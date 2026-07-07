@@ -1,0 +1,59 @@
+name: build-scksnap
+
+# Builds RoeSnip's macOS capture helper (helpers/scksnap) on a macOS runner — it cannot be built
+# on the Windows dev machine (PLAN-XPLAT.md §3.5 / DESIGN-XPLAT.md "Verification reality").
+# Artifact: scksnap.tar.gz containing the universal, ad-hoc-signed 'scksnap' binary.
+
+on:
+  push:
+    paths:
+      - "helpers/scksnap/**"
+      - ".github/workflows/build-scksnap.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    name: Build scksnap (macOS universal)
+    runs-on: macos-15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Toolchain versions (for the build log)
+        run: |
+          sw_vers
+          xcodebuild -version
+          swiftc --version
+
+      - name: Build universal binary
+        working-directory: helpers/scksnap
+        run: |
+          swiftc -parse-as-library -O \
+            -target arm64-apple-macos13.0 \
+            -o scksnap-arm64 Sources/Scksnap.swift
+          swiftc -parse-as-library -O \
+            -target x86_64-apple-macos13.0 \
+            -o scksnap-x86_64 Sources/Scksnap.swift
+          lipo -create -output scksnap scksnap-arm64 scksnap-x86_64
+          lipo -info scksnap
+
+      - name: Ad-hoc sign with stable identifier (TCC attribution)
+        working-directory: helpers/scksnap
+        run: |
+          codesign --force --sign - --identifier net.roelite.roesnip.scksnap scksnap
+          codesign --display --verbose=2 scksnap
+
+      - name: Smoke test (list verb — CoreGraphics enumeration, no TCC needed)
+        working-directory: helpers/scksnap
+        run: ./scksnap list
+
+      - name: Package (tar preserves the executable bit and signature)
+        working-directory: helpers/scksnap
+        run: tar -czf scksnap.tar.gz scksnap
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scksnap
+          path: helpers/scksnap/scksnap.tar.gz
+          if-no-files-found: error
