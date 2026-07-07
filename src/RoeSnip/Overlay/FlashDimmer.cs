@@ -239,9 +239,27 @@ internal static class FlashDimmer
         /// the expensive layered-window creation during warmup.</summary>
         public void PrepareHidden()
         {
-            new WindowInteropHelper(this).EnsureHandle();
+            var hwnd = new WindowInteropHelper(this).EnsureHandle();
+            // CRITICAL: the flash is shown BEFORE the capture runs, so without this every
+            // screenshot would contain the flash's own 45% dim baked into the pixels (user-reported
+            // round-5 bug: "its screenshotting the dimmed screen state instead of the pre-dimmed
+            // state"). WDA_EXCLUDEFROMCAPTURE makes the window visible to the user but invisible
+            // to WGC/DD/print-screen capture paths (Win10 2004+). Failure is non-fatal but must be
+            // loud — a silent failure silently corrupts every screenshot.
+            if (!SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
+            {
+                Console.Error.WriteLine(
+                    "RoeSnip: SetWindowDisplayAffinity(EXCLUDEFROMCAPTURE) failed on a flash window — " +
+                    "captures taken while the flash is up will include the dim!");
+            }
             Position(show: false);
         }
+
+        private const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
 
         public void ShowOnMonitor()
         {

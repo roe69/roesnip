@@ -49,6 +49,20 @@ public partial class ColorPickerWindow : Window
         _onPickRequested = onPickRequested;
         _settings = SettingsStore.Load();
 
+        // Exclude this window from screen capture (same fix as FlashDimmer): a "Pick" re-capture
+        // freezes the screen WITH this window still up — without the affinity it photobombs the
+        // frozen frame and the user can't pick colors from pixels underneath it.
+        SourceInitialized += (_, _) =>
+        {
+            var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            if (!SetWindowDisplayAffinity(hwnd, 0x00000011 /* WDA_EXCLUDEFROMCAPTURE */))
+            {
+                Console.Error.WriteLine(
+                    "RoeSnip: SetWindowDisplayAffinity failed on the color picker window — " +
+                    "pick-mode re-captures will include this window in the frozen frame.");
+            }
+        };
+
         BuildFormatsPopup();
         RefreshRecentColorsPanel();
 
@@ -339,4 +353,8 @@ public partial class ColorPickerWindow : Window
             Console.Error.WriteLine($"RoeSnip: failed to save color picker settings: {ex.Message}");
         }
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
 }
