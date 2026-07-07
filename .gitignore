@@ -7,3 +7,4 @@ TestResults/
 *.png
 *.jxr
 !assets/**/*.png
+RoeSnip.exe
