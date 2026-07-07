@@ -1,0 +1,46 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="RoeSnip.App.AppShell.SettingsWindow"
+        Title="RoeSnip Settings"
+        Width="440" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterScreen">
+  <StackPanel Margin="18" Spacing="4">
+    <TextBlock Text="RoeSnip Settings" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10"/>
+
+    <TextBlock Text="Hotkey" Foreground="#FF9A9A9A"/>
+    <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+      <TextBox x:Name="HotkeyDisplay" Grid.Column="0" IsReadOnly="True" Margin="0,0,8,0"/>
+      <Button x:Name="ChangeHotkeyButton" Grid.Column="1" Content="Change..." Click="ChangeHotkeyButton_Click"/>
+    </Grid>
+
+    <TextBlock Text="Save directory" Foreground="#FF9A9A9A"/>
+    <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+      <TextBox x:Name="SaveDirectoryBox" Grid.Column="0" Margin="0,0,8,0"/>
+      <Button x:Name="BrowseButton" Grid.Column="1" Content="Browse..." Click="BrowseButton_Click"/>
+    </Grid>
+
+    <CheckBox x:Name="AutoSaveHdrCheckBox" Content="Always save an HDR (.jxr) copy alongside the PNG"/>
+    <CheckBox x:Name="CopyOnSelectCheckBox" Content="Confirming a selection also copies it to the clipboard"/>
+    <CheckBox x:Name="RunAtStartupCheckBox" Content="Start RoeSnip at login"/>
+
+    <TextBlock Text="Advanced tone-map overrides (leave blank for automatic)" Margin="0,10,0,4" Foreground="#FF9A9A9A"/>
+    <Grid ColumnDefinitions="*,12,*">
+      <StackPanel Grid.Column="0" Spacing="2">
+        <TextBlock Text="Knee (0-1)"/>
+        <TextBox x:Name="KneeOverrideBox"/>
+      </StackPanel>
+      <StackPanel Grid.Column="2" Spacing="2">
+        <TextBlock Text="Peak"/>
+        <TextBox x:Name="PeakOverrideBox"/>
+      </StackPanel>
+    </Grid>
+
+    <TextBlock x:Name="ValidationErrorText" Foreground="#FFFF6B6B" TextWrapping="Wrap"
+               IsVisible="False" Margin="0,8,0,0"/>
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,16,0,0">
+      <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click"/>
+      <Button x:Name="SaveButton" Content="Save" Classes="accent" Click="SaveButton_Click"/>
+    </StackPanel>
+  </StackPanel>
+</Window>
