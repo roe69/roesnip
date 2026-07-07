@@ -178,6 +178,13 @@ public static class AppComposition
     // Set by App/TrayApp.cs (WP-C). Runs the tray message loop; returns process exit code on quit.
     public static Func<string[], int>? RunTrayApp { get; set; }
 
+    // Set by App/ElevationManager.cs (WP-C). Hidden CLI verbs used only for the UAC round-trip when
+    // SettingsWindow's "Run as administrator" checkbox is toggled from a non-elevated process — see
+    // Program.Main. Both require the process to already be elevated (Verb=runas got it there) and
+    // print a result instead of showing any UI.
+    public static Func<int>? RunEnableElevatedStartupCli { get; set; }
+    public static Func<int>? RunDisableElevatedStartupCli { get; set; }
+
     /// <summary>WP-A only. Implements --diag.</summary>
     public static int RunDiagCli()
     {
@@ -502,6 +509,18 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // Hidden verbs (deliberately undocumented — not in CliOptions/PrintUsage): the target of the
+        // single UAC round-trip SettingsWindow performs when the "Run as administrator" checkbox is
+        // toggled from a non-elevated process. Never invoked unattended.
+        if (args.Length == 1 && args[0] == "--enable-elevated-startup")
+        {
+            return AppComposition.RunEnableElevatedStartupCli?.Invoke() ?? 1;
+        }
+        if (args.Length == 1 && args[0] == "--disable-elevated-startup")
+        {
+            return AppComposition.RunDisableElevatedStartupCli?.Invoke() ?? 1;
+        }
+
         var cli = CliOptions.Parse(args);
         return cli.Mode switch
         {
