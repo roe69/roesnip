@@ -108,15 +108,41 @@ public sealed class TrayApp : ITrayNotifier
 
     private void TriggerCapture()
     {
+        // Instant-response flash (r5-latency): dim every monitor within milliseconds of the
+        // trigger, BEFORE the capture+tonemap stretch inside RunCaptureFlowAsync blocks this UI
+        // thread. The frozen preview the real overlay later shows equals the live screen, so the
+        // flash-to-overlay swap is visually seamless; OverlayController hides each monitor's flash
+        // as that monitor's real overlay window renders. The ReleaseFlash in ObserveCaptureTask's
+        // finally is the backstop that guarantees the flash never outlives the flow on ANY exit
+        // path (capture failed on every monitor, CaptureGate busy, RunOverlay unavailable,
+        // unexpected exception).
+        bool flashShown = false;
+        try
+        {
+            var flashWatch = Stopwatch.StartNew();
+            var monitors = Volatile.Read(ref s_cachedMonitors) ?? RoeSnip.Capture.MonitorEnumerator.Enumerate();
+            flashShown = RoeSnip.Overlay.OverlayController.TryShowFlash(monitors);
+            if (flashShown)
+            {
+                Console.Error.WriteLine($"RoeSnip: hotkey-to-dim {flashWatch.ElapsedMilliseconds} ms");
+            }
+        }
+        catch (Exception ex)
+        {
+            // The flash is a pure perceived-latency optimization — its failure must never block
+            // the actual capture.
+            Console.Error.WriteLine($"RoeSnip: flash dimmer failed (non-fatal): {ex.Message}");
+        }
+
         // Fire-and-forget from a UI event handler: RunCaptureFlowAsync reports its own failures
         // via ITrayNotifier (this) internally, but that's belt-and-braces, not a guarantee — the
         // task itself must still be observed so an unexpected exception (e.g. thrown before its own
         // try/catch is entered) can't become an unobserved-task-exception crash later on the
         // finalizer thread. Route anything that slips through to the same error balloon.
-        _ = ObserveCaptureTask(AppComposition.RunCaptureFlowAsync(_settings, this));
+        _ = ObserveCaptureTask(AppComposition.RunCaptureFlowAsync(_settings, this), flashShown);
     }
 
-    private async Task ObserveCaptureTask(Task captureTask)
+    private async Task ObserveCaptureTask(Task captureTask, bool flashShown)
     {
         try
         {
@@ -128,6 +154,17 @@ public sealed class TrayApp : ITrayNotifier
         catch (Exception ex)
         {
             ShowError($"Capture failed: {ex.Message}");
+        }
+        finally
+        {
+            if (flashShown)
+            {
+                // Still on the WinForms SynchronizationContext (UI thread) — see the await above.
+                RoeSnip.Overlay.OverlayController.ReleaseFlash();
+            }
+            // Re-enumerate for the NEXT trigger's flash placement off the hot path (monitors may
+            // have changed while the overlay was up).
+            RefreshMonitorCacheInBackground(prewarmFlash: false);
         }
     }
 
@@ -311,14 +348,30 @@ public sealed class TrayApp : ITrayNotifier
         _activeBalloonClickHandler = null;
     }
 
-    // ---------------- Cold-start warmup (item 6b, UX round 3) ----------------
+    // ---------------- Cold-start warmup (item 6b, UX round 3; extended for r5-latency) ----------------
 
-    /// <summary>Pre-JITs the heavy first-capture code paths off the UI thread, without performing
-    /// any real capture (a real WGC session flashes the capture border, which this must never do).
-    /// Fully try/caught and never fatal — a warmup failure just means the first real hotkey press is
-    /// as slow as it always was, not a crash.</summary>
-    private static void StartWarmup()
+    /// <summary>The monitor list the instant-response flash uses (TriggerCapture must not pay a
+    /// fresh DXGI/QueryDisplayConfig enumeration on the hot path). Seeded by warmup, refreshed in
+    /// the background after every capture flow and on DisplaySettingsChanged; a stale list costs
+    /// at worst one flash on outdated bounds (the real overlay always re-enumerates via
+    /// CaptureService).</summary>
+    private static IReadOnlyList<RoeSnip.Capture.MonitorInfo>? s_cachedMonitors;
+
+    /// <summary>Pre-pays the heavy first-capture costs off the UI thread (r5-latency): JIT of the
+    /// tonemap/encode path, monitor enumeration (cached for the flash), pre-creation of the
+    /// per-monitor flash dimmer windows (marshalled to the UI thread — they are WPF windows), and
+    /// one REAL throwaway capture per monitor through the exact CaptureService path a hotkey press
+    /// takes. That throwaway capture may briefly show the OS capture border on WGC-fallback
+    /// monitors — accepted at tray startup per the r5-latency brief (no session is left running,
+    /// so no border persists). Fully try/caught and never fatal — a warmup failure just means the
+    /// first real hotkey press is as slow as it always was, not a crash.</summary>
+    private void StartWarmup()
     {
+        // WM_DISPLAYCHANGE-style invalidation: keep the cached monitor list (and the pre-created
+        // flash windows, via the prewarm) in sync with docking/undocking/resolution changes.
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (_, _) =>
+            RefreshMonitorCacheInBackground(prewarmFlash: true);
+
         var thread = new Thread(RunWarmup)
         {
             IsBackground = true,
@@ -328,13 +381,15 @@ public sealed class TrayApp : ITrayNotifier
         thread.Start();
     }
 
-    private static void RunWarmup()
+    private void RunWarmup()
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             WarmupToneMapAndEncode();
-            WarmupCaptureBackendInit();
+            var monitors = WarmupCaptureBackendInit();
+            WarmupFlashWindows(monitors);
+            WarmupCaptureSessions(monitors);
             stopwatch.Stop();
             Console.Error.WriteLine($"RoeSnip: warmup completed in {stopwatch.ElapsedMilliseconds} ms");
         }
@@ -344,6 +399,114 @@ public sealed class TrayApp : ITrayNotifier
             // is exactly as cold as before" — this is a pure optimization, not a requirement.
             Console.Error.WriteLine($"RoeSnip: warmup failed (non-fatal): {ex.Message}");
         }
+    }
+
+    /// <summary>Marshals the flash dimmer window pre-creation onto the UI thread (WPF windows must
+    /// live there; the rest of warmup deliberately stays on this background thread).</summary>
+    private void WarmupFlashWindows(IReadOnlyList<RoeSnip.Capture.MonitorInfo> monitors)
+    {
+        if (monitors.Count == 0)
+        {
+            return;
+        }
+        try
+        {
+            _uiThreadMarshal?.BeginInvoke(new Action(() =>
+                RoeSnip.Overlay.OverlayController.PrewarmFlash(monitors)));
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: flash dimmer warmup scheduling failed (non-fatal): {ex.Message}");
+        }
+    }
+
+    /// <summary>One real throwaway capture per monitor at startup: warms the D3D/duplication/WGC
+    /// machinery end to end, provisions WgcCapturer's per-monitor item/device cache, updates the
+    /// DD-broken memo (so even the FIRST hotkey press skips a doomed Desktop Duplication attempt),
+    /// and tone-maps each frame once so the per-monitor LUTs and the SIMD path are built/JITted at
+    /// real frame sizes. Holds the process-wide CaptureGate: a concurrent real capture could
+    /// otherwise race this one duplicating the same output and spuriously poison the persisted
+    /// DD-broken memo. (A hotkey press inside this sub-second window logs "capture already in
+    /// progress" and is dropped — the lesser evil.)</summary>
+    private static void WarmupCaptureSessions(IReadOnlyList<RoeSnip.Capture.MonitorInfo> monitors)
+    {
+        if (monitors.Count == 0)
+        {
+            return;
+        }
+        if (!RoeSnip.CaptureGate.TryEnter())
+        {
+            Console.Error.WriteLine("RoeSnip: skipping warmup capture; a real capture is already in progress.");
+            return;
+        }
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var frames = new RoeSnip.Capture.CaptureService().CaptureAll(monitors);
+            foreach (var frame in frames)
+            {
+                try
+                {
+                    _ = RoeSnip.Imaging.SdrImage.FromCapturedFrame(frame, new RoeSnip.Color.ToneMapOptions());
+                }
+                finally
+                {
+                    frame.Dispose();
+                }
+            }
+
+            // Monitors whose capture above went through (borderless) Desktop Duplication never
+            // touched WGC — pre-provision WgcCapturer's cached item/device for them too (cheap,
+            // and sessionless, so no border), covering the cost of a first-ever DD→WGC fallback.
+            foreach (var monitor in monitors)
+            {
+                if (!RoeSnip.Capture.CaptureCache.Default.IsDesktopDuplicationBroken(monitor.DeviceName))
+                {
+                    try
+                    {
+                        RoeSnip.Capture.WgcCapturer.Prewarm(monitor, throwawayFrame: false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine(
+                            $"RoeSnip: WGC pre-provisioning failed for monitor {monitor.DeviceName} (non-fatal): {ex.Message}");
+                    }
+                }
+            }
+            watch.Stop();
+            Console.Error.WriteLine(
+                $"RoeSnip: warmup capture ({frames.Count}/{monitors.Count} monitors) completed in " +
+                $"{watch.ElapsedMilliseconds} ms (the OS capture border may have flashed once on WGC monitors)");
+        }
+        finally
+        {
+            RoeSnip.CaptureGate.Exit();
+        }
+    }
+
+    /// <summary>Background monitor re-enumeration for <see cref="s_cachedMonitors"/>; optionally
+    /// re-prewarns the flash windows on the UI thread (display-change path — PrewarmFlash itself
+    /// refuses to touch windows while a flash/session is live).</summary>
+    private void RefreshMonitorCacheInBackground(bool prewarmFlash)
+    {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var monitors = RoeSnip.Capture.MonitorEnumerator.Enumerate();
+                Volatile.Write(ref s_cachedMonitors, monitors);
+                if (prewarmFlash && monitors.Count > 0)
+                {
+                    _uiThreadMarshal?.BeginInvoke(new Action(() =>
+                        RoeSnip.Overlay.OverlayController.PrewarmFlash(monitors)));
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: monitor cache refresh failed (non-fatal): {ex.Message}");
+            }
+        });
     }
 
     /// <summary>Exercises the exact code path a real capture's tone-map/encode stretch runs
@@ -397,13 +560,13 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Pre-creates the DXGI factory/adapter/output walk MonitorEnumerator does for the
     /// AdvancedColor/MaxLuminance/SDR-white-level lookups — otherwise-shared setup cost that's paid
-    /// on the very first hotkey press. The real per-capture D3D11 device(s) inside
-    /// WgcCapturer/DesktopDuplicationCapturer are still built fresh per capture (they're tied to the
-    /// specific monitor being captured), but the DXGI factory/adapter enumeration machinery itself
-    /// gets its JIT/COM-init cost paid here instead.</summary>
-    private static void WarmupCaptureBackendInit()
+    /// on the very first hotkey press — and seeds the cached monitor list the instant-response
+    /// flash positions itself with (r5-latency).</summary>
+    private static IReadOnlyList<RoeSnip.Capture.MonitorInfo> WarmupCaptureBackendInit()
     {
-        _ = RoeSnip.Capture.MonitorEnumerator.Enumerate();
+        var monitors = RoeSnip.Capture.MonitorEnumerator.Enumerate();
+        Volatile.Write(ref s_cachedMonitors, monitors);
+        return monitors;
     }
 
     // ---------------- Single-instance signalling (named mutex + named pipe) ----------------

@@ -54,6 +54,160 @@ public static class OverlayController
         return session.RunAsync();
     }
 
+    // ---------- Instant-response flash dimmer (r5-latency) ----------
+    //
+    // The flash API lives here (not in Program.cs's capture flow) because RunCaptureFlowAsync
+    // only hands this package already-captured frames — far too late for an instant response.
+    // TrayApp.TriggerCapture (the actual hotkey/tray/pipe entry point) calls TryShowFlash BEFORE
+    // kicking off AppComposition.RunCaptureFlowAsync; each monitor's flash is then hidden as its
+    // real overlay window renders (OverlaySession.OnOverlayContentRendered), and TrayApp's
+    // ObserveCaptureTask calls ReleaseFlash in a finally as the backstop that guarantees the
+    // flash never outlives the flow on any no-overlay exit path (capture failed on every monitor,
+    // CaptureGate busy, RunOverlay unavailable, unexpected exception).
+
+    private static OverlaySession? s_activeSession;   // UI thread only
+    private static int s_flashUsers;                  // UI thread only — capture flows that showed the flash
+    private static volatile bool s_flashCancelRequested;
+    private static long s_responseStartTimestamp;     // Stopwatch timestamp of the last TryShowFlash
+
+    /// <summary>Pre-creates the per-monitor flash windows (TrayApp warmup / display-change hook;
+    /// must run on the UI thread). AllowsTransparency windows are expensive to create but cheap to
+    /// re-Show, so paying creation here keeps the hotkey's hotkey-to-dim time to a Show().</summary>
+    public static void PrewarmFlash(IReadOnlyList<MonitorInfo> monitors)
+    {
+        if (monitors.Count == 0)
+        {
+            return;
+        }
+        if (s_activeSession is not null || FlashDimmer.AnyVisible)
+        {
+            return; // never recreate windows out from under a live flash/session
+        }
+        try
+        {
+            EnsureApplication();
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            FlashDimmer.EnsureCreated(monitors);
+            Console.Error.WriteLine(
+                $"RoeSnip: flash dimmer windows ready in {watch.ElapsedMilliseconds} ms ({monitors.Count} monitors)");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: flash dimmer pre-creation failed (non-fatal): {ex.Message}");
+        }
+    }
+
+    /// <summary>Shows the flash dim on every monitor. Returns false (and shows nothing) when an
+    /// overlay session is already on screen — dimming over a live overlay would be wrong — or when
+    /// showing failed; the caller must call <see cref="ReleaseFlash"/> exactly once iff this
+    /// returned true. UI thread only.</summary>
+    public static bool TryShowFlash(IReadOnlyList<MonitorInfo> monitors)
+    {
+        if (monitors.Count == 0 || s_activeSession is not null)
+        {
+            return false;
+        }
+        try
+        {
+            s_responseStartTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+            s_flashCancelRequested = false;
+            EnsureApplication();
+            FlashDimmer.ShowAll(monitors);
+            s_flashUsers++;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: flash dimmer show failed (non-fatal): {ex.Message}");
+            try { FlashDimmer.HideAll(); } catch { /* best-effort */ }
+            return false;
+        }
+    }
+
+    /// <summary>Backstop pair to a successful <see cref="TryShowFlash"/>: called from
+    /// TrayApp.ObserveCaptureTask's finally once the whole capture flow has ended. Counted rather
+    /// than boolean so a second trigger that showed the (already-visible) flash and then bounced
+    /// off the CaptureGate can't hide it out from under the first flow's still-pending capture.</summary>
+    public static void ReleaseFlash()
+    {
+        if (s_flashUsers == 0)
+        {
+            return;
+        }
+        if (--s_flashUsers == 0)
+        {
+            try { FlashDimmer.HideAll(); }
+            catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
+        }
+    }
+
+    /// <summary>Esc pressed while a flash window had focus. If the real session is already up
+    /// (the keydown was queued behind the blocking capture stretch and only dispatched now),
+    /// route it as a normal stage-cancel; otherwise flag the pending flow so its session cancels
+    /// the moment it starts, and drop the dim immediately for responsiveness.</summary>
+    internal static void OnFlashEscape()
+    {
+        if (s_activeSession is not null)
+        {
+            s_activeSession.CancelStageFromFlash();
+            return;
+        }
+        s_flashCancelRequested = true;
+        try { FlashDimmer.HideAll(); }
+        catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
+    }
+
+    private static bool ConsumeFlashCancelRequest()
+    {
+        bool requested = s_flashCancelRequested;
+        s_flashCancelRequested = false;
+        return requested;
+    }
+
+    /// <summary>Show-as-ready ordering (r5-latency): the monitor under the cursor is where the
+    /// user is looking and about to interact, so its window is constructed, shown and activated
+    /// first; the rest follow. Falls back to the given order when the cursor position is
+    /// unavailable or on no captured monitor.</summary>
+    private static IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> OrderCursorMonitorFirst(
+        IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors)
+    {
+        if (monitors.Count < 2)
+        {
+            return monitors;
+        }
+        try
+        {
+            if (!FlashDimmer.TryGetCursorPos(out int cx, out int cy))
+            {
+                return monitors;
+            }
+            int cursorIndex = -1;
+            for (int i = 0; i < monitors.Count; i++)
+            {
+                var b = monitors[i].Frame.Monitor.BoundsPx;
+                if (cx >= b.Left && cx < b.Right && cy >= b.Top && cy < b.Bottom)
+                {
+                    cursorIndex = i;
+                    break;
+                }
+            }
+            if (cursorIndex <= 0)
+            {
+                return monitors;
+            }
+            var reordered = new List<(CapturedFrame Frame, SdrImage Preview)>(monitors);
+            var cursorMonitor = reordered[cursorIndex];
+            reordered.RemoveAt(cursorIndex);
+            reordered.Insert(0, cursorMonitor);
+            return reordered;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: cursor-monitor ordering failed (non-fatal): {ex.Message}");
+            return monitors;
+        }
+    }
+
     // ---------- Standalone ColorPickerWindow (UX round 2) ----------
 
     private static ColorPickerWindow? s_colorPickerWindow;
@@ -185,6 +339,9 @@ public static class OverlayController
     private sealed class OverlaySession
     {
         private readonly RoeSnipSettings _settings;
+        private readonly IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> _monitors;
+        private readonly Action<PickedColorInfo> _onColorPicked;
+        private readonly bool _pickOnlyMode;
         private readonly List<OverlayWindow> _windows = new();
         private readonly TaskCompletionSource<OverlayResult?> _completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -196,7 +353,8 @@ public static class OverlayController
 
         private OverlayWindow? _activeWindow;
         private bool _finished;
-        private readonly long _constructMs;
+        private int _renderedCount;
+        private long _responseBaseTimestamp;
 
         public OverlaySession(
             IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors,
@@ -205,94 +363,135 @@ public static class OverlayController
             bool pickOnlyMode)
         {
             _settings = settings;
+            _onColorPicked = onColorPicked;
+            _pickOnlyMode = pickOnlyMode;
+            _monitors = OrderCursorMonitorFirst(monitors);
 
-            // Installed before any window is shown/receives input, so session keys are covered for
-            // the session's entire visible lifetime — including the (rare) window it races with
-            // Show() below throwing partway through, since that path still routes through Finish()
-            // via each shown window's Closed event (see RunAsync's catch block).
+            // Installed before any window is constructed/shown/receives input, so session keys are
+            // covered for the session's entire visible lifetime. Every path out of RunAsync —
+            // including an exception constructing or showing any window — funnels through Finish(),
+            // which disposes this hook unconditionally.
             _keyboardHook = new SessionKeyboardHook(() => _activeWindow);
-
-            // If constructing any OverlayWindow throws partway through this loop, the session
-            // object itself never finishes constructing — Finish() (the normal disposal point)
-            // would never run and the hook would leak permanently. Guard this loop specifically so
-            // the hook is provably removed on every path, including this one.
-            // Cold-start timing (item 6c, UX round 3): the interactive flow already logs
-            // capture-to-overlay; this is the other half — how long the overlay's own windows take
-            // to construct (InitializeComponent/BAML load, first-JIT of Overlay/* types) and then
-            // Show() — so a cold-start improvement (item 6a/6b) is actually measurable end to end.
-            var constructWatch = System.Diagnostics.Stopwatch.StartNew();
-            try
-            {
-                foreach (var (frame, preview) in monitors)
-                {
-                    var window = new OverlayWindow(
-                        frame, preview, settings, OnActivatedByMouse, OnSelectionStarted, OnCommand,
-                        onColorPicked, pickOnlyMode);
-                    window.Closed += (_, _) => Finish(null);
-                    _windows.Add(window);
-                }
-            }
-            catch
-            {
-                _keyboardHook.Dispose();
-                throw;
-            }
-            finally
-            {
-                constructWatch.Stop();
-            }
-            _constructMs = constructWatch.ElapsedMilliseconds;
         }
 
         public Task<OverlayResult?> RunAsync()
         {
-            // If showing (or activating) one of these windows throws partway through, every window
-            // already shown must be force-closed rather than left stranded, topmost, on screen with
-            // no way for the user to dismiss it (audit finding C.3).
-            var shown = new List<OverlayWindow>();
-            var showWatch = System.Diagnostics.Stopwatch.StartNew();
+            s_activeSession = this;
+            _responseBaseTimestamp = TakeResponseBaseTimestamp();
+
+            // Esc pressed while only the flash dimmer was up: the user already cancelled this
+            // capture before the overlay could appear — honor it instead of flashing a full
+            // overlay set for a frame.
+            if (ConsumeFlashCancelRequest())
+            {
+                Finish(null);
+                return _completion.Task;
+            }
+
+            // Show-as-ready (r5-latency): construct+show the cursor monitor's window FIRST and
+            // flush its layout/render before even constructing the remaining windows, so the
+            // monitor the user is looking at swaps from flash dim to the real overlay as early as
+            // possible (previously: construct all, then show all — the first visible overlay paid
+            // for every monitor's InitializeComponent/BAML load). Each monitor's flash dimmer is
+            // hidden per-monitor from ContentRendered, i.e. only after that monitor's real window
+            // has genuinely rendered — zero-gap replacement.
+            //
+            // The Dispatcher flush below runs a nested message pump, which CAN dispatch input —
+            // an Esc there routes through OnFlashEscape/the session keys into Finish(). Hence the
+            // _finished checks: the loop must stop constructing/showing windows the moment the
+            // session dies under it (windows shown after Finish would be stranded topmost forever).
+            var watch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                foreach (var window in _windows)
+                foreach (var (frame, preview) in _monitors)
                 {
+                    if (_finished)
+                    {
+                        break;
+                    }
+
+                    var window = new OverlayWindow(
+                        frame, preview, _settings, OnActivatedByMouse, OnSelectionStarted, OnCommand,
+                        _onColorPicked, _pickOnlyMode);
+                    window.Closed += (_, _) => Finish(null);
+                    window.ContentRendered += (_, _) => OnOverlayContentRendered(window);
+                    _windows.Add(window);
                     window.Show();
-                    shown.Add(window);
+
+                    if (_activeWindow is null)
+                    {
+                        _activeWindow = window;
+                        // Push the first (cursor) window's pending layout/render through before
+                        // constructing the rest. Loaded sits just below Render, so this drains
+                        // exactly the layout+render queue.
+                        window.Dispatcher.Invoke(static () => { }, System.Windows.Threading.DispatcherPriority.Loaded);
+                    }
                 }
 
-                _activeWindow = _windows.FirstOrDefault(w => w.Monitor.IsPrimary) ?? _windows[0];
-                // Session-start activation ladder (item 3a) — the same three-tier escalation used
-                // when a text edit opens, so a hotkey/pipe-triggered session (which never had a real
-                // OS foreground grant to begin with — see OverlayInputInterop.cs) starts out with the
-                // best foreground/focus this process can obtain, not just Activate()'s best-effort.
-                ForegroundActivator.Activate(_activeWindow, "session-start");
+                if (!_finished && _activeWindow is not null)
+                {
+                    // Session-start activation ladder (item 3a) — the same three-tier escalation
+                    // used when a text edit opens, so a hotkey/pipe-triggered session (which never
+                    // had a real OS foreground grant to begin with — see OverlayInputInterop.cs)
+                    // starts out with the best foreground/focus this process can obtain. The
+                    // cursor monitor's window (shown first) is the one activated: it's where the
+                    // user is about to interact; mouse-enter re-activates others as always.
+                    ForegroundActivator.Activate(_activeWindow, "session-start");
+                }
             }
             catch
             {
-                foreach (var window in shown)
-                {
-                    try
-                    {
-                        window.CloseOverlay();
-                    }
-                    catch
-                    {
-                        // Best-effort: nothing further to do if closing a partially-shown window
-                        // itself fails.
-                    }
-                }
+                // Whatever partially came up must be torn down (windows closed, hook removed,
+                // flash dimmers hidden) rather than left stranded topmost on screen with no way
+                // for the user to dismiss it (audit finding C.3) — Finish is the single terminal
+                // point that does all of that, idempotently.
+                Finish(null);
                 throw;
-            }
-            finally
-            {
-                showWatch.Stop();
             }
 
             Console.Error.WriteLine(
-                $"RoeSnip: overlay window construction+show {_constructMs + showWatch.ElapsedMilliseconds} ms " +
-                $"(construct {_constructMs} ms, show {showWatch.ElapsedMilliseconds} ms)");
+                $"RoeSnip: overlay windows constructed+shown in {watch.ElapsedMilliseconds} ms " +
+                $"({_windows.Count} monitors, cursor monitor first)");
 
             return _completion.Task;
         }
+
+        /// <summary>Latency logs measure from the hotkey (flash timestamp) when this session was
+        /// hotkey-initiated, else from session start (pick mode / direct callers).</summary>
+        private static long TakeResponseBaseTimestamp()
+        {
+            long flashTimestamp = s_responseStartTimestamp;
+            return flashTimestamp != 0 && FlashDimmer.AnyVisible
+                ? flashTimestamp
+                : System.Diagnostics.Stopwatch.GetTimestamp();
+        }
+
+        /// <summary>Per-monitor flash-to-overlay handoff: ContentRendered fires after the window's
+        /// first real render pass, so hiding that monitor's flash dimmer now cannot show a gap.
+        /// Also the source of the "first-overlay-visible"/"all-overlays-visible" latency logs.</summary>
+        private void OnOverlayContentRendered(OverlayWindow window)
+        {
+            FlashDimmer.HideForMonitor(window.Monitor.DeviceName);
+
+            _renderedCount++;
+            double elapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(_responseBaseTimestamp).TotalMilliseconds;
+            if (_renderedCount == 1)
+            {
+                Console.Error.WriteLine(
+                    $"RoeSnip: first-overlay-visible {elapsedMs:0} ms (monitor {window.Monitor.Index})");
+            }
+            if (_renderedCount == _monitors.Count)
+            {
+                Console.Error.WriteLine($"RoeSnip: all-overlays-visible {elapsedMs:0} ms");
+                // A monitor that failed capture has no overlay window and nothing will replace its
+                // flash — hide any remainder now that every real window is visible.
+                FlashDimmer.HideAll();
+            }
+        }
+
+        /// <summary>Flash-phase Esc that arrived (via its queued keydown) after this session
+        /// already opened — treat it exactly like a normal Esc press.</summary>
+        internal void CancelStageFromFlash() => OnCommand(OverlayCommand.CancelStage);
 
         /// <summary>Mouse-enter (or a click) on another overlay activates it, per DESIGN.md — only
         /// the OS-focused window receives keyboard input, so this is what lets Esc/Enter/Ctrl+C/
@@ -483,10 +682,12 @@ public static class OverlayController
 
             // This is the single terminal point every session exit path funnels through — normal
             // Cancel/CancelStage-to-empty/Confirm-Copy-Save-SaveHdr commands call it directly, and
-            // an exception partway through RunAsync's Show() loop reaches it indirectly (that catch
-            // block force-closes every already-shown window, whose Closed event calls Finish(null)).
-            // The keyboard hook removal is guaranteed here via try/finally regardless of which of
-            // those paths got us here, or whether closing the windows themselves throws.
+            // an exception partway through RunAsync's construct/show loop reaches it via that
+            // loop's catch block (as does an externally-closed window's Closed event, e.g.
+            // Alt+F4). The keyboard hook removal is guaranteed here via try/finally regardless of
+            // which of those paths got us here, or whether closing the windows themselves throws;
+            // the same finally clears the active-session marker and hides any flash dimmer still
+            // up (e.g. a cancel that arrived before every monitor's window had rendered).
             try
             {
                 foreach (var window in _windows)
@@ -505,6 +706,12 @@ public static class OverlayController
             finally
             {
                 _keyboardHook.Dispose();
+                if (ReferenceEquals(s_activeSession, this))
+                {
+                    s_activeSession = null;
+                }
+                try { FlashDimmer.HideAll(); }
+                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
             }
 
             _completion.TrySetResult(result);

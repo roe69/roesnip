@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Vortice.Direct3D;
@@ -16,14 +17,108 @@ namespace RoeSnip.Capture;
 /// (NOT plain Create, which needs a DispatcherQueue and throws from CLI/console contexts). Covers
 /// RDP and other Desktop-Duplication-denied contexts. The yellow capture border may appear
 /// (unpackaged apps lack the graphicsCaptureWithoutBorder capability) — accepted per DESIGN.md,
-/// since Desktop Duplication (the primary path) is borderless.</summary>
+/// since Desktop Duplication (the primary path) is borderless.
+///
+/// Pre-provisioning (r5-latency): the expensive parts of a WGC capture — creating the D3D11
+/// device + its WinRT wrapper, and resolving the monitor's GraphicsCaptureItem — are cached
+/// per monitor (keyed by GDI device name) and reused across captures. Those two ARE reusable:
+/// a GraphicsCaptureItem only describes WHAT to capture and stays valid until the display
+/// configuration changes, and a D3D11 device is process-lifetime reusable. The
+/// GraphicsCaptureSession and Direct3D11CaptureFramePool are deliberately NOT reused — a session
+/// that stays alive keeps the capture (and its yellow border) running permanently, which is
+/// forbidden — so they are created and disposed inside every capture. Invalidation: a changed
+/// HMONITOR or item size for the same device name recreates the resources up front, and ANY
+/// capture failure disposes them; if the failed attempt was using cached resources it is retried
+/// once against freshly provisioned ones, so a stale item after a monitor-set/mode change costs
+/// one silent retry, never a failed screenshot. <see cref="Prewarm"/> lets TrayApp's startup
+/// warmup pay the provisioning (and optionally the first session handshake) before the first
+/// hotkey press.</summary>
 public sealed class WgcCapturer : IScreenCapturer
 {
+    /// <summary>Per-monitor cache slot. <see cref="Gate"/> is held for the whole capture: it
+    /// protects the cached resources' lifecycle AND serializes use of the shared device's
+    /// immediate context (ID3D11Device is thread-safe, ID3D11DeviceContext is not) in case the
+    /// startup warmup overlaps a real capture of the same monitor. Different monitors use
+    /// different slots (and devices), so CaptureService's per-monitor parallelism is unaffected.</summary>
+    private sealed class MonitorSlot
+    {
+        public readonly object Gate = new();
+        public MonitorResources? Resources;
+    }
+
+    private sealed class MonitorResources : IDisposable
+    {
+        public required GraphicsCaptureItem Item { get; init; }
+        public required ID3D11Device D3dDevice { get; init; }
+        public required IDirect3DDevice WinrtDevice { get; init; }
+        public required nint HMonitor { get; init; }
+
+        public void Dispose()
+        {
+            // Same disposal contract as the old per-capture cleanup (audit finding H): winrtDevice
+            // and item are CsWinRT projections whose native references must be released explicitly;
+            // IDirect3DDevice implements IDisposable, GraphicsCaptureItem releases via NativeObject.
+            try { WinrtDevice.Dispose(); } catch { /* best-effort */ }
+            try { D3dDevice.Dispose(); } catch { /* best-effort */ }
+            try
+            {
+                if (Item is WinRT.IWinRTObject winrtItem)
+                {
+                    winrtItem.NativeObject?.Dispose();
+                }
+            }
+            catch { /* best-effort */ }
+        }
+    }
+
+    private static readonly ConcurrentDictionary<string, MonitorSlot> s_slots =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public CapturedFrame Capture(MonitorInfo monitor)
     {
         try
         {
-            return CaptureCore(monitor);
+            var slot = s_slots.GetOrAdd(monitor.DeviceName, _ => new MonitorSlot());
+            lock (slot.Gate)
+            {
+                bool fromCache = IsReusable(slot.Resources, monitor);
+                if (!fromCache)
+                {
+                    slot.Resources?.Dispose();
+                    slot.Resources = null;
+                    slot.Resources = CreateResources(monitor);
+                }
+                MonitorResources resources = slot.Resources!;
+
+                try
+                {
+                    return CaptureCore(monitor, resources);
+                }
+                catch (Exception ex)
+                {
+                    resources.Dispose();
+                    slot.Resources = null;
+                    if (!fromCache)
+                    {
+                        throw;
+                    }
+                    Console.Error.WriteLine(
+                        $"RoeSnip: WGC capture with cached resources failed for monitor {monitor.DeviceName} " +
+                        $"({ex.Message}); re-provisioning and retrying once.");
+                }
+
+                slot.Resources = CreateResources(monitor);
+                try
+                {
+                    return CaptureCore(monitor, slot.Resources);
+                }
+                catch
+                {
+                    slot.Resources.Dispose();
+                    slot.Resources = null;
+                    throw;
+                }
+            }
         }
         catch (CaptureException)
         {
@@ -35,15 +130,42 @@ public sealed class WgcCapturer : IScreenCapturer
         }
     }
 
-    private static CapturedFrame CaptureCore(MonitorInfo monitor)
+    /// <summary>Startup-warmup hook (TrayApp): provisions the cached item/device for the monitor
+    /// so the first hotkey press skips that cost. With <paramref name="throwawayFrame"/> it also
+    /// performs one full single-frame capture and discards it — that pays the session handshake
+    /// (and briefly shows the OS capture border, accepted at tray startup per the r5-latency
+    /// brief; the session is disposed immediately, so no border persists).</summary>
+    public static void Prewarm(MonitorInfo monitor, bool throwawayFrame)
+    {
+        if (throwawayFrame)
+        {
+            new WgcCapturer().Capture(monitor).Dispose();
+            return;
+        }
+
+        var slot = s_slots.GetOrAdd(monitor.DeviceName, _ => new MonitorSlot());
+        lock (slot.Gate)
+        {
+            if (!IsReusable(slot.Resources, monitor))
+            {
+                slot.Resources?.Dispose();
+                slot.Resources = null;
+                slot.Resources = CreateResources(monitor);
+            }
+        }
+    }
+
+    private static bool IsReusable(MonitorResources? resources, MonitorInfo monitor) =>
+        resources is not null
+        && resources.HMonitor == monitor.HMonitor
+        && resources.Item.Size.Width == monitor.BoundsPx.Width
+        && resources.Item.Size.Height == monitor.BoundsPx.Height;
+
+    private static MonitorResources CreateResources(MonitorInfo monitor)
     {
         GraphicsCaptureItem item = CreateItemForMonitor(monitor.HMonitor);
-
         ID3D11Device? d3dDevice = null;
-        Direct3D11CaptureFramePool? framePool = null;
-        GraphicsCaptureSession? session = null;
         IDirect3DDevice? winrtDevice = null;
-
         try
         {
             FeatureLevel[] levels =
@@ -63,7 +185,7 @@ public sealed class WgcCapturer : IScreenCapturer
             // does below, so the resulting object is a proper CsWinRT-projected IDirect3DDevice.
             // FromAbi AddRefs internally (verified empirically: refcount 1 -> 3) and does NOT
             // consume the caller's reference, so we must Release the raw pointer we own after
-            // wrapping — otherwise the device leaks once per capture.
+            // wrapping — otherwise the device leaks once per (re)provisioning.
             CreateDirect3D11DeviceFromDXGIDeviceNative(dxgiDevice.NativePointer, out IntPtr winrtDevicePtr);
             try
             {
@@ -74,6 +196,32 @@ public sealed class WgcCapturer : IScreenCapturer
                 Marshal.Release(winrtDevicePtr);
             }
 
+            return new MonitorResources
+            {
+                Item = item,
+                D3dDevice = d3dDevice,
+                WinrtDevice = winrtDevice,
+                HMonitor = monitor.HMonitor,
+            };
+        }
+        catch
+        {
+            winrtDevice?.Dispose();
+            d3dDevice?.Dispose();
+            if (item is WinRT.IWinRTObject winrtItem)
+            {
+                winrtItem.NativeObject?.Dispose();
+            }
+            throw;
+        }
+    }
+
+    private static CapturedFrame CaptureCore(MonitorInfo monitor, MonitorResources resources)
+    {
+        Direct3D11CaptureFramePool? framePool = null;
+        GraphicsCaptureSession? session = null;
+        try
+        {
             // WGC doesn't expose a "delivered format" the way Desktop Duplication does — request
             // FP16 for advanced-color displays, BGRA8 otherwise (DESIGN.md's one legitimate use of
             // AdvancedColorActive for branching).
@@ -81,8 +229,9 @@ public sealed class WgcCapturer : IScreenCapturer
                 ? DirectXPixelFormat.R16G16B16A16Float
                 : DirectXPixelFormat.B8G8R8A8UIntNormalized;
 
-            framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(winrtDevice, pixelFormat, 1, item.Size);
-            session = framePool.CreateCaptureSession(item);
+            framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(
+                resources.WinrtDevice, pixelFormat, 1, resources.Item.Size);
+            session = framePool.CreateCaptureSession(resources.Item);
             session.IsCursorCaptureEnabled = false;
             try { session.IsBorderRequired = false; }
             catch { /* property may not exist on older Windows builds, or capability denied — accepted. */ }
@@ -148,10 +297,10 @@ public sealed class WgcCapturer : IScreenCapturer
                     CPUAccessFlags = CpuAccessFlags.Read,
                     MiscFlags = ResourceOptionFlags.None,
                 };
-                using var staging = d3dDevice.CreateTexture2D(stagingDesc);
-                d3dDevice.ImmediateContext.CopyResource(staging, surfaceTexture);
+                using var staging = resources.D3dDevice.CreateTexture2D(stagingDesc);
+                resources.D3dDevice.ImmediateContext.CopyResource(staging, surfaceTexture);
 
-                var mapped = d3dDevice.ImmediateContext.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+                var mapped = resources.D3dDevice.ImmediateContext.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
                 byte[] pixels;
                 try
                 {
@@ -161,7 +310,7 @@ public sealed class WgcCapturer : IScreenCapturer
                 }
                 finally
                 {
-                    d3dDevice.ImmediateContext.Unmap(staging, 0);
+                    resources.D3dDevice.ImmediateContext.Unmap(staging, 0);
                 }
 
                 FrameFormat format = srcDesc.Format == Format.R16G16B16A16_Float
@@ -173,26 +322,11 @@ public sealed class WgcCapturer : IScreenCapturer
         }
         finally
         {
+            // Session/pool are strictly per-capture (see class doc: keeping a session alive would
+            // keep the yellow border up permanently). The cached item/device are NOT disposed here
+            // — their lifecycle is owned by the MonitorSlot in Capture/Prewarm.
             session?.Dispose();
             framePool?.Dispose();
-            d3dDevice?.Dispose();
-
-            // winrtDevice and item are both CsWinRT projections wrapping a native COM reference
-            // that FromAbi added internally — without an explicit release here, that reference (and
-            // driver-side memory behind it) only got freed whenever the GC finalizer pass eventually
-            // ran, leaking 2 native refs per fallback capture until then (audit finding H). This is
-            // purely additive: the existing Marshal.Release calls above are unrelated, already-
-            // balanced refcounting for the raw ABI pointers and are left untouched.
-            //
-            // IDirect3DDevice (winrtDevice's static type) implements System.IDisposable directly.
-            // GraphicsCaptureItem does not (verified against the projection metadata) — it only
-            // implements WinRT.IWinRTObject, so its underlying native reference is released via its
-            // NativeObject instead.
-            winrtDevice?.Dispose();
-            if (item is WinRT.IWinRTObject winrtItem)
-            {
-                winrtItem.NativeObject?.Dispose();
-            }
         }
     }
 
