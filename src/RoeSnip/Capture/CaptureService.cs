@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace RoeSnip.Capture;
@@ -7,6 +8,15 @@ public sealed class CaptureService
 {
     private readonly IScreenCapturer _primary;
     private readonly IScreenCapturer _fallback;
+
+    /// <summary>Process-lifetime memo of monitors whose primary (Desktop Duplication) capture is
+    /// known broken (black frame or hard failure), keyed by DeviceName. A tray app captures many
+    /// times per session; once DD is deemed broken for a monitor, subsequent CaptureAll calls go
+    /// straight to WGC instead of paying the doomed DD retry loop (~500 ms) on every screenshot
+    /// (DESIGN.md "Failure modes", DD black-frame quirk). Static because CaptureService instances
+    /// are created per capture.</summary>
+    private static readonly ConcurrentDictionary<string, bool> s_primaryBrokenByDeviceName =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public CaptureService() : this(new DesktopDuplicationCapturer(), new WgcCapturer()) { }
 
@@ -33,16 +43,23 @@ public sealed class CaptureService
         {
             if (onlyMonitorIndex is int idx && monitor.Index != idx) continue;
 
-            try
+            if (!s_primaryBrokenByDeviceName.ContainsKey(monitor.DeviceName))
             {
-                results.Add(_primary.Capture(monitor));
-                continue;
-            }
-            catch (CaptureException primaryEx)
-            {
-                Console.Error.WriteLine(
-                    $"RoeSnip: Desktop Duplication capture failed for monitor {monitor.Index} " +
-                    $"({monitor.DeviceName}): {primaryEx.Message}. Falling back to WGC.");
+                try
+                {
+                    results.Add(_primary.Capture(monitor));
+                    continue;
+                }
+                catch (CaptureException primaryEx)
+                {
+                    // First failure for this monitor: log it and remember for the rest of the
+                    // process so later captures skip the doomed primary attempt entirely.
+                    s_primaryBrokenByDeviceName.TryAdd(monitor.DeviceName, true);
+                    Console.Error.WriteLine(
+                        $"RoeSnip: Desktop Duplication capture failed for monitor {monitor.Index} " +
+                        $"({monitor.DeviceName}): {primaryEx.Message}. Falling back to WGC " +
+                        "(and skipping Desktop Duplication for this monitor for the rest of this session).");
+                }
             }
 
             try

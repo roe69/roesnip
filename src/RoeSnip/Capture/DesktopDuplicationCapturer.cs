@@ -110,6 +110,18 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
                 device.ImmediateContext.Unmap(staging, 0);
             }
 
+            // DD black-frame quirk (DESIGN.md "Failure modes", observed on NVIDIA RTX + HDR):
+            // a structurally-successful capture can still deliver an all-zero buffer. A real
+            // desktop frame always has nonzero alpha, so all-zero == unusable output, and the
+            // IScreenCapturer contract says unusable output throws CaptureException (which lets
+            // CaptureService engage the WGC fallback).
+            if (FrameSanity.IsAllZero(pixels))
+            {
+                throw new CaptureException(
+                    $"Desktop Duplication delivered an all-zero (black) frame for monitor {monitor.DeviceName} " +
+                    "(known NVIDIA + HDR driver quirk).");
+            }
+
             return new CapturedFrame(format, (int)srcDesc.Width, (int)srcDesc.Height, (int)mapped.RowPitch, pixels, monitor);
         }
         catch (AccessLostSignal) when (allowAccessLostRetry)

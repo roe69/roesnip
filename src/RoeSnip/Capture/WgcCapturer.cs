@@ -60,11 +60,19 @@ public sealed class WgcCapturer : IScreenCapturer
             // specified cast is not valid"). Call the native factory directly and wrap the raw ABI
             // pointer with WinRT.MarshalInterface<T>.FromAbi instead, exactly like CreateItemForMonitor
             // does below, so the resulting object is a proper CsWinRT-projected IDirect3DDevice.
-            // FromAbi takes ownership of (attaches to) the reference in winrtDevicePtr — it does
-            // NOT AddRef internally, so no Marshal.Release here (that would be an over-release and
-            // crash later during GC finalization once the ref count hits zero early).
+            // FromAbi AddRefs internally (verified empirically: refcount 1 -> 3) and does NOT
+            // consume the caller's reference, so we must Release the raw pointer we own after
+            // wrapping — otherwise the device leaks once per capture.
             CreateDirect3D11DeviceFromDXGIDeviceNative(dxgiDevice.NativePointer, out IntPtr winrtDevicePtr);
-            IDirect3DDevice winrtDevice = WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(winrtDevicePtr);
+            IDirect3DDevice winrtDevice;
+            try
+            {
+                winrtDevice = WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(winrtDevicePtr);
+            }
+            finally
+            {
+                Marshal.Release(winrtDevicePtr);
+            }
 
             // WGC doesn't expose a "delivered format" the way Desktop Duplication does — request
             // FP16 for advanced-color displays, BGRA8 otherwise (DESIGN.md's one legitimate use of
@@ -182,15 +190,13 @@ public sealed class WgcCapturer : IScreenCapturer
         var access = (IDirect3DDxgiInterfaceAccess)Marshal.GetTypedObjectForIUnknown(
             accessRef.ThisPtr, typeof(IDirect3DDxgiInterfaceAccess));
 
+        // GetInterface returns an AddRef'd pointer that we own. SharpGen's ComObject(IntPtr)
+        // constructor ATTACHES to the pointer (no AddRef of its own) and releases it on Dispose —
+        // so ownership transfers to the wrapper here and there must be no Marshal.Release of our
+        // own (an extra Release over-frees a texture the WinRT surface still references, which
+        // crashes later in WinRT.IObjectReference.Finalize once the GC runs).
         IntPtr texturePtr = access.GetInterface(typeof(ID3D11Texture2D).GUID);
-        try
-        {
-            return new ID3D11Texture2D(texturePtr);
-        }
-        finally
-        {
-            Marshal.Release(texturePtr);
-        }
+        return new ID3D11Texture2D(texturePtr);
     }
 
     private static GraphicsCaptureItem CreateItemForMonitor(nint hmonitor)
@@ -210,9 +216,17 @@ public sealed class WgcCapturer : IScreenCapturer
                 var interop = (NativeMethods.IGraphicsCaptureItemInterop)Marshal.GetTypedObjectForIUnknown(
                     factoryPtr, typeof(NativeMethods.IGraphicsCaptureItemInterop));
                 Guid itemIid = ResolveGraphicsCaptureItemIid();
-                // FromAbi attaches to (consumes) this reference — no Marshal.Release afterward.
+                // FromAbi AddRefs internally and does NOT consume this reference — Release the
+                // pointer we own after wrapping (same semantics as the device wrap above).
                 IntPtr itemPtr = interop.CreateForMonitor(hmonitor, ref itemIid);
-                return WinRT.MarshalInterface<GraphicsCaptureItem>.FromAbi(itemPtr);
+                try
+                {
+                    return WinRT.MarshalInterface<GraphicsCaptureItem>.FromAbi(itemPtr);
+                }
+                finally
+                {
+                    Marshal.Release(itemPtr);
+                }
             }
             finally
             {
