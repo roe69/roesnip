@@ -163,6 +163,49 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- The "+" custom-color swatch: same round footprint as ColorSwatchStyle but (unlike that
+             style's template) actually presents its child content, since this button needs the "+"
+             glyph rather than a flat color fill. -->
+        <Style x:Key="AddCustomColorButtonStyle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="20"/>
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Background" Value="#2A2A2E"/>
+            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="BorderBrush" Value="#8A8A92"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Minimal dark theming for the font-family dropdown — not a full retemplate, just enough
+             to not look like a stray light-theme control in the dark toolbar. -->
+        <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Background" Value="#2A2A2E"/>
+            <Setter Property="Foreground" Value="#EAEAEA"/>
+            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="4,2"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="Focusable" Value="False"/>
+        </Style>
     </UserControl.Resources>
 
     <Border Background="#EE1B1B1D" CornerRadius="6" BorderBrush="#3F3F46" BorderThickness="1">
@@ -200,10 +243,42 @@
             <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
             <StackPanel x:Name="ColorSwatchPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
+            <StackPanel x:Name="CustomColorPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
+            <ToggleButton x:Name="AddCustomColorButton" Style="{StaticResource AddCustomColorButtonStyle}"
+                          ToolTip="Custom color..." Click="OnAddCustomColorClick">
+                <Path Style="{StaticResource IconStyle}" Width="10" Height="10" Data="M7,1 V13 M1,7 H13"/>
+            </ToggleButton>
 
             <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
             <StackPanel x:Name="StrokeWidthPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
+            <TextBlock x:Name="StrokeWidthLabel" Text="4px" VerticalAlignment="Center"
+                       Foreground="#CFCFCF" FontSize="11" Margin="4,0,2,0" MinWidth="24"/>
+
+            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
+            <!-- Text-style group (item 4): only ever visible while the Text tool is active. -->
+            <StackPanel x:Name="TextStylePanel" Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
+                <Button x:Name="FontSizeDownButton" Style="{StaticResource ActionButtonStyle}" Width="20"
+                        Content="-" FontSize="14" FontWeight="Bold" Click="OnFontSizeDownClick" ToolTip="Smaller text"/>
+                <TextBlock x:Name="FontSizeLabel" Text="20pt" VerticalAlignment="Center"
+                           Foreground="#EAEAEA" FontSize="11" Margin="3,0" MinWidth="26" TextAlignment="Center"/>
+                <Button x:Name="FontSizeUpButton" Style="{StaticResource ActionButtonStyle}" Width="20"
+                        Content="+" FontSize="14" FontWeight="Bold" Click="OnFontSizeUpClick" ToolTip="Larger text"/>
+
+                <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
+                <ToggleButton x:Name="BoldToggleButton" Style="{StaticResource ToolButtonStyle}" Width="26"
+                              Content="B" FontWeight="Bold" Click="OnBoldToggleClick" ToolTip="Bold"/>
+                <ToggleButton x:Name="ItalicToggleButton" Style="{StaticResource ToolButtonStyle}" Width="26"
+                              Content="I" FontStyle="Italic" FontWeight="Bold" Click="OnItalicToggleClick" ToolTip="Italic"/>
+
+                <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
+                <ComboBox x:Name="FontFamilyComboBox" Style="{StaticResource DarkComboBoxStyle}"
+                          Width="118" Margin="2" VerticalAlignment="Center"
+                          SelectionChanged="OnFontFamilyChanged"/>
+            </StackPanel>
 
             <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 

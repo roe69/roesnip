@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using RoeSnip.Capture;
@@ -16,8 +17,8 @@ namespace RoeSnip.Overlay;
 /// both sources identically. Cancel closes the whole overlay unconditionally (toolbar X button).
 /// CancelStage is Esc's two-stage semantics: if any monitor has a snip in progress (selection /
 /// annotations / drag), clear it and stay open; only with nothing active does it close the
-/// overlay. (Esc's innermost stages — an active inline text edit or an open color-info panel —
-/// are consumed locally by OverlayWindow before CancelStage is ever raised.) ConfirmPlain is
+/// overlay. (Esc's innermost stage — an active inline text edit — is consumed locally by
+/// OverlayWindow.ProcessKeyCommand before CancelStage is ever raised.) ConfirmPlain is
 /// Enter/double-click; Copy/Save/SaveHdr are the explicit Ctrl+C/Ctrl+S/toolbar-button requests.
 /// Undo (Ctrl+Z) is handled locally inside OverlayWindow against its own AnnotationLayer and
 /// never reaches the controller, since only the OS-focused window can receive it in the first
@@ -49,8 +50,117 @@ public static class OverlayController
 
         EnsureApplication();
 
-        var session = new OverlaySession(monitors, settings);
+        var session = new OverlaySession(monitors, settings, OnColorPicked, pickOnlyMode: false);
         return session.RunAsync();
+    }
+
+    // ---------- Standalone ColorPickerWindow (UX round 2) ----------
+
+    private static ColorPickerWindow? s_colorPickerWindow;
+
+    /// <summary>A plain click on the overlay (not a drag, not on the toolbar/handles/selection)
+    /// cancels the whole snip and opens/updates this singleton window with the picked color,
+    /// per the round-2 spec. Recreated on demand — its Closed handler nulls this out — rather than
+    /// Hide()-and-reuse, since its own persisted state (recents, format visibility) already lives in
+    /// settings, so a fresh instance picks up exactly where the old one left off.</summary>
+    private static void OnColorPicked(PickedColorInfo info)
+    {
+        EnsureApplication();
+
+        if (s_colorPickerWindow is null)
+        {
+            var window = new ColorPickerWindow(TriggerPickModeCapture);
+            window.Closed += (_, _) =>
+            {
+                if (ReferenceEquals(s_colorPickerWindow, window))
+                {
+                    s_colorPickerWindow = null;
+                }
+            };
+            s_colorPickerWindow = window;
+        }
+
+        bool wasVisible = s_colorPickerWindow.IsVisible;
+        s_colorPickerWindow.ApplyPick(info);
+        if (!wasVisible)
+        {
+            s_colorPickerWindow.Show();
+        }
+        s_colorPickerWindow.Activate();
+    }
+
+    // Reentrancy guard for the ColorPickerWindow's "Pick" button, mirroring
+    // AppComposition.s_captureInProgress — a second click while a pick-mode capture is already
+    // running is ignored rather than stacking a second overlay set.
+    private static int s_pickCaptureInProgress;
+
+    /// <summary>Re-launches the capture overlay in pick-only mode so the user's next click picks a
+    /// new color into the same ColorPickerWindow. Deliberately implemented here rather than reused
+    /// via AppComposition.RunCaptureFlowAsync: that hook's signature
+    /// (Func&lt;..., RoeSnipSettings, Task&lt;OverlayResult?&gt;&gt;) is fixed (Program.cs is
+    /// additive-only for the settings record per the round-2 brief) and has no notion of pick-only
+    /// mode, and pick mode never produces a Copy/Save/HDR-export OverlayResult to route back through
+    /// it anyway — it only ever ends via OnColorPicked (a pick) or a plain cancel (Esc).</summary>
+    private static void TriggerPickModeCapture()
+    {
+        if (Interlocked.CompareExchange(ref s_pickCaptureInProgress, 1, 0) != 0)
+        {
+            Console.Error.WriteLine("RoeSnip: pick-mode capture already in progress; ignoring.");
+            return;
+        }
+
+        _ = RunPickModeCaptureAsync();
+    }
+
+    private static async Task RunPickModeCaptureAsync()
+    {
+        try
+        {
+            var settings = AppComposition.LoadSettings?.Invoke() ?? RoeSnipSettings.Default;
+
+            var captureService = new CaptureService();
+            var frames = captureService.CaptureAll();
+            if (frames.Count == 0)
+            {
+                Console.Error.WriteLine("RoeSnip: pick-mode capture failed on every monitor.");
+                return;
+            }
+
+            try
+            {
+                // Fully qualified (rather than a "using RoeSnip.Color;") deliberately — several
+                // sibling Overlay/* files alias the unrelated System.Windows.Media.Color as "Color"
+                // and a bare namespace import here would create exactly that ambiguity risk.
+                var toneMapOpts = new RoeSnip.Color.ToneMapOptions(
+                    Knee: settings.ToneMapKneeOverride ?? 0.90,
+                    PeakOverride: settings.ToneMapPeakOverride);
+
+                var monitorsWithPreview = new List<(CapturedFrame Frame, SdrImage Preview)>(frames.Count);
+                foreach (var frame in frames)
+                {
+                    monitorsWithPreview.Add((frame, SdrImage.FromCapturedFrame(frame, toneMapOpts)));
+                }
+
+                EnsureApplication();
+                var session = new OverlaySession(monitorsWithPreview, settings, OnColorPicked, pickOnlyMode: true);
+                await session.RunAsync();
+            }
+            finally
+            {
+                foreach (var frame in frames)
+                {
+                    frame.Dispose();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: pick-mode capture failed: {ex.Message}");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref s_pickCaptureInProgress, 0);
+        }
     }
 
     /// <summary>RunAsync is invoked from the tray app's own STA thread, which pumps Win32 messages
@@ -80,18 +190,47 @@ public static class OverlayController
         private readonly TaskCompletionSource<OverlayResult?> _completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        // Session-scoped reliability layer (a) — see OverlayInputInterop.cs's SessionKeyboardHook
+        // doc comment for the full root-cause writeup. Installed here ("when the session opens"),
+        // disposed exactly once from Finish() ("removed unconditionally... all paths").
+        private readonly SessionKeyboardHook _keyboardHook;
+
         private OverlayWindow? _activeWindow;
         private bool _finished;
 
-        public OverlaySession(IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors, RoeSnipSettings settings)
+        public OverlaySession(
+            IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors,
+            RoeSnipSettings settings,
+            Action<PickedColorInfo> onColorPicked,
+            bool pickOnlyMode)
         {
             _settings = settings;
 
-            foreach (var (frame, preview) in monitors)
+            // Installed before any window is shown/receives input, so session keys are covered for
+            // the session's entire visible lifetime — including the (rare) window it races with
+            // Show() below throwing partway through, since that path still routes through Finish()
+            // via each shown window's Closed event (see RunAsync's catch block).
+            _keyboardHook = new SessionKeyboardHook(() => _activeWindow);
+
+            // If constructing any OverlayWindow throws partway through this loop, the session
+            // object itself never finishes constructing — Finish() (the normal disposal point)
+            // would never run and the hook would leak permanently. Guard this loop specifically so
+            // the hook is provably removed on every path, including this one.
+            try
             {
-                var window = new OverlayWindow(frame, preview, settings, OnActivatedByMouse, OnSelectionStarted, OnCommand);
-                window.Closed += (_, _) => Finish(null);
-                _windows.Add(window);
+                foreach (var (frame, preview) in monitors)
+                {
+                    var window = new OverlayWindow(
+                        frame, preview, settings, OnActivatedByMouse, OnSelectionStarted, OnCommand,
+                        onColorPicked, pickOnlyMode);
+                    window.Closed += (_, _) => Finish(null);
+                    _windows.Add(window);
+                }
+            }
+            catch
+            {
+                _keyboardHook.Dispose();
+                throw;
             }
         }
 
@@ -141,17 +280,6 @@ public static class OverlayController
             {
                 _activeWindow = window;
                 window.Activate();
-
-                // A color-info panel belongs to where the user is working: when attention moves
-                // to another monitor, dismiss any panel left open elsewhere (also guarantees at
-                // most one panel exists across the whole session).
-                foreach (var other in _windows)
-                {
-                    if (!ReferenceEquals(other, window))
-                    {
-                        other.DismissColorInfo();
-                    }
-                }
             }
         }
 
@@ -208,21 +336,13 @@ public static class OverlayController
 
         /// <summary>Esc's two-stage behavior, decided here because only the session can see every
         /// monitor: the selection may live on a different window than the one that has keyboard
-        /// focus. Stage 1 dismisses any open color-info panel; stage 2 clears the in-progress snip
-        /// (selection + annotations, back to the crosshair state); stage 3 — nothing active at all
-        /// — closes the whole overlay. Each Esc press performs exactly one stage.</summary>
+        /// focus. Stage 1 clears the in-progress snip (selection + annotations, back to the
+        /// crosshair state); stage 2 — nothing active at all — closes the whole overlay. Each Esc
+        /// press performs exactly one stage. (An active inline text edit is a third, innermost
+        /// stage, but it's consumed locally by OverlayWindow.ProcessKeyCommand before CancelStage is
+        /// ever raised — see OverlayCommand's doc comment.)</summary>
         private void CancelStage()
         {
-            bool dismissedInfo = false;
-            foreach (var window in _windows)
-            {
-                dismissedInfo |= window.DismissColorInfo();
-            }
-            if (dismissedInfo)
-            {
-                return;
-            }
-
             bool clearedSnip = false;
             foreach (var window in _windows)
             {
@@ -338,17 +458,30 @@ public static class OverlayController
             }
             _finished = true;
 
-            foreach (var window in _windows)
+            // This is the single terminal point every session exit path funnels through — normal
+            // Cancel/CancelStage-to-empty/Confirm-Copy-Save-SaveHdr commands call it directly, and
+            // an exception partway through RunAsync's Show() loop reaches it indirectly (that catch
+            // block force-closes every already-shown window, whose Closed event calls Finish(null)).
+            // The keyboard hook removal is guaranteed here via try/finally regardless of which of
+            // those paths got us here, or whether closing the windows themselves throws.
+            try
             {
-                try
+                foreach (var window in _windows)
                 {
-                    window.CloseOverlay();
+                    try
+                    {
+                        window.CloseOverlay();
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // Already closing (e.g. this Finish was triggered by that window's own
+                        // Closed event, such as an external Alt+F4) — nothing further to do for it.
+                    }
                 }
-                catch (InvalidOperationException)
-                {
-                    // Already closing (e.g. this Finish was triggered by that window's own Closed
-                    // event, such as an external Alt+F4) — nothing further to do for it.
-                }
+            }
+            finally
+            {
+                _keyboardHook.Dispose();
             }
 
             _completion.TrySetResult(result);

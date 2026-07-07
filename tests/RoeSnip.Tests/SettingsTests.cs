@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using RoeSnip.App;
 using Xunit;
@@ -117,6 +118,16 @@ public class SettingsTests : IDisposable
             RunAtStartup = true,
             CopyOnSelect = true,
             PrintScreenPromptAnswered = true,
+            RecentPickedColors = new List<string> { "#AABBCC", "#112233" },
+            ColorFormatShowHex = false,
+            ColorFormatShowRgb = true,
+            ColorFormatShowHsl = false,
+            ColorFormatShowNits = true,
+            TextFontFamily = "Consolas",
+            TextFontSize = 32.0,
+            TextBold = true,
+            TextItalic = true,
+            CustomColors = new List<string> { "#FF00FF", "#00FFAA" },
         };
 
         SettingsStore.Save(original, settingsPath);
@@ -124,7 +135,20 @@ public class SettingsTests : IDisposable
 
         var loaded = SettingsStore.Load(settingsPath);
 
-        Assert.Equal(original, loaded);
+        // RoeSnipSettings.RecentPickedColors/CustomColors are List<string>, whose default
+        // (reference) equality means a freshly-deserialized instance never == the original list
+        // instance even with identical content — assert their contents explicitly (xUnit's
+        // Assert.Equal does a structural/sequence compare for IEnumerable<T>), then neutralize
+        // them to the same reference before the whole-record equality check below so it isn't
+        // tripped up by that same reference-equality quirk on the remaining (scalar) fields.
+        Assert.Equal(original.RecentPickedColors, loaded.RecentPickedColors);
+        Assert.Equal(original.CustomColors, loaded.CustomColors);
+        var originalWithLoadedLists = original with
+        {
+            RecentPickedColors = loaded.RecentPickedColors,
+            CustomColors = loaded.CustomColors,
+        };
+        Assert.Equal(originalWithLoadedLists, loaded);
     }
 
     [Fact]
@@ -144,7 +168,37 @@ public class SettingsTests : IDisposable
 
         Assert.Null(loaded.ToneMapKneeOverride);
         Assert.Null(loaded.ToneMapPeakOverride);
-        Assert.Equal(original, loaded);
+
+        // See SaveThenLoad_RoundTripsEveryField for why the list-valued fields need this treatment.
+        Assert.Equal(original.RecentPickedColors, loaded.RecentPickedColors);
+        Assert.Equal(original.CustomColors, loaded.CustomColors);
+        var originalWithLoadedLists = original with
+        {
+            RecentPickedColors = loaded.RecentPickedColors,
+            CustomColors = loaded.CustomColors,
+        };
+        Assert.Equal(originalWithLoadedLists, loaded);
+    }
+
+    [Fact]
+    public void SaveThenLoad_RoundTripsUxRound2Defaults()
+    {
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+
+        SettingsStore.Save(RoeSnipSettings.Default, settingsPath);
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Empty(loaded.RecentPickedColors);
+        Assert.Empty(loaded.CustomColors);
+        Assert.True(loaded.ColorFormatShowHex);
+        Assert.True(loaded.ColorFormatShowRgb);
+        Assert.True(loaded.ColorFormatShowHsl);
+        Assert.True(loaded.ColorFormatShowNits);
+        Assert.Equal("Segoe UI", loaded.TextFontFamily);
+        Assert.Equal(20.0, loaded.TextFontSize);
+        Assert.False(loaded.TextBold);
+        Assert.False(loaded.TextItalic);
     }
 
     [Fact]
