@@ -223,6 +223,13 @@ PNG. (HDR-true preview via FP16 swapchain is an explicit v2 seam in `OverlayWind
 
 ### Failure modes to handle
 
+- **DD black-frame quirk (observed on NVIDIA RTX + HDR):** Desktop Duplication can succeed
+  structurally (correct format/dimensions, no error) yet deliver an all-zero buffer —
+  including alpha, which a real desktop frame never has. After a DD capture, scan the
+  buffer (early-exit on first nonzero byte); an all-zero frame is treated as a
+  `CaptureException` → WGC fallback. Remember DD-is-broken per monitor for the process
+  lifetime and go straight to WGC on subsequent captures (saves the doomed ~500 ms retry
+  loop on every screenshot).
 - No HDR monitors at all → pure SDR path; must be tested explicitly.
 - Mixed HDR + SDR monitors; ACM-on-SDR (FP16 duplication of an "SDR" display — handled by
   branching on delivered format, with SDR white level applied the same way).
