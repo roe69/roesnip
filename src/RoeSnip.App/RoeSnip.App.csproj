@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- OVERRIDE to PLAN-XPLAT.md §1.7 / §6 flag 7 (orchestrator-approved): OutputType is WinExe
+         when building FOR Windows (explicit win RID, or no RID on a Windows host — the apphost
+         targets the host OS in the no-RID case) so a double-clicked publish shows no console
+         window, matching the frozen WPF app; plain Exe for non-Windows targets. Because of this,
+         WP-X2's Program.cs MUST P/Invoke kernel32!AttachConsole(ATTACH_PARENT_PROCESS = -1) at
+         CLI-verb startup (before any Console output for the diag/capture/settings verbs) so
+         terminal output still works from a WinExe binary. -->
+    <OutputType>Exe</OutputType>
+    <!-- DEVIATION from PLAN-XPLAT.md §1.7 (which pins a single net8.0 TFM): a plain net8.0 project
+         CANNOT reference the net8.0-windows10.0.22621.0 RoeSnip.Platform.Windows project — NuGet
+         fails restore with NU1201 (verified 2026-07-07 during WP-X1). The App therefore
+         multi-targets: the windows TFM carries the Platform.Windows reference (use
+         `-f net8.0-windows10.0.22621.0` for `dotnet run`/win-x64 publish), the net8.0 TFM is what
+         osx/linux publishes use. The RID-conditional reference mechanism below is otherwise
+         exactly §1.7's. -->
+    <TargetFrameworks>net8.0;net8.0-windows10.0.22621.0</TargetFrameworks>
+    <RootNamespace>RoeSnip.App</RootNamespace>
+    <AssemblyName>RoeSnip</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifiers>win-x64;osx-x64;osx-arm64;linux-x64</RuntimeIdentifiers>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('win')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Windows')))">
+    <OutputType>WinExe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.0.5" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.0.5" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.5" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.5" />
+    <!-- DEVIATION from PLAN-XPLAT.md §1.7: Avalonia.Diagnostics has NO 12.x release on nuget.org
+         (latest is 11.3.18 — verified 2026-07-07 during WP-X1; restore of 12.0.5 fails NU1102).
+         Avalonia 12 moved DevTools out of an in-process package into the standalone Avalonia
+         DevTools app. Reference removed rather than pinning an 11.x package into a 12.x graph;
+         WP-X2 decides whether/how to wire developer tooling. -->
+    <PackageReference Include="SharpHook" Version="7.1.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RoeSnip.Core\RoeSnip.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Conditional per-OS capture backend — see PLAN-XPLAT.md §1.7's worked explanation: with no
+       RID (design-time / plain `dotnet build`) all three are referenced and compiled (a genuine
+       cross-platform compile gate on this machine); with a real `-r <rid>` publish exactly one is. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows10.0.22621.0' And ('$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('win')))">
+    <ProjectReference Include="..\RoeSnip.Platform.Windows\RoeSnip.Platform.Windows.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('osx'))">
+    <ProjectReference Include="..\RoeSnip.Platform.MacOS\RoeSnip.Platform.MacOS.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('linux'))">
+    <ProjectReference Include="..\RoeSnip.Platform.Linux\RoeSnip.Platform.Linux.csproj" />
+  </ItemGroup>
+
+</Project>

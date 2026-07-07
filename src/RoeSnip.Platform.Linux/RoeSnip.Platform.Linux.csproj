@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>RoeSnip.Platform.Linux</RootNamespace>
+    <AssemblyName>RoeSnip.Platform.Linux</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Tmds.DBus" Version="0.94.1" />
+    <!-- Decodes the portal's returned PNG (the portal path is SDR-only per DESIGN-XPLAT) and
+         re-slices per monitor; matches Core's own pin exactly (PLAN-XPLAT.md §1.2). -->
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RoeSnip.Core\RoeSnip.Core.csproj" />
+  </ItemGroup>
+
+</Project>

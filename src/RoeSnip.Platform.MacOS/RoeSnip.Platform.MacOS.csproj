@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>RoeSnip.Platform.MacOS</RootNamespace>
+    <AssemblyName>RoeSnip.Platform.MacOS</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RoeSnip.Core\RoeSnip.Core.csproj" />
+  </ItemGroup>
+
+</Project>
