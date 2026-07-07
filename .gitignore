@@ -1,0 +1,9 @@
+bin/
+obj/
+*.user
+.vs/
+publish/
+TestResults/
+*.png
+*.jxr
+!assets/**/*.png
