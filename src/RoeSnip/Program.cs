@@ -169,7 +169,12 @@ public static class AppComposition
     public static int RunCaptureCli(CliOptions cli)
     {
         var captureService = new Capture.CaptureService();
+        var captureWatch = System.Diagnostics.Stopwatch.StartNew();
         var frames = captureService.CaptureAll(monitors: null, onlyMonitorIndex: cli.Monitor);
+        captureWatch.Stop();
+        // Latency instrumentation (stderr, like RunCaptureFlowAsync's capture-to-overlay line) so
+        // hotkey-feel regressions are measurable from the CLI without launching the tray app.
+        Console.Error.WriteLine($"RoeSnip: capture {captureWatch.ElapsedMilliseconds} ms");
         if (frames.Count == 0)
         {
             Console.Error.WriteLine("RoeSnip: capture failed on every monitor.");
@@ -282,8 +287,14 @@ public static class AppComposition
 
         try
         {
+            // Hotkey-to-overlay latency instrumentation: this whole stretch (capture + tone-map)
+            // is what the user perceives as "the overlay appearing", so it is timed and logged to
+            // stderr just before the overlay is shown.
+            var totalWatch = System.Diagnostics.Stopwatch.StartNew();
+
             var captureService = new Capture.CaptureService();
             var frames = captureService.CaptureAll();
+            long captureMs = totalWatch.ElapsedMilliseconds;
             if (frames.Count == 0)
             {
                 notifier?.ShowError("Capture failed on every monitor.");
@@ -299,11 +310,26 @@ public static class AppComposition
                     Knee: settings.ToneMapKneeOverride ?? 0.90,
                     PeakOverride: settings.ToneMapPeakOverride);
 
-                var monitorsWithPreview = new List<(Capture.CapturedFrame Frame, Imaging.SdrImage Preview)>();
-                foreach (var frame in frames)
+                // Tone-map the per-monitor previews in parallel — each frame is independent, and
+                // even though ToneMapper already parallelizes over rows internally, overlapping
+                // the frames still shaves the per-frame scan/setup serialization on a
+                // multi-monitor machine. Fixed slots keep preview order == frame order.
+                var previews = new Imaging.SdrImage[frames.Count];
+                Parallel.For(0, frames.Count, i =>
                 {
-                    monitorsWithPreview.Add((frame, Imaging.SdrImage.FromCapturedFrame(frame, toneMapOpts)));
+                    previews[i] = Imaging.SdrImage.FromCapturedFrame(frames[i], toneMapOpts);
+                });
+
+                var monitorsWithPreview = new List<(Capture.CapturedFrame Frame, Imaging.SdrImage Preview)>(frames.Count);
+                for (int i = 0; i < frames.Count; i++)
+                {
+                    monitorsWithPreview.Add((frames[i], previews[i]));
                 }
+
+                totalWatch.Stop();
+                Console.Error.WriteLine(
+                    $"RoeSnip: capture-to-overlay {totalWatch.ElapsedMilliseconds} ms " +
+                    $"(capture {captureMs} ms, tonemap {totalWatch.ElapsedMilliseconds - captureMs} ms)");
 
                 OverlayResult? result = await RunOverlay(monitorsWithPreview, settings);
 

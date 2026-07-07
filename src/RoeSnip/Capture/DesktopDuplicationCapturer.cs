@@ -12,8 +12,13 @@ namespace RoeSnip.Capture;
 /// delivered (DXGI_OUTDUPL_DESC.ModeDesc.Format) — never on AdvancedColorActive.</summary>
 public sealed class DesktopDuplicationCapturer : IScreenCapturer
 {
-    private const int MaxAcquireAttempts = 5;
-    private const int AcquireRetryDelayMs = 100;
+    // Total first-frame budget ~240 ms (was 5 × 100 ms = 500 ms). AcquireNextFrame normally
+    // returns the current desktop immediately on the first call; the retry loop only exists for
+    // DXGI_ERROR_WAIT_TIMEOUT on static screens, and on monitors with the NVIDIA black-frame
+    // quirk this budget is pure wasted hotkey latency before the WGC fallback engages — keep it
+    // tight while still surviving a couple of timeouts on a genuinely static screen.
+    private const int MaxAcquireAttempts = 3;
+    private const int AcquireTimeoutMs = 80;
 
     public CapturedFrame Capture(MonitorInfo monitor) => CaptureCore(monitor, allowAccessLostRetry: true);
 
@@ -39,7 +44,7 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
             for (int attempt = 0; attempt < MaxAcquireAttempts; attempt++)
             {
                 acquireResult = duplication.AcquireNextFrame(
-                    (uint)AcquireRetryDelayMs, out OutduplFrameInfo frameInfo, out desktopResource);
+                    (uint)AcquireTimeoutMs, out OutduplFrameInfo frameInfo, out desktopResource);
 
                 if (acquireResult.Success)
                 {
