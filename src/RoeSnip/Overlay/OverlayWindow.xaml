@@ -1,0 +1,24 @@
+<Window x:Class="RoeSnip.Overlay.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:RoeSnip.Overlay"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Topmost="True"
+        WindowStartupLocation="Manual"
+        Background="Black"
+        Cursor="Cross"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        Focusable="True">
+    <Grid x:Name="RootGrid">
+        <Image x:Name="PreviewImage" Stretch="Fill" SnapsToDevicePixels="True"/>
+        <Path x:Name="DimPath" Fill="#8A000000" IsHitTestVisible="False"/>
+        <Canvas x:Name="OverlayCanvas" ClipToBounds="True">
+            <local:AnnotationLayer x:Name="Annotations"/>
+            <local:SelectionAdorner x:Name="Adorner"/>
+            <local:Magnifier x:Name="MagnifierControl"/>
+        </Canvas>
+    </Grid>
+</Window>
