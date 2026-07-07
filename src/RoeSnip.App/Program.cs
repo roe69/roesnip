@@ -568,7 +568,13 @@ public static class Program
         {
             try
             {
-                System.Reflection.Assembly.Load(name);
+                var asm = System.Reflection.Assembly.Load(name);
+                // Assembly.Load alone does NOT run [ModuleInitializer] — initializers fire on
+                // first code access, which never happens for backends reached only through
+                // CaptureBackendRegistry. Run the module constructor explicitly. (Windows worked
+                // without this only because RegisterPlatformHooks touches a Platform.Windows type.)
+                System.Runtime.CompilerServices.RuntimeHelpers.RunModuleConstructor(
+                    asm.ManifestModule.ModuleHandle);
             }
             catch
             {

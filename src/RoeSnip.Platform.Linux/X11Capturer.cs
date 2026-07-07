@@ -41,6 +41,35 @@ public sealed class X11Capturer : IScreenCapturer
         {
             nuint root = XDefaultRootWindow(display);
             var bounds = monitor.BoundsPx;
+
+            // RandR-reported monitor geometry can exceed the actual root window (observed under
+            // WSLg, where XWayland advertises the host's monitor layout while the root window is
+            // smaller). XGetImage hard-fails on any out-of-root pixel, so clamp the request to
+            // the root geometry and capture the intersection instead of failing the monitor.
+            if (XGetGeometry(display, root, out _, out int rootX, out int rootY,
+                    out uint rootW, out uint rootH, out _, out _) != 0)
+            {
+                var rootRect = RectPhysical.FromSize(rootX, rootY, (int)rootW, (int)rootH);
+                var clamped = new RectPhysical(
+                    Math.Max(bounds.Left, rootRect.Left), Math.Max(bounds.Top, rootRect.Top),
+                    Math.Min(bounds.Right, rootRect.Right), Math.Min(bounds.Bottom, rootRect.Bottom));
+                if (clamped.Width <= 0 || clamped.Height <= 0)
+                {
+                    throw new CaptureException(
+                        $"Monitor {monitor.Index} ({monitor.DeviceName}) at {bounds.Left},{bounds.Top} " +
+                        $"{bounds.Width}x{bounds.Height} lies entirely outside the X root window " +
+                        $"({rootW}x{rootH}) — nothing to capture.");
+                }
+                if (clamped != bounds)
+                {
+                    Console.Error.WriteLine(
+                        $"RoeSnip: monitor {monitor.Index} ({monitor.DeviceName}) extends beyond the " +
+                        $"X root window ({rootW}x{rootH}); capturing the visible " +
+                        $"{clamped.Width}x{clamped.Height} intersection.");
+                }
+                bounds = clamped;
+            }
+
             IntPtr imagePtr = XGetImage(
                 display, root, bounds.Left, bounds.Top,
                 (uint)bounds.Width, (uint)bounds.Height, AllPlanes, ZPixmap);
@@ -350,6 +379,11 @@ public sealed class X11Capturer : IScreenCapturer
     [DllImport(LibX11)]
     private static extern IntPtr XGetImage(
         IntPtr display, nuint drawable, int x, int y, uint width, uint height, nuint planeMask, int format);
+
+    [DllImport(LibX11)]
+    private static extern int XGetGeometry(
+        IntPtr display, nuint drawable, out nuint rootReturn, out int x, out int y,
+        out uint width, out uint height, out uint borderWidth, out uint depth);
 
     [DllImport(LibX11)]
     private static extern int XDestroyImage(IntPtr image);

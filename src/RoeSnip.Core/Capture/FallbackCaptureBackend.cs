@@ -58,19 +58,58 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
 
     private CapturedFrame? CaptureOneOrNull(MonitorInfo monitor)
     {
+        var frame = CaptureOneAttempt(monitor, out bool skippedAnyByMemo);
+        if (frame is null && skippedAnyByMemo)
+        {
+            // Everything failed while memoized capturers were skipped — the memo may be stale
+            // (environment changed since it was recorded, e.g. a portal got installed or a
+            // one-off X error got persisted by an older build). Clear this monitor's memos and
+            // retry once from scratch so a poisoned cache can never permanently kill capture.
+            Console.Error.WriteLine(
+                $"RoeSnip: all capturers failed for monitor {monitor.Index} ({monitor.DeviceName}) " +
+                "while some were skipped by the persisted memo — clearing the memo and retrying once.");
+            for (int i = 0; i < _capturersInPriorityOrder.Count; i++)
+            {
+                _cache.Unmark($"{monitor.DeviceName}::{i}");
+            }
+            frame = CaptureOneAttempt(monitor, out _);
+        }
+        return frame;
+    }
+
+    private CapturedFrame? CaptureOneAttempt(MonitorInfo monitor, out bool skippedAnyByMemo)
+    {
+        skippedAnyByMemo = false;
+        var failedSlots = new List<int>();
         for (int i = 0; i < _capturersInPriorityOrder.Count; i++)
         {
             string capturerKey = $"{monitor.DeviceName}::{i}"; // per-capturer-slot memo, not just per-monitor
-            if (_cache.IsDesktopDuplicationBroken(capturerKey)) continue; // name kept for on-disk compat; see PLAN-XPLAT.md §2.3 note
+            bool isLastCapturer = i == _capturersInPriorityOrder.Count - 1;
+
+            // Never memo-skip the last resort — skipping it guarantees failure, which is
+            // strictly worse than trying it. (Memo name kept for on-disk compat; §2.3 note.)
+            if (!isLastCapturer && _cache.IsDesktopDuplicationBroken(capturerKey))
+            {
+                skippedAnyByMemo = true;
+                continue;
+            }
 
             try
             {
-                return _capturersInPriorityOrder[i].Capture(monitor);
+                var frame = _capturersInPriorityOrder[i].Capture(monitor);
+                // Persist "skip capturer #j" memos ONLY now that a later capturer has actually
+                // succeeded: the skip provably loses nothing (the Windows DD-black-frame case).
+                // Failures with no working alternative are treated as transient and not recorded,
+                // so a bad day (missing portal, X hiccup) can never poison future sessions.
+                foreach (int j in failedSlots)
+                {
+                    _cache.MarkDesktopDuplicationBroken($"{monitor.DeviceName}::{j}");
+                }
+                return frame;
             }
             catch (CaptureException ex)
             {
-                bool isLastCapturer = i == _capturersInPriorityOrder.Count - 1;
-                _cache.MarkDesktopDuplicationBroken(capturerKey);
+                failedSlots.Add(i);
                 Console.Error.WriteLine(
                     $"RoeSnip: capturer #{i} failed for monitor {monitor.Index} ({monitor.DeviceName}): " +
                     $"{ex.Message}.{(isLastCapturer ? " Omitting this monitor." : " Falling back to the next capturer.")}");

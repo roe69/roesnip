@@ -64,6 +64,22 @@ public sealed class CaptureCache
         }
     }
 
+    /// <summary>Removes a memo entry (used by FallbackCaptureBackend's stale-memo self-healing:
+    /// when capture fails everywhere while memoized capturers were skipped, the memo may be wrong).
+    /// Saves only when something was actually removed.</summary>
+    public void Unmark(string deviceName)
+    {
+        lock (_gate)
+        {
+            EnsureLoaded();
+            if (!_ddBrokenDeviceNames!.Remove(deviceName))
+            {
+                return;
+            }
+            SaveBestEffort();
+        }
+    }
+
     private void EnsureLoaded()
     {
         if (_ddBrokenDeviceNames is not null)
