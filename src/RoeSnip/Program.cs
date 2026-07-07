@@ -287,11 +287,10 @@ public static class AppComposition
     }
 
     // Reentrancy guard (audit finding B): TriggerCapture can be invoked from the hotkey, the tray
-    // menu, icon double-click, and the second-instance pipe. All four funnel into this one method,
-    // so a single Interlocked flag here covers every trigger. While a capture is in progress, a new
-    // trigger is ignored (logged to stderr) rather than stacking a second overlay set on top of the
-    // first (which would screenshot the first overlay's own UI).
-    private static int s_captureInProgress; // 0 = idle, 1 = busy; only touched via Interlocked
+    // menu, icon double-click, and the second-instance pipe. All four funnel into this one method.
+    // The gate is shared with OverlayController's pick-mode capture (CaptureGate) so a hotkey press
+    // can't stack an overlay set over a pick-mode session or vice versa — two overlay stacks must
+    // never coexist (one would screenshot the other's UI).
 
     /// <summary>The interactive capture flow: capture all monitors, run the overlay, then handle
     /// the cross-cutting follow-ups (HDR auto-save / Save-HDR button, "saved" balloon). Called by
@@ -305,7 +304,7 @@ public static class AppComposition
             return;
         }
 
-        if (Interlocked.CompareExchange(ref s_captureInProgress, 1, 0) != 0)
+        if (!CaptureGate.TryEnter())
         {
             Console.Error.WriteLine("RoeSnip: capture already in progress; ignoring trigger.");
             return;
@@ -407,7 +406,7 @@ public static class AppComposition
         }
         finally
         {
-            Interlocked.Exchange(ref s_captureInProgress, 0);
+            CaptureGate.Exit();
         }
     }
 
@@ -472,6 +471,18 @@ public static class AppComposition
         Console.Error.WriteLine("    --jxr          Also save the untouched HDR original as .jxr.");
         Console.Error.WriteLine("  (no arguments)   Launch the tray app.");
     }
+}
+
+/// <summary>Single process-wide capture gate shared by the hotkey/tray/pipe flow
+/// (AppComposition.RunCaptureFlowAsync) AND the color picker's pick-mode capture
+/// (OverlayController.TriggerPickModeCapture) — any overlay session in progress blocks every
+/// other trigger, so two overlay stacks can never coexist.</summary>
+internal static class CaptureGate
+{
+    private static int s_busy; // 0 = idle, 1 = busy; only touched via Interlocked
+
+    public static bool TryEnter() => Interlocked.CompareExchange(ref s_busy, 1, 0) == 0;
+    public static void Exit() => Interlocked.Exchange(ref s_busy, 0);
 }
 
 public static class Program

@@ -89,10 +89,9 @@ public static class OverlayController
         s_colorPickerWindow.Activate();
     }
 
-    // Reentrancy guard for the ColorPickerWindow's "Pick" button, mirroring
-    // AppComposition.s_captureInProgress — a second click while a pick-mode capture is already
-    // running is ignored rather than stacking a second overlay set.
-    private static int s_pickCaptureInProgress;
+    // Reentrancy: pick-mode shares the single process-wide CaptureGate with the hotkey/tray/pipe
+    // capture flow, so a hotkey press can't stack an overlay set over a pick-mode session (or
+    // vice versa) — two overlay stacks would screenshot each other's UI.
 
     /// <summary>Re-launches the capture overlay in pick-only mode so the user's next click picks a
     /// new color into the same ColorPickerWindow. Deliberately implemented here rather than reused
@@ -103,9 +102,9 @@ public static class OverlayController
     /// it anyway — it only ever ends via OnColorPicked (a pick) or a plain cancel (Esc).</summary>
     private static void TriggerPickModeCapture()
     {
-        if (Interlocked.CompareExchange(ref s_pickCaptureInProgress, 1, 0) != 0)
+        if (!CaptureGate.TryEnter())
         {
-            Console.Error.WriteLine("RoeSnip: pick-mode capture already in progress; ignoring.");
+            Console.Error.WriteLine("RoeSnip: a capture is already in progress; ignoring pick request.");
             return;
         }
 
@@ -159,7 +158,7 @@ public static class OverlayController
         }
         finally
         {
-            Interlocked.Exchange(ref s_pickCaptureInProgress, 0);
+            CaptureGate.Exit();
         }
     }
 
