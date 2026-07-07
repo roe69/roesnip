@@ -1,0 +1,222 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="RoeSnip.App.Overlay.ToolbarControl"
+             Focusable="False"
+             UseLayoutRounding="True">
+    <UserControl.Styles>
+        <!-- All icons are inline vector Path geometries (no image assets) — the same path data
+             mini-language strings as the frozen WPF ToolbarControl.xaml. Uniform stretch into a
+             14x14 box; round caps/joins. -->
+        <Style Selector="Path.icon">
+            <Setter Property="Stroke" Value="#F0F0F0"/>
+            <Setter Property="StrokeThickness" Value="1.6"/>
+            <Setter Property="StrokeLineCap" Value="Round"/>
+            <Setter Property="StrokeJoin" Value="Round"/>
+            <Setter Property="Stretch" Value="Uniform"/>
+            <Setter Property="Width" Value="14"/>
+            <Setter Property="Height" Value="14"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="IsHitTestVisible" Value="False"/>
+        </Style>
+
+        <!-- Focusable=False everywhere: clicking a toolbar button must never move keyboard focus
+             off the overlay window, so Esc/Enter/Ctrl+... always reach the window's key handler. -->
+        <Style Selector="ToggleButton.tool">
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Background" Value="#2A2A2E"/>
+            <Setter Property="Foreground" Value="#EAEAEA"/>
+            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="4">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <!-- Active tool is visually obvious: solid accent fill. Hover border wins over the checked
+             border, matching the WPF trigger order. -->
+        <Style Selector="ToggleButton.tool:checked /template/ Border#Bg">
+            <Setter Property="Background" Value="#3A7CFD"/>
+            <Setter Property="BorderBrush" Value="#5C9CFF"/>
+        </Style>
+        <Style Selector="ToggleButton.tool:pointerover /template/ Border#Bg">
+            <Setter Property="BorderBrush" Value="#8A8A92"/>
+        </Style>
+
+        <Style Selector="Button.action">
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Background" Value="#2A2A2E"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="Button.action:pointerover">
+            <Setter Property="Opacity" Value="0.85"/>
+        </Style>
+
+        <!-- The Cancel X: quiet until hovered, then unmistakably red. Always fully closes the
+             overlay (never the staged Esc behavior). Always visible — no hover-only reveal. -->
+        <Style Selector="Button.cancel">
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Background" Value="#2A2A2E"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="4">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="Button.cancel:pointerover /template/ Border#Bg">
+            <Setter Property="Background" Value="#C62828"/>
+        </Style>
+
+        <Style Selector="ToggleButton.swatch">
+            <Setter Property="Width" Value="20"/>
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="10"/>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="ToggleButton.swatch:checked /template/ Border#Bg">
+            <Setter Property="BorderBrush" Value="White"/>
+            <Setter Property="BorderThickness" Value="2"/>
+        </Style>
+
+        <Style Selector="ToggleButton.stroke">
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Background" Value="#2A2A2E"/>
+            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="4">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="ToggleButton.stroke:checked /template/ Border#Bg">
+            <Setter Property="Background" Value="#3A7CFD"/>
+        </Style>
+    </UserControl.Styles>
+
+    <Border Background="#EE1B1B1D" CornerRadius="6" BorderBrush="#3F3F46" BorderThickness="1">
+        <StackPanel Orientation="Horizontal" Margin="4">
+            <!-- Tools -->
+            <ToggleButton x:Name="SelectToolButton" Classes="tool"
+                          ToolTip.Tip="Select / move (default)" IsChecked="True">
+                <Path Classes="icon" StrokeDashArray="2.2,1.6" Data="M1,1 H15 V15 H1 Z"/>
+            </ToggleButton>
+            <ToggleButton x:Name="RectToolButton" Classes="tool" ToolTip.Tip="Rectangle">
+                <Path Classes="icon" Data="M1,3 H15 V13 H1 Z"/>
+            </ToggleButton>
+            <ToggleButton x:Name="EllipseToolButton" Classes="tool" ToolTip.Tip="Ellipse">
+                <Path Classes="icon" Data="M1,8 A7,5 0 1 1 15,8 A7,5 0 1 1 1,8"/>
+            </ToggleButton>
+            <ToggleButton x:Name="ArrowToolButton" Classes="tool" ToolTip.Tip="Arrow">
+                <Path Classes="icon" Data="M2,14 L13,3 M13,3 H7.5 M13,3 V8.5"/>
+            </ToggleButton>
+            <ToggleButton x:Name="LineToolButton" Classes="tool" ToolTip.Tip="Line">
+                <Path Classes="icon" Data="M2,14 L14,2"/>
+            </ToggleButton>
+            <ToggleButton x:Name="FreehandToolButton" Classes="tool" ToolTip.Tip="Freehand">
+                <Path Classes="icon" Data="M1,13 C3,4 6,4 8,9 C10,14 13,13 15,4"/>
+            </ToggleButton>
+            <ToggleButton x:Name="TextToolButton" Classes="tool" ToolTip.Tip="Text">
+                <Path Classes="icon" Data="M3,2 H13 M8,2 V14"/>
+            </ToggleButton>
+
+            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
+            <StackPanel x:Name="ColorSwatchPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
+
+            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
+            <StackPanel x:Name="StrokeWidthPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
+
+            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
+            <Button x:Name="UndoButton" Classes="action" ToolTip.Tip="Undo (Ctrl+Z)">
+                <!-- Curved undo arrow: head pointing left, tail sweeping down and back -->
+                <Path Classes="icon" Data="M2,6 L6,2 M2,6 L6,10 M2,6 H10 A4.5,4.5 0 0 1 10,15 H6"/>
+            </Button>
+
+            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
+            <Button x:Name="CopyButton" Classes="action" Background="#2E7D32" ToolTip.Tip="Copy (Ctrl+C)">
+                <!-- Two overlapping squares -->
+                <Path Classes="icon" Data="M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5"/>
+            </Button>
+            <Button x:Name="SaveButton" Classes="action" Background="#1565C0" ToolTip.Tip="Save (Ctrl+S)">
+                <!-- Down-arrow into tray -->
+                <Path Classes="icon" Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
+            </Button>
+            <Button x:Name="SaveHdrButton" Classes="action" Background="#6A1B9A"
+                    ToolTip.Tip="Save HDR original (.jxr, untouched FP16)">
+                <!-- Save glyph with a small HDR badge -->
+                <Grid>
+                    <Path Classes="icon" Width="13" Height="13" Margin="0,0,7,4"
+                          Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
+                    <Border Background="#D91B1B1D" CornerRadius="2" Padding="1.5,0"
+                            HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                        <TextBlock Text="HDR" FontSize="6.5" FontWeight="Bold" Foreground="#FFD54F"/>
+                    </Border>
+                </Grid>
+            </Button>
+
+            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
+            <Button x:Name="CancelButton" Classes="cancel" ToolTip.Tip="Cancel — close without capturing">
+                <Path Classes="icon" Width="11" Height="11" Data="M2,2 L14,14 M14,2 L2,14"/>
+            </Button>
+        </StackPanel>
+    </Border>
+</UserControl>
