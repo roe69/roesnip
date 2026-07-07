@@ -415,6 +415,18 @@ public static class OverlayController
                         _onColorPicked, _pickOnlyMode);
                     window.Closed += (_, _) => Finish(null);
                     window.ContentRendered += (_, _) => OnOverlayContentRendered(window);
+                    // Anti-double-dim (user report: "flickering/dimming my screen twice"): while
+                    // this monitor's flash dimmer is still covering it, the overlay's first frames
+                    // sit UNDER the flash — if they carried their own dim layer, the two 45% dims
+                    // would stack into a visibly darker blip until the ContentRendered handoff.
+                    // Start the overlay's dim hidden instead: full-bright frozen preview under the
+                    // flash's dim is visually identical to the flash over the live screen (the
+                    // preview IS the screen), and OnOverlayContentRendered swaps dim-on/flash-off
+                    // as one adjacent pair of updates.
+                    if (FlashDimmer.IsCoveringMonitor(frame.Monitor.DeviceName))
+                    {
+                        window.SetDimLayerVisible(false);
+                    }
                     _windows.Add(window);
                     window.Show();
 
@@ -471,6 +483,11 @@ public static class OverlayController
         /// Also the source of the "first-overlay-visible"/"all-overlays-visible" latency logs.</summary>
         private void OnOverlayContentRendered(OverlayWindow window)
         {
+            // Ordered handoff (anti-double-dim, see the show loop): enable the overlay's own dim
+            // FIRST and flush it through layout/render so it is submitted to the compositor, THEN
+            // hide the flash — worst case is one frame of (subtle) double dim, never a bright gap.
+            window.SetDimLayerVisible(true);
+            window.Dispatcher.Invoke(static () => { }, System.Windows.Threading.DispatcherPriority.Loaded);
             FlashDimmer.HideForMonitor(window.Monitor.DeviceName);
 
             _renderedCount++;

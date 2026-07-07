@@ -108,6 +108,22 @@ internal static class FlashDimmer
         Dispatcher.CurrentDispatcher.Invoke(static () => { }, DispatcherPriority.Loaded);
     }
 
+    /// <summary>True while a visible flash window covers the given monitor — the overlay show
+    /// path uses this to start that monitor's real window with its own dim layer hidden
+    /// (anti-double-dim handoff; see OverlayController).</summary>
+    public static bool IsCoveringMonitor(string deviceName)
+    {
+        foreach (var window in s_windows)
+        {
+            if (window.IsVisible
+                && string.Equals(window.Monitor.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// <summary>Hides the flash on one monitor — called from the real overlay window's
     /// ContentRendered so the swap is per-monitor and zero-gap.</summary>
     public static void HideForMonitor(string deviceName)

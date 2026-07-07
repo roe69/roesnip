@@ -682,6 +682,17 @@ public partial class OverlayWindow : Window
         SetSelection(null);
     }
 
+    /// <summary>Shows/hides the whole dim layer. Used by the flash-to-overlay handoff
+    /// (anti-double-dim): while the flash dimmer still covers this monitor the overlay starts
+    /// with its dim hidden (full-bright frozen preview under the flash's dim looks identical to
+    /// the flash over the live screen), and the dim is enabled in the ContentRendered handoff
+    /// right before the flash hides. Idempotent; does not touch the dim GEOMETRY (selection
+    /// holes), only visibility.</summary>
+    internal void SetDimLayerVisible(bool visible)
+    {
+        DimPath.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void UpdateDimGeometry()
     {
         double w = ActualWidth > 0 ? ActualWidth : _frame.Width / Math.Max(_scaleX, 1e-6);
