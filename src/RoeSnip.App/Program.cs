@@ -184,7 +184,23 @@ public static class AppComposition
 
         Console.Error.WriteLine($"RoeSnip: backend = {captureService.BackendName}");
 
-        var monitors = captureService.EnumerateMonitors();
+        IReadOnlyList<MonitorInfo> monitors;
+#if MACOS_BACKEND
+        try
+        {
+            // Defensive (P4 audit fix): EnumerateMonitors's contract never throws, but macOS's
+            // MacCaptureBackend.CaptureAll deliberately deviates for TCC denial (see the catch in
+            // RunCaptureCli below) — guard --diag the same way rather than assuming enumeration
+            // can never surface it.
+            monitors = captureService.EnumerateMonitors();
+        }
+        catch (RoeSnip.Platform.MacOS.ScreenRecordingPermissionDeniedException ex)
+        {
+            return ReportScreenRecordingPermissionDenied(ex);
+        }
+#else
+        monitors = captureService.EnumerateMonitors();
+#endif
         if (monitors.Count == 0)
         {
             Console.Error.WriteLine("RoeSnip: no monitors enumerated.");
@@ -220,7 +236,24 @@ public static class AppComposition
         }
 
         var captureWatch = System.Diagnostics.Stopwatch.StartNew();
-        var frames = captureService.CaptureAll(monitors: null, onlyMonitorIndex: cli.Monitor);
+        IReadOnlyList<CapturedFrame> frames;
+#if MACOS_BACKEND
+        try
+        {
+            frames = captureService.CaptureAll(monitors: null, onlyMonitorIndex: cli.Monitor);
+        }
+        catch (RoeSnip.Platform.MacOS.ScreenRecordingPermissionDeniedException ex)
+        {
+            // MacCaptureBackend.CaptureAll deliberately propagates this instead of omitting every
+            // monitor (§2.3's usual "log + omit" contract) because a TCC denial is a first-class,
+            // UI-surfaced error per DESIGN-XPLAT.md — without this catch it reached here as an
+            // unhandled exception and crashed the CLI with a raw exception dump instead of the
+            // designed grant-Screen-Recording message (P4 audit fix).
+            return ReportScreenRecordingPermissionDenied(ex);
+        }
+#else
+        frames = captureService.CaptureAll(monitors: null, onlyMonitorIndex: cli.Monitor);
+#endif
         captureWatch.Stop();
         // Latency instrumentation (stderr, like RunCaptureFlowAsync's capture-to-overlay line) so
         // hotkey-feel regressions are measurable from the CLI without launching the tray app.
@@ -509,6 +542,25 @@ public static class AppComposition
         }
         return count == 0 ? (0, 0, 0) : (min, max, sum / count);
     }
+
+#if MACOS_BACKEND
+    /// <summary>Friendly, UI-surfaced (well, stderr-surfaced — the CLI has no UI) message for a
+    /// macOS TCC Screen Recording denial, plus the distinct exit code the helper contract uses for
+    /// it (P4 audit fix — ScksnapHelperClient.TccDeniedExitCode, kept as one source of truth rather
+    /// than a duplicated magic number). Only compiled when RoeSnip.Platform.MacOS is actually
+    /// referenced (no-RID design-time builds and osx-targeted publishes — see the MACOS_BACKEND
+    /// constant in RoeSnip.App.csproj): a real win-x64/linux-x64 RID publish never links that
+    /// project in, so this exception type can never be thrown there either.</summary>
+    private static int ReportScreenRecordingPermissionDenied(
+        RoeSnip.Platform.MacOS.ScreenRecordingPermissionDeniedException ex)
+    {
+        Console.Error.WriteLine("RoeSnip: Screen Recording permission is required to capture the screen.");
+        Console.Error.WriteLine($"  {ex.Message}");
+        Console.Error.WriteLine(
+            "  Grant it to 'scksnap' in System Settings > Privacy & Security > Screen Recording, then retry.");
+        return RoeSnip.Platform.MacOS.ScksnapHelperClient.TccDeniedExitCode;
+    }
+#endif
 
     internal static void PrintUsage()
     {

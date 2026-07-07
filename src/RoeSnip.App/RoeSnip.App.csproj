@@ -33,6 +33,18 @@
     <OutputType>WinExe</OutputType>
   </PropertyGroup>
 
+  <!-- P4 audit fix: Program.cs needs to catch RoeSnip.Platform.MacOS.ScreenRecordingPermissionDeniedException
+       (the diag/capture verbs' friendly TCC-denial message), but that project is only ever
+       REFERENCED below under the same condition as this constant (no RID, i.e. the design-time
+       cross-platform compile gate, or an osx RID), never for a real win-x64/linux-x64
+       RID-specific publish. A plain "#if WINDOWS"-style guard needs a matching preprocessor
+       symbol for this condition, since (unlike Platform.Windows) Platform.MacOS's reference is
+       gated on RuntimeIdentifier alone, not TargetFramework, so it can't be distinguished by TFM
+       the way net8.0-windows can. -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('osx'))">
+    <DefineConstants>$(DefineConstants);MACOS_BACKEND</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.0.5" />
     <PackageReference Include="Avalonia.Desktop" Version="12.0.5" />

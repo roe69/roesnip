@@ -64,11 +64,11 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
         {
             task = _shotTask switch
             {
-                null => _shotTask = Task.Run(TakeDesktopShotAsync),
+                null => _shotTask = StartNewShot(),
                 { IsCompleted: false } inflight => inflight, // coalesce concurrent per-monitor calls
                 { IsCompletedSuccessfully: true } fresh
                     when DateTime.UtcNow - fresh.Result.TakenUtc < ReuseWindow => fresh,
-                _ => _shotTask = Task.Run(TakeDesktopShotAsync), // faulted or stale — take a new shot
+                _ => _shotTask = StartNewShot(), // faulted or stale — take a new shot
             };
         }
 
@@ -87,6 +87,35 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
         }
 
         return Slice(shot, monitor);
+    }
+
+    /// <summary>Starts a new whole-desktop shot AND schedules its own eager cleanup once the reuse
+    /// window lapses (P6 leak fix). Without this, a resident tray app that captures once and then
+    /// sits idle keeps a full whole-desktop <c>byte[]</c> buffer rooted via <see cref="_shotTask"/>
+    /// for however long until the NEXT capture — which may be arbitrarily far in the future, or
+    /// never, for the rest of the process's life. The delayed continuation only clears the field if
+    /// it still points at THIS shot (a newer shot started in the meantime must not be clobbered).</summary>
+    private Task<DesktopShot> StartNewShot()
+    {
+        var task = Task.Run(TakeDesktopShotAsync);
+        _ = task.ContinueWith(t =>
+        {
+            if (!t.IsCompletedSuccessfully)
+            {
+                return;
+            }
+            _ = Task.Delay(ReuseWindow).ContinueWith(_ =>
+            {
+                lock (_gate)
+                {
+                    if (ReferenceEquals(_shotTask, t))
+                    {
+                        _shotTask = null;
+                    }
+                }
+            }, TaskScheduler.Default);
+        }, TaskScheduler.Default);
+        return task;
     }
 
     private async Task<DesktopShot> TakeDesktopShotAsync()

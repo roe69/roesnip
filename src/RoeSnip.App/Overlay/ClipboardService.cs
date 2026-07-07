@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -184,12 +185,35 @@ public static class ClipboardService
         }
     }
 
+    // O6 audit fix: WPF's own System.Windows.Clipboard.SetText retries OpenClipboard internally
+    // (another process — including this app's own magnifier/color-inspector on a rapid second
+    // click — can transiently hold the clipboard open); the raw P/Invoke path here had no such
+    // resilience and failed outright on the first contended attempt.
+    private const int OpenClipboardRetryCount = 10;
+    private const int OpenClipboardRetryDelayMs = 100;
+
+    private static bool TryOpenClipboardWithRetry()
+    {
+        for (int attempt = 0; attempt < OpenClipboardRetryCount; attempt++)
+        {
+            if (OpenClipboard(IntPtr.Zero))
+            {
+                return true;
+            }
+            if (attempt < OpenClipboardRetryCount - 1)
+            {
+                Thread.Sleep(OpenClipboardRetryDelayMs);
+            }
+        }
+        return false;
+    }
+
     private static bool TryCopyTextWindows(string text)
     {
         byte[] bytes = System.Text.Encoding.Unicode.GetBytes(text + "\0");
         try
         {
-            if (!OpenClipboard(IntPtr.Zero))
+            if (!TryOpenClipboardWithRetry())
             {
                 return false;
             }

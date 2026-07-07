@@ -121,6 +121,51 @@ public sealed class CaptureCache
             // file. (Broader catch than SettingsStore on purpose — this file is disposable derived
             // state, not user data.)
             Console.Error.WriteLine($"RoeSnip: capture cache unreadable/corrupt, starting empty: {ex.Message}");
+            return;
+        }
+
+        MigrateBareDeviceNameEntries();
+    }
+
+    /// <summary>C1 audit fix: the pre-generalization cache (the frozen WPF app, and this cache's
+    /// own shape before FallbackCaptureBackend's per-capturer-slot keying landed) stored bare
+    /// <c>DeviceName</c> entries with no <c>"::{capturerIndex}"</c> suffix.
+    /// <see cref="FallbackCaptureBackend"/> now keys per-capturer-slot as
+    /// <c>"{DeviceName}::{i}"</c>, so a bare entry never matches anything and is silently dead
+    /// weight — meaning an upgrading NVIDIA+HDR user would re-pay the doomed Desktop Duplication
+    /// attempt once per monitor after upgrading, exactly the cold-start cost this cache exists to
+    /// avoid. Migrate bare entries to <c>"{DeviceName}::0"</c> (slot 0 == the primary capturer —
+    /// Desktop Duplication on Windows, the portal on Linux) once, on load, and drop the bare form.
+    /// This is the cache loader's job regardless of whether anything currently produces a bare
+    /// entry — with P5's config-directory split this only matters again once the two apps
+    /// converge onto one shared cache file.</summary>
+    private void MigrateBareDeviceNameEntries()
+    {
+        List<string>? bareEntries = null;
+        foreach (string name in _ddBrokenDeviceNames!)
+        {
+            if (!name.Contains("::", StringComparison.Ordinal))
+            {
+                (bareEntries ??= new List<string>()).Add(name);
+            }
+        }
+        if (bareEntries is null)
+        {
+            return;
+        }
+
+        bool changed = false;
+        foreach (string bare in bareEntries)
+        {
+            _ddBrokenDeviceNames!.Remove(bare);
+            if (_ddBrokenDeviceNames!.Add($"{bare}::0"))
+            {
+                changed = true;
+            }
+        }
+        if (changed)
+        {
+            SaveBestEffort();
         }
     }
 

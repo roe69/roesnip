@@ -27,6 +27,11 @@ public static class PngWriter
         // Skia-owned pixel memory is safe (no manual pinning of the managed array required).
         System.Runtime.InteropServices.Marshal.Copy(image.Pixels, 0, bitmap.GetPixels(), image.Pixels.Length);
         using var skImage = SkiaSharp.SKImage.FromBitmap(bitmap);
-        return skImage.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+        // SKImage.Encode returns null on encoder failure rather than throwing (C3 audit fix) —
+        // surface a descriptive IOException instead of letting a NullReferenceException escape
+        // from SKData.SaveTo/ToArray with no indication of what actually went wrong.
+        return skImage.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100)
+            ?? throw new System.IO.IOException(
+                $"SkiaSharp failed to encode a {image.Width}x{image.Height} image to PNG.");
     }
 }

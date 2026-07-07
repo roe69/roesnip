@@ -30,7 +30,9 @@ public class FallbackCaptureBackendTests : IDisposable
         }
     }
 
-    private CaptureCache NewCache() => new(Path.Combine(_tempDir, "capture-cache.json"));
+    private string CachePath => Path.Combine(_tempDir, "capture-cache.json");
+
+    private CaptureCache NewCache() => new(CachePath);
 
     private static MonitorInfo Monitor(int index) => new(
         Index: index,
@@ -182,5 +184,101 @@ public class FallbackCaptureBackendTests : IDisposable
         var frames = backend.CaptureAll(monitors: null);
 
         Assert.Equal(new[] { 0, 1 }, frames.Select(f => f.Monitor.Index));
+    }
+
+    // ---- C4 regression coverage: cache-memoization behavior across capturer priority order ----
+
+    [Fact]
+    public void CaptureAll_AllCapturersFail_PersistsNoMemo()
+    {
+        var monitors = new[] { Monitor(0) };
+        var primary = new FakeCapturer(m => throw new CaptureException("primary down"));
+        var fallback = new FakeCapturer(m => throw new CaptureException("fallback down"));
+        var cache = NewCache();
+        var backend = NewBackend(monitors, primary, fallback, cache);
+
+        var frames = backend.CaptureAll(monitors);
+
+        Assert.Empty(frames);
+        Assert.Single(primary.CalledFor);
+        Assert.Single(fallback.CalledFor);
+        Assert.False(cache.IsDesktopDuplicationBroken($"{monitors[0].DeviceName}::0"));
+        Assert.False(cache.IsDesktopDuplicationBroken($"{monitors[0].DeviceName}::1"));
+        Assert.False(File.Exists(CachePath));
+    }
+
+    [Fact]
+    public void CaptureAll_LastCapturerMemoOnDisk_IsStillTried()
+    {
+        var monitors = new[] { Monitor(0) };
+        var cache = NewCache();
+        // A stale/incorrectly-persisted memo for the LAST capturer slot — the algorithm must never
+        // honor a memo for the last resort (skipping it can only turn a recoverable capture into a
+        // guaranteed failure), regardless of what's on disk.
+        cache.MarkDesktopDuplicationBroken($"{monitors[0].DeviceName}::1");
+
+        var primary = new FakeCapturer(m => throw new CaptureException("primary down"));
+        var fallback = new FakeCapturer(Frame);
+        var backend = NewBackend(monitors, primary, fallback, cache);
+
+        var frames = backend.CaptureAll(monitors);
+
+        Assert.Single(frames);
+        Assert.Single(fallback.CalledFor); // tried despite the bogus on-disk memo for slot 1
+    }
+
+    [Fact]
+    public void CaptureAll_StaleMemo_SelfHealsAndRecovers()
+    {
+        var monitors = new[] { Monitor(0) };
+        var cache = NewCache();
+        cache.MarkDesktopDuplicationBroken($"{monitors[0].DeviceName}::0"); // stale: primary works now
+
+        var primary = new FakeCapturer(Frame); // always succeeds once actually tried
+        var fallback = new FakeCapturer(m => throw new CaptureException("fallback also down on the first pass"));
+        var backend = NewBackend(monitors, primary, fallback, cache);
+
+        var frames = backend.CaptureAll(monitors);
+
+        Assert.Single(frames);
+        Assert.Single(primary.CalledFor);  // only the self-heal retry actually calls primary
+        Assert.Single(fallback.CalledFor); // only the first (pre-heal) pass calls fallback
+        Assert.False(cache.IsDesktopDuplicationBroken($"{monitors[0].DeviceName}::0")); // memo cleared
+    }
+
+    [Fact]
+    public void CaptureAll_SelfHealRetryAlsoFails_NoThirdAttempt()
+    {
+        var monitors = new[] { Monitor(0) };
+        var cache = NewCache();
+        cache.MarkDesktopDuplicationBroken($"{monitors[0].DeviceName}::0"); // stale memo
+
+        var primary = new FakeCapturer(m => throw new CaptureException("primary still down"));
+        var fallback = new FakeCapturer(m => throw new CaptureException("fallback still down"));
+        var backend = NewBackend(monitors, primary, fallback, cache);
+
+        var frames = backend.CaptureAll(monitors);
+
+        Assert.Empty(frames);
+        Assert.Single(primary.CalledFor);          // only the self-heal retry ever calls primary
+        Assert.Equal(2, fallback.CalledFor.Count); // first pass + the self-heal retry — no third attempt
+        Assert.False(cache.IsDesktopDuplicationBroken($"{monitors[0].DeviceName}::0"));
+        Assert.False(cache.IsDesktopDuplicationBroken($"{monitors[0].DeviceName}::1"));
+    }
+
+    [Fact]
+    public void CaptureAll_FailureThenSuccess_PersistsOnlyTheFailedSlot()
+    {
+        var monitors = new[] { Monitor(0) };
+        var cache = NewCache();
+        var primary = new FakeCapturer(m => throw new CaptureException("primary down"));
+        var fallback = new FakeCapturer(Frame);
+        var backend = NewBackend(monitors, primary, fallback, cache);
+
+        var frames = backend.CaptureAll(monitors);
+
+        Assert.Single(frames);
+        Assert.True(cache.IsDesktopDuplicationBroken($"{monitors[0].DeviceName}::0"));
+        Assert.False(cache.IsDesktopDuplicationBroken($"{monitors[0].DeviceName}::1"));
     }
 }

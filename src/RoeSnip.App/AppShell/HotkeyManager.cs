@@ -83,9 +83,13 @@ public sealed class HotkeyManager : IDisposable
             return alreadyDecided;
         }
 
-        if (OperatingSystem.IsLinux() && string.Equals(
+        // P8 audit fix: some compositors leave XDG_SESSION_TYPE unset/wrong but always set
+        // WAYLAND_DISPLAY on a Wayland session — treat either signal as Wayland.
+        bool isWayland = string.Equals(
                 Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland",
-                StringComparison.OrdinalIgnoreCase))
+                StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
+        if (OperatingSystem.IsLinux() && isWayland)
         {
             // libuiohook is X11-only (PLAN-XPLAT.md §5) — never start the hook on Wayland;
             // starting-then-failing and never-starting both end in "no global hotkey", but
@@ -105,13 +109,24 @@ public sealed class HotkeyManager : IDisposable
             {
                 if (t.IsFaulted)
                 {
-                    // Covers e.g. macOS without the Accessibility permission, or a dead X display.
-                    Console.Error.WriteLine(
-                        $"RoeSnip: the global keyboard hook stopped/failed to start: " +
-                        $"{t.Exception?.GetBaseException().Message}. The hotkey is inactive; the app " +
-                        "remains operable via the tray menu and `RoeSnip capture`.");
-                    _hookRunning = false;
-                    _armed = false;
+                    lock (_gate)
+                    {
+                        // Covers e.g. macOS without the Accessibility permission, or a dead X display.
+                        Console.Error.WriteLine(
+                            $"RoeSnip: the global keyboard hook stopped/failed to start: " +
+                            $"{t.Exception?.GetBaseException().Message}. The hotkey is inactive; the app " +
+                            "remains operable via the tray menu and `RoeSnip capture`.");
+
+                        // P7 audit fix: dispose the dead hook and reset _hookRunning to null (not
+                        // false) so the NEXT Register() call — e.g. after the user re-saves
+                        // Settings once Accessibility has been granted — tries a FRESH
+                        // TaskPoolGlobalHook instead of EnsureHookRunning's "already decided" fast
+                        // path permanently short-circuiting to false for the rest of the process.
+                        _hook?.Dispose();
+                        _hook = null;
+                        _hookRunning = null;
+                        _armed = false;
+                    }
                 }
             }, TaskScheduler.Default);
             _hookRunning = true;

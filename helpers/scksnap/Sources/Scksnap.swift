@@ -15,11 +15,11 @@
 //
 // Capture matrix (DESIGN-XPLAT.md):
 //   macOS 15+ AND Apple Silicon AND display reports EDR potential > 1.0:
-//       SCScreenshotManager with SCStreamConfiguration.captureDynamicRange = .hdrLocalDisplay
+//       SCScreenshotManager with SCStreamConfiguration(preset: .captureHDRScreenshotLocalDisplay)
 //       -> FP16 RGBA, extended linear sRGB (EDR convention: 1.0 == SDR reference white).
 //   macOS 14 (or Intel, or SDR-only display):
 //       SCScreenshotManager plain (SDR) -> BGRA8 sRGB.
-//   pre-14:
+//   pre-14 (i.e. macOS 13, the binary's own build floor -- see helpers/scksnap/README.md):
 //       CGDisplayCreateImage -> BGRA8 sRGB.
 //
 // Exit codes (mirrored by ScksnapHelperClient.cs — keep in sync):
@@ -203,14 +203,26 @@ func captureViaScreenCaptureKit(
             fail("scksnap: display \(displayID) not found in shareable content", code: EXIT_NO_DISPLAY)
         }
         let filter = SCContentFilter(display: display, excludingWindows: [])
-        let config = SCStreamConfiguration()
+
+        // HDR (P1 audit fix): hand-building a plain SCStreamConfiguration and only setting
+        // captureDynamicRange left every other property (notably pixelFormat) at its default
+        // 8-bit BGRA, which silently clamps HDR content back to SDR — captureDynamicRange alone
+        // does not repoint the pixel format/color space to something that can actually hold
+        // headroom above 1.0. Apple's preset initializer configures the whole HDR screenshot
+        // pipeline (dynamic range + pixel format + color space) correctly in one step; this is
+        // the WWDC24 "Capture HDR content with ScreenCaptureKit" recommended way to request an
+        // HDR screenshot. Width/height/cursor/resolution are still applied on top afterward,
+        // exactly as the non-HDR path does.
+        let config: SCStreamConfiguration
+        if hdr, #available(macOS 15.0, *) {
+            config = SCStreamConfiguration(preset: .captureHDRScreenshotLocalDisplay)
+        } else {
+            config = SCStreamConfiguration()
+        }
         config.width = pixelWidth
         config.height = pixelHeight
         config.showsCursor = false
         config.captureResolution = .best
-        if hdr, #available(macOS 15.0, *) {
-            config.captureDynamicRange = .hdrLocalDisplay
-        }
         return try await SCScreenshotManager.captureImage(
             contentFilter: filter, configuration: config)
     } catch {

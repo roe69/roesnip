@@ -49,6 +49,12 @@ public partial class OverlayWindow : Window
     private double _scaleX = 1.0, _scaleY = 1.0;
     private RectPhysical? _selectionPx;
 
+    /// <summary>The frozen preview bitmap backing <see cref="_previewImage"/>. Kept in its own
+    /// field (O4 audit fix) so it can be explicitly disposed — WriteableBitmap owns native/GPU
+    /// backing memory that isn't reliably freed just by dropping the Image control's Source
+    /// reference on a window that may never even finish showing.</summary>
+    private WriteableBitmap? _previewBitmap;
+
     /// <summary>A mouse-down that would start a new selection is treated as a *click* (color
     /// inspection) until the cursor has travelled at least this many physical pixels — only then
     /// does it become a selection drag. Identical constant and role as the WPF app.</summary>
@@ -74,6 +80,12 @@ public partial class OverlayWindow : Window
     internal MonitorInfo Monitor => _frame.Monitor;
     internal CapturedFrame Frame => _frame;
     internal RectPhysical? SelectionPx => _selectionPx;
+
+    /// <summary>O1 audit fix: set by OverlayController while the (only owner-modal) save picker
+    /// is open, on EVERY window in the session — not just the one that opened the picker — so a
+    /// key/pointer event on a DIFFERENT monitor can't cancel/close/mutate the session while a
+    /// write is in flight. Checked at the top of every tunnel-routed input handler below.</summary>
+    internal bool SessionInputSuspended { get; set; }
 
     /// <summary>True while this window has anything worth cancelling short of closing the whole
     /// overlay — used by OverlayController's two-stage Esc (stage: clear snip, stay open).</summary>
@@ -124,7 +136,14 @@ public partial class OverlayWindow : Window
         // Nearest-neighbor scaling for the frozen preview, same as the WPF version's
         // BitmapScalingMode.NearestNeighbor — on an all-96-DPI machine this is a 1:1 blit anyway.
         RenderOptions.SetBitmapInterpolationMode(_previewImage, BitmapInterpolationMode.None);
-        _previewImage.Source = preview.ToAvaloniaBitmap();
+        _previewBitmap = preview.ToAvaloniaBitmap();
+        _previewImage.Source = _previewBitmap;
+
+        // O4 audit fix: free the preview bitmap on every path this window stops being used —
+        // the normal Closed path, AND CloseOverlay() below covers windows that were placed but
+        // never actually got to fire Closed (e.g. TryPlaceOnScreen succeeded but Show() threw
+        // partway through the session, or the window was closed before ever being shown).
+        Closed += (_, _) => DisposePreviewBitmap();
 
         // Tunnel-routed handlers are the Avalonia analog of WPF's Preview* events — they run
         // before any child control (toolbar buttons, text editor) sees the event.
@@ -150,10 +169,31 @@ public partial class OverlayWindow : Window
             double actual = RenderScaling;
             if (actual > 0 && (Math.Abs(actual - _scaleX) > 1e-9 || Math.Abs(actual - _scaleY) > 1e-9))
             {
+                // O2 audit fix: adopting the new scale WITHOUT re-deriving the DIP size breaks
+                // both invariants at once. TryPlaceOnScreen set Width/Height = physical bounds /
+                // the ASSUMED Screen.Scaling; if RenderScaling turns out different, the window's
+                // actual on-screen PHYSICAL size (DIPs * RenderScaling) no longer equals the
+                // monitor's physical bounds — the overlay would under/over-cover the monitor, and
+                // every DIP<->px conversion done since Show() (selection math, magnifier sampling)
+                // would already have used the wrong scale for whatever the user did before Opened
+                // fired. Fix coherently: recompute DIP ClientSize from the ORIGINAL physical
+                // bounds and the RUNTIME scale (never from the current, already-wrong DIP size),
+                // THEN update _scaleX/_scaleY so everything after this point uses one consistent
+                // scale. This still resizes the window in place after it's already shown — a
+                // documented lesser evil versus the mixed-DPI Avalonia resize bugs (#13917/#17834)
+                // the "never reposition/resize post-Show" discipline exists to avoid; it only
+                // fires on this rare mismatch path, never on the common one.
+                var boundsPx = _frame.Monitor.BoundsPx;
                 Console.Error.WriteLine(
                     $"RoeSnip: overlay for monitor {_frame.Monitor.Index} opened with RenderScaling {actual} " +
-                    $"but Screen.Scaling was {_scaleX}; using RenderScaling for DIP conversion.");
+                    $"but Screen.Scaling was {_scaleX}; resizing to {boundsPx.Width}x{boundsPx.Height}px " +
+                    $"({boundsPx.Width / actual:0.##}x{boundsPx.Height / actual:0.##} DIP) to keep monitor " +
+                    "coverage and 1:1 preview scaling correct for the runtime scale.");
+
                 _scaleX = _scaleY = actual;
+                Width = boundsPx.Width / actual;
+                Height = boundsPx.Height / actual;
+
                 PropagateDeviceScale();
                 UpdateDimGeometry();
                 UpdateToolbarPlacement();
@@ -235,6 +275,11 @@ public partial class OverlayWindow : Window
 
     private void OnPreviewPointerPressed(object? sender, PointerPressedEventArgs e)
     {
+        if (SessionInputSuspended)
+        {
+            return;
+        }
+
         if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
             return;
@@ -318,6 +363,11 @@ public partial class OverlayWindow : Window
 
     private void OnPreviewPointerMoved(object? sender, PointerEventArgs e)
     {
+        if (SessionInputSuspended)
+        {
+            return;
+        }
+
         var dip = e.GetPosition(this);
         var px = ToPhysical(dip);
 
@@ -365,6 +415,11 @@ public partial class OverlayWindow : Window
 
     private void OnPreviewPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        if (SessionInputSuspended)
+        {
+            return;
+        }
+
         if (e.InitialPressMouseButton != MouseButton.Left)
         {
             return;
@@ -477,6 +532,11 @@ public partial class OverlayWindow : Window
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
+        if (SessionInputSuspended)
+        {
+            return;
+        }
+
         if (_activeTextEditor is not null)
         {
             if (e.Key == Key.Escape)
@@ -492,9 +552,12 @@ public partial class OverlayWindow : Window
             return; // don't let Esc/Enter fall through to session-level handling while typing
         }
 
-        // Meta is accepted alongside Control so Cmd+C/Cmd+S/Cmd+Z work naturally on macOS; on
-        // Windows/Linux this is a no-op difference from the WPF original.
-        bool ctrl = (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0;
+        // Meta is accepted alongside Control so Cmd+C/Cmd+S/Cmd+Z work naturally on macOS — but
+        // ONLY on macOS (O7 audit fix): on Windows, KeyModifiers.Meta is the Windows key, and
+        // treating Win+C/Win+S/Win+Z as Copy/Save/Undo would collide with OS-level shortcuts and
+        // surprise Windows/Linux users who never asked for a Meta-modified binding.
+        bool ctrl = (e.KeyModifiers & KeyModifiers.Control) != 0
+            || (OperatingSystem.IsMacOS() && (e.KeyModifiers & KeyModifiers.Meta) != 0);
 
         if (e.Key == Key.Escape)
         {
@@ -639,7 +702,12 @@ public partial class OverlayWindow : Window
             // "Save HDR is Windows-only v1 (backend capability flag hides the button elsewhere)"
             // — DESIGN-XPLAT.md; the flag reaches the overlay as the composition root's
             // WriteHdrExport hook being non-null (set by WP-X2 from Platform.Windows's JxrWriter).
-            _toolbar.SetSaveHdrVisible(AppComposition.WriteHdrExport is not null);
+            // O3 audit fix: gate on the RUNTIME capability too — WriteHdrExport being non-null only
+            // means Platform.Windows was compiled in, not that THIS frame can actually be exported
+            // as HDR (an SDR monitor on the same Windows machine still captures Bgra8Srgb). Without
+            // this the button appeared for every monitor on a Windows build regardless of format.
+            _toolbar.SetSaveHdrVisible(
+                _frame.Format == FrameFormat.Fp16ScRgb && AppComposition.WriteHdrExport is not null);
             _overlayCanvas.Children.Add(_toolbar);
         }
         _toolbar.IsVisible = true;
@@ -878,7 +946,13 @@ public partial class OverlayWindow : Window
             throw new InvalidOperationException("OverlayWindow has no active selection to render.");
         }
 
-        var n = sel.Normalized();
+        // O8 audit fix: defensively clamp to the frame here too, not just in the drag handlers.
+        // Confirm can race a resize/move drag or an annotation that nudged the rect a pixel past
+        // the frame edge between the last SetSelection and this call; Crop() below throws
+        // ArgumentOutOfRangeException on ANY out-of-bounds rect, which — left uncaught in a
+        // fire-and-forget ConfirmAsync — would otherwise turn Enter/Ctrl+C/Ctrl+S into a silent
+        // no-op with no diagnostic anywhere.
+        var n = ClampToFrame(sel).Normalized();
         if (n.Width < 1 || n.Height < 1)
         {
             throw new InvalidOperationException("Selection is empty.");
@@ -950,5 +1024,18 @@ public partial class OverlayWindow : Window
         DispatcherTimer.RunOnce(() => _overlayCanvas.Children.Remove(flash), TimeSpan.FromMilliseconds(300));
     }
 
-    internal void CloseOverlay() => Close();
+    internal void CloseOverlay()
+    {
+        Close();
+        // Belt-and-braces alongside the Closed handler (O4 audit fix): a window that was placed
+        // via TryPlaceOnScreen but never actually reached a shown state isn't guaranteed to raise
+        // Closed on every backend — make sure the preview bitmap is freed either way.
+        DisposePreviewBitmap();
+    }
+
+    private void DisposePreviewBitmap()
+    {
+        _previewBitmap?.Dispose();
+        _previewBitmap = null;
+    }
 }

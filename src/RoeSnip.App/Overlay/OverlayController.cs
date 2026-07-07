@@ -61,6 +61,7 @@ public static class OverlayController
         private OverlayWindow? _activeWindow;
         private bool _finished;
         private bool _confirmInProgress;
+        private int _modalDepth; // O1 audit fix — see BeginModal/EndModal
 
         public OverlaySession(IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors, RoeSnipSettings settings)
         {
@@ -195,24 +196,39 @@ public static class OverlayController
                     break;
 
                 case OverlayCommand.ConfirmPlain:
-                    _ = ConfirmAsync(copy: _settings.CopyOnSelect, save: false, saveHdr: false);
+                    FireAndForget(ConfirmAsync(copy: _settings.CopyOnSelect, save: false, saveHdr: false));
                     break;
 
                 case OverlayCommand.Copy:
-                    _ = ConfirmAsync(copy: true, save: false, saveHdr: false);
+                    FireAndForget(ConfirmAsync(copy: true, save: false, saveHdr: false));
                     break;
 
                 case OverlayCommand.Save:
-                    _ = ConfirmAsync(copy: false, save: true, saveHdr: false);
+                    FireAndForget(ConfirmAsync(copy: false, save: true, saveHdr: false));
                     break;
 
                 case OverlayCommand.SaveHdr:
                     // Sets SaveHdrRequested=true on the eventual result only — the actual HDR
                     // write happens back in AppComposition.RunCaptureFlowAsync using SourceFrame +
                     // SelectionPx (PLAN-XPLAT.md §3.3: the overlay never calls an HDR-export API).
-                    _ = ConfirmAsync(copy: _settings.CopyOnSelect, save: false, saveHdr: true);
+                    FireAndForget(ConfirmAsync(copy: _settings.CopyOnSelect, save: false, saveHdr: true));
                     break;
             }
+        }
+
+        /// <summary>O8 audit fix: OnCommand's callers (key handlers, toolbar button clicks) cannot
+        /// await, so ConfirmAsync is necessarily fire-and-forget from here — but a discarded Task
+        /// whose exception nobody ever observes just vanishes on .NET Core (no crash, no log;
+        /// unlike .NET Framework's process-terminating unobserved-exception behavior). That would
+        /// silently turn Enter/Ctrl+C/Ctrl+S/Save-HDR into a no-op with zero diagnostic anywhere
+        /// if anything above ConfirmAsync's own top-level catch ever throws. Always attach a
+        /// continuation that logs a fault to stderr.</summary>
+        private static void FireAndForget(Task task)
+        {
+            _ = task.ContinueWith(
+                t => Console.Error.WriteLine(
+                    $"RoeSnip: unhandled overlay command failure: {t.Exception?.GetBaseException().Message}"),
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
         }
 
         /// <summary>Esc's two-stage behavior, decided here because only the session can see every
@@ -265,6 +281,10 @@ public static class OverlayController
                 return; // nothing selected yet — Enter/Ctrl+C/Ctrl+S/Save-HDR are no-ops until then
             }
 
+            // Snapshot the selection this render was produced from — used below (O1 audit fix) to
+            // detect whether the session changed underneath an in-flight Save picker await.
+            var selectionAtRenderTime = window.SelectionPx;
+
             SdrImage rendered;
             try
             {
@@ -272,6 +292,13 @@ public static class OverlayController
             }
             catch (InvalidOperationException)
             {
+                return;
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                // O8 audit fix: RenderSelectionWithAnnotations clamps defensively, but treat any
+                // remaining out-of-bounds crop the same as "nothing to confirm yet" rather than
+                // letting it fault this Task silently (FireAndForget still logs it either way).
                 return;
             }
 
@@ -298,11 +325,33 @@ public static class OverlayController
                 string? savedPath = null;
                 if (save)
                 {
-                    savedPath = await TryPickSavePathAsync(window);
+                    // O1 audit fix: the save picker is only OWNER-modal — while it's open the
+                    // session would otherwise stay fully interactive, so e.g. Esc on a DIFFERENT
+                    // monitor could cancel/close the whole overlay while this await is pending.
+                    // Suspend every window's own input handling for the duration.
+                    BeginModal();
+                    try
+                    {
+                        savedPath = await TryPickSavePathAsync(window);
+                    }
+                    finally
+                    {
+                        EndModal();
+                    }
                     if (savedPath is null)
                     {
                         // User cancelled the Save dialog: stay open rather than silently
                         // discarding the selection/annotations they just made.
+                        return;
+                    }
+
+                    // Re-check session state BEFORE writing (O1 audit fix): even with input
+                    // suspended above, the session can still end from outside this method (e.g.
+                    // the resident process shutting down, or another completion racing in) while
+                    // the picker's await was pending — and the rendered crop was captured from
+                    // `selectionAtRenderTime`, which must still be what's selected.
+                    if (_finished || window.SelectionPx != selectionAtRenderTime)
+                    {
                         return;
                     }
 
@@ -339,6 +388,33 @@ public static class OverlayController
             finally
             {
                 _confirmInProgress = false;
+            }
+        }
+
+        /// <summary>Suspends every window's own key/pointer input handling while the (only
+        /// owner-modal) save picker is open (O1 audit fix). Reentrant via a depth counter since
+        /// nothing here strictly prevents nested modal sections in principle.</summary>
+        private void BeginModal()
+        {
+            _modalDepth++;
+            if (_modalDepth == 1)
+            {
+                foreach (var w in _windows)
+                {
+                    w.SessionInputSuspended = true;
+                }
+            }
+        }
+
+        private void EndModal()
+        {
+            _modalDepth = Math.Max(0, _modalDepth - 1);
+            if (_modalDepth == 0)
+            {
+                foreach (var w in _windows)
+                {
+                    w.SessionInputSuspended = false;
+                }
             }
         }
 

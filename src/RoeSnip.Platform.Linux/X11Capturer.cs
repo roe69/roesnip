@@ -13,7 +13,18 @@ namespace RoeSnip.Platform.Linux;
 /// All Xlib/XRandR functions are local <c>DllImport</c>s per the plan — they compile on any host OS
 /// and only need <c>libX11.so.6</c>/<c>libXrandr.so.2</c> to exist at runtime on a real Linux box.
 /// Output frames are always <see cref="FrameFormat.Bgra8Srgb"/> (X11 pixmaps are SDR by definition;
-/// no HDR capture path on Linux in v1, per DESIGN-XPLAT.md).</summary>
+/// no HDR capture path on Linux in v1, per DESIGN-XPLAT.md).
+///
+/// Thread safety (P2 audit fix): Xlib is not thread-safe by default, and
+/// <c>FallbackCaptureBackend.CaptureAll</c> runs one <see cref="Capture"/> call per monitor inside
+/// <c>Parallel.For</c>. The previous per-call "install a silent XSetErrorHandler, do the work,
+/// restore the previous handler" pattern was actively unsafe under that concurrency: thread A's
+/// `finally` could restore Xlib's process-global FATAL default handler while thread B's XGetImage
+/// was still in flight, turning an ordinary BadMatch into a process-killing abort. The fix: call
+/// <c>XInitThreads</c> exactly once per process (in the static constructor, before ANY other Xlib
+/// call), install the silent error handler ONCE for the lifetime of the process (never restored),
+/// and additionally serialize every Xlib/XRandR call (capture AND enumeration) behind one static
+/// lock — Xlib's own thread-safety story is not trusted further than that.</summary>
 public sealed class X11Capturer : IScreenCapturer
 {
     private const string LibX11 = "libX11.so.6";
@@ -24,80 +35,145 @@ public sealed class X11Capturer : IScreenCapturer
     private const ushort RrConnected = 0;
     private static readonly nuint AllPlanes = unchecked((nuint)ulong.MaxValue);
 
+    // Kept rooted in a static field so the native side never sees a collected delegate.
+    private static readonly XErrorHandlerDelegate SilentErrorHandler = static (_, _) => 0;
+
+    /// <summary>Guards every Xlib/XRandR call made anywhere in this class (Capture and
+    /// EnumerateMonitorsViaRandR alike) — see the class doc comment's thread-safety note.</summary>
+    private static readonly object XlibLock = new();
+
+    static X11Capturer()
+    {
+        // Must run before any other Xlib call in the process (Xlib's own contract for
+        // XInitThreads). The error handler is installed once here and never restored — Xlib's
+        // default handler terminates the process on any X error (e.g. a BadMatch if monitor
+        // bounds raced a resolution change), so leaving the silent handler in place permanently
+        // is strictly safer than any per-call install/restore dance could be made to be.
+        XInitThreads();
+        XSetErrorHandler(SilentErrorHandler);
+    }
+
     public CapturedFrame Capture(MonitorInfo monitor)
     {
-        IntPtr display = XOpenDisplay(IntPtr.Zero);
-        if (display == IntPtr.Zero)
+        EnsureNotWaylandSession();
+
+        lock (XlibLock)
         {
-            throw new CaptureException(
-                "XOpenDisplay failed — no X11 (or XWayland) server reachable via DISPLAY.");
-        }
-
-        // Xlib's DEFAULT error handler terminates the process (e.g. a BadMatch if the monitor
-        // bounds raced a resolution change between enumeration and capture). Install a silent
-        // handler around our synchronous calls and restore the previous one afterward.
-        IntPtr previousHandler = XSetErrorHandler(SilentErrorHandler);
-        try
-        {
-            nuint root = XDefaultRootWindow(display);
-            var bounds = monitor.BoundsPx;
-
-            // RandR-reported monitor geometry can exceed the actual root window (observed under
-            // WSLg, where XWayland advertises the host's monitor layout while the root window is
-            // smaller). XGetImage hard-fails on any out-of-root pixel, so clamp the request to
-            // the root geometry and capture the intersection instead of failing the monitor.
-            if (XGetGeometry(display, root, out _, out int rootX, out int rootY,
-                    out uint rootW, out uint rootH, out _, out _) != 0)
-            {
-                var rootRect = RectPhysical.FromSize(rootX, rootY, (int)rootW, (int)rootH);
-                var clamped = new RectPhysical(
-                    Math.Max(bounds.Left, rootRect.Left), Math.Max(bounds.Top, rootRect.Top),
-                    Math.Min(bounds.Right, rootRect.Right), Math.Min(bounds.Bottom, rootRect.Bottom));
-                if (clamped.Width <= 0 || clamped.Height <= 0)
-                {
-                    throw new CaptureException(
-                        $"Monitor {monitor.Index} ({monitor.DeviceName}) at {bounds.Left},{bounds.Top} " +
-                        $"{bounds.Width}x{bounds.Height} lies entirely outside the X root window " +
-                        $"({rootW}x{rootH}) — nothing to capture.");
-                }
-                if (clamped != bounds)
-                {
-                    Console.Error.WriteLine(
-                        $"RoeSnip: monitor {monitor.Index} ({monitor.DeviceName}) extends beyond the " +
-                        $"X root window ({rootW}x{rootH}); capturing the visible " +
-                        $"{clamped.Width}x{clamped.Height} intersection.");
-                }
-                bounds = clamped;
-            }
-
-            IntPtr imagePtr = XGetImage(
-                display, root, bounds.Left, bounds.Top,
-                (uint)bounds.Width, (uint)bounds.Height, AllPlanes, ZPixmap);
-            if (imagePtr == IntPtr.Zero)
+            IntPtr display = XOpenDisplay(IntPtr.Zero);
+            if (display == IntPtr.Zero)
             {
                 throw new CaptureException(
-                    $"XGetImage returned no image for monitor {monitor.Index} ({monitor.DeviceName}) " +
-                    $"at {bounds.Left},{bounds.Top} {bounds.Width}x{bounds.Height} " +
-                    "(X error, or bounds outside the root window).");
+                    "XOpenDisplay failed — no X11 (or XWayland) server reachable via DISPLAY.");
             }
 
             try
             {
-                var image = Marshal.PtrToStructure<XImage>(imagePtr);
-                byte[] pixels = ConvertZPixmapToBgra(in image, bounds.Width, bounds.Height, monitor);
+                nuint root = XDefaultRootWindow(display);
+                var bounds = monitor.BoundsPx;
+
+                // RandR-reported monitor geometry can exceed the actual root window (observed under
+                // WSLg, where XWayland advertises the host's monitor layout while the root window is
+                // smaller). XGetImage hard-fails on any out-of-root pixel, so clamp the request to
+                // the root geometry and capture the intersection instead of failing the monitor.
+                if (XGetGeometry(display, root, out _, out int rootX, out int rootY,
+                        out uint rootW, out uint rootH, out _, out _) != 0)
+                {
+                    var rootRect = RectPhysical.FromSize(rootX, rootY, (int)rootW, (int)rootH);
+                    var clamped = new RectPhysical(
+                        Math.Max(bounds.Left, rootRect.Left), Math.Max(bounds.Top, rootRect.Top),
+                        Math.Min(bounds.Right, rootRect.Right), Math.Min(bounds.Bottom, rootRect.Bottom));
+                    if (clamped.Width <= 0 || clamped.Height <= 0)
+                    {
+                        throw new CaptureException(
+                            $"Monitor {monitor.Index} ({monitor.DeviceName}) at {bounds.Left},{bounds.Top} " +
+                            $"{bounds.Width}x{bounds.Height} lies entirely outside the X root window " +
+                            $"({rootW}x{rootH}) — nothing to capture.");
+                    }
+                    if (clamped != bounds)
+                    {
+                        Console.Error.WriteLine(
+                            $"RoeSnip: monitor {monitor.Index} ({monitor.DeviceName}) extends beyond the " +
+                            $"X root window ({rootW}x{rootH}); capturing the visible " +
+                            $"{clamped.Width}x{clamped.Height} intersection.");
+                    }
+                    bounds = clamped;
+                }
+
+                IntPtr imagePtr = XGetImage(
+                    display, root, bounds.Left, bounds.Top,
+                    (uint)bounds.Width, (uint)bounds.Height, AllPlanes, ZPixmap);
+                if (imagePtr == IntPtr.Zero)
+                {
+                    throw new CaptureException(
+                        $"XGetImage returned no image for monitor {monitor.Index} ({monitor.DeviceName}) " +
+                        $"at {bounds.Left},{bounds.Top} {bounds.Width}x{bounds.Height} " +
+                        "(X error, or bounds outside the root window).");
+                }
+
+                byte[] pixels;
+                try
+                {
+                    var image = Marshal.PtrToStructure<XImage>(imagePtr);
+                    pixels = ConvertZPixmapToBgra(in image, bounds.Width, bounds.Height, monitor);
+                }
+                finally
+                {
+                    DestroyImage(imagePtr);
+                }
+
+                // P3 audit fix: on an XWayland session, XGetImage can "succeed" while returning
+                // black/stale non-desktop content instead of failing outright. Without this check
+                // that false success gets treated by FallbackCaptureBackend as proof the portal
+                // capturer (priority slot 0) is safe to memoize as permanently broken — see
+                // EnsureNotWaylandSession's doc comment for the full failure chain this guards
+                // against. A real, all-zero desktop frame is never legitimate (DESIGN.md's DD
+                // black-frame precedent), so this mirrors DesktopDuplicationCapturer's own check.
+                if (FrameSanity.IsAllZero(pixels))
+                {
+                    throw new CaptureException(
+                        $"XGetImage delivered an all-zero (black) frame for monitor {monitor.Index} " +
+                        $"({monitor.DeviceName}) — likely XWayland returning stale/non-desktop content.");
+                }
+
                 return new CapturedFrame(
                     FrameFormat.Bgra8Srgb, bounds.Width, bounds.Height, bounds.Width * 4, pixels,
                     monitor, sdrWhiteInBufferUnits: 1.0);
             }
             finally
             {
-                DestroyImage(imagePtr);
+                XCloseDisplay(display);
             }
         }
-        finally
+    }
+
+    /// <summary>Refuses to run XGetImage on a Wayland session (P3 audit fix). XWayland answers
+    /// XGetImage requests even when the compositor isn't actually presenting real desktop content
+    /// through it, so a "successful" X11 capture on Wayland can silently be black or stale. Left
+    /// unchecked, that false success feeds straight into FallbackCaptureBackend's fallback-succeeded
+    /// memoization: portal (slot 0) fails once, X11 (the last-resort slot) "succeeds" with garbage,
+    /// so the portal gets memoized broken FOREVER and every future capture goes straight to the
+    /// permanently-black X11 path — self-healing never fires because X11 keeps "succeeding".
+    /// Throwing here instead means both capturers genuinely fail on a portal-less Wayland session,
+    /// which FallbackCaptureBackend's stale-memo self-heal already handles safely (no permanent
+    /// poisoning either way). <c>ROESNIP_FORCE_X11=1</c> overrides this for anyone who explicitly
+    /// wants XWayland capture despite the risk (e.g. known-good XWayland-only setups).</summary>
+    private static void EnsureNotWaylandSession()
+    {
+        if (string.Equals(Environment.GetEnvironmentVariable("ROESNIP_FORCE_X11"), "1", StringComparison.Ordinal))
         {
-            XSetErrorHandlerNative(previousHandler);
-            XCloseDisplay(display);
+            return;
+        }
+
+        string? sessionType = Environment.GetEnvironmentVariable("XDG_SESSION_TYPE");
+        bool isWayland = (sessionType?.Contains("wayland", StringComparison.OrdinalIgnoreCase) ?? false)
+            || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
+        if (isWayland)
+        {
+            throw new CaptureException(
+                "refusing XGetImage on a Wayland session (XDG_SESSION_TYPE and/or WAYLAND_DISPLAY " +
+                "indicate Wayland) — XWayland XGetImage can 'succeed' with black/stale non-desktop " +
+                "content, which would otherwise permanently memoize the portal capturer as broken. " +
+                "Set ROESNIP_FORCE_X11=1 to force XGetImage capture on Wayland anyway.");
         }
     }
 
@@ -107,72 +183,73 @@ public sealed class X11Capturer : IScreenCapturer
     /// server at all — a pure-Wayland session without XWayland).</summary>
     internal static IReadOnlyList<MonitorInfo> EnumerateMonitorsViaRandR()
     {
-        var result = new List<MonitorInfo>();
-        IntPtr display = XOpenDisplay(IntPtr.Zero);
-        if (display == IntPtr.Zero)
+        lock (XlibLock)
         {
-            Console.Error.WriteLine(
-                "RoeSnip: XOpenDisplay failed (no X11/XWayland DISPLAY?) — cannot enumerate monitors.");
-            return result;
-        }
-
-        IntPtr previousHandler = XSetErrorHandler(SilentErrorHandler);
-        try
-        {
-            nuint root = XDefaultRootWindow(display);
-            IntPtr resourcesPtr = XRRGetScreenResources(display, root);
-            if (resourcesPtr == IntPtr.Zero)
+            var result = new List<MonitorInfo>();
+            IntPtr display = XOpenDisplay(IntPtr.Zero);
+            if (display == IntPtr.Zero)
             {
-                Console.Error.WriteLine("RoeSnip: XRRGetScreenResources failed — is the RandR extension available?");
+                Console.Error.WriteLine(
+                    "RoeSnip: XOpenDisplay failed (no X11/XWayland DISPLAY?) — cannot enumerate monitors.");
                 return result;
             }
 
             try
             {
-                var resources = Marshal.PtrToStructure<XRRScreenResources>(resourcesPtr);
-                nuint primaryOutput = XRRGetOutputPrimary(display, root);
-
-                int index = 0;
-                for (int i = 0; i < resources.NOutput; i++)
+                nuint root = XDefaultRootWindow(display);
+                IntPtr resourcesPtr = XRRGetScreenResources(display, root);
+                if (resourcesPtr == IntPtr.Zero)
                 {
-                    try
+                    Console.Error.WriteLine("RoeSnip: XRRGetScreenResources failed — is the RandR extension available?");
+                    return result;
+                }
+
+                try
+                {
+                    var resources = Marshal.PtrToStructure<XRRScreenResources>(resourcesPtr);
+                    nuint primaryOutput = XRRGetOutputPrimary(display, root);
+
+                    int index = 0;
+                    for (int i = 0; i < resources.NOutput; i++)
                     {
-                        nuint output = (nuint)(nint)Marshal.ReadIntPtr(resources.Outputs, i * IntPtr.Size);
-                        MonitorInfo? monitor = ReadOneOutput(display, resourcesPtr, output, primaryOutput, ref index);
-                        if (monitor is not null)
+                        try
                         {
-                            result.Add(monitor);
+                            nuint output = (nuint)(nint)Marshal.ReadIntPtr(resources.Outputs, i * IntPtr.Size);
+                            MonitorInfo? monitor = ReadOneOutput(display, resourcesPtr, output, primaryOutput, ref index);
+                            if (monitor is not null)
+                            {
+                                result.Add(monitor);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.Error.WriteLine($"RoeSnip: skipping RandR output #{i}: {ex.Message}");
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine($"RoeSnip: skipping RandR output #{i}: {ex.Message}");
-                    }
                 }
+                finally
+                {
+                    XRRFreeScreenResources(resourcesPtr);
+                }
+
+                // RRGetOutputPrimary may legitimately be None (0); the app still needs exactly one
+                // primary for its own ordering conventions — promote the first monitor in that case.
+                if (result.Count > 0 && !result.Any(m => m.IsPrimary))
+                {
+                    result[0] = result[0] with { IsPrimary = true };
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: RandR monitor enumeration failed: {ex.Message}");
             }
             finally
             {
-                XRRFreeScreenResources(resourcesPtr);
+                XCloseDisplay(display);
             }
 
-            // RRGetOutputPrimary may legitimately be None (0); the app still needs exactly one
-            // primary for its own ordering conventions — promote the first monitor in that case.
-            if (result.Count > 0 && !result.Any(m => m.IsPrimary))
-            {
-                result[0] = result[0] with { IsPrimary = true };
-            }
+            return result;
         }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"RoeSnip: RandR monitor enumeration failed: {ex.Message}");
-        }
-        finally
-        {
-            XSetErrorHandlerNative(previousHandler);
-            XCloseDisplay(display);
-        }
-
-        return result;
     }
 
     private static MonitorInfo? ReadOneOutput(
@@ -364,8 +441,8 @@ public sealed class X11Capturer : IScreenCapturer
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int XDestroyImageDelegate(IntPtr image);
 
-    // Kept rooted in a static field so the native side never sees a collected delegate.
-    private static readonly XErrorHandlerDelegate SilentErrorHandler = static (_, _) => 0;
+    [DllImport(LibX11)]
+    private static extern int XInitThreads();
 
     [DllImport(LibX11)]
     private static extern IntPtr XOpenDisplay(IntPtr displayName);
@@ -390,9 +467,6 @@ public sealed class X11Capturer : IScreenCapturer
 
     [DllImport(LibX11)]
     private static extern IntPtr XSetErrorHandler(XErrorHandlerDelegate? handler);
-
-    [DllImport(LibX11, EntryPoint = "XSetErrorHandler")]
-    private static extern IntPtr XSetErrorHandlerNative(IntPtr handler);
 
     [DllImport(LibXrandr)]
     private static extern IntPtr XRRGetScreenResources(IntPtr display, nuint window);

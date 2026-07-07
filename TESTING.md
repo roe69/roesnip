@@ -40,7 +40,9 @@ SDR white 240 nits, max luminance 400 nits, all at 96 DPI (scale 1.0). Integrati
   suffix behavior, matching WPF), all Fp16ScRgb, all verified non-black (sampled luma avg
   27–49, max up to 255) with correct per-monitor dimensions. The DD black-frame quirk fired
   live on DISPLAY1 during WP-X2 and fell back to WGC cleanly; the persisted memo in
-  `%APPDATA%\RoeSnip\capture-cache.json` now skips DD there.
+  `%APPDATA%\RoeSnip.App\capture-cache.json` now skips DD there (P5 audit fix: RoeSnip.App uses
+  its own config directory, distinct from the frozen WPF app's `%APPDATA%\RoeSnip`, so the two
+  resident apps can never fire each other's hotkey handler off one settings.json).
 - `--capture --monitor 0 --out x.jxr --jxr`: real JXR written (WP-X2 pass), proving the
   `AppComposition.WriteHdrExport` wiring to Platform.Windows's JxrWriter.
 - CLI output caveat: the app is WinExe + AttachConsole. `dotnet run` output cannot be piped
@@ -90,10 +92,15 @@ WSLg smoke (copy the linux-x64 publish into WSL, check `echo $XDG_SESSION_TYPE` 
 - `./RoeSnip --diag` — exercises RandR monitor enumeration end-to-end (struct marshalling of
   XRRScreenResources/XRROutputInfo/XRRCrtcInfo was hand-checked but never executed), output
   names, bounds, primary detection.
-- `./RoeSnip --capture` — portal is usually absent in WSLg: expect one logged portal failure,
-  then permanent X11 fallback via the capture-cache memo. Verify XGetImage returns real pixels
-  (known XWayland hazard: all-black frames; the X11 capturer deliberately does NOT throw on
-  all-black, to avoid poisoning legit black screens).
+- `./RoeSnip --capture` — portal is usually absent in WSLg: expect one logged portal failure, then
+  X11 fallback attempted per capture (no permanent memo of the portal as broken unless X11 has
+  ALSO genuinely succeeded at least once — see the next point). Verify XGetImage returns real
+  pixels: WSLg's `XDG_SESSION_TYPE`/`WAYLAND_DISPLAY` mark the session as Wayland, so as of the P3
+  audit fix the X11 capturer now REFUSES to run there by default (throws immediately, both
+  monitors omitted) rather than risking the known XWayland hazard of "successful" all-black
+  frames; set `ROESNIP_FORCE_X11=1` to force it anyway for this smoke test specifically. Also
+  verify a real all-zero XGetImage result (forced path) is now caught by `FrameSanity.IsAllZero`
+  and thrown as a `CaptureException`, mirroring `DesktopDuplicationCapturer`'s black-frame check.
 - Known WSLg-unreachable: real portal behavior (prompt, `uri` result, temp-file deletion),
   HiDPI discovered-scale slicing (the scale≠1 branch has never executed anywhere),
   Tmds.DBus `Response` signal deserialization against a real portal.
@@ -104,7 +111,7 @@ Real GNOME/KDE box checklist:
   new portals, per-shot on old); KDE historically skips it. Documented behavior, not a bug.
 - **Known UX edge (plan-mandated cache interacting with the portal):** a single user DENIAL of
   the portal dialog throws CaptureException → the portal capturer is memoized broken forever
-  for that monitor (persisted `capture-cache.json` under `~/.config/roesnip/`); deleting the
+  for that monitor (persisted `capture-cache.json` under `~/.config/roesnip-app/`); deleting the
   cache file is the only retry path today.
 - **Wayland activation:** SharpHook/libuiohook is X11-only. On `XDG_SESSION_TYPE=wayland` the
   hotkey hook is never started (by design). The PRIMARY activation path is a DE keyboard
@@ -137,7 +144,10 @@ Status label: **built, not hardware-validated.** Do not claim more.
 - `scksnap capture` end-to-end: wire-format (96-byte LE header + raw rows) round-trip into
   `CapturedFrame`; FP16 extended-linear-sRGB EDR values; the HDR path specifically needs
   macOS 15 + Apple Silicon + an EDR display; SDR path on macOS 14/Intel;
-  `CGDisplayCreateImage` pre-14 path.
+  `CGDisplayCreateImage` "pre-14" path. P9 audit correction: the helper's REAL floor is macOS 13
+  (`swiftc -target ...-macos13.0`, helpers/scksnap/README.md's Build section) — the binary cannot
+  run at all below that, so "pre-14" in practice only ever means macOS 13.x, not "any older
+  macOS" as the phrase might otherwise suggest.
 - **TCC (Screen Recording) flow:** first capture must trigger the system prompt
   (`CGRequestScreenCaptureAccess`); grant lives under System Settings → Privacy & Security →
   Screen & System Audio Recording, attributed to the helper's stable ad-hoc identifier
@@ -162,7 +172,13 @@ Status label: **built, not hardware-validated.** Do not claim more.
   a possible launch-failure cause on very old GPUs.
 - `RoeSnip.App` on Windows uses distinct single-instance names (`Global\RoeSnip.App-SingleInstance`,
   pipe `RoeSnip.App-SingleInstance`) and HKCU Run value (`RoeSnip.App`) so it can run side by
-  side with the frozen WPF app without cross-signalling. The capture-cache file is shared but
-  keys are disjoint.
+  side with the frozen WPF app without cross-signalling. Per the P5 audit fix, `RoeSnip.App` also
+  now uses its own config directory (`%APPDATA%\RoeSnip.App` / `~/Library/Application Support/
+  RoeSnip.App` / `~/.config/roesnip-app`) rather than sharing the WPF app's `%APPDATA%\RoeSnip` —
+  the two apps no longer share settings.json OR capture-cache.json at all. Sharing one directory
+  meant both apps loaded the same HotkeyVirtualKey and each armed their own global-hotkey
+  mechanism (SharpHook here, RegisterHotKey in the WPF app) for the identical key, so one
+  PrintScreen press fired both — two overlay stacks plus concurrent capture-cache rewrites.
+  Convergence to one shared config directory is a later cleanup, once the WPF app retires.
 - Run-at-startup is Windows-only (HKCU Run); a logged no-op on macOS/Linux (PLAN-XPLAT §6
   flag 5).

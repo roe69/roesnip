@@ -1,7 +1,6 @@
 using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Input;
 using Avalonia.Media;
 using RoeSnip.Core.Capture;
 using RoeSnip.Core.Imaging;
@@ -11,9 +10,9 @@ namespace RoeSnip.App.Overlay;
 /// <summary>Zoom loupe near the cursor with hex/RGB (sampled from the tone-mapped preview — what
 /// the user "sees") and a nits readout (sampled from the raw CapturedFrame via
 /// <see cref="CapturedFrame.ReadPixelNits"/>) — RoeSnip's signature feature: it can reveal an HDR
-/// highlight even when the hex value reads as plain white. Click anywhere on the loupe widget to
-/// copy the current hex string to the clipboard as plain text. Ported from the frozen WPF app's
-/// src/RoeSnip/Overlay/Magnifier.cs.</summary>
+/// highlight even when the hex value reads as plain white. The click-color-inspector
+/// (OverlayWindow.ShowColorInfo) owns click-to-copy for the hex readout; this widget is purely a
+/// visual readout. Ported from the frozen WPF app's src/RoeSnip/Overlay/Magnifier.cs.</summary>
 public sealed class Magnifier : Control
 {
     private const int SampleRadiusPx = 5;        // (2r+1)x(2r+1) block of preview pixels sampled
@@ -34,7 +33,6 @@ public sealed class Magnifier : Control
 
     public Magnifier()
     {
-        IsHitTestVisible = true; // click-to-copy the hex readout
     }
 
     /// <summary>Updates the sample point. <paramref name="cursorDip"/> is the mouse position in
@@ -140,18 +138,6 @@ public sealed class Magnifier : Control
         dc.DrawText(hexText, new Point(x + 8.0, textY));
         dc.DrawText(rgbText, new Point(x + 8.0, textY + hexText.Height + 2.0));
         dc.DrawText(nitsText, new Point(x + 8.0, textY + hexText.Height + rgbText.Height + 5.0));
-    }
-
-    protected override void OnPointerPressed(PointerPressedEventArgs e)
-    {
-        base.OnPointerPressed(e);
-        if (!string.IsNullOrEmpty(CurrentHex))
-        {
-            // Click-to-copy is a convenience, not part of the critical Copy/Save path — failures
-            // are swallowed inside TryCopyTextAsync and the user just retries.
-            _ = ClipboardService.TryCopyTextAsync(this, CurrentHex);
-            e.Handled = true;
-        }
     }
 
     private static (byte R, byte G, byte B) ReadPreviewPixel(SdrImage preview, int x, int y)
