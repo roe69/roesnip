@@ -183,6 +183,36 @@
             </Setter>
         </Style>
 
+        <!-- Explicit dark styling for every dropdown row. DEFINED BEFORE both ComboBox styles that
+             reference it: a StaticResource forward-reference inside a compiled ResourceDictionary
+             hands ItemContainerStyle a deferred reference instead of a Style, which detonates as
+             an InvalidCastException (process-killing XamlParseException) the first time the
+             control is hovered — this exact bug crashed the tray in round 5 verification. -->
+        <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#EAEAEA"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Focusable" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#3A7CFD"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#2F5FCC"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- The numeric size input (item 2, UX round 5 — replaced the fixed small/medium/big stroke
              dots): an EDITABLE dark ComboBox, so unlike DarkComboBoxStyle it must template in the
              PART_EditableTextBox WPF's ComboBox looks up by name to enable typing. The TextBox is
@@ -295,34 +325,6 @@
                            Foreground="#A8A8B2" Margin="12,0,2,0" VerticalAlignment="Center"/>
             </Grid>
         </DataTemplate>
-
-        <!-- Explicit dark styling for every dropdown row (background/foreground for both the
-             ComboBoxItem chrome and its hover/selected states) — separate from the ComboBox's own
-             chrome styling below, since the Popup's items are a distinct visual subtree. -->
-        <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#EAEAEA"/>
-            <Setter Property="Padding" Value="8,6"/>
-            <Setter Property="Focusable" Value="True"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ComboBoxItem">
-                        <Border x:Name="Bg" Background="{TemplateBinding Background}"
-                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
-                            <ContentPresenter/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#3A7CFD"/>
-                            </Trigger>
-                            <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#2F5FCC"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
 
         <!-- Fully retemplated (not just a palette tweak) so both the closed chrome AND the dropdown
              Popup are explicitly dark — the default ComboBox template otherwise draws its Popup with
