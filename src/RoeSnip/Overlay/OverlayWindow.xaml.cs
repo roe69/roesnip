@@ -122,12 +122,17 @@ public partial class OverlayWindow : Window
     /// OS focus. Null whenever <see cref="IsTextEditingActive"/> is false.</summary>
     internal TextBox? ActiveTextEditor => _activeTextEditor;
 
-    /// <summary>True while the magnifier loupe (item 4, UX round 3) should track the cursor:
-    /// pick-only mode always shows it (it's the point of that mode); otherwise it's visible only
-    /// before any selection exists, or while actively dragging out a brand-new one — once a
-    /// selection is finalized (or being moved/resized), it hides until the selection is cleared or
-    /// a new one starts.</summary>
-    private bool IsMagnifierActive => _pickOnlyMode || _selectionPx is null || _dragMode == DragMode.NewSelection;
+    /// <summary>True while the magnifier loupe (item 4, UX round 3; lifecycle fixed in UX round 4)
+    /// should track the cursor: pick-only mode always shows it (it's the point of that mode);
+    /// otherwise it's visible only while this window owns no selection AND no drag of any kind is
+    /// in progress. The moment a drag starts — including a brand-new selection drag, still inside
+    /// the click-threshold-pending phase — this goes false and the magnifier is hidden immediately
+    /// (see the explicit MagnifierControl.Hide() calls at each drag-start site in
+    /// OnPreviewMouseLeftButtonDown/BeginTextEditor), rather than staying visible until the drag
+    /// finishes. Independently of this, MouseLeave/Deactivated always hide the magnifier outright
+    /// (even in pick-only mode) so it can never freeze on a monitor the cursor has left — see
+    /// OnMouseLeave/OnDeactivated.</summary>
+    private bool IsMagnifierActive => _pickOnlyMode || (_selectionPx is null && _dragMode == DragMode.None);
 
     internal OverlayWindow(
         CapturedFrame frame,
@@ -163,6 +168,8 @@ public partial class OverlayWindow : Window
         PreviewMouseWheel += OnPreviewMouseWheel;
         PreviewKeyDown += OnPreviewKeyDown;
         MouseEnter += OnMouseEnter;
+        MouseLeave += OnMouseLeave;
+        Deactivated += OnDeactivated;
         SizeChanged += (_, _) =>
         {
             SyncChromeSizes();
@@ -228,6 +235,19 @@ public partial class OverlayWindow : Window
 
     private void OnMouseEnter(object sender, MouseEventArgs e) => _onActivatedByMouse(this);
 
+    /// <summary>Lifecycle fix (UX round 4, item 1b): without this, a window that last rendered the
+    /// magnifier at some position never gets another PreviewMouseMove once the cursor crosses onto a
+    /// different monitor's window — so its magnifier visual just sits there frozen ("stuck") at the
+    /// last sampled point instead of disappearing. Unconditional (ignores IsMagnifierActive/
+    /// _pickOnlyMode): the cursor leaving this window is reason enough to hide regardless of mode.</summary>
+    private void OnMouseLeave(object sender, MouseEventArgs e) => MagnifierControl.Hide();
+
+    /// <summary>Belt-and-suspenders alongside OnMouseLeave: if this window loses activation (e.g.
+    /// another monitor's window steals it, or the OS takes focus away entirely) while some other
+    /// codepath managed to dodge MouseLeave, the magnifier still gets torn down rather than risking a
+    /// stuck frame on a monitor the cursor may no longer even be over.</summary>
+    private void OnDeactivated(object? sender, EventArgs e) => MagnifierControl.Hide();
+
     private void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (IsWithinToolbar(e.OriginalSource as DependencyObject))
@@ -275,6 +295,7 @@ public partial class OverlayWindow : Window
                 _dragMode = DragMode.Annotation;
                 Annotations.BeginShape(_currentTool, px, _currentColor, _currentStrokeWidth);
                 CaptureMouse();
+                MagnifierControl.Hide(); // item 1a: hide the instant this drag starts, not once it ends
             }
             e.Handled = true;
             return;
@@ -307,6 +328,13 @@ public partial class OverlayWindow : Window
         }
 
         CaptureMouse();
+        // Item 1a: hide immediately on drag-start state entry — covers Move/Resize (which always
+        // already own a selection, so IsMagnifierActive was already false) and, crucially,
+        // NewSelection: previously the magnifier stayed visible for the entire drag and only hid
+        // once the mouse was released. It still doesn't know yet whether this will resolve into a
+        // real drag or a plain click-to-pick (see _newSelectionPending), but either way the preview
+        // should disappear the moment the mouse goes down to start it.
+        MagnifierControl.Hide();
         e.Handled = true;
     }
 
@@ -790,6 +818,7 @@ public partial class OverlayWindow : Window
     private void BeginTextEditor(Point originPx, Point originDip)
     {
         CommitActiveTextEditor();
+        MagnifierControl.Hide(); // item 1a: text placement is a drag-start-equivalent state entry
 
         var editor = new TextBox
         {

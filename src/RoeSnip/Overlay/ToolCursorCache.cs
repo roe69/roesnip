@@ -16,6 +16,7 @@ namespace RoeSnip.Overlay;
 using Point = System.Windows.Point;
 using Color = System.Windows.Media.Color;
 using Cursor = System.Windows.Input.Cursor;
+using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
 using Pen = System.Windows.Media.Pen;
 using FontFamily = System.Windows.Media.FontFamily;
@@ -41,6 +42,44 @@ public readonly record struct CursorKey(AnnotationTool Tool, Color Color, double
             or AnnotationTool.Arrow or AnnotationTool.Line or AnnotationTool.Freehand;
         double normalizedWidth = widthMatters ? Math.Round(strokeWidthPx, MidpointRounding.AwayFromZero) : 0.0;
         return new CursorKey(tool, color, normalizedWidth);
+    }
+}
+
+/// <summary>Computes the on-screen circle diameter and bitmap canvas size for a given (already
+/// rounded-to-nearest-pixel) stroke width — UX round 4's tool-cursor redesign: every drawing tool's
+/// cursor is a plain circle outline whose diameter equals the stroke width, so scrolling the width
+/// visibly grows/shrinks the cursor itself, rather than a per-tool shape glyph. The diameter always
+/// equals the stroke width 1:1 — never scaled down to fit — except once it would need a canvas bigger
+/// than <see cref="MaxCanvasSize"/>: past that point the bitmap is capped at 64x64, the circle is
+/// drawn at the largest diameter that still fits, and <see cref="ShowLabel"/> switches on so the
+/// actual numeric width is drawn inside it instead of silently lying about the true size. Public
+/// (rather than internal/private) purely so this sizing rule is unit-testable without an
+/// InternalsVisibleTo edit, matching <see cref="CursorKey"/> and the rest of Overlay/*'s pure-helper
+/// convention.</summary>
+public readonly record struct CircleSpec(int CanvasSize, double Diameter, bool ShowLabel, double LabelWidthPx)
+{
+    public const int MaxCanvasSize = 64;
+
+    // Below this, a stroke of e.g. 1-2px would render an almost-invisible ring — clamp to a small
+    // fixed-size circle instead so the cursor always stays legible.
+    public const double MinDiameter = 6.0;
+
+    // Padding around the circle for the halo stroke's outer half-width plus a little antialiasing
+    // headroom, so the ring is never clipped at the bitmap edge.
+    public const double Margin = 6.0;
+
+    public static CircleSpec For(double strokeWidthPx)
+    {
+        double desiredDiameter = Math.Max(strokeWidthPx, MinDiameter);
+        double neededCanvas = desiredDiameter + Margin * 2;
+
+        if (neededCanvas <= MaxCanvasSize)
+        {
+            return new CircleSpec((int)Math.Ceiling(neededCanvas), desiredDiameter, ShowLabel: false, strokeWidthPx);
+        }
+
+        double cappedDiameter = MaxCanvasSize - Margin * 2;
+        return new CircleSpec(MaxCanvasSize, cappedDiameter, ShowLabel: true, strokeWidthPx);
     }
 }
 
@@ -101,21 +140,22 @@ file static class CursorInterop
 }
 
 /// <summary>Builds and caches a small custom Windows cursor per (tool, color, strokeWidth)
-/// combination — item 1 of UX round 3: the crosshair changes to visualize what the selected drawing
-/// tool will actually draw (a rect/ellipse/arrow/line/pencil glyph, or an I-beam-with-T for text),
-/// tinted with the current draw color, with a faint ring around stroke tools' glyph that grows/
-/// shrinks with the current stroke width so a scroll-wheel resize is visible in the cursor itself
-/// without needing to look at the toolbar. AnnotationTool.None (the Select tool) is never looked up
-/// here — OverlayWindow keeps the plain system crosshair for it.
+/// combination — item 1 of UX round 3, redesigned in UX round 4 after the original per-tool glyphs
+/// (a literal drawn rect/ellipse/arrow/line/pencil icon) read as visual artifacts rather than a
+/// cursor — e.g. the arrow/line glyph looked like "a red line through the crosshair". The new design
+/// is deliberately minimal: every drawing tool (Rectangle/Ellipse/Arrow/Line/Freehand) gets a plain
+/// circle outline whose diameter *is* the current stroke width, so scrolling the width visibly
+/// grows/shrinks the cursor itself; the Text tool gets a small I-beam-with-T icon. AnnotationTool.None
+/// (the Select tool) is never looked up here — OverlayWindow keeps the plain system crosshair for it.
 ///
 /// Built via DrawingVisual -> RenderTargetBitmap (Pbgra32, i.e. already premultiplied — exactly the
 /// pixel layout a 32bpp alpha-icon DIB needs) -> a GDI DIB section (CreateDIBSection) copied in as
 /// the icon's color bitmap -> CreateIconIndirect with fIcon=false (a cursor, not an icon) and an
-/// explicit centered hotspot -> CursorInteropHelper.Create wraps the resulting HICON/HCURSOR as a
-/// WPF Cursor. Entries are cached per <see cref="CursorKey"/> (scroll-wheel resizing revisits the
-/// same widths constantly) in a small LRU-bounded cache; whatever gets evicted is disposed
-/// (DestroyIcon) immediately, and <see cref="Dispose"/> tears down every entry still cached — call
-/// it once when the owning OverlayWindow closes.</summary>
+/// explicit hotspot -> CursorInteropHelper.Create wraps the resulting HICON/HCURSOR as a WPF Cursor.
+/// Entries are cached per <see cref="CursorKey"/> (scroll-wheel resizing revisits the same widths
+/// constantly) in a small LRU-bounded cache; whatever gets evicted is disposed (DestroyIcon)
+/// immediately, and <see cref="Dispose"/> tears down every entry still cached — call it once when the
+/// owning OverlayWindow closes.</summary>
 public sealed class ToolCursorCache : IDisposable
 {
     /// <summary>Owns one HICON/HCURSOR returned by CreateIconIndirect. CreateIconIndirect's own
@@ -131,7 +171,6 @@ public sealed class ToolCursorCache : IDisposable
     }
 
     private const int MaxCachedCursors = 48;
-    private const int CanvasSize = 32;
 
     private readonly Dictionary<CursorKey, (Cursor Cursor, SafeIconHandle Handle)> _cache = new();
     private readonly List<CursorKey> _lruOrder = new(); // oldest first
@@ -183,20 +222,40 @@ public sealed class ToolCursorCache : IDisposable
 
     private static (Cursor Cursor, SafeIconHandle Handle) Build(AnnotationTool tool, Color color, double normalizedStrokeWidthPx)
     {
+        int canvasWidth, canvasHeight, hotspotX, hotspotY;
+        Action<DrawingContext> render;
+
+        if (tool == AnnotationTool.Text)
+        {
+            canvasWidth = canvasHeight = TextCanvasSize;
+            hotspotX = TextHotspotX;
+            hotspotY = TextHotspotY;
+            render = dc => DrawTextGlyph(dc, color);
+        }
+        else
+        {
+            // Every stroke tool (Rectangle/Ellipse/Arrow/Line/Freehand) shares one design: a plain
+            // circle outline the same diameter as the stroke width — see CircleSpec.For.
+            var spec = CircleSpec.For(normalizedStrokeWidthPx);
+            canvasWidth = canvasHeight = spec.CanvasSize;
+            hotspotX = hotspotY = spec.CanvasSize / 2;
+            render = dc => DrawCircleGlyph(dc, color, spec);
+        }
+
         var visual = new DrawingVisual();
         using (var dc = visual.RenderOpen())
         {
-            DrawGlyph(dc, tool, color, normalizedStrokeWidthPx);
+            render(dc);
         }
 
-        var rtb = new RenderTargetBitmap(CanvasSize, CanvasSize, 96, 96, PixelFormats.Pbgra32);
+        var rtb = new RenderTargetBitmap(canvasWidth, canvasHeight, 96, 96, PixelFormats.Pbgra32);
         rtb.Render(visual);
 
-        int stride = CanvasSize * 4;
-        var pixels = new byte[stride * CanvasSize];
+        int stride = canvasWidth * 4;
+        var pixels = new byte[stride * canvasHeight];
         rtb.CopyPixels(pixels, stride, 0);
 
-        IntPtr hIcon = CreateCursorIcon(pixels, CanvasSize, CanvasSize, CanvasSize / 2, CanvasSize / 2);
+        IntPtr hIcon = CreateCursorIcon(pixels, canvasWidth, canvasHeight, hotspotX, hotspotY);
         var handle = new SafeIconHandle(hIcon);
         Cursor cursor = CursorInteropHelper.Create(handle);
         return (cursor, handle);
@@ -266,132 +325,46 @@ public sealed class ToolCursorCache : IDisposable
 
     // ---------- Glyph rendering ----------
 
-    private static void DrawGlyph(DrawingContext dc, AnnotationTool tool, Color color, double strokeWidthPx)
+    /// <summary>All five drawing tools (Rectangle/Ellipse/Arrow/Line/Freehand) share this one design:
+    /// a circle outline sized to the current stroke width, tinted with the draw color, with a dark
+    /// halo so it reads on any background — no per-tool shape glyph, which is what previously read as
+    /// stray artifacts (e.g. a line tool's glyph looking like "a red line through the crosshair").</summary>
+    private static void DrawCircleGlyph(DrawingContext dc, Color color, CircleSpec spec)
     {
-        var center = new Point(CanvasSize / 2.0, CanvasSize / 2.0);
+        var center = new Point(spec.CanvasSize / 2.0, spec.CanvasSize / 2.0);
+        double radius = spec.Diameter / 2.0;
 
-        bool isStrokeTool = tool is AnnotationTool.Rectangle or AnnotationTool.Ellipse
-            or AnnotationTool.Arrow or AnnotationTool.Line or AnnotationTool.Freehand;
-        if (isStrokeTool)
+        var haloPen = new Pen(new SolidColorBrush(Color.FromArgb(215, 0, 0, 0)), 3.0);
+        var fgPen = new Pen(new SolidColorBrush(color), 1.6);
+        dc.DrawEllipse(null, haloPen, center, radius, radius);
+        dc.DrawEllipse(null, fgPen, center, radius, radius);
+
+        if (spec.ShowLabel)
         {
-            double ringDiameter = Math.Clamp(strokeWidthPx * 1.4 + 6.0, 10.0, 27.0);
-            var ringPen = new Pen(new SolidColorBrush(Color.FromArgb(130, color.R, color.G, color.B)), 1.3);
-            dc.DrawEllipse(null, ringPen, center, ringDiameter / 2, ringDiameter / 2);
+            string label = spec.LabelWidthPx.ToString("0", CultureInfo.InvariantCulture);
+            var typeface = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+            DrawHaloedText(dc, label, typeface, 13.0, center, color: Brushes.White);
         }
+    }
 
-        // A dark halo drawn first (then the actual color on top) keeps the glyph legible over both
-        // bright and dark screen content — a plain colored line can vanish over similarly-colored
-        // background pixels otherwise.
-        var haloPen = new Pen(new SolidColorBrush(Color.FromArgb(215, 0, 0, 0)), 3.2)
+    /// <summary>Text tool: an I-beam with a small bold "T" beside it (unambiguously "text tool", not
+    /// a generic text-select caret), tinted with the draw color and haloed like the circle cursor.
+    /// The hotspot (<see cref="TextHotspotX"/>/<see cref="TextHotspotY"/>) sits at the top of the
+    /// I-beam's vertical bar — the point BeginTextEditor treats as the new text's origin (top-left of
+    /// the editor), not the bar's vertical center a normal caret would use.</summary>
+    private static void DrawTextGlyph(DrawingContext dc, Color color)
+    {
+        var haloPen = new Pen(new SolidColorBrush(Color.FromArgb(215, 0, 0, 0)), 3.0)
         {
-            StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round,
+            StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round,
         };
         var fgPen = new Pen(new SolidColorBrush(color), 1.5)
         {
-            StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round,
+            StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round,
         };
 
-        switch (tool)
-        {
-            case AnnotationTool.Rectangle:
-            {
-                var rect = new Rect(center.X - 6, center.Y - 6, 12, 12);
-                dc.DrawRectangle(null, haloPen, rect);
-                dc.DrawRectangle(null, fgPen, rect);
-                break;
-            }
-            case AnnotationTool.Ellipse:
-                dc.DrawEllipse(null, haloPen, center, 6.5, 6.5);
-                dc.DrawEllipse(null, fgPen, center, 6.5, 6.5);
-                break;
-            case AnnotationTool.Line:
-            {
-                var a = new Point(center.X - 7, center.Y + 7);
-                var b = new Point(center.X + 7, center.Y - 7);
-                dc.DrawLine(haloPen, a, b);
-                dc.DrawLine(fgPen, a, b);
-                break;
-            }
-            case AnnotationTool.Arrow:
-            {
-                var a = new Point(center.X - 7, center.Y + 7);
-                var b = new Point(center.X + 7, center.Y - 7);
-                DrawArrowGlyph(dc, haloPen, fgPen, color, a, b);
-                break;
-            }
-            case AnnotationTool.Freehand:
-                DrawPencilGlyph(dc, haloPen, fgPen, color, center);
-                break;
-            case AnnotationTool.Text:
-                DrawTextGlyph(dc, haloPen, fgPen, color, center);
-                break;
-        }
-    }
-
-    private static void DrawArrowGlyph(DrawingContext dc, Pen haloPen, Pen fgPen, Color color, Point from, Point to)
-    {
-        dc.DrawLine(haloPen, from, to);
-        dc.DrawLine(fgPen, from, to);
-
-        var direction = to - from;
-        if (direction.LengthSquared < 1e-6)
-        {
-            return;
-        }
-        direction.Normalize();
-
-        const double headLength = 6.0;
-        const double headAngle = Math.PI / 6.5;
-
-        static Vector Rotate(Vector v, double radians)
-        {
-            double cos = Math.Cos(radians), sin = Math.Sin(radians);
-            return new Vector(v.X * cos - v.Y * sin, v.X * sin + v.Y * cos);
-        }
-
-        var back = -direction * headLength;
-        var left = to + Rotate(back, headAngle);
-        var right = to + Rotate(back, -headAngle);
-
-        var geometry = new StreamGeometry();
-        using (var ctx = geometry.Open())
-        {
-            ctx.BeginFigure(to, true, true);
-            ctx.LineTo(left, true, true);
-            ctx.LineTo(right, true, true);
-        }
-        dc.DrawGeometry(new SolidColorBrush(color), new Pen(Brushes.Black, 1.0), geometry);
-    }
-
-    private static void DrawPencilGlyph(DrawingContext dc, Pen haloPen, Pen fgPen, Color color, Point center)
-    {
-        var tail = new Point(center.X + 8, center.Y - 7);
-        var tip = new Point(center.X - 7, center.Y + 8);
-        dc.DrawLine(haloPen, tail, tip);
-        dc.DrawLine(fgPen, tail, tip);
-
-        var dir = tip - tail;
-        dir.Normalize();
-        var perp = new Vector(-dir.Y, dir.X);
-        const double tipLength = 4.5;
-        var p2 = tip - dir * tipLength + perp * 2.4;
-        var p3 = tip - dir * tipLength - perp * 2.4;
-
-        var geometry = new StreamGeometry();
-        using (var ctx = geometry.Open())
-        {
-            ctx.BeginFigure(tip, true, true);
-            ctx.LineTo(p2, true, true);
-            ctx.LineTo(p3, true, true);
-        }
-        dc.DrawGeometry(new SolidColorBrush(color), new Pen(Brushes.Black, 1.0), geometry);
-    }
-
-    private static void DrawTextGlyph(DrawingContext dc, Pen haloPen, Pen fgPen, Color color, Point center)
-    {
-        const double halfHeight = 8.0;
-        var top = new Point(center.X - 2, center.Y - halfHeight);
-        var bottom = new Point(center.X - 2, center.Y + halfHeight);
+        var top = new Point(TextHotspotX, TextHotspotY);
+        var bottom = new Point(TextHotspotX, TextHotspotY + TextBarHeight);
 
         void Serif(Point p)
         {
@@ -406,12 +379,39 @@ public sealed class ToolCursorCache : IDisposable
         Serif(top);
         Serif(bottom);
 
-        // A small bold "T" beside the I-beam so the glyph reads unambiguously as "text tool", not a
-        // generic text-select caret.
         var typeface = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
-        var formatted = new FormattedText(
-            "T", CultureInfo.InvariantCulture, FlowDir.LeftToRight,
-            typeface, 12.0, new SolidColorBrush(color), 1.0);
-        dc.DrawText(formatted, new Point(center.X + 5, center.Y - halfHeight - 1));
+        var tCenter = new Point(TextHotspotX + 8.0, TextHotspotY + TextBarHeight / 2.0);
+        DrawHaloedText(dc, "T", typeface, 12.0, tCenter, new SolidColorBrush(color));
     }
+
+    /// <summary>Draws <paramref name="text"/> centered on <paramref name="center"/> with a cheap
+    /// (four-offset-copy) dark halo behind it in <paramref name="color"/>, matching the halo-then-
+    /// tint convention used throughout the rest of this cache's rendering.</summary>
+    private static void DrawHaloedText(DrawingContext dc, string text, Typeface typeface, double fontSize, Point center, Brush color)
+    {
+        var halo = new FormattedText(
+            text, CultureInfo.InvariantCulture, FlowDir.LeftToRight, typeface, fontSize,
+            new SolidColorBrush(Color.FromArgb(215, 0, 0, 0)), 1.0);
+        var fg = new FormattedText(
+            text, CultureInfo.InvariantCulture, FlowDir.LeftToRight, typeface, fontSize, color, 1.0);
+
+        var origin = new Point(center.X - fg.Width / 2.0, center.Y - fg.Height / 2.0);
+        foreach (var offset in HaloOffsets)
+        {
+            dc.DrawText(halo, origin + offset);
+        }
+        dc.DrawText(fg, origin);
+    }
+
+    private static readonly Vector[] HaloOffsets =
+    {
+        new(-1, 0), new(1, 0), new(0, -1), new(0, 1),
+    };
+
+    // Text-tool cursor geometry: a fixed-size canvas (stroke width plays no part in this glyph — see
+    // CursorKey.For's normalization), with the hotspot at the top of the I-beam bar.
+    private const int TextCanvasSize = 28;
+    private const double TextBarHeight = 16.0;
+    private const int TextHotspotX = 9;
+    private const int TextHotspotY = 5;
 }

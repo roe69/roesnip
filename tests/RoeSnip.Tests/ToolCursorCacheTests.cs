@@ -1,3 +1,4 @@
+using System;
 using System.Windows.Media;
 using RoeSnip.Overlay;
 using Xunit;
@@ -74,5 +75,61 @@ public class ToolCursorCacheTests
         var a = CursorKey.For(AnnotationTool.Rectangle, Colors.Red, 4.0);
         var b = CursorKey.For(AnnotationTool.Ellipse, Colors.Red, 4.0);
         Assert.NotEqual(a, b);
+    }
+}
+
+/// <summary>CircleSpec.For's sizing rules (item 2, UX round 4) — the tool cursor is now a plain
+/// circle whose diameter tracks the stroke width 1:1, capped at a 64x64 bitmap with a numeric label
+/// once the width would otherwise need a bigger canvas.</summary>
+public class CircleSpecTests
+{
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(10.0)]
+    [InlineData(32.0)]
+    public void For_WidthWithinCap_DiameterMatchesStrokeWidth1To1(double strokeWidthPx)
+    {
+        var spec = CircleSpec.For(strokeWidthPx);
+        // Below CircleSpec.MinDiameter the circle is clamped to a fixed minimum instead.
+        double expected = Math.Max(strokeWidthPx, CircleSpec.MinDiameter);
+        Assert.Equal(expected, spec.Diameter);
+        Assert.False(spec.ShowLabel);
+    }
+
+    [Fact]
+    public void For_TinyWidth_ClampsToMinDiameter()
+    {
+        var spec = CircleSpec.For(1.0);
+        Assert.Equal(CircleSpec.MinDiameter, spec.Diameter);
+    }
+
+    [Fact]
+    public void For_CanvasSize_NeverExceedsMax()
+    {
+        foreach (double width in new[] { 1.0, 6.0, 20.0, 40.0, 52.0, 64.0, 100.0, 500.0 })
+        {
+            var spec = CircleSpec.For(width);
+            Assert.True(spec.CanvasSize <= CircleSpec.MaxCanvasSize);
+        }
+    }
+
+    [Fact]
+    public void For_WidthExceedingCap_CapsBitmapAndShowsLabel()
+    {
+        var spec = CircleSpec.For(500.0);
+        Assert.Equal(CircleSpec.MaxCanvasSize, spec.CanvasSize);
+        Assert.True(spec.ShowLabel);
+        Assert.Equal(500.0, spec.LabelWidthPx);
+        // The circle itself must still fit inside the capped canvas with room for the halo.
+        Assert.True(spec.Diameter < CircleSpec.MaxCanvasSize);
+    }
+
+    [Fact]
+    public void For_WidthAtExactCapBoundary_DoesNotShowLabel()
+    {
+        double boundaryWidth = CircleSpec.MaxCanvasSize - CircleSpec.Margin * 2;
+        var spec = CircleSpec.For(boundaryWidth);
+        Assert.False(spec.ShowLabel);
+        Assert.Equal(boundaryWidth, spec.Diameter);
     }
 }
