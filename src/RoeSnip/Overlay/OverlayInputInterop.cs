@@ -217,7 +217,12 @@ internal sealed class SessionKeyboardHook : IDisposable
                 var activeWindow = _getActiveWindow();
                 bool textEditing = activeWindow?.IsTextEditingActive == true;
 
-                if (textEditing && activeWindow is not null && !IsWindowForeground(activeWindow))
+                // Trust the normal WPF pipeline only when BOTH hold: the window is really OS-
+                // foreground AND the editor really holds WPF keyboard focus. "Foreground but focus
+                // landed elsewhere" (activation succeeded, focus lost during it) previously left an
+                // uncovered gap where typing went to the window and silently did nothing.
+                if (textEditing && activeWindow is not null
+                    && !(IsWindowForeground(activeWindow) && activeWindow.TextEditorHasKeyboardFocus))
                 {
                     // Guaranteed fallback tier (item 3b, UX round 3): the overlay does not currently
                     // hold real OS foreground/focus (every ForegroundActivator tier failed), so

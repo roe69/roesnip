@@ -109,6 +109,14 @@ public partial class OverlayWindow : Window
     /// control through the normal WPF pipeline (text-editing case) — see OverlayInputInterop.cs.</summary>
     internal bool IsTextEditingActive => _activeTextEditor is not null;
 
+    /// <summary>Volatile mirror of "the in-progress text editor holds WPF keyboard focus",
+    /// maintained by the editor's Got/LostKeyboardFocus events. Read by the session hook from its
+    /// own thread: only when this is true can the normal focus-dependent WPF pipeline be trusted
+    /// to deliver typing; otherwise the hook forwards keys via TextEditKeyForwarder.</summary>
+    internal bool TextEditorHasKeyboardFocus => _textEditorHasKeyboardFocus;
+
+    private volatile bool _textEditorHasKeyboardFocus;
+
     /// <summary>The in-progress text annotation editor, if any — read by TextEditKeyForwarder (item
     /// 3b's guaranteed fallback tier) to apply keystrokes directly when the window doesn't hold real
     /// OS focus. Null whenever <see cref="IsTextEditingActive"/> is false.</summary>
@@ -804,6 +812,12 @@ public partial class OverlayWindow : Window
         Canvas.SetTop(editor, originDip.Y);
         OverlayCanvas.Children.Add(editor);
 
+        // The session hook consults this from its own (non-dispatcher) thread to decide whether
+        // the normal WPF pipeline can be trusted with keys, so track it via focus events into a
+        // volatile flag rather than reading Keyboard.FocusedElement cross-thread.
+        editor.GotKeyboardFocus += (_, _) => _textEditorHasKeyboardFocus = true;
+        editor.LostKeyboardFocus += (_, _) => _textEditorHasKeyboardFocus = false;
+
         editor.Focus();
         Keyboard.Focus(editor);
 
@@ -816,6 +830,18 @@ public partial class OverlayWindow : Window
         // but never let a failure be fatal: if every tier fails, TextEditKeyForwarder (item 3b, the
         // session hook's guaranteed fallback tier) still guarantees typing is never dead.
         ForegroundActivator.Activate(this, "text-edit");
+
+        // Re-assert WPF keyboard focus AFTER the activation ladder settles: focus set before a
+        // window becomes active can be lost during activation, which leaves keys routing to the
+        // window instead of the editor even though everything "succeeded".
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, new Action(() =>
+        {
+            if (ReferenceEquals(_activeTextEditor, editor))
+            {
+                editor.Focus();
+                Keyboard.Focus(editor);
+            }
+        }));
     }
 
     private void CommitActiveTextEditor()
@@ -829,6 +855,7 @@ public partial class OverlayWindow : Window
         double fontSize = editor.FontSize;
         OverlayCanvas.Children.Remove(editor);
         _activeTextEditor = null;
+        _textEditorHasKeyboardFocus = false;
 
         if (!string.IsNullOrWhiteSpace(text))
         {
@@ -844,6 +871,7 @@ public partial class OverlayWindow : Window
         }
         OverlayCanvas.Children.Remove(editor);
         _activeTextEditor = null;
+        _textEditorHasKeyboardFocus = false;
     }
 
     // ---------- Scroll-wheel sizing (item 3) ----------

@@ -90,6 +90,12 @@ public sealed class TrayApp : ITrayNotifier
         _hotkeyManager = new HotkeyManager(() => TriggerCapture());
         _hotkeyManager.Register(_settings);
 
+        // Bridge WinForms' message pump into WPF's keyboard stack — without this every WPF window
+        // on this thread (overlay, settings, color picker) is keyboard-deaf even with real OS
+        // focus, which is the root cause behind rounds 1-3's key/typing complaints. See
+        // WpfKeyboardBridge's doc comment.
+        Application.AddMessageFilter(new WpfKeyboardBridge());
+
         Application.Run();
 
         _pipeListenerCts.Cancel();
