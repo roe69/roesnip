@@ -45,6 +45,12 @@ public sealed class AnnotationShape
     public Color StrokeColor { get; init; } = Colors.Red;
     public double StrokeWidthPx { get; init; } = 3.0;
     public string Text { get; set; } = string.Empty;
+
+    // Text-only styling (item 4) — unused by every other tool. StrokeWidthPx doubles as the text's
+    // font size (matching the pre-existing convention CommitText already used).
+    public string TextFontFamily { get; init; } = "Segoe UI";
+    public bool TextBold { get; init; }
+    public bool TextItalic { get; init; }
 }
 
 /// <summary>Vector annotation shapes drawn over an overlay's frozen preview. Renders itself scaled
@@ -132,8 +138,11 @@ public sealed class AnnotationLayer : FrameworkElement
 
     /// <summary>Commits a completed text annotation. Used by OverlayWindow's inline text editor
     /// (a real WPF TextBox, for native IME support) rather than the Begin/Update/EndShape drag
-    /// pipeline, since text entry isn't a drag gesture.</summary>
-    public void CommitText(Point physicalPt, string text, Color color, double fontSizePx)
+    /// pipeline, since text entry isn't a drag gesture. fontFamily/bold/italic (item 4) default to
+    /// the pre-existing plain style so any other caller keeps working unchanged.</summary>
+    public void CommitText(
+        Point physicalPt, string text, Color color, double fontSizePx,
+        string fontFamily = "Segoe UI", bool bold = false, bool italic = false)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -146,6 +155,9 @@ public sealed class AnnotationLayer : FrameworkElement
             StrokeColor = color,
             StrokeWidthPx = fontSizePx,
             Text = text,
+            TextFontFamily = fontFamily,
+            TextBold = bold,
+            TextItalic = italic,
         };
         shape.PointsPx.Add(physicalPt);
         _shapes.Add(shape);
@@ -267,7 +279,11 @@ public sealed class AnnotationLayer : FrameworkElement
             case AnnotationTool.Text:
                 if (shape.PointsPx.Count >= 1 && !string.IsNullOrEmpty(shape.Text))
                 {
-                    var typeface = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
+                    var typeface = new Typeface(
+                        new FontFamily(shape.TextFontFamily),
+                        shape.TextItalic ? FontStyles.Italic : FontStyles.Normal,
+                        shape.TextBold ? FontWeights.Bold : FontWeights.SemiBold,
+                        FontStretches.Normal);
                     var formatted = new FormattedText(
                         shape.Text,
                         CultureInfo.InvariantCulture,

@@ -37,6 +37,32 @@ public sealed record RoeSnipSettings
     public bool CopyOnSelect { get; init; } = false;              // confirming a selection also performs Copy
     public bool PrintScreenPromptAnswered { get; init; } = false; // one-time PrtScr/Snipping-Tool consent dialog already answered
 
+    // ---------- UX round 2 (additive; see DESIGN.md addendum / Overlay/ColorPickerWindow etc.) ----------
+
+    /// <summary>Last 8 picked colors from the standalone ColorPickerWindow's eyedropper ("Pick"),
+    /// newest first, stored as "#RRGGBB". Deduplicated (a re-pick of an existing entry moves it to
+    /// the front rather than adding a second copy) via Overlay/BoundedColorList.Push.</summary>
+    public List<string> RecentPickedColors { get; init; } = new();
+
+    /// <summary>Which format rows the ColorPickerWindow shows, toggled from its gear popover. All
+    /// default true (every format visible out of the box).</summary>
+    public bool ColorFormatShowHex { get; init; } = true;
+    public bool ColorFormatShowRgb { get; init; } = true;
+    public bool ColorFormatShowHsl { get; init; } = true;
+    public bool ColorFormatShowNits { get; init; } = true;
+
+    /// <summary>Last-used text-annotation style (toolbar's text-style group), applied to new text
+    /// annotations and carried across overlay sessions.</summary>
+    public string TextFontFamily { get; init; } = "Segoe UI";
+    public double TextFontSize { get; init; } = 20.0;
+    public bool TextBold { get; init; } = false;
+    public bool TextItalic { get; init; } = false;
+
+    /// <summary>Custom colors chosen via the toolbar's "+" swatch (System.Windows.Forms.ColorDialog),
+    /// stored as "#RRGGBB", newest first, capped at 8 (LRU — see Overlay/BoundedColorList.Push),
+    /// rendered as extra swatches in the toolbar after the built-in presets.</summary>
+    public List<string> CustomColors { get; init; } = new();
+
     public static RoeSnipSettings Default { get; } = new();
 
     private static string DefaultSaveDirectory() =>
