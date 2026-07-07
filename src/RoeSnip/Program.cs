@@ -35,6 +35,7 @@ public sealed record RoeSnipSettings
     public double? ToneMapPeakOverride { get; init; } = null;     // null => derive from monitor
     public bool RunAtStartup { get; init; } = false;
     public bool CopyOnSelect { get; init; } = false;              // confirming a selection also performs Copy
+    public bool PrintScreenPromptAnswered { get; init; } = false; // one-time PrtScr/Snipping-Tool consent dialog already answered
 
     public static RoeSnipSettings Default { get; } = new();
 

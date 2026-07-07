@@ -116,6 +116,7 @@ public class SettingsTests : IDisposable
             ToneMapPeakOverride = 4.0,
             RunAtStartup = true,
             CopyOnSelect = true,
+            PrintScreenPromptAnswered = true,
         };
 
         SettingsStore.Save(original, settingsPath);

@@ -1,5 +1,4 @@
 using System;
-using Microsoft.Win32;
 using RoeSnip.Interop;
 
 namespace RoeSnip.App;
@@ -8,23 +7,18 @@ namespace RoeSnip.App;
 /// DESIGN.md) and dispatches WM_HOTKEY to a caller-supplied callback (wired by TrayApp to
 /// <see cref="AppComposition.RunCaptureFlowAsync"/>).
 ///
-/// PrintScreen/Snipping-Tool consent flow (DESIGN.md): on Windows 11, a bare PrintScreen is
-/// intercepted for Snipping Tool whenever
-/// <c>HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled</c> is non-zero. The first time
-/// this process registers the PrintScreen-alone default hotkey, this class checks that value and,
-/// if set, shows a one-time dialog offering to disable it (writes 0 to that key) or instead
-/// register Ctrl+PrintScreen. That registry write happens ONLY as the direct result of an
-/// interactive "Yes" click on that dialog — this path must never run unattended/automated (no
-/// unit test exercises it; see PLAN.md §3.3 and the WP-C brief).</summary>
+/// This class is deliberately prompt-free: the one-time PrintScreen/Snipping-Tool consent flow
+/// (the dialog around <c>HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled</c>,
+/// DESIGN.md §2) lives in <see cref="TrayApp.ResolvePrintScreenConsent"/>, which owns the settings
+/// and can persist the user's answer. The settings handed to <see cref="Register"/> are expected
+/// to already be consent-resolved — keeping the (modal) prompt out of this class means merely
+/// registering a hotkey can never block the tray app's startup.</summary>
 public sealed class HotkeyManager : IDisposable
 {
     private const int HotkeyId = 1;
-    private const string PrintScreenRegistryKeyPath = @"Control Panel\Keyboard";
-    private const string PrintScreenValueName = "PrintScreenKeyForSnippingEnabled";
 
     private readonly HotkeyMessageWindow _window;
     private readonly Action _onHotkey;
-    private bool _consentAsked;
     private bool _registered;
 
     public HotkeyManager(Action onHotkey)
@@ -43,21 +37,16 @@ public sealed class HotkeyManager : IDisposable
     /// that itself and does not attempt to fake one.</summary>
     public bool IsRegistered => _registered;
 
-    /// <summary>(Re)registers the hotkey from the given settings, unregistering any previous
-    /// registration first. Called once at startup and again by SettingsWindow after the user
-    /// changes the hotkey.</summary>
+    /// <summary>(Re)registers the hotkey from the given (already consent-resolved) settings,
+    /// unregistering any previous registration first. Called once at startup and again by TrayApp
+    /// after SettingsWindow saves a hotkey change — in both cases the caller has run
+    /// TrayApp.ResolvePrintScreenConsent over the settings first.</summary>
     public void Register(RoeSnipSettings settings)
     {
         Unregister();
 
         uint modifiers = settings.HotkeyModifiers;
         uint virtualKey = settings.HotkeyVirtualKey;
-
-        if (modifiers == 0 && virtualKey == NativeMethods.VK_SNAPSHOT && !_consentAsked)
-        {
-            _consentAsked = true;
-            modifiers = ResolvePrintScreenConsent(modifiers);
-        }
 
         _registered = NativeMethods.RegisterHotKey(
             _window.Handle, HotkeyId, modifiers | NativeMethods.MOD_NOREPEAT, virtualKey);
@@ -84,74 +73,6 @@ public sealed class HotkeyManager : IDisposable
         if (id == HotkeyId)
         {
             _onHotkey();
-        }
-    }
-
-    /// <summary>Reads PrintScreenKeyForSnippingEnabled and, unless it's explicitly present AND
-    /// zero, asks the user (via a blocking dialog) whether to disable it or fall back to
-    /// Ctrl+PrintScreen. On Windows 11 an ABSENT value means the Snipping Tool intercept is ON by
-    /// default (not off) — treating "missing" as "no conflict" would silently make RoeSnip's
-    /// PrtScr hotkey never fire on a stock Win11 install, so only an explicit 0 counts as
-    /// "no conflict". Returns the modifiers RoeSnip should actually register with. Any registry or
-    /// dialog failure logs and falls back to keeping the PrintScreen-alone default (fail open on
-    /// the UX, not silently register nothing).</summary>
-    private static uint ResolvePrintScreenConsent(uint modifiers)
-    {
-        try
-        {
-            bool valuePresent;
-            int value;
-            using (var key = Registry.CurrentUser.OpenSubKey(PrintScreenRegistryKeyPath, writable: false))
-            {
-                object? raw = key?.GetValue(PrintScreenValueName);
-                switch (raw)
-                {
-                    case int i:
-                        valuePresent = true;
-                        value = i;
-                        break;
-                    case string s when int.TryParse(s, out int parsed):
-                        valuePresent = true;
-                        value = parsed;
-                        break;
-                    default:
-                        // Missing key/value (or unparseable) — Win11 default is "intercept ON",
-                        // so this must NOT be treated as value == 0 ("no conflict").
-                        valuePresent = false;
-                        value = 0;
-                        break;
-                }
-            }
-
-            if (valuePresent && value == 0)
-            {
-                return modifiers; // Explicitly disabled: Windows isn't intercepting a bare PrtScr.
-            }
-
-            var result = System.Windows.Forms.MessageBox.Show(
-                "Windows is currently set to open Snipping Tool when you press PrintScreen, which " +
-                "would prevent RoeSnip's screenshot hotkey from receiving it.\n\n" +
-                "Disable that Windows setting so PrintScreen triggers RoeSnip directly?\n\n" +
-                "Choosing \"No\" leaves the Windows setting alone and makes RoeSnip use " +
-                "Ctrl+PrintScreen instead.",
-                "RoeSnip - PrintScreen hotkey",
-                System.Windows.Forms.MessageBoxButtons.YesNo,
-                System.Windows.Forms.MessageBoxIcon.Question);
-
-            if (result == System.Windows.Forms.DialogResult.Yes)
-            {
-                using var writableKey = Registry.CurrentUser.OpenSubKey(PrintScreenRegistryKeyPath, writable: true);
-                writableKey?.SetValue(PrintScreenValueName, 0, RegistryValueKind.DWord);
-                return modifiers;
-            }
-
-            return NativeMethods.MOD_CONTROL;
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine(
-                $"RoeSnip: PrintScreen consent check failed, keeping PrintScreen-alone: {ex.Message}");
-            return modifiers;
         }
     }
 

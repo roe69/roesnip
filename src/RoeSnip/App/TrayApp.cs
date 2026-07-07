@@ -7,6 +7,8 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Microsoft.Win32;
+using RoeSnip.Interop;
 
 namespace RoeSnip.App;
 
@@ -19,6 +21,8 @@ public sealed class TrayApp : ITrayNotifier
 {
     private const string MutexName = @"Global\RoeSnip-SingleInstance";
     private const string PipeName = "RoeSnip-SingleInstance-Capture";
+    private const string PrintScreenRegistryKeyPath = @"Control Panel\Keyboard";
+    private const string PrintScreenValueName = "PrintScreenKeyForSnippingEnabled";
 
     private NotifyIcon? _notifyIcon;
     private HotkeyManager? _hotkeyManager;
@@ -54,9 +58,6 @@ public sealed class TrayApp : ITrayNotifier
         _uiThreadMarshal = new System.Windows.Forms.Control();
         _uiThreadMarshal.CreateControl();
 
-        _hotkeyManager = new HotkeyManager(() => TriggerCapture());
-        _hotkeyManager.Register(_settings);
-
         using var trayIcon = CreateTrayIcon();
         _notifyIcon = trayIcon;
 
@@ -74,6 +75,15 @@ public sealed class TrayApp : ITrayNotifier
 
         _pipeListenerCts = new CancellationTokenSource();
         _ = ListenForSignalAsync(_pipeListenerCts.Token);
+
+        // The consent resolution below can show a MODAL MessageBox (first launch on a machine
+        // where Windows intercepts PrtScr for Snipping Tool), so it must come AFTER the NotifyIcon
+        // and pipe listener are live — otherwise an unanswered dialog on an auto-start-at-login app
+        // leaves it with no tray icon and second-instance signals going nowhere until answered.
+        _settings = ResolvePrintScreenConsent(_settings);
+
+        _hotkeyManager = new HotkeyManager(() => TriggerCapture());
+        _hotkeyManager.Register(_settings);
 
         Application.Run();
 
@@ -114,10 +124,118 @@ public sealed class TrayApp : ITrayNotifier
     {
         var window = new SettingsWindow(_settings, updated =>
         {
-            _settings = updated;
+            // Same resolved path as startup: if the saved hotkey is bare PrintScreen, run it
+            // through the consent resolution before registering. PrintScreenPromptAnswered will
+            // already be true after the first-ever resolution, so this cannot re-trigger the
+            // prompt then — it only fires the one-time dialog in the edge case where the user
+            // never had bare PrtScr configured before (prompt never applied) and just switched
+            // to it now.
+            _settings = ResolvePrintScreenConsent(updated);
             _hotkeyManager?.Register(_settings);
         });
         window.ShowDialog();
+    }
+
+    /// <summary>The one-time PrintScreen/Snipping-Tool consent flow (DESIGN.md §2), applicable only
+    /// when the configured hotkey is bare PrintScreen (no modifiers). On Windows 11 an ABSENT
+    /// <c>HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled</c> value means the Snipping
+    /// Tool intercept is ON by default, so only an explicitly-present 0 counts as "no conflict";
+    /// anything else (present nonzero, absent, unparseable) means Windows would swallow the key.
+    /// In that case, unless the user has already answered the prompt once
+    /// (<see cref="RoeSnipSettings.PrintScreenPromptAnswered"/>, persisted), ask via a blocking
+    /// dialog: Yes writes 0 to that registry value (the write happens ONLY as the direct result of
+    /// that interactive click — never unattended; no unit test exercises this path) and keeps bare
+    /// PrtScr; No switches the hotkey to Ctrl+PrintScreen. Either answer is persisted with
+    /// PrintScreenPromptAnswered=true so the dialog truly happens once ever. Any registry or dialog
+    /// failure logs and returns the settings unchanged (fail open on the UX, not silently register
+    /// nothing) without marking the prompt as answered.</summary>
+    private static RoeSnipSettings ResolvePrintScreenConsent(RoeSnipSettings settings)
+    {
+        if (settings.HotkeyModifiers != 0 || settings.HotkeyVirtualKey != NativeMethods.VK_SNAPSHOT)
+        {
+            return settings; // consent flow only applies to the bare-PrintScreen hotkey
+        }
+
+        try
+        {
+            bool interceptExplicitlyDisabled;
+            using (var key = Registry.CurrentUser.OpenSubKey(PrintScreenRegistryKeyPath, writable: false))
+            {
+                interceptExplicitlyDisabled = key?.GetValue(PrintScreenValueName) switch
+                {
+                    int i => i == 0,
+                    string s when int.TryParse(s, out int parsed) => parsed == 0,
+                    // Missing key/value (or unparseable) — Win11 default is "intercept ON", so
+                    // this must NOT be treated as "no conflict".
+                    _ => false,
+                };
+            }
+
+            if (interceptExplicitlyDisabled)
+            {
+                return settings; // Windows isn't intercepting a bare PrtScr; nothing to do.
+            }
+
+            if (settings.PrintScreenPromptAnswered)
+            {
+                // Asked once before; honor whatever the persisted answer produced (a previous "No"
+                // saved HotkeyModifiers=MOD_CONTROL, a previous "Yes" wrote the registry value —
+                // which the user has since re-enabled if we got here; don't nag again).
+                return settings;
+            }
+
+            var result = MessageBox.Show(
+                "Windows is currently set to open Snipping Tool when you press PrintScreen, which " +
+                "would prevent RoeSnip's screenshot hotkey from receiving it.\n\n" +
+                "Disable that Windows setting so PrintScreen triggers RoeSnip directly?\n\n" +
+                "Choosing \"No\" leaves the Windows setting alone and makes RoeSnip use " +
+                "Ctrl+PrintScreen instead.",
+                "RoeSnip - PrintScreen hotkey",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+
+            RoeSnipSettings updated;
+            if (result == DialogResult.Yes)
+            {
+                try
+                {
+                    using var writableKey = Registry.CurrentUser.OpenSubKey(PrintScreenRegistryKeyPath, writable: true);
+                    writableKey?.SetValue(PrintScreenValueName, 0, RegistryValueKind.DWord);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(
+                        $"RoeSnip: failed to disable the Snipping Tool PrintScreen intercept: {ex.Message}");
+                }
+                updated = settings with { PrintScreenPromptAnswered = true };
+            }
+            else
+            {
+                updated = settings with
+                {
+                    HotkeyModifiers = NativeMethods.MOD_CONTROL,
+                    PrintScreenPromptAnswered = true,
+                };
+            }
+
+            try
+            {
+                SettingsStore.Save(updated);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"RoeSnip: failed to persist the PrintScreen consent answer: {ex.Message}");
+            }
+
+            return updated;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"RoeSnip: PrintScreen consent check failed, keeping PrintScreen-alone: {ex.Message}");
+            return settings;
+        }
     }
 
     private static void ShowAbout()
