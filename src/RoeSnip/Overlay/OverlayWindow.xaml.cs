@@ -682,15 +682,31 @@ public partial class OverlayWindow : Window
         SetSelection(null);
     }
 
-    /// <summary>Shows/hides the whole dim layer. Used by the flash-to-overlay handoff
-    /// (anti-double-dim): while the flash dimmer still covers this monitor the overlay starts
-    /// with its dim hidden (full-bright frozen preview under the flash's dim looks identical to
-    /// the flash over the live screen), and the dim is enabled in the ContentRendered handoff
-    /// right before the flash hides. Idempotent; does not touch the dim GEOMETRY (selection
-    /// holes), only visibility.</summary>
-    internal void SetDimLayerVisible(bool visible)
+    /// <summary>Flash-to-overlay handoff, take 2 (anti-double-dim): two stacked 45% dims in two
+    /// separate HWNDs can never swap atomically — any ordering shows either a double-dim frame
+    /// (45% darker blip) or a bright gap. So the overlay starts with its dim at opacity 0 (full-
+    /// bright frozen preview under the flash's dim == flash over the live screen, pixel-identical)
+    /// and the handoff CROSSFADES: this dim fades 0→1 while the flash window fades 1→0 over the
+    /// same duration. The stacked product mid-fade deviates at most ~9% in brightness for a few
+    /// frames — imperceptible, unlike either hard ordering.</summary>
+    internal void PrepareDimForFlashHandoff()
     {
-        DimPath.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        DimPath.Opacity = 0.0;
+    }
+
+    internal void BeginDimFadeIn(TimeSpan duration)
+    {
+        var fade = new DoubleAnimation(0.0, 1.0, duration)
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseInOut },
+        };
+        fade.Completed += (_, _) =>
+        {
+            // Release the animation's hold so nothing else ever fights a stuck animated value.
+            DimPath.BeginAnimation(OpacityProperty, null);
+            DimPath.Opacity = 1.0;
+        };
+        DimPath.BeginAnimation(OpacityProperty, fade);
     }
 
     private void UpdateDimGeometry()

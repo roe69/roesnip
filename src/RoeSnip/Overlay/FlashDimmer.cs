@@ -137,6 +137,21 @@ internal static class FlashDimmer
         }
     }
 
+    /// <summary>Crossfade half of the anti-double-dim handoff: fades this monitor's flash window
+    /// out over <paramref name="duration"/> (while the overlay fades its own dim in), then hides
+    /// it and resets opacity for reuse. See OverlayWindow.PrepareDimForFlashHandoff.</summary>
+    public static void FadeOutForMonitor(string deviceName, TimeSpan duration)
+    {
+        foreach (var window in s_windows)
+        {
+            if (window.IsVisible
+                && string.Equals(window.Monitor.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
+            {
+                window.FadeOutAndHide(duration);
+            }
+        }
+    }
+
     public static void HideAll()
     {
         foreach (var window in s_windows)
@@ -305,8 +320,39 @@ internal static class FlashDimmer
         {
             if (IsVisible)
             {
+                // Cancel any in-flight fade so a reuse after an interrupted crossfade can't start
+                // from a half-faded (or animation-held) opacity.
+                BeginAnimation(OpacityProperty, null);
+                Opacity = 1.0;
                 Hide();
             }
+        }
+
+        /// <summary>Crossfade half of the anti-double-dim handoff: fade to transparent over the
+        /// given duration, then Hide and reset opacity for the next session's reuse.</summary>
+        public void FadeOutAndHide(TimeSpan duration)
+        {
+            if (!IsVisible)
+            {
+                return;
+            }
+            var fade = new System.Windows.Media.Animation.DoubleAnimation(1.0, 0.0, duration)
+            {
+                EasingFunction = new System.Windows.Media.Animation.QuadraticEase
+                {
+                    EasingMode = System.Windows.Media.Animation.EasingMode.EaseInOut,
+                },
+            };
+            fade.Completed += (_, _) =>
+            {
+                BeginAnimation(OpacityProperty, null);
+                Opacity = 1.0;
+                if (IsVisible)
+                {
+                    Hide();
+                }
+            };
+            BeginAnimation(OpacityProperty, fade);
         }
 
         public void CloseFlash()
