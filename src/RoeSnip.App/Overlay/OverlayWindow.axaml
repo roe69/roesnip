@@ -1,0 +1,23 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:RoeSnip.App.Overlay"
+        x:Class="RoeSnip.App.Overlay.OverlayWindow"
+        WindowDecorations="None"
+        CanResize="False"
+        ShowInTaskbar="False"
+        Topmost="True"
+        WindowStartupLocation="Manual"
+        Background="Black"
+        Cursor="Cross"
+        UseLayoutRounding="True"
+        Focusable="True">
+    <Grid x:Name="RootGrid">
+        <Image x:Name="PreviewImage" Stretch="Fill"/>
+        <Path x:Name="DimPath" Fill="#8A000000" IsHitTestVisible="False"/>
+        <Canvas x:Name="OverlayCanvas" ClipToBounds="True">
+            <local:AnnotationLayer x:Name="Annotations"/>
+            <local:SelectionAdorner x:Name="Adorner"/>
+            <local:Magnifier x:Name="MagnifierControl"/>
+        </Canvas>
+    </Grid>
+</Window>
