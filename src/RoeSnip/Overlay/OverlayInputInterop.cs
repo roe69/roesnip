@@ -152,6 +152,12 @@ internal static class OverlayInputInterop
 /// guaranteed fallback tier (item 3b, UX round 3) that applies the keystroke directly against the
 /// TextBox, since nothing typed could otherwise ever reach it.
 ///
+/// SECOND EXCEPTION (UX round 5, item 2): while any OTHER text input in the overlay window (today:
+/// the toolbar size ComboBox's editable TextBox — see OverlayWindow.IsTextInputFocused) holds WPF
+/// keyboard focus and the window is genuinely OS-foreground, this hook intercepts NOTHING — all
+/// keys, Enter included, flow through the normal pipeline so typing a size can never trigger a
+/// session command. See the inline comment at that branch for why no forwarder tier is needed.
+///
 /// Lifecycle: installed once when the owning OverlaySession is constructed ("the session opens"),
 /// disposed exactly once from OverlaySession.Finish() — the single terminal point every session exit
 /// path (Cancel, CancelStage-to-empty, Confirm/Copy/Save/SaveHdr, an exception during Show(), or an
@@ -235,6 +241,24 @@ internal sealed class SessionKeyboardHook : IDisposable
                     bool capsLockOn = (OverlayInputInterop.GetKeyState(OverlayInputInterop.VK_CAPITAL) & 0x0001) != 0;
                     TextEditKeyForwarder.Forward(activeWindow, key, data.vkCode, data.scanCode, shift, capsLockOn, ctrl);
                     return (IntPtr)1;
+                }
+
+                // Generalized text-input guard (UX round 5, item 2): the toolbar's size ComboBox
+                // has an editable TextBox — the one non-annotation text input in the overlay.
+                // While it genuinely holds WPF keyboard focus AND the window is really OS-
+                // foreground (same double condition as the annotation-editor branch above, for the
+                // same reason: only then can the normal focus-dependent WPF pipeline be trusted),
+                // EVERY key passes through untouched — crucially including Enter, which the
+                // ComboBox handles itself (commit the typed size, hand focus back to the window)
+                // and which must NOT be swallowed here as confirm-the-snip mid-typing. Unlike the
+                // annotation editor there is no forwarder fallback tier: without real focus the
+                // user cannot be typing into the box in the first place (it only ever gains focus
+                // by a real click on a foreground window), so the normal session-key handling
+                // below stays correct in that state.
+                if (!textEditing && activeWindow is not null
+                    && activeWindow.IsTextInputFocused && IsWindowForeground(activeWindow))
+                {
+                    return OverlayInputInterop.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
                 }
 
                 bool isSessionKey = key == Key.Escape || key == Key.Enter

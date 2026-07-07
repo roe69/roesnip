@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 
 namespace RoeSnip.Overlay;
@@ -14,33 +14,29 @@ namespace RoeSnip.Overlay;
 // WP-A namespace, would otherwise shadow an outer-scope alias for "Color".)
 using Color = System.Windows.Media.Color;
 using UserControl = System.Windows.Controls.UserControl;
+using ContextMenu = System.Windows.Controls.ContextMenu;
+using MenuItem = System.Windows.Controls.MenuItem;
+using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
-/// <summary>Pictogram tool buttons (inline vector Path icons — no image assets), color/stroke-width
-/// pickers, undo, the three terminal action buttons (Copy / Save / Save HDR), and a Cancel X that
-/// always closes the whole overlay. Always attached below-right of the current selection by the
-/// owning OverlayWindow (flipping above if it would go off-screen). All buttons are always visible
-/// — no hover-only-revealed controls, per the product's UI style requirement — and every button is
+/// <summary>Pictogram tool buttons (inline vector Path icons — no image assets), the editable
+/// swatch palette (right-click Replace/Remove per swatch — item 3, UX round 5), the numeric size
+/// input (item 2, UX round 5 — one editable px/pt ComboBox instead of the old fixed stroke dots),
+/// undo, the terminal action buttons (Copy / Save, with HDR export on Save's right-click menu —
+/// item 4, UX round 5), and a Cancel X that always closes the whole overlay. Always attached
+/// below-right of the current selection by the owning OverlayWindow (flipping above if it would go
+/// off-screen). All buttons are always visible — no hover-only-revealed controls, per the product's
+/// UI style requirement — and every control except the size ComboBox's editable TextBox is
 /// Focusable=false so keystrokes (Esc/Enter/Ctrl+...) keep reaching the overlay window's handler
-/// even right after a toolbar click.</summary>
+/// even right after a toolbar click. The size box is the one deliberate exception (typing needs
+/// real keyboard focus); OverlayWindow.IsTextInputFocused + the session keyboard hook's pass-through
+/// branch (OverlayInputInterop.cs) keep its keystrokes from triggering session commands.
+///
+/// The root Cursor=Arrow (item 1, UX round 5) beats the window-level brush-circle tool cursor via
+/// WPF's element-level cursor resolution, so hovering any toolbar control shows a normal pointer;
+/// the ComboBox dropdowns and context menus set their own Arrow explicitly since Popup subtrees
+/// don't inherit it.</summary>
 public partial class ToolbarControl : UserControl
 {
-    private static readonly (Color Color, string Name)[] PresetColors =
-    {
-        (Color.FromRgb(0xE5, 0x39, 0x35), "Red"),
-        (Color.FromRgb(0xFF, 0xB3, 0x00), "Amber"),
-        (Color.FromRgb(0x43, 0xA0, 0x47), "Green"),
-        (Color.FromRgb(0x1E, 0x88, 0xE5), "Blue"),
-        (Color.FromRgb(0xFF, 0xFF, 0xFF), "White"),
-        (Color.FromRgb(0x21, 0x21, 0x21), "Black"),
-    };
-
-    private static readonly (double Width, string Name)[] StrokeWidths =
-    {
-        (2.0, "Thin (2 px)"),
-        (4.0, "Medium (4 px)"),
-        (8.0, "Thick (8 px)"),
-    };
-
     /// <summary>The fixed font-family choices for the text-style group (item 4) — a small,
     /// universally-installed set rather than an open-ended system font enumeration.</summary>
     private static readonly string[] FontFamilyChoices =
@@ -48,14 +44,17 @@ public partial class ToolbarControl : UserControl
         "Segoe UI", "Arial", "Calibri", "Consolas", "Times New Roman", "Comic Sans MS",
     };
 
-    private const double MinFontSize = 6.0;
-    private const double MaxFontSize = 96.0;
-
     private readonly ToggleButton[] _toolButtons;
     private ToggleButton? _selectedColorSwatch;
-    private ToggleButton? _selectedStrokeSwatch;
+    private double _strokeWidth = 4.0;
     private double _fontSize = 20.0;
     private bool _suppressFontFamilyEvent;
+
+    // Size ComboBox state (item 2): whether it currently edits the font size (Text tool, "pt") or
+    // the stroke width (every other tool, "px"), plus a guard so programmatic repopulation/Text
+    // writes never re-raise the *Selected events they themselves were driven by.
+    private bool _sizeModeIsFont;
+    private bool _suppressSizeEvents;
 
     public event Action<AnnotationTool>? ToolSelected;
     public event Action<Color>? ColorSelected;
@@ -66,16 +65,22 @@ public partial class ToolbarControl : UserControl
     public event Action? SaveHdrClicked;
     public event Action? CancelClicked;
 
-    /// <summary>Text-style group (item 4) — font size (scroll target + click steppers), Bold,
-    /// Italic, font family. Only ever visible while the Text tool is selected.</summary>
+    /// <summary>Text-style group (item 4) — Bold, Italic, font family. Only ever visible while the
+    /// Text tool is selected. Font size is edited via the shared size ComboBox (pt mode).</summary>
     public event Action<double>? FontSizeSelected;
     public event Action<bool>? BoldToggled;
     public event Action<bool>? ItalicToggled;
     public event Action<string>? FontFamilySelected;
 
-    /// <summary>The "+" custom-color swatch (item 5) — OverlayWindow owns the actual
-    /// System.Windows.Forms.ColorDialog (it needs the window's HWND as dialog owner).</summary>
+    /// <summary>The "+" swatch — OverlayWindow owns the actual System.Windows.Forms.ColorDialog
+    /// (it needs the window's HWND as dialog owner), appends the pick to the persisted palette.</summary>
     public event Action? CustomColorRequested;
+
+    /// <summary>Right-click palette editing (item 3, UX round 5): the argument is the swatch's
+    /// index into the palette list last passed to <see cref="SetPaletteColors"/>. OverlayWindow
+    /// owns the mutation + persistence (and the Replace dialog) and calls SetPaletteColors again.</summary>
+    public event Action<int>? PaletteReplaceRequested;
+    public event Action<int>? PaletteRemoveRequested;
 
     public ToolbarControl()
     {
@@ -87,52 +92,19 @@ public partial class ToolbarControl : UserControl
             ArrowToolButton, LineToolButton, FreehandToolButton, TextToolButton,
         };
 
-        BuildColorSwatches();
-        BuildStrokeWidthSwatches();
         BuildFontFamilyChoices();
-    }
+        RefreshSizeCombo();
 
-    private void BuildColorSwatches()
-    {
-        foreach (var (color, name) in PresetColors)
+        // Commit whatever was typed whenever keyboard focus leaves the size box entirely (clicking
+        // a tool, clicking the image, Enter's own focus hand-back) — never leave a typed-but-
+        // uncommitted value silently reverting later.
+        SizeComboBox.IsKeyboardFocusWithinChanged += (_, e) =>
         {
-            var swatch = new ToggleButton
+            if (e.NewValue is false)
             {
-                Style = (Style)Resources["ColorSwatchStyle"],
-                Background = new SolidColorBrush(color),
-                Tag = color,
-                ToolTip = name,
-            };
-            swatch.Click += OnColorSwatchClick;
-            ColorSwatchPanel.Children.Add(swatch);
-
-            if (_selectedColorSwatch is null)
-            {
-                _selectedColorSwatch = swatch;
-                swatch.IsChecked = true;
+                CommitSizeText();
             }
-        }
-    }
-
-    private void BuildStrokeWidthSwatches()
-    {
-        foreach (var (width, name) in StrokeWidths)
-        {
-            var swatch = new ToggleButton
-            {
-                Style = (Style)Resources["StrokeWidthSwatchStyle"],
-                Tag = width * 2.0, // dot diameter scales with stroke width, min ~4 DIPs
-                ToolTip = name,
-            };
-            swatch.Click += OnStrokeWidthSwatchClick;
-            StrokeWidthPanel.Children.Add(swatch);
-
-            if (width == StrokeWidths[1].Width) // default to the medium preset
-            {
-                _selectedStrokeSwatch = swatch;
-                swatch.IsChecked = true;
-            }
-        }
+        };
     }
 
     private void SelectTool(ToggleButton selected, AnnotationTool tool)
@@ -146,6 +118,9 @@ public partial class ToolbarControl : UserControl
         // and collapsed for every other tool.
         TextStylePanel.Visibility = tool == AnnotationTool.Text ? Visibility.Visible : Visibility.Collapsed;
 
+        // The size box follows the tool: pt (font size) for Text, px (stroke width) otherwise.
+        SetSizeMode(isFont: tool == AnnotationTool.Text);
+
         ToolSelected?.Invoke(tool);
     }
 
@@ -157,6 +132,92 @@ public partial class ToolbarControl : UserControl
     private void OnFreehandToolClick(object sender, RoutedEventArgs e) => SelectTool(FreehandToolButton, AnnotationTool.Freehand);
     private void OnTextToolClick(object sender, RoutedEventArgs e) => SelectTool(TextToolButton, AnnotationTool.Text);
 
+    // ---------- Editable swatch palette (item 3, UX round 5) ----------
+
+    /// <summary>Rebuilds the swatch row from the persisted palette (RoeSnipSettings.PaletteColors,
+    /// migrated/capped by SwatchPalette) — called by OverlayWindow when the toolbar is (re)shown
+    /// and after every palette edit. The swatch matching <paramref name="selectedColor"/> is
+    /// checked (falling back to the first swatch, without raising ColorSelected — OverlayWindow
+    /// keeps its current color aligned with the palette before calling this).</summary>
+    public void SetPaletteColors(IReadOnlyList<string> hexColors, Color selectedColor)
+    {
+        ColorSwatchPanel.Children.Clear();
+        _selectedColorSwatch = null;
+
+        string selectedHex = ColorFormatting.HexWithHash(selectedColor.R, selectedColor.G, selectedColor.B);
+        bool removeEnabled = hexColors.Count > 1;
+
+        for (int i = 0; i < hexColors.Count; i++)
+        {
+            string hex = hexColors[i];
+            Color color;
+            try
+            {
+                if (System.Windows.Media.ColorConverter.ConvertFromString(hex) is not Color parsed)
+                {
+                    continue;
+                }
+                color = parsed;
+            }
+            catch (FormatException)
+            {
+                continue; // a hand-edited settings file can hold garbage; skip, never crash
+            }
+
+            var swatch = new ToggleButton
+            {
+                Style = (Style)Resources["ColorSwatchStyle"],
+                Background = new SolidColorBrush(color),
+                Tag = color,
+                ToolTip = SwatchPalette.NameFor(hex),
+                ContextMenu = BuildSwatchContextMenu(i, removeEnabled),
+            };
+            swatch.Click += OnColorSwatchClick;
+            ColorSwatchPanel.Children.Add(swatch);
+
+            if (_selectedColorSwatch is null && string.Equals(hex, selectedHex, StringComparison.OrdinalIgnoreCase))
+            {
+                _selectedColorSwatch = swatch;
+                swatch.IsChecked = true;
+            }
+        }
+
+        // Never show a palette with nothing checked: fall back to the first swatch visually
+        // (no ColorSelected raise — display-only, mirroring how the old preset row initialized).
+        if (_selectedColorSwatch is null && ColorSwatchPanel.Children.Count > 0)
+        {
+            _selectedColorSwatch = (ToggleButton)ColorSwatchPanel.Children[0];
+            _selectedColorSwatch.IsChecked = true;
+        }
+    }
+
+    /// <summary>Per-swatch right-click menu: Replace... / Remove (item 3, UX round 5). Remove is
+    /// disabled whenever it would leave the palette empty. Index is captured per swatch — the whole
+    /// row is rebuilt on every palette change, so indices can never go stale.</summary>
+    private ContextMenu BuildSwatchContextMenu(int paletteIndex, bool removeEnabled)
+    {
+        var replaceItem = new MenuItem
+        {
+            Header = "Replace...",
+            Style = (Style)Resources["DarkMenuItemStyle"],
+        };
+        replaceItem.Click += (_, _) => PaletteReplaceRequested?.Invoke(paletteIndex);
+
+        var removeItem = new MenuItem
+        {
+            Header = "Remove",
+            Style = (Style)Resources["DarkMenuItemStyle"],
+            IsEnabled = removeEnabled,
+            ToolTip = removeEnabled ? null : "The palette must keep at least one color",
+        };
+        removeItem.Click += (_, _) => PaletteRemoveRequested?.Invoke(paletteIndex);
+
+        var menu = new ContextMenu { Style = (Style)Resources["DarkContextMenuStyle"] };
+        menu.Items.Add(replaceItem);
+        menu.Items.Add(removeItem);
+        return menu;
+    }
+
     private void OnColorSwatchClick(object sender, RoutedEventArgs e)
     {
         var clicked = (ToggleButton)sender;
@@ -164,35 +225,21 @@ public partial class ToolbarControl : UserControl
         ColorSelected?.Invoke((Color)clicked.Tag);
     }
 
-    /// <summary>Shared by built-in and custom-color swatches (item 5) — they form a single
-    /// selection group spanning both panels, so picking one always un-checks every other swatch
-    /// regardless of which panel it lives in.</summary>
+    /// <summary>Swatches form a single selection group: picking one un-checks every other.</summary>
     private void SelectColorSwatch(ToggleButton clicked)
     {
         foreach (ToggleButton swatch in ColorSwatchPanel.Children)
         {
             swatch.IsChecked = ReferenceEquals(swatch, clicked);
         }
-        foreach (ToggleButton swatch in CustomColorPanel.Children)
-        {
-            swatch.IsChecked = ReferenceEquals(swatch, clicked);
-        }
         _selectedColorSwatch = clicked;
     }
 
-    private void OnStrokeWidthSwatchClick(object sender, RoutedEventArgs e)
+    private void OnAddCustomColorClick(object sender, RoutedEventArgs e)
     {
-        var clicked = (ToggleButton)sender;
-        foreach (ToggleButton swatch in StrokeWidthPanel.Children)
-        {
-            swatch.IsChecked = ReferenceEquals(swatch, clicked);
-        }
-        _selectedStrokeSwatch = clicked;
-
-        int index = StrokeWidthPanel.Children.IndexOf(clicked);
-        double width = index >= 0 && index < StrokeWidths.Length ? StrokeWidths[index].Width : StrokeWidths[1].Width;
-        SetStrokeWidth(width);
-        StrokeWidthSelected?.Invoke(width);
+        // This is a plain trigger button, not a real toggle state — it never stays "checked".
+        AddCustomColorButton.IsChecked = false;
+        CustomColorRequested?.Invoke();
     }
 
     /// <summary>Re-checks the default Select tool without raising ToolSelected — called by the
@@ -205,35 +252,180 @@ public partial class ToolbarControl : UserControl
             button.IsChecked = ReferenceEquals(button, SelectToolButton);
         }
         TextStylePanel.Visibility = Visibility.Collapsed;
+        SetSizeMode(isFont: false);
     }
 
-    // ---------- Scroll-wheel sizing support (item 3) — the numeric displays this updates ----------
+    // ---------- Numeric size input (item 2, UX round 5) ----------
 
-    /// <summary>Live-updates the stroke-width label from a scroll-wheel change (OverlayWindow calls
-    /// this; it does not itself raise StrokeWidthSelected — the wheel handler already knows the new
-    /// width and drives OverlayWindow's own state directly). Also called internally when a preset
-    /// swatch is clicked, so the label always reflects the true current width.</summary>
+    /// <summary>Live-updates the size box from a scroll-wheel change (OverlayWindow calls this; it
+    /// does not itself raise StrokeWidthSelected — the wheel handler already knows the new width
+    /// and drives OverlayWindow's own state directly). Also the canonical-text refresh after a
+    /// typed commit.</summary>
     public void SetStrokeWidth(double width)
     {
-        StrokeWidthLabel.Text = string.Create(CultureInfo.InvariantCulture, $"{width:0}px");
-
-        // Reflect an exact preset match in the swatch row; otherwise (a scroll-wheel value that
-        // doesn't land on a preset) leave none of them checked rather than lying about which one
-        // is "selected".
-        ToggleButton? matching = null;
-        for (int i = 0; i < StrokeWidths.Length && i < StrokeWidthPanel.Children.Count; i++)
+        _strokeWidth = SizeInput.ClampStroke(width);
+        if (!_sizeModeIsFont)
         {
-            if (Math.Abs(StrokeWidths[i].Width - width) < 0.01)
+            SetSizeComboTextSuppressed(SizeInput.FormatPx(_strokeWidth));
+        }
+    }
+
+    /// <summary>Live-updates the size box from a scroll-wheel font resize — mirrors
+    /// <see cref="SetStrokeWidth"/>'s role for the Text tool's pt mode.</summary>
+    public void SetFontSize(double size)
+    {
+        _fontSize = SizeInput.ClampFont(size);
+        if (_sizeModeIsFont)
+        {
+            SetSizeComboTextSuppressed(SizeInput.FormatPt(_fontSize));
+        }
+    }
+
+    private void SetSizeMode(bool isFont)
+    {
+        if (_sizeModeIsFont == isFont && SizeComboBox.Items.Count > 0)
+        {
+            return;
+        }
+        _sizeModeIsFont = isFont;
+        RefreshSizeCombo();
+    }
+
+    /// <summary>Repopulates the dropdown presets and the displayed text for the current mode
+    /// (px: SizeInput.StrokePresetsPx / pt: SizeInput.FontPresetsPt), suppressing the selection/
+    /// text events the repopulation itself fires.</summary>
+    private void RefreshSizeCombo()
+    {
+        _suppressSizeEvents = true;
+        try
+        {
+            SizeComboBox.Items.Clear();
+            var presets = _sizeModeIsFont ? SizeInput.FontPresetsPt : SizeInput.StrokePresetsPx;
+            foreach (double preset in presets)
             {
-                matching = (ToggleButton)StrokeWidthPanel.Children[i];
-                break;
+                SizeComboBox.Items.Add(_sizeModeIsFont ? SizeInput.FormatPt(preset) : SizeInput.FormatPx(preset));
+            }
+            SizeComboBox.Text = _sizeModeIsFont ? SizeInput.FormatPt(_fontSize) : SizeInput.FormatPx(_strokeWidth);
+        }
+        finally
+        {
+            _suppressSizeEvents = false;
+        }
+    }
+
+    private void SetSizeComboTextSuppressed(string text)
+    {
+        _suppressSizeEvents = true;
+        try
+        {
+            SizeComboBox.Text = text;
+        }
+        finally
+        {
+            _suppressSizeEvents = false;
+        }
+    }
+
+    /// <summary>Parses/clamps whatever is in the size box and applies it: updates the tool state
+    /// via StrokeWidthSelected/FontSizeSelected (OverlayWindow updates the brush + cursor circle
+    /// immediately) and rewrites the box to the canonical "Npx"/"Npt" form. Unparseable text
+    /// reverts to the current value. Idempotent — safe to call from both Enter and focus-loss.</summary>
+    private void CommitSizeText()
+    {
+        if (_suppressSizeEvents)
+        {
+            return;
+        }
+
+        if (!SizeInput.TryParse(SizeComboBox.Text, out double raw))
+        {
+            SetSizeComboTextSuppressed(_sizeModeIsFont ? SizeInput.FormatPt(_fontSize) : SizeInput.FormatPx(_strokeWidth));
+            return;
+        }
+
+        if (_sizeModeIsFont)
+        {
+            double value = SizeInput.ClampFont(raw);
+            bool changed = Math.Abs(value - _fontSize) > 0.001;
+            SetFontSize(value);
+            if (changed)
+            {
+                FontSizeSelected?.Invoke(value);
             }
         }
-        foreach (ToggleButton swatch in StrokeWidthPanel.Children)
+        else
         {
-            swatch.IsChecked = ReferenceEquals(swatch, matching);
+            double value = SizeInput.ClampStroke(raw);
+            bool changed = Math.Abs(value - _strokeWidth) > 0.001;
+            SetStrokeWidth(value);
+            if (changed)
+            {
+                StrokeWidthSelected?.Invoke(value);
+            }
         }
-        _selectedStrokeSwatch = matching;
+    }
+
+    /// <summary>Enter commits and hands keyboard focus back to the overlay window (so the NEXT
+    /// Enter confirms the snip — this one never does; the session hook passes keys through while
+    /// the box is focused, see OverlayInputInterop.cs). Esc reverts and hands focus back likewise,
+    /// deliberately consuming it so it can't double as "cancel the snip" mid-typing.</summary>
+    private void OnSizeComboKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            CommitSizeText();
+            SizeComboBox.IsDropDownOpen = false;
+            ReturnFocusToOverlayWindow();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            SetSizeComboTextSuppressed(_sizeModeIsFont ? SizeInput.FormatPt(_fontSize) : SizeInput.FormatPx(_strokeWidth));
+            SizeComboBox.IsDropDownOpen = false;
+            ReturnFocusToOverlayWindow();
+            e.Handled = true;
+        }
+    }
+
+    private void OnSizeComboSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressSizeEvents || SizeComboBox.SelectedItem is not string presetText)
+        {
+            return;
+        }
+
+        // Apply the preset directly (the editable Text may not have synced yet at this point),
+        // then hand focus back — picking from the dropdown is a complete gesture.
+        SetSizeComboTextSuppressed(presetText);
+        CommitSizeText();
+        ReturnFocusToOverlayWindow();
+    }
+
+    private void ReturnFocusToOverlayWindow()
+    {
+        if (Window.GetWindow(this) is { } window)
+        {
+            window.Focus();
+            Keyboard.Focus(window);
+        }
+    }
+
+    /// <summary>True when the given event source sits inside the size ComboBox — OverlayWindow uses
+    /// this to decide whether a toolbar click should yank keyboard focus back to the window (any
+    /// toolbar click that is NOT into the size box should, since every other control is
+    /// Focusable=false and would otherwise leave the box focused forever).</summary>
+    internal bool IsWithinSizeInput(DependencyObject? source)
+    {
+        var current = source;
+        while (current is not null)
+        {
+            if (ReferenceEquals(current, SizeComboBox))
+            {
+                return true;
+            }
+            current = current is Visual ? VisualTreeHelper.GetParent(current) : null;
+        }
+        return false;
     }
 
     // ---------- Text-style group (item 4) ----------
@@ -269,25 +461,6 @@ public partial class ToolbarControl : UserControl
         ItalicToggleButton.IsChecked = italic;
     }
 
-    /// <summary>Live-updates the font-size label from a scroll-wheel change — mirrors
-    /// <see cref="SetStrokeWidth"/>'s role for the stroke-width label.</summary>
-    public void SetFontSize(double size)
-    {
-        _fontSize = Math.Clamp(size, MinFontSize, MaxFontSize);
-        FontSizeLabel.Text = string.Create(CultureInfo.InvariantCulture, $"{_fontSize:0}pt");
-    }
-
-    private void OnFontSizeDownClick(object sender, RoutedEventArgs e) => StepFontSize(-2.0);
-
-    private void OnFontSizeUpClick(object sender, RoutedEventArgs e) => StepFontSize(2.0);
-
-    private void StepFontSize(double delta)
-    {
-        double newSize = Math.Clamp(_fontSize + delta, MinFontSize, MaxFontSize);
-        SetFontSize(newSize);
-        FontSizeSelected?.Invoke(newSize);
-    }
-
     private void OnBoldToggleClick(object sender, RoutedEventArgs e) => BoldToggled?.Invoke(BoldToggleButton.IsChecked == true);
 
     private void OnItalicToggleClick(object sender, RoutedEventArgs e) => ItalicToggled?.Invoke(ItalicToggleButton.IsChecked == true);
@@ -301,42 +474,6 @@ public partial class ToolbarControl : UserControl
         if (FontFamilyComboBox.SelectedItem is string family)
         {
             FontFamilySelected?.Invoke(family);
-        }
-    }
-
-    // ---------- Custom colors (item 5) ----------
-
-    private void OnAddCustomColorClick(object sender, RoutedEventArgs e)
-    {
-        // This is a plain trigger button, not a real toggle state — it never stays "checked".
-        AddCustomColorButton.IsChecked = false;
-        CustomColorRequested?.Invoke();
-    }
-
-    /// <summary>Rebuilds the custom-color swatch row from the persisted palette (newest first,
-    /// capped at 8 by BoundedColorList) — called by OverlayWindow after every settings change and
-    /// once when the toolbar is (re)shown so a reused toolbar instance always reflects the current
-    /// palette.</summary>
-    public void SetCustomColors(IReadOnlyList<string> hexColors)
-    {
-        CustomColorPanel.Children.Clear();
-
-        foreach (var hex in hexColors)
-        {
-            if (System.Windows.Media.ColorConverter.ConvertFromString(hex) is not Color color)
-            {
-                continue;
-            }
-
-            var swatch = new ToggleButton
-            {
-                Style = (Style)Resources["ColorSwatchStyle"],
-                Background = new SolidColorBrush(color),
-                Tag = color,
-                ToolTip = hex,
-            };
-            swatch.Click += OnColorSwatchClick;
-            CustomColorPanel.Children.Add(swatch);
         }
     }
 

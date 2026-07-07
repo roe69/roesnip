@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -122,6 +123,17 @@ public partial class OverlayWindow : Window
     /// OS focus. Null whenever <see cref="IsTextEditingActive"/> is false.</summary>
     internal TextBox? ActiveTextEditor => _activeTextEditor;
 
+    /// <summary>Volatile "some text input inside this window holds WPF keyboard focus" flag (UX
+    /// round 5, item 2) — the generalization of <see cref="TextEditorHasKeyboardFocus"/> to ANY
+    /// TextBoxBase in the window, today the toolbar size ComboBox's editable TextBox (and the
+    /// annotation editor, which the more specific IsTextEditingActive machinery checks first).
+    /// Maintained by window-level Got/LostKeyboardFocus class handlers; read by SessionKeyboardHook
+    /// from its own thread to pass ALL keys through (Enter included — the ComboBox commits it
+    /// locally) instead of swallowing them as session commands while the user is typing a size.</summary>
+    internal bool IsTextInputFocused => _textInputFocused;
+
+    private volatile bool _textInputFocused;
+
     /// <summary>True while the magnifier loupe (item 4, UX round 3; lifecycle fixed in UX round 4)
     /// should track the cursor: pick-only mode always shows it (it's the point of that mode);
     /// otherwise it's visible only while this window owns no selection AND no drag of any kind is
@@ -170,6 +182,13 @@ public partial class OverlayWindow : Window
         MouseEnter += OnMouseEnter;
         MouseLeave += OnMouseLeave;
         Deactivated += OnDeactivated;
+
+        // Track whether ANY text input in this window holds keyboard focus (see IsTextInputFocused)
+        // — handledEventsToo because TextBoxBase marks these focus events handled internally.
+        AddHandler(Keyboard.GotKeyboardFocusEvent,
+            new KeyboardFocusChangedEventHandler(OnAnyKeyboardFocusChanged), handledEventsToo: true);
+        AddHandler(Keyboard.LostKeyboardFocusEvent,
+            new KeyboardFocusChangedEventHandler(OnAnyKeyboardFocusChanged), handledEventsToo: true);
         SizeChanged += (_, _) =>
         {
             SyncChromeSizes();
@@ -252,7 +271,23 @@ public partial class OverlayWindow : Window
     {
         if (IsWithinToolbar(e.OriginalSource as DependencyObject))
         {
+            // Clicking any toolbar control OTHER than the size box while the size box holds
+            // keyboard focus hands focus back to the window (every other toolbar control is
+            // Focusable=false and would never take it) — otherwise the box would keep focus
+            // forever and Enter would keep committing the size instead of confirming the snip.
+            if (_textInputFocused && _activeTextEditor is null
+                && _toolbar?.IsWithinSizeInput(e.OriginalSource as DependencyObject) != true)
+            {
+                Keyboard.Focus(this);
+            }
             return; // let the toolbar's own controls handle their own click
+        }
+
+        // Same hand-back for clicks on the overlay itself (starting a drag/annotation while the
+        // size box was still focused).
+        if (_textInputFocused && _activeTextEditor is null)
+        {
+            Keyboard.Focus(this);
         }
 
         var dip = e.GetPosition(this);
@@ -531,8 +566,23 @@ public partial class OverlayWindow : Window
 
     // ---------- Keyboard ----------
 
+    /// <summary>Single handler for both Got/LostKeyboardFocus at the window level: the flag simply
+    /// mirrors "the element gaining focus is a text input". Focus leaving the window entirely
+    /// (NewFocus null / another HWND) lands here via LostKeyboardFocus and clears the flag.</summary>
+    private void OnAnyKeyboardFocusChanged(object sender, KeyboardFocusChangedEventArgs e) =>
+        _textInputFocused = e.NewFocus is System.Windows.Controls.Primitives.TextBoxBase;
+
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (_textInputFocused && _activeTextEditor is null)
+        {
+            // A toolbar text input (the size ComboBox) holds focus: every key — Enter included —
+            // must tunnel on to it rather than be treated as a session command; the ComboBox's own
+            // Enter/Esc handling commits/reverts and hands focus back (ToolbarControl). The
+            // annotation editor case stays with ProcessKeyCommand, whose first branch implements
+            // its Esc/Enter semantics.
+            return;
+        }
         if (ProcessKeyCommand(e.Key, Keyboard.Modifiers))
         {
             e.Handled = true;
@@ -732,15 +782,47 @@ public partial class OverlayWindow : Window
                 }
             };
 
-            // Custom colors (item 5): "+" swatch opens System.Windows.Forms.ColorDialog.
+            // Editable palette (item 3, UX round 5): "+" appends via ColorDialog; each swatch's
+            // right-click menu edits in place. All mutations persist immediately via SettingsStore.
             _toolbar.CustomColorRequested += OnCustomColorRequested;
+            _toolbar.PaletteReplaceRequested += OnPaletteReplaceRequested;
+            _toolbar.PaletteRemoveRequested += OnPaletteRemoveRequested;
 
             OverlayCanvas.Children.Add(_toolbar);
         }
 
         _toolbar.InitializeTextStyle(_textFontFamily, _textFontSize, _textBold, _textItalic);
-        _toolbar.SetCustomColors(_liveSettings.CustomColors);
+        RefreshToolbarPalette();
+        _toolbar.SetStrokeWidth(_currentStrokeWidth);
         _toolbar.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>Pushes the current effective palette (persisted PaletteColors, or the migration
+    /// seed of defaults + legacy CustomColors on a pre-round-5 settings file) into the toolbar,
+    /// first snapping <see cref="_currentColor"/> onto the palette if it isn't in it — the checked
+    /// swatch must never lie about the actual draw color.</summary>
+    private void RefreshToolbarPalette()
+    {
+        var palette = SwatchPalette.EffectivePalette(_liveSettings.PaletteColors, _liveSettings.CustomColors);
+        if (palette.Count > 0 && !PaletteContains(palette, _currentColor) && TryParseHex(palette[0]) is { } first)
+        {
+            _currentColor = first;
+            UpdateToolCursor();
+        }
+        _toolbar?.SetPaletteColors(palette, _currentColor);
+    }
+
+    private static bool PaletteContains(IReadOnlyList<string> palette, Color color)
+    {
+        string hex = ColorFormatting.HexWithHash(color.R, color.G, color.B);
+        foreach (var entry in palette)
+        {
+            if (string.Equals(entry, hex, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void HideToolbar()
@@ -926,12 +1008,12 @@ public partial class OverlayWindow : Window
 
         if (_currentTool == AnnotationTool.Text)
         {
-            double newSize = Math.Clamp(_textFontSize + notches * 2.0, 6.0, 96.0);
+            double newSize = SizeInput.ClampFont(_textFontSize + notches * 2.0);
             SetTextFontSize(newSize, showIndicator: true, cursorDip);
         }
         else
         {
-            double newWidth = Math.Clamp(_currentStrokeWidth + notches, 1.0, 32.0);
+            double newWidth = SizeInput.ClampStroke(_currentStrokeWidth + notches);
             SetStrokeWidth(newWidth, cursorDip);
         }
 
@@ -1031,14 +1113,15 @@ public partial class OverlayWindow : Window
         _sizeIndicatorTimer.Start();
     }
 
-    // ---------- Custom colors (item 5) ----------
+    // ---------- Editable palette (item 3, UX round 5; replaces the old CustomColors row) ----------
 
-    /// <summary>The toolbar's "+" swatch: opens System.Windows.Forms.ColorDialog (FullOpen so the
-    /// full custom-color editor is visible immediately) owned by this window's HWND so it stacks
-    /// correctly above the topmost overlay. The chosen color becomes the active draw color and is
-    /// pushed onto the persisted custom palette (settings, additive, capped at 8, LRU).</summary>
-    private void OnCustomColorRequested()
+    /// <summary>Opens System.Windows.Forms.ColorDialog (FullOpen so the full custom-color editor is
+    /// visible immediately) owned by this window's HWND so it stacks correctly above the topmost
+    /// overlay — shared by the "+" swatch and every swatch's right-click "Replace...".</summary>
+    private bool TryPickColorFromDialog(out Color color)
     {
+        color = default;
+
         using var dialog = new System.Windows.Forms.ColorDialog
         {
             FullOpen = true,
@@ -1050,20 +1133,101 @@ public partial class OverlayWindow : Window
 
         if (dialog.ShowDialog(owner) != System.Windows.Forms.DialogResult.OK)
         {
+            return false;
+        }
+
+        color = Color.FromRgb(dialog.Color.R, dialog.Color.G, dialog.Color.B);
+        return true;
+    }
+
+    /// <summary>The current palette as displayed: the persisted list, or (pre-round-5 settings
+    /// file) the migration seed — every mutation below starts from this so the first edit
+    /// materializes the migrated list into PaletteColors.</summary>
+    private List<string> CurrentEffectivePalette() =>
+        SwatchPalette.EffectivePalette(_liveSettings.PaletteColors, _liveSettings.CustomColors);
+
+    /// <summary>Persists a palette mutation immediately (like the old custom-color flow) and
+    /// refreshes the toolbar's swatch row from it.</summary>
+    private void UpdatePalette(List<string> palette)
+    {
+        _liveSettings = _liveSettings with { PaletteColors = palette };
+        TrySaveLiveSettings();
+        RefreshToolbarPalette();
+    }
+
+    private static Color? TryParseHex(string hex)
+    {
+        try
+        {
+            return System.Windows.Media.ColorConverter.ConvertFromString(hex) as Color?;
+        }
+        catch (FormatException)
+        {
+            return null; // a hand-edited settings file can hold garbage; never crash over it
+        }
+    }
+
+    /// <summary>The toolbar's "+" swatch: the chosen color becomes the active draw color and is
+    /// appended to the persisted palette (capped at SwatchPalette.MaxColors, oldest evicted).</summary>
+    private void OnCustomColorRequested()
+    {
+        if (!TryPickColorFromDialog(out var picked))
+        {
             return;
         }
 
-        var picked = dialog.Color;
-        _currentColor = Color.FromRgb(picked.R, picked.G, picked.B);
+        _currentColor = picked;
         UpdateToolCursor();
         string hex = ColorFormatting.HexWithHash(picked.R, picked.G, picked.B);
+        UpdatePalette(SwatchPalette.Append(CurrentEffectivePalette(), hex));
+    }
 
-        _liveSettings = _liveSettings with
+    /// <summary>Right-click "Replace...": same ColorDialog as "+", swaps that palette entry in
+    /// place. If the replaced swatch was the active color, the replacement becomes active.</summary>
+    private void OnPaletteReplaceRequested(int index)
+    {
+        var palette = CurrentEffectivePalette();
+        if (index < 0 || index >= palette.Count || !TryPickColorFromDialog(out var picked))
         {
-            CustomColors = BoundedColorList.Push(_liveSettings.CustomColors, hex, maxCount: 8),
-        };
-        TrySaveLiveSettings();
-        _toolbar?.SetCustomColors(_liveSettings.CustomColors);
+            return;
+        }
+
+        bool wasActive = string.Equals(
+            palette[index], ColorFormatting.HexWithHash(_currentColor.R, _currentColor.G, _currentColor.B),
+            StringComparison.OrdinalIgnoreCase);
+        if (wasActive)
+        {
+            _currentColor = picked;
+            UpdateToolCursor();
+        }
+
+        string hex = ColorFormatting.HexWithHash(picked.R, picked.G, picked.B);
+        UpdatePalette(SwatchPalette.ReplaceAt(palette, index, hex));
+    }
+
+    /// <summary>Right-click "Remove": deletes the palette entry (the menu item is disabled at one
+    /// remaining color; SwatchPalette.RemoveAt refuses regardless as a second net). If the removed
+    /// swatch was the active color, the first remaining swatch becomes active.</summary>
+    private void OnPaletteRemoveRequested(int index)
+    {
+        var palette = CurrentEffectivePalette();
+        if (index < 0 || index >= palette.Count || palette.Count <= 1)
+        {
+            return;
+        }
+
+        bool wasActive = string.Equals(
+            palette[index], ColorFormatting.HexWithHash(_currentColor.R, _currentColor.G, _currentColor.B),
+            StringComparison.OrdinalIgnoreCase);
+
+        var updated = SwatchPalette.RemoveAt(palette, index);
+        if (wasActive && updated.Count > 0 && TryParseHex(updated[0]) is { } first)
+        {
+            _currentColor = first;
+            UpdateToolCursor();
+        }
+
+        UpdatePalette(updated);
     }
 
     private void TrySaveLiveSettings()

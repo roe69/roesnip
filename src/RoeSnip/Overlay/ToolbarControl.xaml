@@ -2,6 +2,7 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Focusable="False"
+             Cursor="Arrow"
              SnapsToDevicePixels="True"
              UseLayoutRounding="True">
     <UserControl.Resources>
@@ -135,30 +136,113 @@
             </Setter>
         </Style>
 
-        <Style x:Key="StrokeWidthSwatchStyle" TargetType="ToggleButton">
-            <Setter Property="Width" Value="28"/>
-            <Setter Property="Height" Value="28"/>
-            <Setter Property="Margin" Value="2"/>
-            <Setter Property="Background" Value="#2A2A2E"/>
-            <Setter Property="BorderBrush" Value="#3F3F46"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Focusable" Value="False"/>
+        <!-- Dark right-click menu chrome shared by the palette swatches ("Replace... / Remove")
+             and the Save button ("Save HDR"). Retemplated for the same reason as DarkComboBoxStyle:
+             the default menu chrome draws system-themed (light) regardless of Background setters.
+             Cursor=Arrow explicitly — menus live in their own Popup visual tree, so they don't
+             inherit the toolbar's own Arrow (item 1, UX round 5). -->
+        <Style x:Key="DarkContextMenuStyle" TargetType="ContextMenu">
+            <Setter Property="Background" Value="#22222A"/>
+            <Setter Property="Foreground" Value="#EAEAEA"/>
+            <Setter Property="BorderBrush" Value="#4A4A52"/>
+            <Setter Property="Cursor" Value="Arrow"/>
             <Setter Property="Template">
                 <Setter.Value>
-                    <ControlTemplate TargetType="ToggleButton">
+                    <ControlTemplate TargetType="ContextMenu">
                         <Border Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="4">
-                            <Ellipse Fill="White" Width="{TemplateBinding Tag}" Height="{TemplateBinding Tag}"
-                                     HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                BorderThickness="1" CornerRadius="4" Padding="3"
+                                SnapsToDevicePixels="True">
+                            <ItemsPresenter/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DarkMenuItemStyle" TargetType="MenuItem">
+            <Setter Property="Foreground" Value="#EAEAEA"/>
+            <Setter Property="Cursor" Value="Arrow"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="Bg" Background="Transparent" Padding="10,6" SnapsToDevicePixels="True">
+                            <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter Property="Background" Value="#3A7CFD"/>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#3A7CFD"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#6A6A72"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- The numeric size input (item 2, UX round 5 — replaced the fixed small/medium/big stroke
+             dots): an EDITABLE dark ComboBox, so unlike DarkComboBoxStyle it must template in the
+             PART_EditableTextBox WPF's ComboBox looks up by name to enable typing. The TextBox is
+             the one deliberately focusable control on the whole toolbar (typing needs real keyboard
+             focus) — the session keyboard hook knows to stand down while it holds focus via
+             OverlayWindow.IsTextInputFocused (see OverlayInputInterop.cs). -->
+        <Style x:Key="DarkEditableComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Background" Value="#2A2A2E"/>
+            <Setter Property="Foreground" Value="#EAEAEA"/>
+            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <Border Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="4">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="16"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="PART_EditableTextBox" Grid.Column="0"
+                                             Background="Transparent" BorderThickness="0"
+                                             Foreground="{TemplateBinding Foreground}" CaretBrush="#EAEAEA"
+                                             SelectionBrush="#3A7CFD"
+                                             Margin="{TemplateBinding Padding}" Padding="0"
+                                             VerticalContentAlignment="Center"
+                                             Cursor="IBeam"/>
+                                    <ToggleButton Grid.Column="1" Focusable="False" ClickMode="Press"
+                                                  Background="Transparent" BorderThickness="0"
+                                                  IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                        <ToggleButton.Template>
+                                            <ControlTemplate TargetType="ToggleButton">
+                                                <Border Background="Transparent">
+                                                    <Path Fill="#B8B8C0" Data="M0,0 L4,4 L8,0 Z"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+                                            </ControlTemplate>
+                                        </ToggleButton.Template>
+                                    </ToggleButton>
+                                </Grid>
+                            </Border>
+                            <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True"
+                                   Focusable="False" PopupAnimation="Slide"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}">
+                                <Border Background="#22222A" BorderBrush="#4A4A52"
+                                        BorderThickness="1" CornerRadius="4" Cursor="Arrow"
+                                        MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260">
+                                    <ScrollViewer Margin="2" SnapsToDevicePixels="True">
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -290,8 +374,10 @@
                             <Popup x:Name="Popup" Placement="Bottom" AllowsTransparency="True"
                                    Focusable="False" PopupAnimation="Slide"
                                    IsOpen="{TemplateBinding IsDropDownOpen}">
+                                <!-- Cursor=Arrow: the dropdown lives in its own Popup visual tree, so it does
+                                     not inherit the toolbar root's Arrow (item 1, UX round 5). -->
                                 <Border x:Name="DropDownBorder" Background="#22222A" BorderBrush="#4A4A52"
-                                        BorderThickness="1" CornerRadius="4"
+                                        BorderThickness="1" CornerRadius="4" Cursor="Arrow"
                                         MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260">
                                     <ScrollViewer Margin="2" SnapsToDevicePixels="True">
                                         <ItemsPresenter/>
@@ -339,32 +425,34 @@
 
             <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
+            <!-- The single editable palette (item 3, UX round 5): every swatch is built in code from
+                 the persisted RoeSnipSettings.PaletteColors list and carries a right-click
+                 Replace/Remove menu; the "+" swatch appends. The old separate CustomColorPanel row
+                 is gone — custom and preset colors are one list now. -->
             <StackPanel x:Name="ColorSwatchPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
-            <StackPanel x:Name="CustomColorPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
             <ToggleButton x:Name="AddCustomColorButton" Style="{StaticResource AddCustomColorButtonStyle}"
-                          ToolTip="Custom color..." Click="OnAddCustomColorClick">
+                          ToolTip="Add color..." Click="OnAddCustomColorClick">
                 <Path Style="{StaticResource IconStyle}" Width="10" Height="10" Data="M7,1 V13 M1,7 H13"/>
             </ToggleButton>
 
             <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
-            <StackPanel x:Name="StrokeWidthPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
-            <TextBlock x:Name="StrokeWidthLabel" Text="4px" VerticalAlignment="Center"
-                       Foreground="#CFCFCF" FontSize="11" Margin="4,0,2,0" MinWidth="24"/>
+            <!-- Numeric size input (item 2, UX round 5 — replaced the small/medium/big stroke dots):
+                 shows "Npx" (stroke width) for the drawing tools and "Npt" (font size) while the
+                 Text tool is active; dropdown offers preset jumps, typed values are clamped by
+                 SizeInput. Enter commits and returns focus to the overlay window. -->
+            <ComboBox x:Name="SizeComboBox" Style="{StaticResource DarkEditableComboBoxStyle}"
+                      Width="74" Margin="2" VerticalAlignment="Center"
+                      IsEditable="True" IsTextSearchEnabled="False"
+                      ToolTip="Size — type a value or pick a preset (scroll wheel over the image also resizes)"
+                      KeyDown="OnSizeComboKeyDown"
+                      SelectionChanged="OnSizeComboSelectionChanged"/>
 
             <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
-            <!-- Text-style group (item 4): only ever visible while the Text tool is active. -->
+            <!-- Text-style group (item 4): only ever visible while the Text tool is active. The font
+                 size itself moved into SizeComboBox (which switches to pt mode for the Text tool). -->
             <StackPanel x:Name="TextStylePanel" Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
-                <Button x:Name="FontSizeDownButton" Style="{StaticResource ActionButtonStyle}" Width="20"
-                        Content="-" FontSize="14" FontWeight="Bold" Click="OnFontSizeDownClick" ToolTip="Smaller text"/>
-                <TextBlock x:Name="FontSizeLabel" Text="20pt" VerticalAlignment="Center"
-                           Foreground="#EAEAEA" FontSize="11" Margin="3,0" MinWidth="26" TextAlignment="Center"/>
-                <Button x:Name="FontSizeUpButton" Style="{StaticResource ActionButtonStyle}" Width="20"
-                        Content="+" FontSize="14" FontWeight="Bold" Click="OnFontSizeUpClick" ToolTip="Larger text"/>
-
-                <Border Width="1" Margin="4,3" Background="#3F3F46"/>
-
                 <ToggleButton x:Name="BoldToggleButton" Style="{StaticResource ToolButtonStyle}" Width="26"
                               Content="B" FontWeight="Bold" Click="OnBoldToggleClick" ToolTip="Bold"/>
                 <ToggleButton x:Name="ItalicToggleButton" Style="{StaticResource ToolButtonStyle}" Width="26"
@@ -393,22 +481,20 @@
                 <!-- Two overlapping squares -->
                 <Path Style="{StaticResource IconStyle}" Data="M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5"/>
             </Button>
+            <!-- HDR export moved off the toolbar (item 4, UX round 5): 99% of saves are plain PNGs,
+                 so left-click Save = PNG exactly as before and the old dedicated Save-HDR button is
+                 now a right-click menu item here, raising the same SaveHdr command path unchanged. -->
             <Button x:Name="SaveButton" Style="{StaticResource ActionButtonStyle}" Background="#1565C0"
-                    ToolTip="Save (Ctrl+S)" Click="OnSaveClick">
+                    ToolTip="Save (Ctrl+S) — right-click for HDR" Click="OnSaveClick">
+                <Button.ContextMenu>
+                    <ContextMenu Style="{StaticResource DarkContextMenuStyle}">
+                        <MenuItem x:Name="SaveHdrMenuItem" Style="{StaticResource DarkMenuItemStyle}"
+                                  Header="Save HDR (.jxr)" Click="OnSaveHdrClick"
+                                  ToolTip="Save the untouched FP16 HDR original (no annotations)"/>
+                    </ContextMenu>
+                </Button.ContextMenu>
                 <!-- Down-arrow into tray -->
                 <Path Style="{StaticResource IconStyle}" Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
-            </Button>
-            <Button x:Name="SaveHdrButton" Style="{StaticResource ActionButtonStyle}" Background="#6A1B9A"
-                    ToolTip="Save HDR original (.jxr, untouched FP16)" Click="OnSaveHdrClick">
-                <!-- Save glyph with a small HDR badge -->
-                <Grid>
-                    <Path Style="{StaticResource IconStyle}" Width="13" Height="13" Margin="0,0,7,4"
-                          Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
-                    <Border Background="#D91B1B1D" CornerRadius="2" Padding="1.5,0"
-                            HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False">
-                        <TextBlock Text="HDR" FontSize="6.5" FontWeight="Bold" Foreground="#FFD54F"/>
-                    </Border>
-                </Grid>
             </Button>
 
             <Border Width="1" Margin="4,3" Background="#3F3F46"/>

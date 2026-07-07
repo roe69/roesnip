@@ -128,6 +128,7 @@ public class SettingsTests : IDisposable
             TextBold = true,
             TextItalic = true,
             CustomColors = new List<string> { "#FF00FF", "#00FFAA" },
+            PaletteColors = new List<string> { "#E53935", "#123456", "#654321" },
         };
 
         SettingsStore.Save(original, settingsPath);
@@ -143,10 +144,12 @@ public class SettingsTests : IDisposable
         // tripped up by that same reference-equality quirk on the remaining (scalar) fields.
         Assert.Equal(original.RecentPickedColors, loaded.RecentPickedColors);
         Assert.Equal(original.CustomColors, loaded.CustomColors);
+        Assert.Equal(original.PaletteColors, loaded.PaletteColors);
         var originalWithLoadedLists = original with
         {
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
+            PaletteColors = loaded.PaletteColors,
         };
         Assert.Equal(originalWithLoadedLists, loaded);
     }
@@ -172,10 +175,12 @@ public class SettingsTests : IDisposable
         // See SaveThenLoad_RoundTripsEveryField for why the list-valued fields need this treatment.
         Assert.Equal(original.RecentPickedColors, loaded.RecentPickedColors);
         Assert.Equal(original.CustomColors, loaded.CustomColors);
+        Assert.Equal(original.PaletteColors, loaded.PaletteColors);
         var originalWithLoadedLists = original with
         {
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
+            PaletteColors = loaded.PaletteColors,
         };
         Assert.Equal(originalWithLoadedLists, loaded);
     }
@@ -191,6 +196,7 @@ public class SettingsTests : IDisposable
 
         Assert.Empty(loaded.RecentPickedColors);
         Assert.Empty(loaded.CustomColors);
+        Assert.Empty(loaded.PaletteColors); // empty = "not migrated" sentinel, see SwatchPalette
         Assert.True(loaded.ColorFormatShowHex);
         Assert.True(loaded.ColorFormatShowRgb);
         Assert.True(loaded.ColorFormatShowHsl);

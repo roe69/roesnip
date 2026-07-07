@@ -60,8 +60,20 @@ public sealed record RoeSnipSettings
 
     /// <summary>Custom colors chosen via the toolbar's "+" swatch (System.Windows.Forms.ColorDialog),
     /// stored as "#RRGGBB", newest first, capped at 8 (LRU — see Overlay/BoundedColorList.Push),
-    /// rendered as extra swatches in the toolbar after the built-in presets.</summary>
+    /// rendered as extra swatches in the toolbar after the built-in presets.
+    /// LEGACY as of UX round 5: superseded by <see cref="PaletteColors"/> (the whole palette is
+    /// editable now); kept — read once as migration seed, never written or displayed separately —
+    /// so a downgrade to an older build still sees its custom colors.</summary>
     public List<string> CustomColors { get; init; } = new();
+
+    // ---------- UX round 5 (additive) ----------
+
+    /// <summary>The toolbar's entire swatch palette (UX round 5, item 3): "#RRGGBB" strings in
+    /// display order, fully user-editable (right-click Replace/Remove, "+" appends), capped at
+    /// Overlay/SwatchPalette.MaxColors (12). Empty (the default) means "not migrated yet": consumers
+    /// seed from SwatchPalette.DefaultColors + any legacy <see cref="CustomColors"/> via
+    /// SwatchPalette.EffectivePalette and only persist the list once the user first edits it.</summary>
+    public List<string> PaletteColors { get; init; } = new();
 
     public static RoeSnipSettings Default { get; } = new();
 
