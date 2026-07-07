@@ -28,6 +28,7 @@ using Brushes = System.Windows.Media.Brushes;
 using Orientation = System.Windows.Controls.Orientation;
 using Size = System.Windows.Size;
 using FontFamily = System.Windows.Media.FontFamily;
+using Cursors = System.Windows.Input.Cursors;
 
 /// <summary>One per monitor. Shows the frozen tone-mapped preview, dims everything outside the
 /// current selection, handles drag-to-select / resize / move, hosts the magnifier and (once a
@@ -89,6 +90,10 @@ public partial class OverlayWindow : Window
     private TextBox? _activeTextEditor;
     private Point _activeTextEditorOriginPx;
 
+    // Tool-indicating cursor (item 1, UX round 3) — one small custom cursor bitmap per
+    // (tool, color, strokeWidth) combination, cached and disposed for this window's lifetime.
+    private readonly ToolCursorCache _toolCursorCache = new();
+
     internal MonitorInfo Monitor => _frame.Monitor;
     internal CapturedFrame Frame => _frame;
     internal RectPhysical? SelectionPx => _selectionPx;
@@ -103,6 +108,18 @@ public partial class OverlayWindow : Window
     /// session keys globally (normal case) or let everything except Esc reach the real focused
     /// control through the normal WPF pipeline (text-editing case) — see OverlayInputInterop.cs.</summary>
     internal bool IsTextEditingActive => _activeTextEditor is not null;
+
+    /// <summary>The in-progress text annotation editor, if any — read by TextEditKeyForwarder (item
+    /// 3b's guaranteed fallback tier) to apply keystrokes directly when the window doesn't hold real
+    /// OS focus. Null whenever <see cref="IsTextEditingActive"/> is false.</summary>
+    internal TextBox? ActiveTextEditor => _activeTextEditor;
+
+    /// <summary>True while the magnifier loupe (item 4, UX round 3) should track the cursor:
+    /// pick-only mode always shows it (it's the point of that mode); otherwise it's visible only
+    /// before any selection exists, or while actively dragging out a brand-new one — once a
+    /// selection is finalized (or being moved/resized), it hides until the selection is cleared or
+    /// a new one starts.</summary>
+    private bool IsMagnifierActive => _pickOnlyMode || _selectionPx is null || _dragMode == DragMode.NewSelection;
 
     internal OverlayWindow(
         CapturedFrame frame,
@@ -132,6 +149,7 @@ public partial class OverlayWindow : Window
         _textItalic = settings.TextItalic;
 
         PreviewMouseLeftButtonDown += OnPreviewMouseLeftButtonDown;
+        PreviewMouseRightButtonDown += OnPreviewMouseRightButtonDown;
         PreviewMouseMove += OnPreviewMouseMove;
         PreviewMouseLeftButtonUp += OnPreviewMouseLeftButtonUp;
         PreviewMouseWheel += OnPreviewMouseWheel;
@@ -173,6 +191,12 @@ public partial class OverlayWindow : Window
         RenderOptions.SetBitmapScalingMode(PreviewImage, BitmapScalingMode.NearestNeighbor);
 
         UpdateDimGeometry();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+        _toolCursorCache.Dispose();
     }
 
     private void SyncChromeSizes()
@@ -278,12 +302,55 @@ public partial class OverlayWindow : Window
         e.Handled = true;
     }
 
+    /// <summary>Right-click exits (item 5, UX round 3): outside the current selection (or when
+    /// there is no selection anywhere) it cancels the whole overlay session, exactly like Esc's
+    /// final stage — never the staged CancelStage semantics, since a right-click is an explicit
+    /// "get me out of here" gesture rather than "undo one step". Right-click *inside* the current
+    /// selection is reserved (a no-op) rather than exiting. Suppressed while a text edit is active,
+    /// where it instead cancels just the edit (mirroring Esc's innermost stage) — and it never opens
+    /// the color-picker window, which is exclusively a left-click concern (TriggerColorPick), so
+    /// there's nothing here that could conflict with it.</summary>
+    private void OnPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (IsWithinToolbar(e.OriginalSource as DependencyObject))
+        {
+            return; // right-clicking a toolbar button is not an "exit the overlay" gesture
+        }
+        e.Handled = true;
+
+        if (_activeTextEditor is not null)
+        {
+            CancelActiveTextEditor();
+            return;
+        }
+
+        if (_pickOnlyMode)
+        {
+            // Deferred like TriggerColorPick's own Cancel dispatch — Cancel synchronously closes
+            // every window in the session (including this one, from inside its own mouse-event
+            // handler); BeginInvoke avoids touching a window that's already mid-teardown.
+            Dispatcher.BeginInvoke(new Action(() => _onCommand(OverlayCommand.Cancel)));
+            return;
+        }
+
+        var px = ToPhysical(e.GetPosition(this));
+        if (_selectionPx is { } sel && RectContains(sel, px))
+        {
+            return; // inside the current selection — reserved, no-op
+        }
+
+        Dispatcher.BeginInvoke(new Action(() => _onCommand(OverlayCommand.Cancel)));
+    }
+
     private void OnPreviewMouseMove(object sender, MouseEventArgs e)
     {
         var dip = e.GetPosition(this);
         var px = ToPhysical(dip);
 
-        MagnifierControl.Update(_preview, _frame, dip, px);
+        if (IsMagnifierActive)
+        {
+            MagnifierControl.Update(_preview, _frame, dip, px);
+        }
 
         switch (_dragMode)
         {
@@ -362,6 +429,13 @@ public partial class OverlayWindow : Window
         if (IsMouseCaptured)
         {
             ReleaseMouseCapture();
+        }
+        if (!IsMagnifierActive)
+        {
+            // The NewSelection-finalize path above calls SetSelection while _dragMode is still
+            // NewSelection (so its own IsMagnifierActive check didn't hide it) — re-check now that
+            // _dragMode has actually settled to None.
+            MagnifierControl.Hide();
         }
     }
 
@@ -498,6 +572,10 @@ public partial class OverlayWindow : Window
         Adorner.InvalidateVisual();
         UpdateDimGeometry();
         UpdateToolbarPlacement();
+        if (!IsMagnifierActive)
+        {
+            MagnifierControl.Hide();
+        }
     }
 
     /// <summary>Clears this window's selection/annotations — called by OverlayController when a
@@ -580,9 +658,9 @@ public partial class OverlayWindow : Window
         if (_toolbar is null)
         {
             _toolbar = new ToolbarControl();
-            _toolbar.ToolSelected += tool => _currentTool = tool;
-            _toolbar.ColorSelected += color => _currentColor = color;
-            _toolbar.StrokeWidthSelected += width => _currentStrokeWidth = width;
+            _toolbar.ToolSelected += tool => { _currentTool = tool; UpdateToolCursor(); };
+            _toolbar.ColorSelected += color => { _currentColor = color; UpdateToolCursor(); };
+            _toolbar.StrokeWidthSelected += width => { _currentStrokeWidth = width; UpdateToolCursor(); };
             _toolbar.UndoClicked += () => Annotations.Undo();
             _toolbar.CopyClicked += () => _onCommand(OverlayCommand.Copy);
             _toolbar.SaveClicked += () => _onCommand(OverlayCommand.Save);
@@ -639,6 +717,18 @@ public partial class OverlayWindow : Window
             _toolbar.ResetToolSelection();
         }
         _currentTool = AnnotationTool.None;
+        UpdateToolCursor();
+    }
+
+    /// <summary>Tool-indicating cursor (item 1, UX round 3): the Select tool (AnnotationTool.None)
+    /// keeps the plain system crosshair; every drawing tool gets a small custom cursor rendered from
+    /// the current tool/color/strokeWidth via <see cref="ToolCursorCache"/>. Called on every change
+    /// to tool, color, or stroke width — including scroll-wheel width changes.</summary>
+    private void UpdateToolCursor()
+    {
+        Cursor = _currentTool == AnnotationTool.None
+            ? Cursors.Cross
+            : _toolCursorCache.GetOrCreate(_currentTool, _currentColor, _currentStrokeWidth);
     }
 
     // ---------- Click-to-pick: standalone ColorPickerWindow (replaces the old inline click panel) ----------
@@ -717,63 +807,15 @@ public partial class OverlayWindow : Window
         editor.Focus();
         Keyboard.Focus(editor);
 
-        // Reliability layer (b): best-effort — a background tray process may not hold the actual OS
-        // foreground grant (see OverlayInputInterop.cs), which normally doesn't matter because the
-        // session-scoped WH_KEYBOARD_LL hook (layer a) handles Esc/Enter/Ctrl+C/Ctrl+S/Ctrl+Z
-        // regardless of focus. Typing into this TextBox (and IME composition) is different: it needs
-        // *real* keyboard/text-services focus, which the hook deliberately does not fake. So try
-        // hard here, but never let a failure be fatal — the hook still guarantees Esc cancels the
-        // edit even if this doesn't manage to steal focus.
-        TryActivateForTextInput();
-    }
-
-    /// <summary>AttachThreadInput trick (reliability layer b, per the round-2 spec): Activate() a
-    /// background-process window is not guaranteed to actually move OS foreground focus onto it
-    /// (SetForegroundWindow has restrictions on which process may steal foreground). If a plain
-    /// Activate() didn't work, temporarily attach this thread's input queue to whichever thread
-    /// currently owns the foreground window, so SetForegroundWindow/SetFocus are allowed to
-    /// succeed, then detach again immediately. Best-effort only — failures are logged, never
-    /// thrown, and the low-level keyboard hook (layer a) is what actually guarantees Esc still
-    /// cancels the edit even if this doesn't manage to grab real focus.</summary>
-    private void TryActivateForTextInput()
-    {
-        try
-        {
-            Activate();
-
-            IntPtr hwnd = new WindowInteropHelper(this).Handle;
-            if (hwnd == IntPtr.Zero || OverlayInputInterop.GetForegroundWindow() == hwnd)
-            {
-                return;
-            }
-
-            IntPtr foregroundHwnd = OverlayInputInterop.GetForegroundWindow();
-            uint foregroundThreadId = OverlayInputInterop.GetWindowThreadProcessId(foregroundHwnd, IntPtr.Zero);
-            uint thisThreadId = OverlayInputInterop.GetCurrentThreadId();
-
-            if (foregroundThreadId == 0 || foregroundThreadId == thisThreadId)
-            {
-                return;
-            }
-
-            bool attached = OverlayInputInterop.AttachThreadInput(foregroundThreadId, thisThreadId, true);
-            try
-            {
-                OverlayInputInterop.SetForegroundWindow(hwnd);
-                OverlayInputInterop.SetFocus(hwnd);
-            }
-            finally
-            {
-                if (attached)
-                {
-                    OverlayInputInterop.AttachThreadInput(foregroundThreadId, thisThreadId, false);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"RoeSnip: best-effort text-input activation failed: {ex.Message}");
-        }
+        // Reliability layer (b, item 3a of UX round 3): best-effort — a background tray process may
+        // not hold the actual OS foreground grant (see OverlayInputInterop.cs), which normally
+        // doesn't matter because the session-scoped WH_KEYBOARD_LL hook (layer a) handles
+        // Esc/Enter/Ctrl+C/Ctrl+S/Ctrl+Z regardless of focus. Typing into this TextBox (and IME
+        // composition) is different: it needs *real* keyboard/text-services focus, which the hook
+        // deliberately does not fake there. So try hard via the full three-tier activation ladder —
+        // but never let a failure be fatal: if every tier fails, TextEditKeyForwarder (item 3b, the
+        // session hook's guaranteed fallback tier) still guarantees typing is never dead.
+        ForegroundActivator.Activate(this, "text-edit");
     }
 
     private void CommitActiveTextEditor()
@@ -857,6 +899,7 @@ public partial class OverlayWindow : Window
     {
         _currentStrokeWidth = width;
         _toolbar?.SetStrokeWidth(width);
+        UpdateToolCursor();
         ShowSizeIndicator(cursorDip, string.Create(CultureInfo.InvariantCulture, $"{width:0}px"), circleDiameterDip: width);
     }
 
@@ -952,6 +995,7 @@ public partial class OverlayWindow : Window
 
         var picked = dialog.Color;
         _currentColor = Color.FromRgb(picked.R, picked.G, picked.B);
+        UpdateToolCursor();
         string hex = ColorFormatting.HexWithHash(picked.R, picked.G, picked.B);
 
         _liveSettings = _liveSettings with

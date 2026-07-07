@@ -76,6 +76,11 @@ public sealed class TrayApp : ITrayNotifier
         _pipeListenerCts = new CancellationTokenSource();
         _ = ListenForSignalAsync(_pipeListenerCts.Token);
 
+        // Cold-start warmup (item 6b, UX round 3): runs on its own background thread so it can
+        // never delay the tray icon/pipe listener above coming up, and never blocks (or is blocked
+        // by) the modal PrintScreen consent dialog below.
+        StartWarmup();
+
         // The consent resolution below can show a MODAL MessageBox (first launch on a machine
         // where Windows intercepts PrtScr for Snipping Tool), so it must come AFTER the NotifyIcon
         // and pipe listener are live — otherwise an unanswered dialog on an auto-start-at-login app
@@ -298,6 +303,101 @@ public sealed class TrayApp : ITrayNotifier
             _notifyIcon.BalloonTipClicked -= _activeBalloonClickHandler;
         }
         _activeBalloonClickHandler = null;
+    }
+
+    // ---------------- Cold-start warmup (item 6b, UX round 3) ----------------
+
+    /// <summary>Pre-JITs the heavy first-capture code paths off the UI thread, without performing
+    /// any real capture (a real WGC session flashes the capture border, which this must never do).
+    /// Fully try/caught and never fatal — a warmup failure just means the first real hotkey press is
+    /// as slow as it always was, not a crash.</summary>
+    private static void StartWarmup()
+    {
+        var thread = new Thread(RunWarmup)
+        {
+            IsBackground = true,
+            Priority = ThreadPriority.BelowNormal,
+            Name = "RoeSnip-Warmup",
+        };
+        thread.Start();
+    }
+
+    private static void RunWarmup()
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            WarmupToneMapAndEncode();
+            WarmupCaptureBackendInit();
+            stopwatch.Stop();
+            Console.Error.WriteLine($"RoeSnip: warmup completed in {stopwatch.ElapsedMilliseconds} ms");
+        }
+        catch (Exception ex)
+        {
+            // Never let a warmup failure be visible as anything other than "the first real capture
+            // is exactly as cold as before" — this is a pure optimization, not a requirement.
+            Console.Error.WriteLine($"RoeSnip: warmup failed (non-fatal): {ex.Message}");
+        }
+    }
+
+    /// <summary>Exercises the exact code path a real capture's tone-map/encode stretch runs
+    /// (SdrImage.FromCapturedFrame -> ToneMapper -> ToBitmapSource -> PngWriter.Encode) against a
+    /// small synthetic frame with a fake MonitorInfo — no real WGC/duplication session, so nothing
+    /// ever flashes. The pixel data alternates a plain-SDR value and an HDR-highlight value per
+    /// column so ToneMapper's pass-through AND shoulder/dither branches both actually execute
+    /// (a uniform frame would only ever hit whichever single branch its one value falls into).</summary>
+    private static void WarmupToneMapAndEncode()
+    {
+        const int size = 256;
+
+        // Fully qualified deliberately (matching OverlayController.RunPickModeCaptureAsync's own
+        // ToneMapOptions construction) — RoeSnip.Color is a sibling namespace whose "Color" type
+        // would collide with System.Drawing.Color (already in scope via this file's own
+        // NotifyIcon/Bitmap usage below) if brought in with a bare "using RoeSnip.Color;".
+        var monitor = new RoeSnip.Capture.MonitorInfo(
+            Index: -1, DeviceName: "RoeSnip-Warmup", HMonitor: 0,
+            BoundsPx: new RoeSnip.Capture.RectPhysical(0, 0, size, size),
+            DpiX: 96, DpiY: 96, AdvancedColorActive: true,
+            SdrWhiteNits: 240.0, MaxLuminanceNits: 1000.0, IsPrimary: true);
+
+        Span<byte> dim = stackalloc byte[2];
+        Span<byte> bright = stackalloc byte[2];
+        BitConverter.TryWriteBytes(dim, (Half)0.5f);   // plain SDR gray — exercises the pass-through branch
+        BitConverter.TryWriteBytes(bright, (Half)2.5f); // 200 nits — exercises the shoulder/dither branch
+
+        var pixels = new byte[size * size * 8]; // Fp16ScRgb: 8 bytes/pixel (4 x Half)
+        for (int y = 0; y < size; y++)
+        {
+            int rowOffset = y * size * 8;
+            for (int x = 0; x < size; x++)
+            {
+                var src = (x % 2 == 0) ? dim : bright;
+                int pixelOffset = rowOffset + x * 8;
+                for (int channel = 0; channel < 4; channel++)
+                {
+                    pixels[pixelOffset + channel * 2] = src[0];
+                    pixels[pixelOffset + channel * 2 + 1] = src[1];
+                }
+            }
+        }
+
+        using var frame = new RoeSnip.Capture.CapturedFrame(
+            RoeSnip.Capture.FrameFormat.Fp16ScRgb, size, size, size * 8, pixels, monitor);
+
+        var sdr = RoeSnip.Imaging.SdrImage.FromCapturedFrame(frame, new RoeSnip.Color.ToneMapOptions());
+        _ = sdr.ToBitmapSource();
+        _ = RoeSnip.Imaging.PngWriter.Encode(sdr);
+    }
+
+    /// <summary>Pre-creates the DXGI factory/adapter/output walk MonitorEnumerator does for the
+    /// AdvancedColor/MaxLuminance/SDR-white-level lookups — otherwise-shared setup cost that's paid
+    /// on the very first hotkey press. The real per-capture D3D11 device(s) inside
+    /// WgcCapturer/DesktopDuplicationCapturer are still built fresh per capture (they're tied to the
+    /// specific monitor being captured), but the DXGI factory/adapter enumeration machinery itself
+    /// gets its JIT/COM-init cost paid here instead.</summary>
+    private static void WarmupCaptureBackendInit()
+    {
+        _ = RoeSnip.Capture.MonitorEnumerator.Enumerate();
     }
 
     // ---------------- Single-instance signalling (named mutex + named pipe) ----------------

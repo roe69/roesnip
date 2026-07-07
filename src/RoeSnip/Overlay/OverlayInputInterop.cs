@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Input;
+using System.Windows.Interop;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
 namespace RoeSnip.Overlay;
@@ -49,6 +50,10 @@ internal static class OverlayInputInterop
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool fAttach);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool BringWindowToTop(IntPtr hWnd);
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct KBDLLHOOKSTRUCT
     {
@@ -63,6 +68,65 @@ internal static class OverlayInputInterop
     internal const int WM_KEYDOWN = 0x0100;
     internal const int WM_SYSKEYDOWN = 0x0104;
     internal const int VK_CONTROL = 0x11;
+    internal const int VK_SHIFT = 0x10;
+    internal const int VK_CAPITAL = 0x14;
+    internal const int VK_MENU = 0x12;
+
+    // ---------- SendInput (ForegroundActivator's tier-3 Alt-tap "unlock", item 3a) ----------
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    internal struct InputUnion
+    {
+        [FieldOffset(0)] public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct INPUT
+    {
+        public uint type;
+        public InputUnion U;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    internal const uint INPUT_KEYBOARD = 1;
+    internal const uint KEYEVENTF_KEYUP = 0x0002;
+
+    /// <summary>Injects a synthetic Alt down+up — the documented workaround for Windows' foreground-
+    /// lock timeout: SendInput is treated as "real" input for the purposes of resetting that timeout
+    /// (unlike calling SetForegroundWindow directly, which is exactly the operation the timeout
+    /// restricts), so a SetForegroundWindow attempt immediately afterward is far more likely to
+    /// succeed. Used only as ForegroundActivator's last-resort tier 3.</summary>
+    internal static void SendAltTapUnlock()
+    {
+        var inputs = new[]
+        {
+            new INPUT { type = INPUT_KEYBOARD, U = new InputUnion { ki = new KEYBDINPUT { wVk = VK_MENU } } },
+            new INPUT { type = INPUT_KEYBOARD, U = new InputUnion { ki = new KEYBDINPUT { wVk = VK_MENU, dwFlags = KEYEVENTF_KEYUP } } },
+        };
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    }
+
+    // ---------- ToUnicodeEx (TextEditKeyForwarder's printable-key translation, item 3b) ----------
+
+    [DllImport("user32.dll")]
+    internal static extern int ToUnicodeEx(
+        uint wVirtKey, uint wScanCode, byte[] lpKeyState,
+        [Out] System.Text.StringBuilder pwszBuff, int cchBuff, uint wFlags, IntPtr dwhkl);
+
+    [DllImport("user32.dll")]
+    internal static extern IntPtr GetKeyboardLayout(uint idThread);
 }
 
 /// <summary>Session-scoped low-level keyboard hook (WH_KEYBOARD_LL) — the fix for "Esc doesn't
@@ -79,10 +143,14 @@ internal static class OverlayInputInterop
 /// intercepts (and swallows, so the keystroke doesn't leak through to the background app) the five
 /// keys the overlay cares about; everything else passes through untouched via CallNextHookEx.
 ///
-/// EXCEPTION (per spec): while a text annotation edit is active, only Esc is intercepted here — the
-/// rest (typing, Enter-to-commit, Ctrl+C-to-copy-text) must reach the real focused control (the
-/// in-progress TextBox, via OverlayWindow's own best-effort activation — see TryActivateForTextInput
-/// in OverlayWindow.xaml.cs) through the normal WPF input pipeline, not through this hook.
+/// EXCEPTION (per spec): while a text annotation edit is active AND the overlay window genuinely
+/// holds OS foreground/focus (via ForegroundActivator's activation ladder), only Esc is intercepted
+/// here — the rest (typing, Enter-to-commit, Ctrl+C-to-copy-text) must reach the real focused
+/// control (the in-progress TextBox) through the normal WPF input pipeline, not through this hook.
+/// If the window does NOT hold real foreground/focus while text-editing (every ForegroundActivator
+/// tier failed), this hook instead routes every relevant keydown to TextEditKeyForwarder — the
+/// guaranteed fallback tier (item 3b, UX round 3) that applies the keystroke directly against the
+/// TextBox, since nothing typed could otherwise ever reach it.
 ///
 /// Lifecycle: installed once when the owning OverlaySession is constructed ("the session opens"),
 /// disposed exactly once from OverlaySession.Finish() — the single terminal point every session exit
@@ -146,31 +214,44 @@ internal sealed class SessionKeyboardHook : IDisposable
                 Key key = KeyInterop.KeyFromVirtualKey((int)data.vkCode);
                 bool ctrl = (OverlayInputInterop.GetKeyState(OverlayInputInterop.VK_CONTROL) & 0x8000) != 0;
 
+                var activeWindow = _getActiveWindow();
+                bool textEditing = activeWindow?.IsTextEditingActive == true;
+
+                if (textEditing && activeWindow is not null && !IsWindowForeground(activeWindow))
+                {
+                    // Guaranteed fallback tier (item 3b, UX round 3): the overlay does not currently
+                    // hold real OS foreground/focus (every ForegroundActivator tier failed), so
+                    // nothing typed would ever reach the in-progress TextBox through the normal WPF
+                    // input pipeline — forward it directly instead of letting it leak through to
+                    // whatever background app actually has focus. Swallowed unconditionally, even
+                    // for keys TextEditKeyForwarder doesn't itself act on, since the alternative is
+                    // leaking a keystroke the user believes is going into RoeSnip.
+                    bool shift = (OverlayInputInterop.GetKeyState(OverlayInputInterop.VK_SHIFT) & 0x8000) != 0;
+                    bool capsLockOn = (OverlayInputInterop.GetKeyState(OverlayInputInterop.VK_CAPITAL) & 0x0001) != 0;
+                    TextEditKeyForwarder.Forward(activeWindow, key, data.vkCode, data.scanCode, shift, capsLockOn, ctrl);
+                    return (IntPtr)1;
+                }
+
                 bool isSessionKey = key == Key.Escape || key == Key.Enter
                     || (ctrl && (key == Key.C || key == Key.S || key == Key.Z));
 
-                if (isSessionKey)
+                // While typing (and the window does hold real focus, per the branch above), only Esc
+                // is ours to steal — everything else must reach the real focused TextBox through the
+                // normal (focus-dependent) WPF pipeline.
+                if (isSessionKey && (!textEditing || key == Key.Escape))
                 {
-                    var activeWindow = _getActiveWindow();
-                    bool textEditing = activeWindow?.IsTextEditingActive == true;
-
-                    // While typing, only Esc is ours to steal — everything else must reach the real
-                    // focused TextBox through the normal (focus-dependent) WPF pipeline.
-                    if (!textEditing || key == Key.Escape)
+                    if (activeWindow is not null)
                     {
-                        if (activeWindow is not null)
-                        {
-                            var modifiers = ctrl ? ModifierKeys.Control : ModifierKeys.None;
-                            // Marshal to the UI thread's dispatcher queue rather than calling
-                            // straight through: we're on the hook's call stack here (synchronous,
-                            // system-wide), and ProcessKeyCommand can close windows (Cancel) —
-                            // doing that reentrantly from inside the hook callback itself would be
-                            // fragile. BeginInvoke defers it to run right after this hook returns.
-                            activeWindow.Dispatcher.BeginInvoke(new Action(
-                                () => activeWindow.ProcessKeyCommand(key, modifiers)));
-                        }
-                        return (IntPtr)1; // swallow — never let it leak through to the background app
+                        var modifiers = ctrl ? ModifierKeys.Control : ModifierKeys.None;
+                        // Marshal to the UI thread's dispatcher queue rather than calling straight
+                        // through: we're on the hook's call stack here (synchronous, system-wide),
+                        // and ProcessKeyCommand can close windows (Cancel) — doing that reentrantly
+                        // from inside the hook callback itself would be fragile. BeginInvoke defers
+                        // it to run right after this hook returns.
+                        activeWindow.Dispatcher.BeginInvoke(new Action(
+                            () => activeWindow.ProcessKeyCommand(key, modifiers)));
                     }
+                    return (IntPtr)1; // swallow — never let it leak through to the background app
                 }
             }
             catch (Exception ex)
@@ -182,6 +263,12 @@ internal sealed class SessionKeyboardHook : IDisposable
         }
 
         return OverlayInputInterop.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
+    }
+
+    private static bool IsWindowForeground(OverlayWindow window)
+    {
+        IntPtr hwnd = new WindowInteropHelper(window).Handle;
+        return hwnd != IntPtr.Zero && OverlayInputInterop.GetForegroundWindow() == hwnd;
     }
 
     public void Dispose()

@@ -195,16 +195,113 @@
             </Setter>
         </Style>
 
-        <!-- Minimal dark theming for the font-family dropdown — not a full retemplate, just enough
-             to not look like a stray light-theme control in the dark toolbar. -->
+        <!-- Font-family dropdown item template: a fixed-size, standard-UI-font label on the left
+             (always legible regardless of which family it names) plus a small "AaBb" sample
+             rendered in that item's own family on the right — used for both the closed selection
+             box and the open dropdown's rows (WPF applies ItemTemplate to both by default). -->
+        <DataTemplate x:Key="FontFamilyItemTemplate">
+            <Grid Margin="1,2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding}" FontFamily="Segoe UI" FontSize="13"
+                           Foreground="#EAEAEA" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="AaBb" FontFamily="{Binding}" FontSize="13"
+                           Foreground="#A8A8B2" Margin="12,0,2,0" VerticalAlignment="Center"/>
+            </Grid>
+        </DataTemplate>
+
+        <!-- Explicit dark styling for every dropdown row (background/foreground for both the
+             ComboBoxItem chrome and its hover/selected states) — separate from the ComboBox's own
+             chrome styling below, since the Popup's items are a distinct visual subtree. -->
+        <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#EAEAEA"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Focusable" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#3A7CFD"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#2F5FCC"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Fully retemplated (not just a palette tweak) so both the closed chrome AND the dropdown
+             Popup are explicitly dark — the default ComboBox template otherwise draws its Popup with
+             a system-themed (typically light) brush regardless of the Background/Foreground setters
+             above it, which is exactly why the plain-property version of this style read as
+             illegible on the dark overlay. -->
         <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
             <Setter Property="Background" Value="#2A2A2E"/>
             <Setter Property="Foreground" Value="#EAEAEA"/>
             <Setter Property="BorderBrush" Value="#3F3F46"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="4,2"/>
-            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="FontSize" Value="13"/>
             <Setter Property="Focusable" Value="False"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="ToggleBtn" Focusable="False" ClickMode="Press"
+                                          Background="{TemplateBinding Background}"
+                                          BorderBrush="{TemplateBinding BorderBrush}"
+                                          BorderThickness="{TemplateBinding BorderThickness}"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="4">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="16"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Path Grid.Column="1" Fill="#B8B8C0" Data="M0,0 L4,4 L8,0 Z"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="ContentSite" IsHitTestVisible="False"
+                                               Content="{TemplateBinding SelectionBoxItem}"
+                                               ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                               ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                               Margin="{TemplateBinding Padding}"
+                                               HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                            <Popup x:Name="Popup" Placement="Bottom" AllowsTransparency="True"
+                                   Focusable="False" PopupAnimation="Slide"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}">
+                                <Border x:Name="DropDownBorder" Background="#22222A" BorderBrush="#4A4A52"
+                                        BorderThickness="1" CornerRadius="4"
+                                        MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260">
+                                    <ScrollViewer Margin="2" SnapsToDevicePixels="True">
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </UserControl.Resources>
 
@@ -276,7 +373,8 @@
                 <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
                 <ComboBox x:Name="FontFamilyComboBox" Style="{StaticResource DarkComboBoxStyle}"
-                          Width="118" Margin="2" VerticalAlignment="Center"
+                          ItemTemplate="{StaticResource FontFamilyItemTemplate}"
+                          Width="190" Margin="2" VerticalAlignment="Center"
                           SelectionChanged="OnFontFamilyChanged"/>
             </StackPanel>
 

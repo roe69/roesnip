@@ -196,6 +196,7 @@ public static class OverlayController
 
         private OverlayWindow? _activeWindow;
         private bool _finished;
+        private readonly long _constructMs;
 
         public OverlaySession(
             IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors,
@@ -215,6 +216,11 @@ public static class OverlayController
             // object itself never finishes constructing — Finish() (the normal disposal point)
             // would never run and the hook would leak permanently. Guard this loop specifically so
             // the hook is provably removed on every path, including this one.
+            // Cold-start timing (item 6c, UX round 3): the interactive flow already logs
+            // capture-to-overlay; this is the other half — how long the overlay's own windows take
+            // to construct (InitializeComponent/BAML load, first-JIT of Overlay/* types) and then
+            // Show() — so a cold-start improvement (item 6a/6b) is actually measurable end to end.
+            var constructWatch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 foreach (var (frame, preview) in monitors)
@@ -231,6 +237,11 @@ public static class OverlayController
                 _keyboardHook.Dispose();
                 throw;
             }
+            finally
+            {
+                constructWatch.Stop();
+            }
+            _constructMs = constructWatch.ElapsedMilliseconds;
         }
 
         public Task<OverlayResult?> RunAsync()
@@ -239,6 +250,7 @@ public static class OverlayController
             // already shown must be force-closed rather than left stranded, topmost, on screen with
             // no way for the user to dismiss it (audit finding C.3).
             var shown = new List<OverlayWindow>();
+            var showWatch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 foreach (var window in _windows)
@@ -248,7 +260,11 @@ public static class OverlayController
                 }
 
                 _activeWindow = _windows.FirstOrDefault(w => w.Monitor.IsPrimary) ?? _windows[0];
-                _activeWindow.Activate();
+                // Session-start activation ladder (item 3a) — the same three-tier escalation used
+                // when a text edit opens, so a hotkey/pipe-triggered session (which never had a real
+                // OS foreground grant to begin with — see OverlayInputInterop.cs) starts out with the
+                // best foreground/focus this process can obtain, not just Activate()'s best-effort.
+                ForegroundActivator.Activate(_activeWindow, "session-start");
             }
             catch
             {
@@ -266,6 +282,14 @@ public static class OverlayController
                 }
                 throw;
             }
+            finally
+            {
+                showWatch.Stop();
+            }
+
+            Console.Error.WriteLine(
+                $"RoeSnip: overlay window construction+show {_constructMs + showWatch.ElapsedMilliseconds} ms " +
+                $"(construct {_constructMs} ms, show {showWatch.ElapsedMilliseconds} ms)");
 
             return _completion.Task;
         }
