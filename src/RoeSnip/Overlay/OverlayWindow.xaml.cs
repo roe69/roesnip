@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -22,6 +23,9 @@ using TextBox = System.Windows.Controls.TextBox;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using Brushes = System.Windows.Media.Brushes;
+using Orientation = System.Windows.Controls.Orientation;
+using Size = System.Windows.Size;
+using FontFamily = System.Windows.Media.FontFamily;
 
 /// <summary>One per monitor. Shows the frozen tone-mapped preview, dims everything outside the
 /// current selection, handles drag-to-select / resize / move, hosts the magnifier and (once a
@@ -43,10 +47,18 @@ public partial class OverlayWindow : Window
     private double _scaleX = 1.0, _scaleY = 1.0;
     private RectPhysical? _selectionPx;
 
+    /// <summary>A mouse-down that would start a new selection is treated as a *click* (color
+    /// inspection, item: "just clicking should bring up colour information") until the cursor has
+    /// travelled at least this many physical pixels — only then does it become a selection drag.</summary>
+    private const double ClickDragThresholdPx = 4.0;
+
     private DragMode _dragMode = DragMode.None;
     private SelectionHandle _activeHandle = SelectionHandle.None;
     private Point _dragAnchorPx;
+    private Point _dragAnchorDip;
+    private bool _newSelectionPending;
     private RectPhysical _dragStartRect;
+    private System.Windows.Controls.Border? _colorInfoPanel;
 
     private AnnotationTool _currentTool = AnnotationTool.None;
     private Color _currentColor = Colors.Red;
@@ -59,6 +71,11 @@ public partial class OverlayWindow : Window
     internal MonitorInfo Monitor => _frame.Monitor;
     internal CapturedFrame Frame => _frame;
     internal RectPhysical? SelectionPx => _selectionPx;
+
+    /// <summary>True while this window has anything worth cancelling short of closing the whole
+    /// overlay — used by OverlayController's two-stage Esc (stage: clear snip, stay open).</summary>
+    internal bool HasSnipInProgress =>
+        _selectionPx is not null || Annotations.HasAnnotations || _dragMode != DragMode.None;
 
     internal OverlayWindow(
         CapturedFrame frame,
@@ -156,6 +173,10 @@ public partial class OverlayWindow : Window
             CommitActiveTextEditor();
         }
 
+        // Any real click (i.e. not on the toolbar, handled above) dismisses an open color-info
+        // panel — a background click may then open a fresh one at the new spot on mouse-up.
+        DismissColorInfo();
+
         _onActivatedByMouse(this);
 
         if (e.ClickCount >= 2 && _selectionPx is { } existing && RectContains(existing, px))
@@ -198,10 +219,13 @@ public partial class OverlayWindow : Window
         }
         else
         {
-            _onSelectionStarted(this);
+            // Don't start (or clear) any selection yet: below ClickDragThresholdPx of travel this
+            // is a color-inspection click, not a drag. The selection work happens in
+            // OnPreviewMouseMove once the threshold is crossed.
             _dragMode = DragMode.NewSelection;
+            _newSelectionPending = true;
             _dragAnchorPx = px;
-            SetSelection(RectPhysical.FromSize((int)px.X, (int)px.Y, 0, 0));
+            _dragAnchorDip = dip;
         }
 
         CaptureMouse();
@@ -218,6 +242,15 @@ public partial class OverlayWindow : Window
         switch (_dragMode)
         {
             case DragMode.NewSelection:
+                if (_newSelectionPending)
+                {
+                    if ((px - _dragAnchorPx).LengthSquared < ClickDragThresholdPx * ClickDragThresholdPx)
+                    {
+                        break; // still a click candidate, not a drag — don't disturb any selection
+                    }
+                    _newSelectionPending = false;
+                    _onSelectionStarted(this); // clears other monitors' selections, per DESIGN.md
+                }
                 SetSelection(RectPhysical.FromSize(
                     (int)Math.Min(_dragAnchorPx.X, px.X),
                     (int)Math.Min(_dragAnchorPx.Y, px.Y),
@@ -250,7 +283,14 @@ public partial class OverlayWindow : Window
         switch (_dragMode)
         {
             case DragMode.NewSelection:
-                if (_selectionPx is { } sel)
+                if (_newSelectionPending)
+                {
+                    // Mouse never travelled far enough to become a drag: this was a click —
+                    // inspect the clicked pixel's color instead of touching the selection.
+                    _newSelectionPending = false;
+                    ShowColorInfo(_dragAnchorPx, _dragAnchorDip);
+                }
+                else if (_selectionPx is { } sel)
                 {
                     SetSelection(sel.Width < 2 || sel.Height < 2 ? null : ClampToFrame(sel));
                 }
@@ -354,7 +394,14 @@ public partial class OverlayWindow : Window
 
         if (e.Key == Key.Escape)
         {
-            _onCommand(OverlayCommand.Cancel);
+            // Two-stage Esc, innermost thing first. An active text edit was already consumed
+            // above; next comes this window's color-info panel; everything beyond that (clear
+            // the snip on whichever monitor holds it, else close the whole overlay) needs the
+            // session's cross-monitor view, so it escalates as CancelStage.
+            if (!DismissColorInfo())
+            {
+                _onCommand(OverlayCommand.CancelStage);
+            }
             e.Handled = true;
         }
         else if (e.Key == Key.Enter)
@@ -397,11 +444,13 @@ public partial class OverlayWindow : Window
         if (_dragMode != DragMode.None)
         {
             _dragMode = DragMode.None;
+            _newSelectionPending = false;
             if (IsMouseCaptured)
             {
                 ReleaseMouseCapture();
             }
         }
+        DismissColorInfo();
         CancelActiveTextEditor();
         Annotations.Clear();
         SetSelection(null);
@@ -443,7 +492,7 @@ public partial class OverlayWindow : Window
         double x = n.Left / _scaleX;
         double y = n.Bottom / _scaleY + 8.0;
 
-        double toolbarWidth = toolbar.ActualWidth > 0 ? toolbar.ActualWidth : 480.0;
+        double toolbarWidth = toolbar.ActualWidth > 0 ? toolbar.ActualWidth : 700.0;
         double toolbarHeight = toolbar.ActualHeight > 0 ? toolbar.ActualHeight : 44.0;
 
         if (ActualHeight > 0 && y + toolbarHeight > ActualHeight)
@@ -476,6 +525,9 @@ public partial class OverlayWindow : Window
             _toolbar.CopyClicked += () => _onCommand(OverlayCommand.Copy);
             _toolbar.SaveClicked += () => _onCommand(OverlayCommand.Save);
             _toolbar.SaveHdrClicked += () => _onCommand(OverlayCommand.SaveHdr);
+            // The toolbar's X button always closes the whole overlay outright — deliberately NOT
+            // the staged CancelStage semantics Esc has.
+            _toolbar.CancelClicked += () => _onCommand(OverlayCommand.Cancel);
             OverlayCanvas.Children.Add(_toolbar);
         }
         _toolbar.Visibility = Visibility.Visible;
@@ -486,8 +538,162 @@ public partial class OverlayWindow : Window
         if (_toolbar is not null)
         {
             _toolbar.Visibility = Visibility.Collapsed;
+            // Keep the visible checked state in sync with _currentTool being reset below — the
+            // toolbar instance is reused the next time a selection is made.
+            _toolbar.ResetToolSelection();
         }
         _currentTool = AnnotationTool.None;
+    }
+
+    // ---------- Click-to-inspect color info panel ----------
+
+    /// <summary>Small floating panel opened by a plain click (no drag): color swatch, hex, R/G/B
+    /// bytes sampled from the tone-mapped preview (what the user sees), and the HDR nits value
+    /// read from the raw FP16 CapturedFrame — the signature feature. The hex string is auto-copied
+    /// to the clipboard. Dismissed by the next click, by starting a drag, or by Esc (stage 1 of
+    /// the two-stage Esc); it never confirms or closes the overlay.</summary>
+    private void ShowColorInfo(Point clickPx, Point clickDip)
+    {
+        DismissColorInfo();
+
+        int sx = Math.Clamp((int)clickPx.X, 0, _preview.Width - 1);
+        int sy = Math.Clamp((int)clickPx.Y, 0, _preview.Height - 1);
+        int o = sy * _preview.Stride + sx * 4;
+        byte b = _preview.Pixels[o];
+        byte g = _preview.Pixels[o + 1];
+        byte r = _preview.Pixels[o + 2];
+        double nits = _frame.ReadPixelNits(
+            Math.Clamp(sx, 0, _frame.Width - 1),
+            Math.Clamp(sy, 0, _frame.Height - 1));
+
+        string hex = string.Create(CultureInfo.InvariantCulture, $"#{r:X2}{g:X2}{b:X2}");
+        bool copied = TryCopyTextToClipboard(hex);
+
+        var mono = new FontFamily("Consolas");
+
+        var swatch = new System.Windows.Controls.Border
+        {
+            Width = 30,
+            Height = 30,
+            CornerRadius = new CornerRadius(4),
+            Background = new SolidColorBrush(Color.FromRgb(r, g, b)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF)),
+            BorderThickness = new Thickness(1),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var hexText = new TextBlock
+        {
+            Text = hex,
+            FontFamily = mono,
+            FontSize = 15,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brushes.White,
+        };
+        var rgbText = new TextBlock
+        {
+            Text = string.Create(CultureInfo.InvariantCulture, $"R{r} G{g} B{b}"),
+            FontFamily = mono,
+            FontSize = 11.5,
+            Foreground = Brushes.LightGray,
+            Margin = new Thickness(0, 1, 0, 0),
+        };
+        var textColumn = new StackPanel { Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        textColumn.Children.Add(hexText);
+        textColumn.Children.Add(rgbText);
+
+        var topRow = new StackPanel { Orientation = Orientation.Horizontal };
+        topRow.Children.Add(swatch);
+        topRow.Children.Add(textColumn);
+
+        // Same >250-nits "this is an HDR highlight" emphasis rule as the magnifier readout.
+        bool isHighlight = nits > 250.0;
+        var nitsText = new TextBlock
+        {
+            Text = string.Create(CultureInfo.InvariantCulture, $"{nits:0.#} nits"),
+            FontFamily = mono,
+            FontSize = 15,
+            FontWeight = FontWeights.Bold,
+            Foreground = isHighlight ? new SolidColorBrush(Color.FromRgb(0xFF, 0xD5, 0x4F)) : Brushes.White,
+            Margin = new Thickness(0, 7, 0, 0),
+        };
+        var copiedText = new TextBlock
+        {
+            Text = copied ? "copied" : "copy failed (clipboard busy)",
+            FontSize = 10.5,
+            Foreground = copied
+                ? new SolidColorBrush(Color.FromRgb(0x7F, 0xD8, 0x8A))
+                : new SolidColorBrush(Color.FromRgb(0xE0, 0x9A, 0x9A)),
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+
+        var stack = new StackPanel();
+        stack.Children.Add(topRow);
+        stack.Children.Add(nitsText);
+        stack.Children.Add(copiedText);
+
+        var panel = new System.Windows.Controls.Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0xEC, 0x14, 0x14, 0x16)),
+            BorderBrush = Brushes.DimGray,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(11, 9, 11, 8),
+            Child = stack,
+            // Clicks must pass through: the next click anywhere dismisses this panel (and may
+            // open a new one at that spot) rather than interacting with the panel itself.
+            IsHitTestVisible = false,
+        };
+
+        panel.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        double w = panel.DesiredSize.Width;
+        double h = panel.DesiredSize.Height;
+
+        const double offsetDip = 16.0;
+        double x = clickDip.X + offsetDip;
+        double y = clickDip.Y + offsetDip;
+        if (ActualWidth > 0 && x + w > ActualWidth)
+        {
+            x = Math.Max(0, clickDip.X - offsetDip - w);
+        }
+        if (ActualHeight > 0 && y + h > ActualHeight)
+        {
+            y = Math.Max(0, clickDip.Y - offsetDip - h);
+        }
+
+        Canvas.SetLeft(panel, x);
+        Canvas.SetTop(panel, y);
+        OverlayCanvas.Children.Add(panel); // appended last => renders above magnifier/toolbar
+        _colorInfoPanel = panel;
+    }
+
+    /// <summary>Removes the color-info panel if one is open. Returns whether anything was
+    /// dismissed — Esc uses that to decide whether this press was consumed (stage 1) or should
+    /// escalate to CancelStage.</summary>
+    internal bool DismissColorInfo()
+    {
+        if (_colorInfoPanel is not { } panel)
+        {
+            return false;
+        }
+        OverlayCanvas.Children.Remove(panel);
+        _colorInfoPanel = null;
+        return true;
+    }
+
+    private static bool TryCopyTextToClipboard(string text)
+    {
+        try
+        {
+            System.Windows.Clipboard.SetText(text);
+            return true;
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Clipboard transiently locked by another process — the panel reports the failure;
+            // color inspection is a convenience, never worth crashing the overlay over.
+            return false;
+        }
     }
 
     // ---------- Inline text annotation (cuttable per PLAN.md §3.2 if it endangers the milestone) ----------

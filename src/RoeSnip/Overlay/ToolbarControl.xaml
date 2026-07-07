@@ -5,18 +5,34 @@
              SnapsToDevicePixels="True"
              UseLayoutRounding="True">
     <UserControl.Resources>
+        <!-- All icons are inline vector Path geometries (no image assets). Uniform stretch into a
+             14x14 box; round caps/joins for a clean hand-drawn-free look. -->
+        <Style x:Key="IconStyle" TargetType="Path">
+            <Setter Property="Stroke" Value="#F0F0F0"/>
+            <Setter Property="StrokeThickness" Value="1.6"/>
+            <Setter Property="StrokeStartLineCap" Value="Round"/>
+            <Setter Property="StrokeEndLineCap" Value="Round"/>
+            <Setter Property="StrokeLineJoin" Value="Round"/>
+            <Setter Property="Stretch" Value="Uniform"/>
+            <Setter Property="Width" Value="14"/>
+            <Setter Property="Height" Value="14"/>
+            <Setter Property="HorizontalAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="IsHitTestVisible" Value="False"/>
+        </Style>
+
+        <!-- Focusable=False everywhere: clicking a toolbar button must never move keyboard focus
+             off the overlay window, so Esc/Enter/Ctrl+... always reach the window's key handler. -->
         <Style x:Key="ToolButtonStyle" TargetType="ToggleButton">
-            <Setter Property="MinWidth" Value="36"/>
-            <Setter Property="MinHeight" Value="28"/>
-            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="28"/>
             <Setter Property="Margin" Value="2"/>
             <Setter Property="Background" Value="#2A2A2E"/>
             <Setter Property="Foreground" Value="#EAEAEA"/>
             <Setter Property="BorderBrush" Value="#3F3F46"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="FontSize" Value="12"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
@@ -24,16 +40,16 @@
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="4">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
-                                              Margin="{TemplateBinding Padding}"/>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
+                            <!-- Active tool is visually obvious: solid accent fill. -->
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter Property="Background" Value="#3A7CFD"/>
                                 <Setter Property="BorderBrush" Value="#5C9CFF"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="BorderBrush" Value="#6A6A70"/>
+                                <Setter Property="BorderBrush" Value="#8A8A92"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -42,24 +58,50 @@
         </Style>
 
         <Style x:Key="ActionButtonStyle" TargetType="Button">
-            <Setter Property="Padding" Value="12,5"/>
-            <Setter Property="Margin" Value="3,2"/>
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Margin" Value="2"/>
             <Setter Property="Background" Value="#2A2A2E"/>
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="FontSize" Value="12"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border Background="{TemplateBinding Background}" CornerRadius="4">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
-                                              Margin="{TemplateBinding Padding}"/>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- The Cancel X: quiet until hovered, then unmistakably red. Always fully closes the
+             overlay (never the staged Esc behavior). -->
+        <Style x:Key="CancelButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Background" Value="#2A2A2E"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="#C62828"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -74,6 +116,7 @@
             <Setter Property="BorderBrush" Value="#3F3F46"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
@@ -100,6 +143,7 @@
             <Setter Property="BorderBrush" Value="#3F3F46"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
@@ -123,13 +167,35 @@
 
     <Border Background="#EE1B1B1D" CornerRadius="6" BorderBrush="#3F3F46" BorderThickness="1">
         <StackPanel Orientation="Horizontal" Margin="4">
-            <ToggleButton x:Name="SelectToolButton" Style="{StaticResource ToolButtonStyle}" Content="Sel" ToolTip="Select / move (default)" IsChecked="True" Click="OnSelectToolClick"/>
-            <ToggleButton x:Name="RectToolButton" Style="{StaticResource ToolButtonStyle}" Content="Rect" ToolTip="Rectangle" Click="OnRectToolClick"/>
-            <ToggleButton x:Name="EllipseToolButton" Style="{StaticResource ToolButtonStyle}" Content="Elli" ToolTip="Ellipse" Click="OnEllipseToolClick"/>
-            <ToggleButton x:Name="ArrowToolButton" Style="{StaticResource ToolButtonStyle}" Content="Arrow" ToolTip="Arrow" Click="OnArrowToolClick"/>
-            <ToggleButton x:Name="LineToolButton" Style="{StaticResource ToolButtonStyle}" Content="Line" ToolTip="Line" Click="OnLineToolClick"/>
-            <ToggleButton x:Name="FreehandToolButton" Style="{StaticResource ToolButtonStyle}" Content="Free" ToolTip="Freehand" Click="OnFreehandToolClick"/>
-            <ToggleButton x:Name="TextToolButton" Style="{StaticResource ToolButtonStyle}" Content="Text" ToolTip="Text" Click="OnTextToolClick"/>
+            <!-- Tools -->
+            <ToggleButton x:Name="SelectToolButton" Style="{StaticResource ToolButtonStyle}"
+                          ToolTip="Select / move (default)" IsChecked="True" Click="OnSelectToolClick">
+                <Path Style="{StaticResource IconStyle}" StrokeDashArray="2.2 1.6" Data="M1,1 H15 V15 H1 Z"/>
+            </ToggleButton>
+            <ToggleButton x:Name="RectToolButton" Style="{StaticResource ToolButtonStyle}"
+                          ToolTip="Rectangle" Click="OnRectToolClick">
+                <Path Style="{StaticResource IconStyle}" Data="M1,3 H15 V13 H1 Z"/>
+            </ToggleButton>
+            <ToggleButton x:Name="EllipseToolButton" Style="{StaticResource ToolButtonStyle}"
+                          ToolTip="Ellipse" Click="OnEllipseToolClick">
+                <Path Style="{StaticResource IconStyle}" Data="M1,8 A7,5 0 1 1 15,8 A7,5 0 1 1 1,8"/>
+            </ToggleButton>
+            <ToggleButton x:Name="ArrowToolButton" Style="{StaticResource ToolButtonStyle}"
+                          ToolTip="Arrow" Click="OnArrowToolClick">
+                <Path Style="{StaticResource IconStyle}" Data="M2,14 L13,3 M13,3 H7.5 M13,3 V8.5"/>
+            </ToggleButton>
+            <ToggleButton x:Name="LineToolButton" Style="{StaticResource ToolButtonStyle}"
+                          ToolTip="Line" Click="OnLineToolClick">
+                <Path Style="{StaticResource IconStyle}" Data="M2,14 L14,2"/>
+            </ToggleButton>
+            <ToggleButton x:Name="FreehandToolButton" Style="{StaticResource ToolButtonStyle}"
+                          ToolTip="Freehand" Click="OnFreehandToolClick">
+                <Path Style="{StaticResource IconStyle}" Data="M1,13 C3,4 6,4 8,9 C10,14 13,13 15,4"/>
+            </ToggleButton>
+            <ToggleButton x:Name="TextToolButton" Style="{StaticResource ToolButtonStyle}"
+                          ToolTip="Text" Click="OnTextToolClick">
+                <Path Style="{StaticResource IconStyle}" Data="M3,2 H13 M8,2 V14"/>
+            </ToggleButton>
 
             <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
@@ -141,13 +207,43 @@
 
             <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
-            <Button x:Name="UndoButton" Style="{StaticResource ActionButtonStyle}" Content="Undo" ToolTip="Undo (Ctrl+Z)" Click="OnUndoClick"/>
+            <Button x:Name="UndoButton" Style="{StaticResource ActionButtonStyle}"
+                    ToolTip="Undo (Ctrl+Z)" Click="OnUndoClick">
+                <!-- Curved undo arrow: head pointing left, tail sweeping down and back -->
+                <Path Style="{StaticResource IconStyle}" Data="M2,6 L6,2 M2,6 L6,10 M2,6 H10 A4.5,4.5 0 0 1 10,15 H6"/>
+            </Button>
 
             <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
-            <Button x:Name="CopyButton" Style="{StaticResource ActionButtonStyle}" Content="Copy" ToolTip="Copy (Ctrl+C)" Background="#2E7D32" Click="OnCopyClick"/>
-            <Button x:Name="SaveButton" Style="{StaticResource ActionButtonStyle}" Content="Save" ToolTip="Save (Ctrl+S)" Background="#1565C0" Click="OnSaveClick"/>
-            <Button x:Name="SaveHdrButton" Style="{StaticResource ActionButtonStyle}" Content="Save HDR" ToolTip="Save the untouched HDR original" Background="#6A1B9A" Click="OnSaveHdrClick"/>
+            <Button x:Name="CopyButton" Style="{StaticResource ActionButtonStyle}" Background="#2E7D32"
+                    ToolTip="Copy (Ctrl+C)" Click="OnCopyClick">
+                <!-- Two overlapping squares -->
+                <Path Style="{StaticResource IconStyle}" Data="M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5"/>
+            </Button>
+            <Button x:Name="SaveButton" Style="{StaticResource ActionButtonStyle}" Background="#1565C0"
+                    ToolTip="Save (Ctrl+S)" Click="OnSaveClick">
+                <!-- Down-arrow into tray -->
+                <Path Style="{StaticResource IconStyle}" Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
+            </Button>
+            <Button x:Name="SaveHdrButton" Style="{StaticResource ActionButtonStyle}" Background="#6A1B9A"
+                    ToolTip="Save HDR original (.jxr, untouched FP16)" Click="OnSaveHdrClick">
+                <!-- Save glyph with a small HDR badge -->
+                <Grid>
+                    <Path Style="{StaticResource IconStyle}" Width="13" Height="13" Margin="0,0,7,4"
+                          Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
+                    <Border Background="#D91B1B1D" CornerRadius="2" Padding="1.5,0"
+                            HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                        <TextBlock Text="HDR" FontSize="6.5" FontWeight="Bold" Foreground="#FFD54F"/>
+                    </Border>
+                </Grid>
+            </Button>
+
+            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
+            <Button x:Name="CancelButton" Style="{StaticResource CancelButtonStyle}"
+                    ToolTip="Cancel — close without capturing" Click="OnCancelClick">
+                <Path Style="{StaticResource IconStyle}" Width="11" Height="11" Data="M2,2 L14,14 M14,2 L2,14"/>
+            </Button>
         </StackPanel>
     </Border>
 </UserControl>

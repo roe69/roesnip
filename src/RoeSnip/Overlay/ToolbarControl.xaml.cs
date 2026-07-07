@@ -13,23 +13,31 @@ namespace RoeSnip.Overlay;
 using Color = System.Windows.Media.Color;
 using UserControl = System.Windows.Controls.UserControl;
 
-/// <summary>Tool buttons, color/stroke-width pickers, undo, and the three terminal action buttons
-/// (Copy / Save / Save HDR). Always attached below-right of the current selection by the owning
-/// OverlayWindow (flipping above if it would go off-screen). All buttons are always visible — no
-/// hover-only-revealed controls, per the product's UI style requirement.</summary>
+/// <summary>Pictogram tool buttons (inline vector Path icons — no image assets), color/stroke-width
+/// pickers, undo, the three terminal action buttons (Copy / Save / Save HDR), and a Cancel X that
+/// always closes the whole overlay. Always attached below-right of the current selection by the
+/// owning OverlayWindow (flipping above if it would go off-screen). All buttons are always visible
+/// — no hover-only-revealed controls, per the product's UI style requirement — and every button is
+/// Focusable=false so keystrokes (Esc/Enter/Ctrl+...) keep reaching the overlay window's handler
+/// even right after a toolbar click.</summary>
 public partial class ToolbarControl : UserControl
 {
-    private static readonly Color[] PresetColors =
+    private static readonly (Color Color, string Name)[] PresetColors =
     {
-        Color.FromRgb(0xE5, 0x39, 0x35), // red
-        Color.FromRgb(0xFF, 0xB3, 0x00), // amber
-        Color.FromRgb(0x43, 0xA0, 0x47), // green
-        Color.FromRgb(0x1E, 0x88, 0xE5), // blue
-        Color.FromRgb(0xFF, 0xFF, 0xFF), // white
-        Color.FromRgb(0x21, 0x21, 0x21), // near-black
+        (Color.FromRgb(0xE5, 0x39, 0x35), "Red"),
+        (Color.FromRgb(0xFF, 0xB3, 0x00), "Amber"),
+        (Color.FromRgb(0x43, 0xA0, 0x47), "Green"),
+        (Color.FromRgb(0x1E, 0x88, 0xE5), "Blue"),
+        (Color.FromRgb(0xFF, 0xFF, 0xFF), "White"),
+        (Color.FromRgb(0x21, 0x21, 0x21), "Black"),
     };
 
-    private static readonly double[] StrokeWidths = { 2.0, 4.0, 8.0 };
+    private static readonly (double Width, string Name)[] StrokeWidths =
+    {
+        (2.0, "Thin (2 px)"),
+        (4.0, "Medium (4 px)"),
+        (8.0, "Thick (8 px)"),
+    };
 
     private readonly ToggleButton[] _toolButtons;
     private ToggleButton? _selectedColorSwatch;
@@ -42,6 +50,7 @@ public partial class ToolbarControl : UserControl
     public event Action? CopyClicked;
     public event Action? SaveClicked;
     public event Action? SaveHdrClicked;
+    public event Action? CancelClicked;
 
     public ToolbarControl()
     {
@@ -59,13 +68,14 @@ public partial class ToolbarControl : UserControl
 
     private void BuildColorSwatches()
     {
-        foreach (var color in PresetColors)
+        foreach (var (color, name) in PresetColors)
         {
             var swatch = new ToggleButton
             {
                 Style = (Style)Resources["ColorSwatchStyle"],
                 Background = new SolidColorBrush(color),
                 Tag = color,
+                ToolTip = name,
             };
             swatch.Click += OnColorSwatchClick;
             ColorSwatchPanel.Children.Add(swatch);
@@ -80,17 +90,18 @@ public partial class ToolbarControl : UserControl
 
     private void BuildStrokeWidthSwatches()
     {
-        foreach (var width in StrokeWidths)
+        foreach (var (width, name) in StrokeWidths)
         {
             var swatch = new ToggleButton
             {
                 Style = (Style)Resources["StrokeWidthSwatchStyle"],
                 Tag = width * 2.0, // dot diameter scales with stroke width, min ~4 DIPs
+                ToolTip = name,
             };
             swatch.Click += OnStrokeWidthSwatchClick;
             StrokeWidthPanel.Children.Add(swatch);
 
-            if (width == StrokeWidths[1]) // default to the medium preset
+            if (width == StrokeWidths[1].Width) // default to the medium preset
             {
                 _selectedStrokeSwatch = swatch;
                 swatch.IsChecked = true;
@@ -136,12 +147,24 @@ public partial class ToolbarControl : UserControl
         _selectedStrokeSwatch = clicked;
 
         int index = StrokeWidthPanel.Children.IndexOf(clicked);
-        double width = index >= 0 && index < StrokeWidths.Length ? StrokeWidths[index] : StrokeWidths[1];
+        double width = index >= 0 && index < StrokeWidths.Length ? StrokeWidths[index].Width : StrokeWidths[1].Width;
         StrokeWidthSelected?.Invoke(width);
+    }
+
+    /// <summary>Re-checks the default Select tool without raising ToolSelected — called by the
+    /// owning OverlayWindow when the toolbar is hidden (selection cleared), which also resets its
+    /// own current tool to None; this keeps the visible checked state from lying on re-show.</summary>
+    public void ResetToolSelection()
+    {
+        foreach (var button in _toolButtons)
+        {
+            button.IsChecked = ReferenceEquals(button, SelectToolButton);
+        }
     }
 
     private void OnUndoClick(object sender, RoutedEventArgs e) => UndoClicked?.Invoke();
     private void OnCopyClick(object sender, RoutedEventArgs e) => CopyClicked?.Invoke();
     private void OnSaveClick(object sender, RoutedEventArgs e) => SaveClicked?.Invoke();
     private void OnSaveHdrClick(object sender, RoutedEventArgs e) => SaveHdrClicked?.Invoke();
+    private void OnCancelClick(object sender, RoutedEventArgs e) => CancelClicked?.Invoke();
 }

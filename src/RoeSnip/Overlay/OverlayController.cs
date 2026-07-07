@@ -13,14 +13,19 @@ namespace RoeSnip.Overlay;
 
 /// <summary>Commands that can be raised from any monitor's OverlayWindow (keyboard) or from the
 /// toolbar attached to the monitor that currently holds the selection — OverlayController treats
-/// both sources identically. ConfirmPlain is Enter/double-click; Copy/Save/SaveHdr are the
-/// explicit Ctrl+C/Ctrl+S/toolbar-button requests. Undo (Ctrl+Z) is handled locally inside
-/// OverlayWindow against its own AnnotationLayer and never reaches the controller, since only the
-/// OS-focused window can receive it in the first place — there's no cross-monitor ambiguity to
-/// resolve for it.</summary>
+/// both sources identically. Cancel closes the whole overlay unconditionally (toolbar X button).
+/// CancelStage is Esc's two-stage semantics: if any monitor has a snip in progress (selection /
+/// annotations / drag), clear it and stay open; only with nothing active does it close the
+/// overlay. (Esc's innermost stages — an active inline text edit or an open color-info panel —
+/// are consumed locally by OverlayWindow before CancelStage is ever raised.) ConfirmPlain is
+/// Enter/double-click; Copy/Save/SaveHdr are the explicit Ctrl+C/Ctrl+S/toolbar-button requests.
+/// Undo (Ctrl+Z) is handled locally inside OverlayWindow against its own AnnotationLayer and
+/// never reaches the controller, since only the OS-focused window can receive it in the first
+/// place — there's no cross-monitor ambiguity to resolve for it.</summary>
 public enum OverlayCommand
 {
     Cancel,
+    CancelStage,
     ConfirmPlain,
     Copy,
     Save,
@@ -136,6 +141,17 @@ public static class OverlayController
             {
                 _activeWindow = window;
                 window.Activate();
+
+                // A color-info panel belongs to where the user is working: when attention moves
+                // to another monitor, dismiss any panel left open elsewhere (also guarantees at
+                // most one panel exists across the whole session).
+                foreach (var other in _windows)
+                {
+                    if (!ReferenceEquals(other, window))
+                    {
+                        other.DismissColorInfo();
+                    }
+                }
             }
         }
 
@@ -165,6 +181,10 @@ public static class OverlayController
                     Finish(null);
                     break;
 
+                case OverlayCommand.CancelStage:
+                    CancelStage();
+                    break;
+
                 case OverlayCommand.ConfirmPlain:
                     Confirm(copy: _settings.CopyOnSelect, save: false, saveHdr: false);
                     break;
@@ -183,6 +203,38 @@ public static class OverlayController
                     // SelectionPx, per PLAN.md §3.2 ("does not call any HDR-export API itself").
                     Confirm(copy: _settings.CopyOnSelect, save: false, saveHdr: true);
                     break;
+            }
+        }
+
+        /// <summary>Esc's two-stage behavior, decided here because only the session can see every
+        /// monitor: the selection may live on a different window than the one that has keyboard
+        /// focus. Stage 1 dismisses any open color-info panel; stage 2 clears the in-progress snip
+        /// (selection + annotations, back to the crosshair state); stage 3 — nothing active at all
+        /// — closes the whole overlay. Each Esc press performs exactly one stage.</summary>
+        private void CancelStage()
+        {
+            bool dismissedInfo = false;
+            foreach (var window in _windows)
+            {
+                dismissedInfo |= window.DismissColorInfo();
+            }
+            if (dismissedInfo)
+            {
+                return;
+            }
+
+            bool clearedSnip = false;
+            foreach (var window in _windows)
+            {
+                if (window.HasSnipInProgress)
+                {
+                    window.ClearSelection();
+                    clearedSnip = true;
+                }
+            }
+            if (!clearedSnip)
+            {
+                Finish(null);
             }
         }
 
