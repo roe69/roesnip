@@ -11,7 +11,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- InvariantGlobalization must stay OFF: WPF's font cache (MS.Internal.FontCache.MajorLanguages)
+         constructs real cultures and hard-crashes the process on first text layout when it's enabled. -->
     <Platforms>x64</Platforms>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
   </PropertyGroup>
