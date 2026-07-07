@@ -58,10 +58,30 @@ public static class ToneMapper
             });
 
         double m0 = globalMax;
-        double knee = opts.Knee;
-        double peak = opts.PeakOverride ?? Math.Clamp(
+
+        // Defensive sanitization (never trust options — audit finding F): a knee/peak pair where
+        // PeakOverride == Knee divides by zero downstream (t = (m - knee) / (peak - knee)),
+        // producing NaN that Math.Clamp does NOT clamp, which renders HDR highlights as solid
+        // black. A Knee greater than peak silently hard-clips the entire frame — exactly the
+        // failure mode this app exists to prevent. Both are sanitized here regardless of what
+        // SettingsWindow already validates, since ToneMapOptions can also be constructed directly
+        // (tests, future callers) without going through that UI.
+        double knee = double.IsFinite(opts.Knee) ? Math.Clamp(opts.Knee, 0.5, 0.99) : 0.90;
+
+        double derivedPeak = Math.Clamp(
             Math.Min(m0, frame.Monitor.MaxLuminanceNits / frame.Monitor.SdrWhiteNits),
             2.0, double.MaxValue);
+        // A PeakOverride is only honored if it's finite AND actually above the (already-sanitized)
+        // knee — anything else (non-finite, negative, or <= knee) is "absurd" and the override is
+        // ignored entirely in favor of the derived peak, rather than letting a bogus value survive
+        // into the Math.Max floor below.
+        double peak = opts.PeakOverride is { } peakOverride && double.IsFinite(peakOverride) && peakOverride > knee
+            ? peakOverride
+            : derivedPeak;
+        // Final safety net regardless of which path produced peak above: force at least a minimal
+        // shoulder width so peak can never equal (or fall below) knee.
+        peak = Math.Max(peak, knee + 0.05);
+
         bool passThroughWholeFrame = m0 <= 1.0 + opts.Epsilon;
 
         var output = new byte[width * 4 * height];

@@ -201,6 +201,118 @@ public class ToneMapperTests
     }
 
     [Fact]
+    public void PeakOverrideEqualToKnee_DoesNotProduceNaNOrBlack_BrightPixelStaysBright()
+    {
+        // Audit finding F: PeakOverride == Knee used to divide by zero downstream (t = (m - knee) /
+        // (peak - knee)), producing NaN that Math.Clamp does not clamp, which rendered HDR
+        // highlights as solid black. A bright (well above knee) pixel must still come out bright.
+        var monitor = MakeMonitor(sdrWhiteNits: 80.0, maxLuminanceNits: 100000.0);
+        var frame = MakeFp16Frame(1, 1, (_, _) => (3.0f, 3.0f, 3.0f, 1.0f), monitor);
+
+        var image = ToneMapper.MapToSdr(frame, new ToneMapOptions(Knee: 0.90, PeakOverride: 0.90));
+        var (b, g, r, _) = ReadOutputPixel(image, 0, 0);
+
+        Assert.True(r > 200, $"Expected a bright output byte, got R={r} (NaN/black regression).");
+        Assert.True(g > 200, $"Expected a bright output byte, got G={g} (NaN/black regression).");
+        Assert.True(b > 200, $"Expected a bright output byte, got B={b} (NaN/black regression).");
+    }
+
+    [Fact]
+    public void HugeKneeOverride_ClampsTo0_99_AndShoulderStillEngages()
+    {
+        // Audit finding F: an absurd (e.g. > 1.0) Knee override used to make Knee > Peak, which
+        // makes shoulderPixel false for every pixel and silently hard-clips the whole frame via the
+        // naive Clamp(r,0,1) passthrough branch instead of applying the shoulder rolloff. After
+        // sanitizing Knee into [0.5, 0.99], (1) the huge override must behave identically to passing
+        // 0.99 explicitly, and (2) values straddling that real (sanitized) knee boundary must still
+        // produce adjacent bytes — exactly like the pre-existing ShoulderContinuity test already
+        // proves for the literal default knee — demonstrating the shoulder is active, not disabled.
+        const double sanitizedKnee = 0.99;
+        var monitor = MakeMonitor(sdrWhiteNits: 80.0, maxLuminanceNits: 1000.0);
+
+        float justBelow = (float)(sanitizedKnee - 1e-6);
+        float justAbove = (float)(sanitizedKnee + 1e-6);
+        var frame = MakeFp16Frame(3, 1, (x, _) => x switch
+        {
+            0 => (2.0f, 2.0f, 2.0f, 1.0f), // forces shoulder mode active for the whole frame
+            1 => (justBelow, justBelow, justBelow, 1.0f),
+            _ => (justAbove, justAbove, justAbove, 1.0f),
+        }, monitor);
+
+        var withHugeOverride = ToneMapper.MapToSdr(frame, new ToneMapOptions(Knee: 50.0));
+        var withExplicitSanitizedKnee = ToneMapper.MapToSdr(frame, new ToneMapOptions(Knee: sanitizedKnee));
+
+        var (_, _, rBelowHuge, _) = ReadOutputPixel(withHugeOverride, 1, 0);
+        var (_, _, rAboveHuge, _) = ReadOutputPixel(withHugeOverride, 2, 0);
+        var (_, _, rBelowExplicit, _) = ReadOutputPixel(withExplicitSanitizedKnee, 1, 0);
+        var (_, _, rAboveExplicit, _) = ReadOutputPixel(withExplicitSanitizedKnee, 2, 0);
+
+        Assert.Equal(rBelowExplicit, rBelowHuge);
+        Assert.Equal(rAboveExplicit, rAboveHuge);
+        Assert.True(Math.Abs(rAboveHuge - rBelowHuge) <= 1,
+            $"Expected adjacent bytes at the (sanitized) knee boundary, got {rBelowHuge} and {rAboveHuge} — shoulder appears disabled.");
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void NonFiniteKneeOverride_FallsBackToLiteralDefault(double badKnee)
+    {
+        var monitor = MakeMonitor(sdrWhiteNits: 80.0, maxLuminanceNits: 100000.0);
+        var frame = MakeFp16Frame(1, 1, (_, _) => (3.0f, 3.0f, 3.0f, 1.0f), monitor);
+
+        var withBadKnee = ToneMapper.MapToSdr(frame, new ToneMapOptions(Knee: badKnee));
+        var withDefaultKnee = ToneMapper.MapToSdr(frame, new ToneMapOptions(Knee: 0.90));
+
+        var (bBad, gBad, rBad, _) = ReadOutputPixel(withBadKnee, 0, 0);
+        var (bDef, gDef, rDef, _) = ReadOutputPixel(withDefaultKnee, 0, 0);
+
+        Assert.Equal(rDef, rBad);
+        Assert.Equal(gDef, gBad);
+        Assert.Equal(bDef, bBad);
+    }
+
+    [Theory]
+    [InlineData(-5.0, 0.5)]   // finite, below range -> clamps to the 0.5 floor
+    [InlineData(50.0, 0.99)]  // finite, above range -> clamps to the 0.99 ceiling
+    public void FiniteOutOfRangeKneeOverride_ClampsIntoValidRange(double rawKnee, double expectedClampedKnee)
+    {
+        var monitor = MakeMonitor(sdrWhiteNits: 80.0, maxLuminanceNits: 100000.0);
+        var frame = MakeFp16Frame(1, 1, (_, _) => (3.0f, 3.0f, 3.0f, 1.0f), monitor);
+
+        var withRawKnee = ToneMapper.MapToSdr(frame, new ToneMapOptions(Knee: rawKnee));
+        var withExpectedClampedKnee = ToneMapper.MapToSdr(frame, new ToneMapOptions(Knee: expectedClampedKnee));
+
+        var (bRaw, gRaw, rRaw, _) = ReadOutputPixel(withRawKnee, 0, 0);
+        var (bExp, gExp, rExp, _) = ReadOutputPixel(withExpectedClampedKnee, 0, 0);
+
+        Assert.Equal(rExp, rRaw);
+        Assert.Equal(gExp, gRaw);
+        Assert.Equal(bExp, bRaw);
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.NegativeInfinity)]
+    [InlineData(-3.0)]
+    public void NonFiniteOrNegativePeakOverride_IgnoresOverride_UsesDerivedPeak(double badPeak)
+    {
+        var monitor = MakeMonitor(sdrWhiteNits: 80.0, maxLuminanceNits: 100000.0);
+        var frame = MakeFp16Frame(1, 1, (_, _) => (3.0f, 3.0f, 3.0f, 1.0f), monitor);
+
+        var withBadPeak = ToneMapper.MapToSdr(frame, new ToneMapOptions(PeakOverride: badPeak));
+        var withNoOverride = ToneMapper.MapToSdr(frame, new ToneMapOptions(PeakOverride: null));
+
+        var (bBad, gBad, rBad, _) = ReadOutputPixel(withBadPeak, 0, 0);
+        var (bDef, gDef, rDef, _) = ReadOutputPixel(withNoOverride, 0, 0);
+
+        Assert.Equal(rDef, rBad);
+        Assert.Equal(gDef, gBad);
+        Assert.Equal(bDef, bBad);
+    }
+
+    [Fact]
     public void MapToSdr_OnBgra8SrgbFrame_Throws()
     {
         var monitor = MakeMonitor();

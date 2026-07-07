@@ -188,6 +188,16 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
                             adapter, DriverType.Unknown, DeviceCreationFlags.None, levels,
                             out ID3D11Device? device).CheckError();
                         adapterOwnsOutput = true;
+
+                        // The D3D device holds its own reference to the adapter it was created on
+                        // (verified: the adapter is not needed after this call returns), so the
+                        // Vortice adapter wrapper itself must still be disposed here — SharpGen
+                        // ComObjects never release their native ref without an explicit Dispose.
+                        // `adapterOwnsOutput = true` above only meant "don't dispose it in the
+                        // finally below"; without this line the wrapper (and its underlying COM
+                        // reference) leaked on every single capture. `output` is unaffected: it
+                        // holds its own independent COM reference and remains valid for the caller.
+                        adapter.Dispose();
                         return (output, device!);
                     }
 

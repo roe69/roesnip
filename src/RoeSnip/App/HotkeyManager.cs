@@ -87,29 +87,45 @@ public sealed class HotkeyManager : IDisposable
         }
     }
 
-    /// <summary>Reads PrintScreenKeyForSnippingEnabled and, if non-zero, asks the user (via a
-    /// blocking dialog) whether to disable it or fall back to Ctrl+PrintScreen. Returns the
-    /// modifiers RoeSnip should actually register with. Any registry or dialog failure logs and
-    /// falls back to keeping the PrintScreen-alone default (fail open on the UX, not silently
-    /// register nothing).</summary>
+    /// <summary>Reads PrintScreenKeyForSnippingEnabled and, unless it's explicitly present AND
+    /// zero, asks the user (via a blocking dialog) whether to disable it or fall back to
+    /// Ctrl+PrintScreen. On Windows 11 an ABSENT value means the Snipping Tool intercept is ON by
+    /// default (not off) — treating "missing" as "no conflict" would silently make RoeSnip's
+    /// PrtScr hotkey never fire on a stock Win11 install, so only an explicit 0 counts as
+    /// "no conflict". Returns the modifiers RoeSnip should actually register with. Any registry or
+    /// dialog failure logs and falls back to keeping the PrintScreen-alone default (fail open on
+    /// the UX, not silently register nothing).</summary>
     private static uint ResolvePrintScreenConsent(uint modifiers)
     {
         try
         {
+            bool valuePresent;
             int value;
             using (var key = Registry.CurrentUser.OpenSubKey(PrintScreenRegistryKeyPath, writable: false))
             {
-                value = key?.GetValue(PrintScreenValueName) switch
+                object? raw = key?.GetValue(PrintScreenValueName);
+                switch (raw)
                 {
-                    int i => i,
-                    string s when int.TryParse(s, out int parsed) => parsed,
-                    _ => 0,
-                };
+                    case int i:
+                        valuePresent = true;
+                        value = i;
+                        break;
+                    case string s when int.TryParse(s, out int parsed):
+                        valuePresent = true;
+                        value = parsed;
+                        break;
+                    default:
+                        // Missing key/value (or unparseable) — Win11 default is "intercept ON",
+                        // so this must NOT be treated as value == 0 ("no conflict").
+                        valuePresent = false;
+                        value = 0;
+                        break;
+                }
             }
 
-            if (value == 0)
+            if (valuePresent && value == 0)
             {
-                return modifiers; // Windows isn't intercepting a bare PrtScr; nothing to do.
+                return modifiers; // Explicitly disabled: Windows isn't intercepting a bare PrtScr.
             }
 
             var result = System.Windows.Forms.MessageBox.Show(

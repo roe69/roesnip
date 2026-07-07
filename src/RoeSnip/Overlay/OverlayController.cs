@@ -92,13 +92,37 @@ public static class OverlayController
 
         public Task<OverlayResult?> RunAsync()
         {
-            foreach (var window in _windows)
+            // If showing (or activating) one of these windows throws partway through, every window
+            // already shown must be force-closed rather than left stranded, topmost, on screen with
+            // no way for the user to dismiss it (audit finding C.3).
+            var shown = new List<OverlayWindow>();
+            try
             {
-                window.Show();
-            }
+                foreach (var window in _windows)
+                {
+                    window.Show();
+                    shown.Add(window);
+                }
 
-            _activeWindow = _windows.FirstOrDefault(w => w.Monitor.IsPrimary) ?? _windows[0];
-            _activeWindow.Activate();
+                _activeWindow = _windows.FirstOrDefault(w => w.Monitor.IsPrimary) ?? _windows[0];
+                _activeWindow.Activate();
+            }
+            catch
+            {
+                foreach (var window in shown)
+                {
+                    try
+                    {
+                        window.CloseOverlay();
+                    }
+                    catch
+                    {
+                        // Best-effort: nothing further to do if closing a partially-shown window
+                        // itself fails.
+                    }
+                }
+                throw;
+            }
 
             return _completion.Task;
         }

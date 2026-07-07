@@ -42,6 +42,7 @@ public sealed class WgcCapturer : IScreenCapturer
         ID3D11Device? d3dDevice = null;
         Direct3D11CaptureFramePool? framePool = null;
         GraphicsCaptureSession? session = null;
+        IDirect3DDevice? winrtDevice = null;
 
         try
         {
@@ -64,7 +65,6 @@ public sealed class WgcCapturer : IScreenCapturer
             // consume the caller's reference, so we must Release the raw pointer we own after
             // wrapping — otherwise the device leaks once per capture.
             CreateDirect3D11DeviceFromDXGIDeviceNative(dxgiDevice.NativePointer, out IntPtr winrtDevicePtr);
-            IDirect3DDevice winrtDevice;
             try
             {
                 winrtDevice = WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(winrtDevicePtr);
@@ -176,6 +176,23 @@ public sealed class WgcCapturer : IScreenCapturer
             session?.Dispose();
             framePool?.Dispose();
             d3dDevice?.Dispose();
+
+            // winrtDevice and item are both CsWinRT projections wrapping a native COM reference
+            // that FromAbi added internally — without an explicit release here, that reference (and
+            // driver-side memory behind it) only got freed whenever the GC finalizer pass eventually
+            // ran, leaking 2 native refs per fallback capture until then (audit finding H). This is
+            // purely additive: the existing Marshal.Release calls above are unrelated, already-
+            // balanced refcounting for the raw ABI pointers and are left untouched.
+            //
+            // IDirect3DDevice (winrtDevice's static type) implements System.IDisposable directly.
+            // GraphicsCaptureItem does not (verified against the projection metadata) — it only
+            // implements WinRT.IWinRTObject, so its underlying native reference is released via its
+            // NativeObject instead.
+            winrtDevice?.Dispose();
+            if (item is WinRT.IWinRTObject winrtItem)
+            {
+                winrtItem.NativeObject?.Dispose();
+            }
         }
     }
 

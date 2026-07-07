@@ -88,8 +88,26 @@ public sealed class TrayApp : ITrayNotifier
     private void TriggerCapture()
     {
         // Fire-and-forget from a UI event handler: RunCaptureFlowAsync reports its own failures
-        // via ITrayNotifier (this), so there's nothing further to await/observe here.
-        _ = AppComposition.RunCaptureFlowAsync(_settings, this);
+        // via ITrayNotifier (this) internally, but that's belt-and-braces, not a guarantee — the
+        // task itself must still be observed so an unexpected exception (e.g. thrown before its own
+        // try/catch is entered) can't become an unobserved-task-exception crash later on the
+        // finalizer thread. Route anything that slips through to the same error balloon.
+        _ = ObserveCaptureTask(AppComposition.RunCaptureFlowAsync(_settings, this));
+    }
+
+    private async Task ObserveCaptureTask(Task captureTask)
+    {
+        try
+        {
+            // Deliberately NOT ConfigureAwait(false): ShowError touches the NotifyIcon, which this
+            // class otherwise only ever touches from the UI/message-loop thread that's running
+            // Application.Run — stay on the captured (WinForms) SynchronizationContext.
+            await captureTask;
+        }
+        catch (Exception ex)
+        {
+            ShowError($"Capture failed: {ex.Message}");
+        }
     }
 
     private void OpenSettings()

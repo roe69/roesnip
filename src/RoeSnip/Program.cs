@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace RoeSnip;
@@ -175,6 +176,7 @@ public static class AppComposition
         }
 
         var toneMapOpts = new Color.ToneMapOptions();
+        bool anyWriteFailed = false;
 
         foreach (var frame in frames)
         {
@@ -188,11 +190,18 @@ public static class AppComposition
             string outPath = ResolveCaptureOutPath(cli.Out, frame.Monitor.Index, frames.Count);
             try
             {
+                string? outDir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(outPath));
+                if (!string.IsNullOrEmpty(outDir))
+                {
+                    System.IO.Directory.CreateDirectory(outDir);
+                }
+
                 Imaging.PngWriter.WriteFile(outPath, image);
                 Console.WriteLine($"  wrote {outPath}");
             }
             catch (Exception ex)
             {
+                anyWriteFailed = true;
                 Console.Error.WriteLine($"RoeSnip: failed to write {outPath}: {ex.Message}");
             }
 
@@ -209,11 +218,13 @@ public static class AppComposition
                     }
                     catch (Exception ex)
                     {
+                        anyWriteFailed = true;
                         Console.Error.WriteLine($"RoeSnip: failed to write HDR copy: {ex.Message}");
                     }
                 }
                 else
                 {
+                    anyWriteFailed = true;
                     Console.Error.WriteLine("RoeSnip: HDR export unavailable — App package not present in this build.");
                 }
             }
@@ -221,7 +232,7 @@ public static class AppComposition
             frame.Dispose();
         }
 
-        return 0;
+        return anyWriteFailed ? 1 : 0;
     }
 
     /// <summary>Entry point for launching the tray app (no CLI args). If RunTrayApp is null
@@ -243,6 +254,13 @@ public static class AppComposition
         return RunTrayApp(args);
     }
 
+    // Reentrancy guard (audit finding B): TriggerCapture can be invoked from the hotkey, the tray
+    // menu, icon double-click, and the second-instance pipe. All four funnel into this one method,
+    // so a single Interlocked flag here covers every trigger. While a capture is in progress, a new
+    // trigger is ignored (logged to stderr) rather than stacking a second overlay set on top of the
+    // first (which would screenshot the first overlay's own UI).
+    private static int s_captureInProgress; // 0 = idle, 1 = busy; only touched via Interlocked
+
     /// <summary>The interactive capture flow: capture all monitors, run the overlay, then handle
     /// the cross-cutting follow-ups (HDR auto-save / Save-HDR button, "saved" balloon). Called by
     /// WP-C's HotkeyManager (on hotkey) and TrayApp's "Capture" menu item, passing itself as
@@ -255,67 +273,88 @@ public static class AppComposition
             return;
         }
 
-        var captureService = new Capture.CaptureService();
-        var frames = captureService.CaptureAll();
-        if (frames.Count == 0)
+        if (Interlocked.CompareExchange(ref s_captureInProgress, 1, 0) != 0)
         {
-            notifier?.ShowError("Capture failed on every monitor.");
+            Console.Error.WriteLine("RoeSnip: capture already in progress; ignoring trigger.");
             return;
         }
 
-        var toneMapOpts = new Color.ToneMapOptions(
-            Knee: settings.ToneMapKneeOverride ?? 0.90,
-            PeakOverride: settings.ToneMapPeakOverride);
-
-        var monitorsWithPreview = new List<(Capture.CapturedFrame Frame, Imaging.SdrImage Preview)>();
-        foreach (var frame in frames)
-        {
-            monitorsWithPreview.Add((frame, Imaging.SdrImage.FromCapturedFrame(frame, toneMapOpts)));
-        }
-
-        OverlayResult? result;
         try
         {
-            result = await RunOverlay(monitorsWithPreview, settings);
+            var captureService = new Capture.CaptureService();
+            var frames = captureService.CaptureAll();
+            if (frames.Count == 0)
+            {
+                notifier?.ShowError("Capture failed on every monitor.");
+                return;
+            }
+
+            // Frames must stay alive (undisposed) through the HDR-export branch below, which reads
+            // result.SourceFrame — only dispose them once every post-overlay action (HDR export,
+            // "saved" balloon) has completed, on every path (cancel, exception).
+            try
+            {
+                var toneMapOpts = new Color.ToneMapOptions(
+                    Knee: settings.ToneMapKneeOverride ?? 0.90,
+                    PeakOverride: settings.ToneMapPeakOverride);
+
+                var monitorsWithPreview = new List<(Capture.CapturedFrame Frame, Imaging.SdrImage Preview)>();
+                foreach (var frame in frames)
+                {
+                    monitorsWithPreview.Add((frame, Imaging.SdrImage.FromCapturedFrame(frame, toneMapOpts)));
+                }
+
+                OverlayResult? result = await RunOverlay(monitorsWithPreview, settings);
+
+                if (result is null)
+                {
+                    return; // user cancelled
+                }
+
+                if (result.SaveHdrRequested || settings.AutoSaveHdrCopy)
+                {
+                    if (WriteJxr is not null)
+                    {
+                        try
+                        {
+                            string hdrPath = BuildHdrPath(settings, result.SavedPngPath);
+                            WriteJxr(hdrPath, result.SourceFrame, result.SelectionPx);
+                        }
+                        catch (Exception ex)
+                        {
+                            notifier?.ShowError($"Failed to save HDR copy: {ex.Message}");
+                        }
+                    }
+                    else if (result.SaveHdrRequested)
+                    {
+                        // Only surface this when the user explicitly asked for it; a silent auto-save
+                        // setting shouldn't nag on every capture in a WP-A-only build.
+                        notifier?.ShowError("HDR export unavailable — App package not present in this build.");
+                    }
+                }
+
+                if (result.SavedPngPath is not null)
+                {
+                    notifier?.ShowSavedBalloon(result.SavedPngPath);
+                }
+            }
+            finally
+            {
+                foreach (var frame in frames)
+                {
+                    frame.Dispose();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Guards the overlay/export flow: an unhandled exception here would otherwise strand
+            // topmost overlay windows and silently drop the failure (audit finding C).
+            notifier?.ShowError($"Capture failed: {ex.Message}");
         }
         finally
         {
-            foreach (var frame in frames)
-            {
-                frame.Dispose();
-            }
-        }
-
-        if (result is null)
-        {
-            return; // user cancelled
-        }
-
-        if (result.SaveHdrRequested || settings.AutoSaveHdrCopy)
-        {
-            if (WriteJxr is not null)
-            {
-                try
-                {
-                    string hdrPath = BuildHdrPath(settings, result.SavedPngPath);
-                    WriteJxr(hdrPath, result.SourceFrame, result.SelectionPx);
-                }
-                catch (Exception ex)
-                {
-                    notifier?.ShowError($"Failed to save HDR copy: {ex.Message}");
-                }
-            }
-            else if (result.SaveHdrRequested)
-            {
-                // Only surface this when the user explicitly asked for it; a silent auto-save
-                // setting shouldn't nag on every capture in a WP-A-only build.
-                notifier?.ShowError("HDR export unavailable — App package not present in this build.");
-            }
-        }
-
-        if (result.SavedPngPath is not null)
-        {
-            notifier?.ShowSavedBalloon(result.SavedPngPath);
+            Interlocked.Exchange(ref s_captureInProgress, 0);
         }
     }
 

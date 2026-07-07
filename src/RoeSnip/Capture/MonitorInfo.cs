@@ -177,7 +177,10 @@ public static class MonitorEnumerator
                                 var desc = output6.Description1;
                                 bool advancedColor = desc.ColorSpace == ColorSpaceType.RgbFullG2084NoneP2020;
                                 double maxLum = desc.MaxLuminance;
-                                if (maxLum <= 0 || maxLum > 10000) maxLum = 1000.0;
+                                // Matches the MonitorInfo.MaxLuminanceNits doc comment: "<10 or
+                                // >10000" is absurd, not just "<=0" (a monitor reporting e.g. 3 nits
+                                // of max luminance is exactly as bogus as 0).
+                                if (!double.IsFinite(maxLum) || maxLum < 10 || maxLum > 10000) maxLum = 1000.0;
                                 result[desc.DeviceName] = new DxgiOutputInfo(advancedColor, maxLum);
                             }
                             catch (Exception ex)
@@ -250,6 +253,11 @@ public static class MonitorEnumerator
                     if (sdrHr != 0) continue;
 
                     double nits = sdrRequest.SDRWhiteLevel / 1000.0 * 80.0;
+                    // Sanity floor: a query that "succeeds" but yields a near-zero or non-finite
+                    // value would make ToneMapper's `scale = 80.0 / sdrWhiteNits` blow up to
+                    // (near-)Infinity across the whole frame. Fall back to the documented 240 nits
+                    // default in that case, same as an outright query failure.
+                    if (!double.IsFinite(nits) || nits < 10.0) nits = 240.0;
                     result[sourceNameRequest.viewGdiDeviceName] = nits;
                 }
                 catch (Exception ex)

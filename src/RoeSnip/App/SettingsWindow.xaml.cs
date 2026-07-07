@@ -105,6 +105,13 @@ public partial class SettingsWindow : Window
 
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
+        if (!TryValidateToneMapOverrides(out double? kneeOverride, out double? peakOverride, out string? validationError))
+        {
+            System.Windows.MessageBox.Show(
+                this, validationError, "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         bool runAtStartup = RunAtStartupCheckBox.IsChecked == true;
 
         var updated = _original with
@@ -114,8 +121,8 @@ public partial class SettingsWindow : Window
             SaveDirectory = SaveDirectoryBox.Text,
             AutoSaveHdrCopy = AutoSaveHdrCheckBox.IsChecked == true,
             CopyOnSelect = CopyOnSelectCheckBox.IsChecked == true,
-            ToneMapKneeOverride = ParseNullableDouble(KneeOverrideBox.Text),
-            ToneMapPeakOverride = ParseNullableDouble(PeakOverrideBox.Text),
+            ToneMapKneeOverride = kneeOverride,
+            ToneMapPeakOverride = peakOverride,
             RunAtStartup = runAtStartup,
         };
 
@@ -154,6 +161,58 @@ public partial class SettingsWindow : Window
         return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
             ? value
             : null;
+    }
+
+    /// <summary>Validates the raw Knee/Peak override text boxes before they're allowed into
+    /// RoeSnipSettings (audit finding F). ToneMapper.MapToSdr also defensively sanitizes bad values
+    /// at map-time (never trust options end-to-end), but bad input must never be SAVED in the first
+    /// place: a Knee/Peak pair with PeakOverride == Knee divides by zero downstream (NaN -> HDR
+    /// highlights render as black, since Math.Clamp does not clamp NaN), and Knee greater than Peak
+    /// silently hard-clips the entire frame — exactly the failure mode this app exists to prevent.
+    /// Blank boxes mean "no override" (null), matching the pre-existing ParseNullableDouble
+    /// behavior. Returns false (with a user-facing message, matching this window's existing
+    /// MessageBox-on-failure pattern) if either box contains non-blank text that fails to parse, or
+    /// a Knee/Peak pair that would misbehave.</summary>
+    private bool TryValidateToneMapOverrides(out double? kneeOverride, out double? peakOverride, out string? error)
+    {
+        kneeOverride = null;
+        peakOverride = null;
+        error = null;
+
+        string kneeText = KneeOverrideBox.Text;
+        if (!string.IsNullOrWhiteSpace(kneeText))
+        {
+            if (!double.TryParse(kneeText, NumberStyles.Float, CultureInfo.InvariantCulture, out double knee)
+                || !double.IsFinite(knee) || knee < 0.5 || knee > 0.99)
+            {
+                error = "Knee override must be a number between 0.5 and 0.99 (or blank for automatic).";
+                return false;
+            }
+            kneeOverride = knee;
+        }
+
+        string peakText = PeakOverrideBox.Text;
+        if (!string.IsNullOrWhiteSpace(peakText))
+        {
+            if (!double.TryParse(peakText, NumberStyles.Float, CultureInfo.InvariantCulture, out double peak)
+                || !double.IsFinite(peak))
+            {
+                error = "Peak override must be a number (or blank for automatic).";
+                return false;
+            }
+
+            double effectiveKnee = kneeOverride ?? 0.90;
+            double minPeak = effectiveKnee + 0.05;
+            if (peak < minPeak)
+            {
+                error = $"Peak override must be at least {minPeak.ToString("0.00", CultureInfo.InvariantCulture)} " +
+                        $"(0.05 above the knee, {effectiveKnee.ToString("0.00", CultureInfo.InvariantCulture)}).";
+                return false;
+            }
+            peakOverride = peak;
+        }
+
+        return true;
     }
 
     private static string DescribeHotkey(uint modifiers, uint virtualKey)
