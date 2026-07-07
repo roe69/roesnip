@@ -60,9 +60,11 @@ public readonly record struct CircleSpec(int CanvasSize, double Diameter, bool S
 {
     public const int MaxCanvasSize = 64;
 
-    // Below this, a stroke of e.g. 1-2px would render an almost-invisible ring — clamp to a small
-    // fixed-size circle instead so the cursor always stays legible.
-    public const double MinDiameter = 6.0;
+    // The circle is ALWAYS exactly the stroke width — no legibility clamp. At 1-2px the ring is
+    // tiny, but the dark halo keeps it findable, and a cursor bigger than the brush lies about
+    // what will be drawn ("it should always be the same size as whatever we'll be drawing" —
+    // user feedback). Kept as a floor of 1 purely to guard against zero/negative widths.
+    public const double MinDiameter = 1.0;
 
     // Padding around the circle for the halo stroke's outer half-width plus a little antialiasing
     // headroom, so the ring is never clipped at the bitmap edge.

@@ -985,7 +985,10 @@ public partial class OverlayWindow : Window
         var content = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 5, 8, 5) };
         if (circleDiameterDip is { } d)
         {
-            double clamped = Math.Clamp(d, 2.0, 40.0);
+            // Exact 1:1 with the brush at the low end — the dot IS the brush size preview (user
+            // feedback: "it should always be the same size as whatever we'll be drawing"). Only
+            // capped at 40 to keep the popup compact; the numeric label carries the truth there.
+            double clamped = Math.Clamp(d, 1.0, 40.0);
             content.Children.Add(new System.Windows.Shapes.Ellipse
             {
                 Width = clamped,
