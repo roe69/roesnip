@@ -107,6 +107,18 @@ public static class OverlayController
         {
             return false;
         }
+        // Flash dimmer DISABLED by default (opt-in via ROESNIP_USE_FLASH=1). The two-window
+        // instant-response handoff (flash window dims immediately, real overlay swaps in) was the
+        // root cause of the persistent dim-flicker: a luma-sampler trace of the handoff showed
+        // bright -> dim -> BLACK(0) -> bright, i.e. a black frame plus a broken final state, versus
+        // a clean monotonic bright -> dim with no flash. Two separate top-most windows can't hand
+        // off a full-screen dim without a visible seam on this compositor. The single-window path
+        // (capture -> show overlay) reaches first-dim in ~120 ms warm, which is imperceptible
+        // enough and, crucially, flicker-free. Re-enable only behind a genuinely seamless design.
+        if (Environment.GetEnvironmentVariable("ROESNIP_USE_FLASH") != "1")
+        {
+            return false;
+        }
         try
         {
             s_responseStartTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();

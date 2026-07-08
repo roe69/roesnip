@@ -263,7 +263,11 @@ internal static class FlashDimmer
             // state"). WDA_EXCLUDEFROMCAPTURE makes the window visible to the user but invisible
             // to WGC/DD/print-screen capture paths (Win10 2004+). Failure is non-fatal but must be
             // loud — a silent failure silently corrupts every screenshot.
-            if (!SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
+            // Diagnostic escape hatch: with ROESNIP_DIAG_NOEXCLUDE=1 the flash is left capturable
+            // so an external luma sampler can observe the flash-to-overlay handoff. Never set in
+            // normal use (it would let the flash dim leak into screenshots).
+            if (Environment.GetEnvironmentVariable("ROESNIP_DIAG_NOEXCLUDE") != "1"
+                && !SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
             {
                 Console.Error.WriteLine(
                     "RoeSnip: SetWindowDisplayAffinity(EXCLUDEFROMCAPTURE) failed on a flash window — " +

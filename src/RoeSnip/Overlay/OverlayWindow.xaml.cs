@@ -202,10 +202,6 @@ public partial class OverlayWindow : Window
 
         var bounds = _frame.Monitor.BoundsPx;
         var hwnd = new WindowInteropHelper(this).Handle;
-        NativeMethods.SetWindowPos(
-            hwnd, NativeMethods.HWND_TOPMOST,
-            bounds.Left, bounds.Top, bounds.Width, bounds.Height,
-            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
 
         var source = PresentationSource.FromVisual(this);
         if (source?.CompositionTarget is { } target)
@@ -225,16 +221,42 @@ public partial class OverlayWindow : Window
         PreviewImage.Source = previewBitmap;
         RenderOptions.SetBitmapScalingMode(PreviewImage, BitmapScalingMode.NearestNeighbor);
 
-        // Kill the black first-frame flash: this window is opaque (Background=Black), so the
-        // compositor can present one frame of pure black after Show() before the PreviewImage
-        // element paints — a visible black blink during the flash-to-overlay handoff. Painting the
-        // same frozen preview into the window Background means even a background-only first frame
-        // already shows the correct pixels, so the opaque overlay lands on top of the flash dimmer
-        // looking pixel-identical to it (preview == live screen, and the DimPath dim matches the
-        // flash's). The flash can then be hidden with no visible change.
+        // Paint the frozen preview into the window Background too, so even a background-only first
+        // compositor frame already shows the correct pixels (not the XAML black) — kills the black
+        // first-frame blink the luma sampler caught on cold captures.
         Background = new ImageBrush(previewBitmap) { Stretch = Stretch.Fill };
 
         UpdateDimGeometry();
+
+        // Cold-start black-frame elimination (measured with a luma sampler): on the first capture
+        // after launch, WPF clears the window's surface to black and DWM shows that for one frame
+        // before the render thread produces the first composited frame — a visible black blink,
+        // independent of Background or content-set ordering (both were tried and measured to not
+        // help). Fix: show the window at its correct SIZE but positioned fully OFF the virtual
+        // desktop, so that unavoidable cold black frame happens where nobody can see it, then move
+        // it onto the target monitor in ContentRendered once it has genuinely painted. On warm
+        // captures ContentRendered fires almost immediately, so the on-screen appearance is instant
+        // and already-dimmed.
+        ContentRendered += OnFirstContentRendered;
+        NativeMethods.SetWindowPos(
+            hwnd, NativeMethods.HWND_TOPMOST,
+            OffScreenX, bounds.Top, bounds.Width, bounds.Height,
+            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
+    }
+
+    // Far off the virtual desktop (monitors span roughly x:[-1440, 2560]); the window renders here
+    // invisibly, then OnFirstContentRendered snaps it to its real monitor bounds already painted.
+    private const int OffScreenX = 60000;
+
+    private void OnFirstContentRendered(object? sender, EventArgs e)
+    {
+        ContentRendered -= OnFirstContentRendered;
+        var bounds = _frame.Monitor.BoundsPx;
+        var hwnd = new WindowInteropHelper(this).Handle;
+        NativeMethods.SetWindowPos(
+            hwnd, NativeMethods.HWND_TOPMOST,
+            bounds.Left, bounds.Top, bounds.Width, bounds.Height,
+            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
     }
 
     protected override void OnClosed(EventArgs e)
