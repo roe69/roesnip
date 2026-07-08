@@ -221,8 +221,18 @@ public partial class OverlayWindow : Window
         MagnifierControl.DeviceScaleX = _scaleX;
         MagnifierControl.DeviceScaleY = _scaleY;
 
-        PreviewImage.Source = _preview.ToBitmapSource();
+        var previewBitmap = _preview.ToBitmapSource();
+        PreviewImage.Source = previewBitmap;
         RenderOptions.SetBitmapScalingMode(PreviewImage, BitmapScalingMode.NearestNeighbor);
+
+        // Kill the black first-frame flash: this window is opaque (Background=Black), so the
+        // compositor can present one frame of pure black after Show() before the PreviewImage
+        // element paints — a visible black blink during the flash-to-overlay handoff. Painting the
+        // same frozen preview into the window Background means even a background-only first frame
+        // already shows the correct pixels, so the opaque overlay lands on top of the flash dimmer
+        // looking pixel-identical to it (preview == live screen, and the DimPath dim matches the
+        // flash's). The flash can then be hidden with no visible change.
+        Background = new ImageBrush(previewBitmap) { Stretch = Stretch.Fill };
 
         UpdateDimGeometry();
     }
@@ -682,32 +692,6 @@ public partial class OverlayWindow : Window
         SetSelection(null);
     }
 
-    /// <summary>Flash-to-overlay handoff, take 2 (anti-double-dim): two stacked 45% dims in two
-    /// separate HWNDs can never swap atomically — any ordering shows either a double-dim frame
-    /// (45% darker blip) or a bright gap. So the overlay starts with its dim at opacity 0 (full-
-    /// bright frozen preview under the flash's dim == flash over the live screen, pixel-identical)
-    /// and the handoff CROSSFADES: this dim fades 0→1 while the flash window fades 1→0 over the
-    /// same duration. The stacked product mid-fade deviates at most ~9% in brightness for a few
-    /// frames — imperceptible, unlike either hard ordering.</summary>
-    internal void PrepareDimForFlashHandoff()
-    {
-        DimPath.Opacity = 0.0;
-    }
-
-    internal void BeginDimFadeIn(TimeSpan duration)
-    {
-        var fade = new DoubleAnimation(0.0, 1.0, duration)
-        {
-            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseInOut },
-        };
-        fade.Completed += (_, _) =>
-        {
-            // Release the animation's hold so nothing else ever fights a stuck animated value.
-            DimPath.BeginAnimation(OpacityProperty, null);
-            DimPath.Opacity = 1.0;
-        };
-        DimPath.BeginAnimation(OpacityProperty, fade);
-    }
 
     private void UpdateDimGeometry()
     {

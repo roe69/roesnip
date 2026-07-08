@@ -415,18 +415,14 @@ public static class OverlayController
                         _onColorPicked, _pickOnlyMode);
                     window.Closed += (_, _) => Finish(null);
                     window.ContentRendered += (_, _) => OnOverlayContentRendered(window);
-                    // Anti-double-dim (user report: "flickering/dimming my screen twice"): while
-                    // this monitor's flash dimmer is still covering it, the overlay's first frames
-                    // sit UNDER the flash — if they carried their own dim layer, the two 45% dims
-                    // would stack into a visibly darker blip. Start the overlay's dim at opacity 0
-                    // (full-bright frozen preview under the flash's dim is pixel-identical to the
-                    // flash over the live screen), then OnOverlayContentRendered CROSSFADES the two
-                    // dims — see OverlayWindow.PrepareDimForFlashHandoff's doc comment for why a
-                    // crossfade is the only artifact-free option across two HWNDs.
-                    if (FlashDimmer.IsCoveringMonitor(frame.Monitor.DeviceName))
-                    {
-                        window.PrepareDimForFlashHandoff();
-                    }
+                    // NOTE (anti-flicker): the overlay window is OPAQUE (Background is the frozen
+                    // preview, PreviewImage on top, DimPath dim on top of that) — so once it paints
+                    // it fully OCCLUDES the flash dimmer beneath it. There is no dim-stacking to
+                    // manage: the overlay's first frame already equals the flash (preview == live
+                    // screen + matching dim), so it lands seamlessly and the flash is hidden
+                    // invisibly in OnOverlayContentRendered. (Earlier crossfade/dim-fade attempts
+                    // were wrong: fading the opaque overlay's own dim in made it paint BRIGHT first,
+                    // causing the dim→bright→dim double flicker the user reported.)
                     _windows.Add(window);
                     window.Show();
 
@@ -483,16 +479,9 @@ public static class OverlayController
         /// Also the source of the "first-overlay-visible"/"all-overlays-visible" latency logs.</summary>
         private void OnOverlayContentRendered(OverlayWindow window)
         {
-            // Crossfade handoff (anti-double-dim): overlay dim 0→1 while the flash fades 1→0 over
-            // the same interval — the stacked brightness deviates ≤~9% mid-fade instead of a hard
-            // double-dim or bright-gap frame. No flush, no nested pump (the previous ordered
-            // version guaranteed a visible double-dim frame — user-reported as worse).
-            if (FlashDimmer.IsCoveringMonitor(window.Monitor.DeviceName))
-            {
-                var crossfade = TimeSpan.FromMilliseconds(120);
-                window.BeginDimFadeIn(crossfade);
-                FlashDimmer.FadeOutForMonitor(window.Monitor.DeviceName, crossfade);
-            }
+            // The opaque overlay has now painted and fully occludes the flash beneath it, so
+            // hiding the flash is invisible — a plain instant hide, no fade, no stacking.
+            FlashDimmer.HideForMonitor(window.Monitor.DeviceName);
 
             _renderedCount++;
             double elapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(_responseBaseTimestamp).TotalMilliseconds;
