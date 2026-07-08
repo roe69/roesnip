@@ -33,20 +33,45 @@ public enum SelectionHandle
     Body,
 }
 
-/// <summary>Renders the selection border, 8 resize handles, and a physical-pixel size badge
-/// ("1920 x 1080"); also answers hit-tests so OverlayWindow can decide what a mouse-down means.
-/// All geometry is tracked in physical pixels and scaled down to DIPs only at render/hit-test
-/// time via <see cref="DeviceScaleX"/>/<see cref="DeviceScaleY"/> (kept in sync by the owning
-/// window from CompositionTarget.TransformToDevice) — the mixed-DPI contract requires physical
-/// pixels everywhere except this view-layer conversion.</summary>
+/// <summary>Renders the selection border (a two-tone dashed "marching-ants" line with white
+/// corner brackets), and a physical-pixel size badge ("1920 x 1080"); also answers hit-tests so
+/// OverlayWindow can decide what a mouse-down means. All geometry is tracked in physical pixels and
+/// scaled down to DIPs only at render/hit-test time via <see cref="DeviceScaleX"/>/
+/// <see cref="DeviceScaleY"/> (kept in sync by the owning window from
+/// CompositionTarget.TransformToDevice) — the mixed-DPI contract requires physical pixels
+/// everywhere except this view-layer conversion.</summary>
 public sealed class SelectionAdorner : FrameworkElement
 {
-    private const double HandleSizePx = 10.0;
     private const double HandleHitPaddingPx = 7.0;
 
-    private static readonly Brush BorderBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0xC8, 0xFF));
-    private static readonly Brush HandleFill = Brushes.White;
+    // Two-tone border: a dark under-stroke gives contrast on light content, light dashes ride on
+    // top — a neutral, non-garish alternative to the old solid cyan line (user feedback). Frozen
+    // so WPF can share them across renders. Widths are in DIPs (this is view-layer chrome).
+    private static readonly Pen BorderUnderPen = CreateFrozenPen(Color.FromArgb(0xB0, 0x00, 0x00, 0x00), 1.0, null);
+    private static readonly Pen BorderDashPen = CreateFrozenPen(
+        Color.FromArgb(0xFF, 0xDC, 0xDC, 0xE0), 1.0, new DashStyle(new double[] { 3, 3 }, 0));
+    private static readonly Pen CornerUnderPen = CreateFrozenPen(Color.FromArgb(0xC0, 0x00, 0x00, 0x00), 3.0, null);
+    private static readonly Pen CornerPen = CreateFrozenPen(Color.FromArgb(0xFF, 0xF5, 0xF5, 0xF8), 2.0, null);
+
+    private const double CornerArmDip = 13.0; // length of each corner-bracket arm
+
     private static readonly Brush BadgeBackground = new SolidColorBrush(Color.FromArgb(0xD0, 0x10, 0x10, 0x12));
+
+    private static Pen CreateFrozenPen(Color color, double thickness, DashStyle? dash)
+    {
+        var pen = new Pen(new SolidColorBrush(color), thickness)
+        {
+            StartLineCap = PenLineCap.Flat,
+            EndLineCap = PenLineCap.Flat,
+        };
+        if (dash is not null)
+        {
+            pen.DashStyle = dash;
+            pen.DashCap = PenLineCap.Flat;
+        }
+        pen.Freeze();
+        return pen;
+    }
 
     public RectPhysical? SelectionPx { get; set; }
     public double DeviceScaleX { get; set; } = 1.0;
@@ -106,15 +131,17 @@ public sealed class SelectionAdorner : FrameworkElement
 
         var dipRect = new Rect(r.Left / sx, r.Top / sy, Math.Max(0, r.Width / sx), Math.Max(0, r.Height / sy));
 
-        var borderPen = new Pen(BorderBrush, 1.5);
-        dc.DrawRectangle(null, borderPen, dipRect);
+        // Snap to the pixel grid so a 1px line stays crisp (a half-pixel line renders as a 2px
+        // blurry gray smear otherwise).
+        var edgeRect = new Rect(
+            Math.Round(dipRect.Left) + 0.5, Math.Round(dipRect.Top) + 0.5,
+            Math.Max(0, Math.Round(dipRect.Width) - 1), Math.Max(0, Math.Round(dipRect.Height) - 1));
 
-        double handleDip = HandleSizePx / Math.Max(sx, sy);
-        foreach (var center in HandleCenters(dipRect))
-        {
-            var handleRect = new Rect(center.X - handleDip / 2, center.Y - handleDip / 2, handleDip, handleDip);
-            dc.DrawRectangle(HandleFill, borderPen, handleRect);
-        }
+        // Dark under-stroke first, light dashes on top: reads on any background, no garish color.
+        dc.DrawRectangle(null, BorderUnderPen, edgeRect);
+        dc.DrawRectangle(null, BorderDashPen, edgeRect);
+
+        DrawCornerBrackets(dc, edgeRect);
 
         string label = string.Create(CultureInfo.InvariantCulture, $"{r.Width} x {r.Height}");
         var typeface = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
@@ -133,15 +160,31 @@ public sealed class SelectionAdorner : FrameworkElement
         dc.DrawText(formatted, new Point(badgeRect.Left + badgePad, badgeRect.Top + badgePad));
     }
 
-    private static IEnumerable<Point> HandleCenters(Rect r)
+    /// <summary>Solid white L-brackets at the four corners (dark under-stroke for contrast) — the
+    /// affordance that signals "resizable", replacing the old white square dots. The arms shrink
+    /// for tiny selections so they never overrun a small rect.</summary>
+    private static void DrawCornerBrackets(DrawingContext dc, Rect r)
     {
-        yield return new Point(r.Left, r.Top);
-        yield return new Point(r.Left + r.Width / 2, r.Top);
-        yield return new Point(r.Right, r.Top);
-        yield return new Point(r.Right, r.Top + r.Height / 2);
-        yield return new Point(r.Right, r.Bottom);
-        yield return new Point(r.Left + r.Width / 2, r.Bottom);
-        yield return new Point(r.Left, r.Bottom);
-        yield return new Point(r.Left, r.Top + r.Height / 2);
+        double arm = Math.Min(CornerArmDip, Math.Min(r.Width, r.Height) / 2);
+        if (arm <= 1)
+        {
+            return; // selection too small for brackets; the dashed edge alone is enough
+        }
+
+        foreach (var pen in new[] { CornerUnderPen, CornerPen })
+        {
+            // Top-left
+            dc.DrawLine(pen, new Point(r.Left, r.Top), new Point(r.Left + arm, r.Top));
+            dc.DrawLine(pen, new Point(r.Left, r.Top), new Point(r.Left, r.Top + arm));
+            // Top-right
+            dc.DrawLine(pen, new Point(r.Right, r.Top), new Point(r.Right - arm, r.Top));
+            dc.DrawLine(pen, new Point(r.Right, r.Top), new Point(r.Right, r.Top + arm));
+            // Bottom-right
+            dc.DrawLine(pen, new Point(r.Right, r.Bottom), new Point(r.Right - arm, r.Bottom));
+            dc.DrawLine(pen, new Point(r.Right, r.Bottom), new Point(r.Right, r.Bottom - arm));
+            // Bottom-left
+            dc.DrawLine(pen, new Point(r.Left, r.Bottom), new Point(r.Left + arm, r.Bottom));
+            dc.DrawLine(pen, new Point(r.Left, r.Bottom), new Point(r.Left, r.Bottom - arm));
+        }
     }
 }
