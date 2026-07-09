@@ -1,98 +1,85 @@
 # RoeSnip
 
-RoeSnip is an HDR-correct screenshot tool for Windows.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4)](#quick-start)
+[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![Built with Claude Code](https://img.shields.io/badge/built%20with-Claude%20Code-D97757?logo=claude&logoColor=white)](https://claude.com/claude-code)
 
-## Why
+An HDR-correct screenshot tool: press PrintScreen, the screen dims instantly,
+drag a region, annotate, copy or save. On HDR desktops Windows composites in
+linear scRGB FP16 and legacy tools (Snipping Tool, Lightshot, ShareX's default
+path) clip or mis-scale that buffer — which is why their screenshots come out
+washed-out and gray. RoeSnip captures the true FP16 frame and converts it
+properly.
 
-On HDR/OLED monitors (or SDR monitors with Windows 11's Advanced Color Management enabled),
-Windows composites the desktop in linear scRGB (16-bit float per channel, where `1.0 = 80 nits`
-and values can exceed `1.0` for HDR highlights). Legacy screenshot tools — Snipping Tool,
-Lightshot, ShareX's default capture path, etc. — grab that buffer and either hard-clip it or
-divide it by the wrong constant, which is exactly why screenshots taken with HDR enabled come out
-washed-out and gray.
+- **HDR done right.** SDR content (the common case) comes out
+  **pixel-identical** to a plain SDR monitor's screenshot — exact
+  pass-through, matched to the "SDR content brightness" level; genuine HDR
+  highlights get a smooth, hue-preserving rolloff instead of blowing out.
+  Optionally saves the untouched HDR original as a `.jxr` alongside the PNG,
+  the way Xbox Game Bar does.
+- **Instant response.** A resident tray process with pre-provisioned capture
+  sessions and overlay windows: the dim lands in single-digit milliseconds
+  and the interactive overlay well under 100 ms, warm or cold.
+- **Annotations.** Rectangle, ellipse, arrow, line, freehand, highlighter,
+  pixelate (censor mosaic), and text in any installed font. Every placed
+  shape stays editable — click it under any tool to move it, drag its handles
+  or endpoints, scroll to adjust its stroke/mosaic/font size — with full
+  undo/redo.
+- **Color picker.** A plain click inspects the pixel under the cursor into a
+  compact picker window (hex / RGB / HSL / nits, HDR-aware).
+- **Multi-monitor.** One overlay per monitor, per-monitor HDR state and SDR
+  white levels, capture via Desktop Duplication with a
+  Windows.Graphics.Capture fallback per monitor.
+- **CLI modes.** Headless `--capture` and per-monitor `--diag` HDR
+  diagnostics, no UI involved.
 
-RoeSnip captures the true FP16 scRGB frame straight from Desktop Duplication and does the
-conversion correctly:
+## Quick start
 
-- Screenshots of ordinary SDR content (the common case) come out **pixel-identical** to a
-  screenshot taken on a plain SDR monitor — exact pass-through, matched to the "SDR content
-  brightness" slider (SDR white level).
-- Genuine HDR highlights get a smooth, hue-preserving rolloff into 8-bit sRGB instead of being
-  blown out or looking flat.
-- You can optionally save the untouched HDR original alongside the PNG as a `.jxr` (JPEG XR) file,
-  the same way Xbox Game Bar does — useful for archiving or re-editing later without having
-  already lost the highlight detail.
+Requires Windows 10 2004+ and the .NET 8 SDK to build (the published exe is
+self-contained).
 
-See `DESIGN.md` for the full behavioral spec and `PLAN.md` for the implementation plan.
+```sh
+dotnet build RoeSnip.sln -c Release
+dotnet test RoeSnip.sln
 
-## Build
-
-Requires the .NET 8 SDK on Windows (the app is Windows-only — WPF + Desktop Duplication + WIC).
-
-```
-dotnet build RoeSnip.sln -c Debug
-```
-
-## Test
-
-```
-dotnet test
-```
-
-This runs the full unit test suite: color-math and tone-map golden values, JPEG XR round-trip
-(verifies HDR highlight data actually survives the encoder), and settings persistence
-(fail-closed on a missing/corrupt file, atomic save).
-
-## Run
-
-With no arguments, RoeSnip starts as a tray app:
-
-```
-dotnet run --project src/RoeSnip
+# single-file exe -> src/RoeSnip/bin/Release/.../win-x64/publish/RoeSnip.exe
+dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64
 ```
 
-It also has a CLI test mode that captures and exits without showing any UI — handy for scripting
-and for verifying HDR handling on a given monitor without going through the overlay:
+Run `RoeSnip.exe` with no arguments to start the tray app; **PrintScreen**
+opens the capture overlay. If Windows currently intercepts PrintScreen for
+Snipping Tool, RoeSnip asks once whether to disable that or use
+**Ctrl+PrintScreen** instead — the hotkey is changeable from the tray icon's
+Settings window. Launching the exe again triggers a capture on the running
+instance.
 
-```
-dotnet run --project src/RoeSnip -- --diag
-dotnet run --project src/RoeSnip -- --capture --monitor 0 --out shot.png --jxr
-```
+Settings live at `%APPDATA%\RoeSnip\settings.json` (hotkey, save directory,
+auto-HDR-copy, tone-map overrides, run-at-startup, copy-on-select). A missing
+or corrupt file falls back to defaults in memory without being overwritten,
+so it can always be inspected or repaired by hand.
 
-- `--diag` prints per-monitor diagnostics (device name, resolution, Advanced Color on/off, SDR
-  white level, max luminance) and exits.
-- `--capture [--monitor N] [--out path] [--jxr]` captures one or all monitors, writes a PNG
-  (default name `roesnip_capture_monitorN.png`), prints per-monitor stats (min/max/avg captured
-  nits), and — with `--jxr` — also writes an untouched HDR `.jxr` copy next to the PNG.
+## CLI
 
-## Default hotkey
-
-**PrintScreen** freezes the screen and opens the region-selection overlay. If Windows is
-configured to intercept a bare PrintScreen for Snipping Tool
-(`HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled` non-zero), RoeSnip asks once,
-on first run, whether to turn that off or fall back to **Ctrl+PrintScreen** instead. The hotkey is
-changeable from the tray icon's Settings window at any time.
-
-## Settings
-
-Stored as JSON at:
-
-```
-%APPDATA%\RoeSnip\settings.json
+```sh
+RoeSnip.exe --diag
+RoeSnip.exe --capture [--monitor N] [--out shot.png] [--jxr]
 ```
 
-Covers the hotkey, save directory (defaults to `Pictures\RoeSnip`), whether to always save an HDR
-copy alongside the PNG, advanced tone-map knee/peak overrides, run-at-Windows-startup, and
-copy-on-select. If this file is missing or corrupt, RoeSnip silently falls back to defaults in
-memory without touching the file on disk (fail-closed) — a broken settings file is never
-overwritten, so it can still be inspected or repaired by hand.
+- `--diag` prints per-monitor diagnostics (device, resolution, Advanced Color
+  on/off, SDR white level, max luminance) and exits.
+- `--capture` captures one or all monitors headlessly, writes PNGs, prints
+  min/max/avg captured nits, and with `--jxr` also writes the untouched HDR
+  original next to each PNG.
 
-## Publish
+## Docs
 
-Single-file, self-contained win-x64 build:
-
-```
-dotnet publish src/RoeSnip -p:PublishProfile=win-x64
-```
-
-Output lands in `src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe`.
+- [DESIGN.md](DESIGN.md) — behavioral spec: capture paths, tone mapping,
+  overlay semantics, failure modes.
+- [PLAN.md](PLAN.md) — the implementation plan the WPF app was built against.
+- [DESIGN-XPLAT.md](DESIGN-XPLAT.md) / [PLAN-XPLAT.md](PLAN-XPLAT.md) — the
+  in-progress cross-platform port (`src/RoeSnip.App`, Avalonia +
+  `RoeSnip.Core` + `RoeSnip.Platform.*`) targeting Linux (X11) and macOS
+  (`helpers/scksnap`); the WPF app in `src/RoeSnip` is the Windows daily
+  driver.
+- [TESTING.md](TESTING.md) — what has actually been verified, per OS and how.
