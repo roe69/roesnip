@@ -178,6 +178,15 @@ public static class AppComposition
     // Set by App/TrayApp.cs (WP-C). Runs the tray message loop; returns process exit code on quit.
     public static Func<string[], int>? RunTrayApp { get; set; }
 
+    // Set by Overlay/OverlayController.cs (WP-B). Review fix (r5-latency S2): TrayApp's
+    // MarkTriggerTimestamp call stamps a pending trigger BEFORE RunCaptureFlowAsync is invoked, so
+    // every dead-end exit path below that never reaches RunOverlay must discard it here — otherwise
+    // it sits stale until whatever OverlaySession runs next (which may be an entirely unrelated
+    // pick-mode session, or a much-later hotkey press) silently inherits it. Routed through this hook
+    // rather than a direct RoeSnip.Overlay.OverlayController reference so Program.cs (WP-A) stays
+    // free of a WP-B dependency, matching RunOverlay's own hook pattern above.
+    public static Action? ClearPendingOverlayTrigger { get; set; }
+
     // Set by App/ElevationManager.cs (WP-C). Hidden CLI verbs used only for the UAC round-trip when
     // SettingsWindow's "Run as administrator" checkbox is toggled from a non-elevated process — see
     // Program.Main. Both require the process to already be elevated (Verb=runas got it there) and
@@ -320,12 +329,50 @@ public static class AppComposition
         if (RunOverlay is null)
         {
             notifier?.ShowError("Overlay unavailable in this build (Overlay package not present).");
+            // Review fix: this trigger will never reach RunOverlay/OverlaySession — discard its
+            // timestamp rather than leaving it for some later, unrelated session to inherit.
+            ClearPendingOverlayTrigger?.Invoke();
             return;
         }
 
-        if (!CaptureGate.TryEnter())
+        // Cold-start CaptureGate race fix (r5-latency, S5): if the startup warmup thread is still
+        // running its Warmup* steps but hasn't reached WarmupCaptureSessions' TryEnter yet, the gate
+        // itself is still free — a trigger landing in exactly that window would WIN CaptureGate
+        // against the warmup and then pay first-time D3D/WGC device init itself (measured: 292-1003
+        // ms for the real capture) instead of riding the warmup's own init (measured: ~20 ms once the
+        // warmup has actually provisioned everything). Waiting here is strictly better: the flash
+        // (S1, now on by default) has already dimmed the screen by this point, so the wait is
+        // invisible, and a wedged/slow warmup still can't brick the hotkey — the poll gives up after
+        // 5 seconds and proceeds regardless.
+        if (CaptureGate.WarmupPending)
+        {
+            var warmupWait = System.Diagnostics.Stopwatch.StartNew();
+            while (CaptureGate.WarmupPending && warmupWait.ElapsedMilliseconds < 5000)
+            {
+                await Task.Delay(25);
+            }
+        }
+
+        bool entered = CaptureGate.TryEnter();
+        if (!entered && CaptureGate.HeldByWarmup)
+        {
+            // The gate is held by the sub-second startup warmup capture, not a real session. A
+            // PrtScr press landing in that window is a deliberate user action — wait the warmup
+            // out (bounded) instead of silently dropping the press, which made an early press
+            // right after app launch do nothing at all.
+            var wait = System.Diagnostics.Stopwatch.StartNew();
+            while (!entered && wait.ElapsedMilliseconds < 3000)
+            {
+                await Task.Delay(25);
+                entered = CaptureGate.TryEnter();
+            }
+        }
+        if (!entered)
         {
             Console.Error.WriteLine("RoeSnip: capture already in progress; ignoring trigger.");
+            // Review fix: same reasoning as the RunOverlay-null branch above — this trigger is being
+            // dropped and will never construct an OverlaySession.
+            ClearPendingOverlayTrigger?.Invoke();
             return;
         }
 
@@ -342,6 +389,9 @@ public static class AppComposition
             if (frames.Count == 0)
             {
                 notifier?.ShowError("Capture failed on every monitor.");
+                // Review fix: same reasoning as above — no OverlaySession will ever be constructed
+                // for this trigger.
+                ClearPendingOverlayTrigger?.Invoke();
                 return;
             }
 
@@ -422,6 +472,9 @@ public static class AppComposition
             // Guards the overlay/export flow: an unhandled exception here would otherwise strand
             // topmost overlay windows and silently drop the failure (audit finding C).
             notifier?.ShowError($"Capture failed: {ex.Message}");
+            // Review fix: covers an exception thrown before RunOverlay was ever reached (e.g. inside
+            // CaptureAll/tonemap) — idempotent no-op if a session already consumed the timestamp.
+            ClearPendingOverlayTrigger?.Invoke();
         }
         finally
         {
@@ -499,6 +552,22 @@ public static class AppComposition
 internal static class CaptureGate
 {
     private static int s_busy; // 0 = idle, 1 = busy; only touched via Interlocked
+
+    /// <summary>True from just before TrayApp.StartWarmup launches the warmup thread until
+    /// RunWarmup's finally clears it on every exit path (success, exception, or a benign
+    /// zero-monitors return) — a wider window than <see cref="HeldByWarmup"/>, which only covers
+    /// the sub-second stretch WarmupCaptureSessions actually holds the gate for. RunCaptureFlowAsync
+    /// polls this BEFORE its TryEnter to close the race where a trigger lands after StartWarmup but
+    /// before WarmupCaptureSessions has entered the gate (see the poll loop below for the
+    /// measurements that make waiting worth it). Defaults to false, so CLI/test callers of
+    /// RunCaptureFlowAsync that never touch TrayApp are unaffected.</summary>
+    public static volatile bool WarmupPending;
+
+    /// <summary>True while the STARTUP WARMUP capture holds the gate (set/cleared by TrayApp's
+    /// WarmupCaptureSessions, strictly inside its TryEnter/Exit pair). Lets RunCaptureFlowAsync
+    /// tell "busy because the sub-second warmup is running" (a real hotkey press should wait that
+    /// out) apart from "busy because another overlay session is live" (drop the trigger).</summary>
+    public static volatile bool HeldByWarmup;
 
     public static bool TryEnter() => Interlocked.CompareExchange(ref s_busy, 1, 0) == 0;
     public static void Exit() => Interlocked.Exchange(ref s_busy, 0);

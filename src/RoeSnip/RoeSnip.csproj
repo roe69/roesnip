@@ -15,6 +15,18 @@
          constructs real cultures and hard-crashes the process on first text layout when it's enabled. -->
     <Platforms>x64</Platforms>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <!-- Trigger-1 latency investigation (r5-latency): ToneMapper.ComputeGlobalMax's AVX2 max-scan
+         (called via the exact same warmup-then-real path StartWarmup/RunWarmup already primes)
+         measured 60-105 ms on the first two real hotkey presses after launch vs. ~1 ms steady-state,
+         even after 3+ prior warmup calls on real full-size frames — a controlled
+         DOTNET_TieredCompilation=0 run collapsed it to 1-4 ms immediately, isolating ordinary tiered
+         JIT promotion timing (not warmup coverage) as the cause. Disabling tiered compilation forces
+         every method to its fully-optimized tier on first call instead of a cheap tier-0 JIT followed
+         by a background re-JIT once "hot enough" — the right trade for this app specifically, since
+         its whole architecture already exists to pay JIT/init costs upfront on a background warmup
+         thread (TrayApp.RunWarmup) rather than gradually on the hotkey path; the extra full-opt JIT
+         time at first call now lands there instead of on the second real screenshot a user takes. -->
+    <TieredCompilation>false</TieredCompilation>
   </PropertyGroup>
 
   <ItemGroup>

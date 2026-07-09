@@ -108,6 +108,13 @@ public sealed class TrayApp : ITrayNotifier
 
     private void TriggerCapture()
     {
+        // Honest trigger-based latency instrumentation (r5-latency, S2): stamp the moment the
+        // ACTUAL trigger happened — before the flash, before capture, before anything else — so
+        // every downstream latency log (hotkey-to-dim, first-overlay-visible, all-overlays-visible)
+        // measures from what the user really experienced, not from whenever the flash happened to
+        // start (or didn't, if it's disabled/fails). Must be the first statement in this method.
+        RoeSnip.Overlay.OverlayController.MarkTriggerTimestamp();
+
         // Instant-response flash (r5-latency): dim every monitor within milliseconds of the
         // trigger, BEFORE the capture+tonemap stretch inside RunCaptureFlowAsync blocks this UI
         // thread. The frozen preview the real overlay later shows equals the live screen, so the
@@ -372,6 +379,15 @@ public sealed class TrayApp : ITrayNotifier
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (_, _) =>
             RefreshMonitorCacheInBackground(prewarmFlash: true);
 
+        // Cold-start CaptureGate race fix (r5-latency, S5): flag the gate as "warmup pending" BEFORE
+        // the warmup thread even starts, so a trigger that fires in the brief window between
+        // StartWarmup returning and RunWarmup's first CaptureGate.TryEnter (WarmupCaptureSessions)
+        // still sees WarmupPending=true and waits rather than racing straight past the not-yet-busy
+        // gate into paying first-time D3D/WGC init itself (measured: winning that race cost the real
+        // capture 292-1003 ms; losing it — i.e. waiting — cost ~20 ms). RunWarmup clears this in a
+        // finally on every exit path (success, exception, zero monitors) — see RunWarmup below.
+        RoeSnip.CaptureGate.WarmupPending = true;
+
         var thread = new Thread(RunWarmup)
         {
             IsBackground = true,
@@ -386,9 +402,20 @@ public sealed class TrayApp : ITrayNotifier
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            WarmupToneMapAndEncode();
+            // Ordering (r5-latency, S4): the flash windows ARE the instant (<20 ms) response — every
+            // other warmup step is slower and only matters once the flash is already up, so it comes
+            // first. Monitor enumeration seeds s_cachedMonitors, which TriggerCapture's flash needs
+            // before it can position itself, so it has to run before WarmupFlashWindows. Tonemap/
+            // encode and the OverlayWindow type warmup both want a WPF Application to exist (the
+            // latter for pack-URI resolution — see WarmupOverlayWindowType), which WarmupFlashWindows
+            // is what creates (via PrewarmFlash -> EnsureApplication), so they're scheduled after it.
+            // The real throwaway capture session warmup is last: it's the slowest step and holds the
+            // process-wide CaptureGate, so it should delay everything above it as little as possible.
             var monitors = WarmupCaptureBackendInit();
             WarmupFlashWindows(monitors);
+            WarmupOverlayPool(monitors);
+            WarmupToneMapAndEncode();
+            WarmupOverlayWindowType();
             WarmupCaptureSessions(monitors);
             stopwatch.Stop();
             Console.Error.WriteLine($"RoeSnip: warmup completed in {stopwatch.ElapsedMilliseconds} ms");
@@ -399,10 +426,30 @@ public sealed class TrayApp : ITrayNotifier
             // is exactly as cold as before" — this is a pure optimization, not a requirement.
             Console.Error.WriteLine($"RoeSnip: warmup failed (non-fatal): {ex.Message}");
         }
+        finally
+        {
+            // S5: unblock any RunCaptureFlowAsync call currently polling WarmupPending, on every
+            // possible exit from this method — success, an exception caught above, or a benign
+            // zero-monitors early return inside one of the Warmup* steps. A stuck WarmupPending=true
+            // would otherwise make every hotkey press wait out the full 5-second poll deadline for
+            // nothing.
+            RoeSnip.CaptureGate.WarmupPending = false;
+        }
     }
 
     /// <summary>Marshals the flash dimmer window pre-creation onto the UI thread (WPF windows must
-    /// live there; the rest of warmup deliberately stays on this background thread).</summary>
+    /// live there; the rest of warmup deliberately stays on this background thread).
+    ///
+    /// Known trade-off (review finding, r5-latency S3): PrewarmFlash primes every monitor's flash
+    /// window back-to-back inside this ONE BeginInvoke callback (window creation is ~100 ms/monitor
+    /// even before S3's own priming cost per window), so on a multi-monitor rig this can be a
+    /// several-hundred-ms stretch of UI-thread work, and a hotkey press landing inside it is delayed
+    /// until it returns. This is the same accepted "press during warmup pays a cost" trade-off
+    /// WarmupCaptureSessions already documents for its own gate hold, just wider in scope than
+    /// intended; PrewarmFlash's own "flash dimmer windows ready in N ms" log line (below) is the
+    /// existing observability hook for measuring it. Not restructured into a chained/yielding
+    /// per-monitor sequence here — that would meaningfully change EnsureCreated's atomic
+    /// "does the monitor set match" semantics for comparatively low measured benefit.</summary>
     private void WarmupFlashWindows(IReadOnlyList<RoeSnip.Capture.MonitorInfo> monitors)
     {
         if (monitors.Count == 0)
@@ -417,6 +464,40 @@ public sealed class TrayApp : ITrayNotifier
         catch (Exception ex)
         {
             Console.Error.WriteLine($"RoeSnip: flash dimmer warmup scheduling failed (non-fatal): {ex.Message}");
+        }
+    }
+
+    /// <summary>Pre-builds the overlay window POOL (r5-latency round 2, D1/D4 — see
+    /// OverlayWindowPool's own doc comment), scheduled right after the flash windows via a second,
+    /// separately-queued _uiThreadMarshal.BeginInvoke (see RunWarmup's own comment for why flash
+    /// comes first). "Scheduled after" rather than "guaranteed to run after": WarmupFlashWindows'
+    /// own FlashWindow.PrepareHidden calls Dispatcher.Invoke(Loaded) per window, and that's a nested
+    /// message pump on this same thread — exactly the reentrancy FlashDimmer's s_ensuringCreated
+    /// guards against (see its doc comment) — so this callback can end up DISPATCHED (and even
+    /// finish building) WHILE PrewarmFlash's own loop is still mid-flight, observed as this method's
+    /// "overlay pool built" log line sometimes printing before "flash dimmer windows ready". Safe
+    /// either way: OverlayWindowPool.EnsureBuilt has its own independent reentrancy guard and never
+    /// touches FlashDimmer's state (or vice versa) — this note exists purely so a future reader
+    /// isn't surprised by the interleaved log ordering. Same known trade-off as WarmupFlashWindows
+    /// above: building one parked window per monitor costs real UI-thread time (each pays the same
+    /// ~80-103 ms construction/Show/first-render this whole pool exists to move off the hotkey path
+    /// — see this method's own "overlay pool built in N ms" log line), so a trigger landing during
+    /// this stretch is delayed until it returns; accepted for the same reason WarmupFlashWindows
+    /// accepts it.</summary>
+    private void WarmupOverlayPool(IReadOnlyList<RoeSnip.Capture.MonitorInfo> monitors)
+    {
+        if (monitors.Count == 0)
+        {
+            return;
+        }
+        try
+        {
+            _uiThreadMarshal?.BeginInvoke(new Action(() =>
+                RoeSnip.Overlay.OverlayController.PrewarmOverlayPool(monitors)));
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: overlay pool warmup scheduling failed (non-fatal): {ex.Message}");
         }
     }
 
@@ -439,18 +520,41 @@ public sealed class TrayApp : ITrayNotifier
             Console.Error.WriteLine("RoeSnip: skipping warmup capture; a real capture is already in progress.");
             return;
         }
+        // Flag the hold as warmup's so a real hotkey press in this window waits for the gate
+        // (RunCaptureFlowAsync) instead of being dropped.
+        RoeSnip.CaptureGate.HeldByWarmup = true;
 
         var watch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var frames = new RoeSnip.Capture.CaptureService().CaptureAll(monitors);
-            foreach (var frame in frames)
+            try
             {
-                try
+                // Fixed-slot Parallel.For mirrors AppComposition.RunCaptureFlowAsync's real tonemap
+                // step exactly (r5-latency, S7) — a plain sequential foreach only warms ToneMapper's
+                // single-threaded internals, not the nested Parallel.For threadpool ramp + full-size
+                // LUT/SIMD path a real hotkey press actually exercises. Measured: with the old
+                // sequential warmup, the first REAL tonemap after launch still cost ~112 ms
+                // (JIT/threadpool ramp) despite warmup already tonemapping real frames.
+                //
+                // Trigger-1/2 latency investigation (r5-latency): a single pass here still left
+                // ToneMapper.ComputeGlobalMax's AVX2 max-scan running ~60-105 ms on the first TWO
+                // real hotkey presses after launch (vs. ~1 ms steady-state) despite already running
+                // here — repeating this loop more times did NOT fix it (tried 3 passes; measured no
+                // change), ruling out a simple call-count/OSR promotion gap. A controlled
+                // DOTNET_TieredCompilation=0 run collapsed the same trigger's scan time to 1-4 ms
+                // immediately, isolating ordinary tiered-JIT promotion timing as the cause — fixed
+                // process-wide via TieredCompilation=false in RoeSnip.csproj instead (see that
+                // file's comment).
+                var previews = new RoeSnip.Imaging.SdrImage[frames.Count];
+                Parallel.For(0, frames.Count, i =>
                 {
-                    _ = RoeSnip.Imaging.SdrImage.FromCapturedFrame(frame, new RoeSnip.Color.ToneMapOptions());
-                }
-                finally
+                    previews[i] = RoeSnip.Imaging.SdrImage.FromCapturedFrame(frames[i], new RoeSnip.Color.ToneMapOptions());
+                });
+            }
+            finally
+            {
+                foreach (var frame in frames)
                 {
                     frame.Dispose();
                 }
@@ -481,6 +585,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         finally
         {
+            RoeSnip.CaptureGate.HeldByWarmup = false;
             RoeSnip.CaptureGate.Exit();
         }
     }
@@ -499,7 +604,13 @@ public sealed class TrayApp : ITrayNotifier
                 if (prewarmFlash && monitors.Count > 0)
                 {
                     _uiThreadMarshal?.BeginInvoke(new Action(() =>
-                        RoeSnip.Overlay.OverlayController.PrewarmFlash(monitors)));
+                    {
+                        RoeSnip.Overlay.OverlayController.PrewarmFlash(monitors);
+                        // D4: a real monitor-set change invalidates the pool the same way it
+                        // invalidates the flash windows — EnsureBuilt's own set-comparison (see
+                        // OverlayWindowPool.Matches) detects the mismatch and rebuilds wholesale.
+                        RoeSnip.Overlay.OverlayController.PrewarmOverlayPool(monitors);
+                    }));
                 }
             }
             catch (Exception ex)
@@ -512,13 +623,25 @@ public sealed class TrayApp : ITrayNotifier
     /// <summary>Exercises the exact code path a real capture's tone-map/encode stretch runs
     /// (SdrImage.FromCapturedFrame -> ToneMapper -> ToBitmapSource -> PngWriter.Encode) against a
     /// small synthetic frame with a fake MonitorInfo — no real WGC/duplication session, so nothing
-    /// ever flashes. The pixel data alternates a plain-SDR value and an HDR-highlight value per
-    /// column so ToneMapper's pass-through AND shoulder/dither branches both actually execute
-    /// (a uniform frame would only ever hit whichever single branch its one value falls into).</summary>
+    /// ever flashes.</summary>
     private static void WarmupToneMapAndEncode()
     {
         const int size = 256;
+        using var frame = CreateSyntheticWarmupFrame(size);
 
+        var sdr = RoeSnip.Imaging.SdrImage.FromCapturedFrame(frame, new RoeSnip.Color.ToneMapOptions());
+        _ = sdr.ToBitmapSource();
+        _ = RoeSnip.Imaging.PngWriter.Encode(sdr);
+    }
+
+    /// <summary>Builds the small synthetic Fp16 scRGB frame shared by <see
+    /// cref="WarmupToneMapAndEncode"/> and <see cref="WarmupOverlayWindowType"/> — a fake MonitorInfo
+    /// plus <paramref name="size"/>x<paramref name="size"/> pixel data alternating a plain-SDR value
+    /// and an HDR-highlight value per column, so ToneMapper's pass-through AND shoulder/dither
+    /// branches both actually execute (a uniform frame would only ever hit whichever single branch
+    /// its one value falls into). Caller owns and must Dispose the returned frame.</summary>
+    private static RoeSnip.Capture.CapturedFrame CreateSyntheticWarmupFrame(int size)
+    {
         // Fully qualified deliberately (matching OverlayController.RunPickModeCaptureAsync's own
         // ToneMapOptions construction) — RoeSnip.Color is a sibling namespace whose "Color" type
         // would collide with System.Drawing.Color (already in scope via this file's own
@@ -550,12 +673,63 @@ public sealed class TrayApp : ITrayNotifier
             }
         }
 
-        using var frame = new RoeSnip.Capture.CapturedFrame(
+        return new RoeSnip.Capture.CapturedFrame(
             RoeSnip.Capture.FrameFormat.Fp16ScRgb, size, size, size * 8, pixels, monitor);
+    }
 
-        var sdr = RoeSnip.Imaging.SdrImage.FromCapturedFrame(frame, new RoeSnip.Color.ToneMapOptions());
-        _ = sdr.ToBitmapSource();
-        _ = RoeSnip.Imaging.PngWriter.Encode(sdr);
+    /// <summary>Warms the real OverlayWindow type (r5-latency, S6): the first-ever
+    /// InitializeComponent for OverlayWindow.xaml pays BAML load for it AND its nested
+    /// ToolbarControl.xaml (733 lines) plus custom-control JIT — measured as a large share of the
+    /// 447 ms first flash-mode overlay. Must run on the UI thread (marshalled like
+    /// WarmupFlashWindows), and deliberately NEVER Show()s the window: with no HWND,
+    /// OnSourceInitialized never runs, so nothing built here can become visible or touch any real
+    /// monitor/CaptureGate state — Measure+Arrange alone is enough to force the XAML visual tree to
+    /// build and lay out for real, which is where the BAML/JIT cost actually lands.</summary>
+    private void WarmupOverlayWindowType()
+    {
+        try
+        {
+            _uiThreadMarshal?.BeginInvoke(new Action(() =>
+            {
+                const int size = 256;
+                RoeSnip.Capture.CapturedFrame? frame = null;
+                try
+                {
+                    // Pack-URI resolution dependency: InitializeComponent below needs a live WPF
+                    // Application to resolve pack://application:,,,/RoeSnip;component/... URIs, but
+                    // this method doesn't call OverlayController.EnsureApplication itself — S4's
+                    // RunWarmup ordering schedules WarmupFlashWindows (whose PrewarmFlash calls
+                    // EnsureApplication) BEFORE this method, both marshalled onto the SAME
+                    // _uiThreadMarshal queue via BeginInvoke, which dispatches in FIFO order — so the
+                    // Application this callback needs already exists by the time it runs. If that
+                    // scheduling were ever to fail (e.g. BeginInvoke itself throwing), InitializeComponent
+                    // throws here and the catch below swallows it non-fatally, same as any other
+                    // warmup step failure.
+                    frame = CreateSyntheticWarmupFrame(size);
+                    var sdr = RoeSnip.Imaging.SdrImage.FromCapturedFrame(frame, new RoeSnip.Color.ToneMapOptions());
+
+                    var window = new RoeSnip.Overlay.OverlayWindow(
+                        frame, sdr, RoeSnipSettings.Default,
+                        static _ => { }, static _ => { }, static _ => { }, static _ => { },
+                        pickOnlyMode: false);
+                    window.Measure(new System.Windows.Size(size, size));
+                    window.Arrange(new System.Windows.Rect(0, 0, size, size));
+                    window.Close(); // never Show()n — see method doc.
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"RoeSnip: overlay window type warmup failed (non-fatal): {ex.Message}");
+                }
+                finally
+                {
+                    frame?.Dispose();
+                }
+            }));
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: overlay window type warmup scheduling failed (non-fatal): {ex.Message}");
+        }
     }
 
     /// <summary>Pre-creates the DXGI factory/adapter/output walk MonitorEnumerator does for the

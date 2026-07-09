@@ -44,6 +44,14 @@ public sealed class WgcCapturer : IScreenCapturer
     {
         public readonly object Gate = new();
         public MonitorResources? Resources;
+
+        // r5-latency round 2 (D5): the MonitorInfo last used to (re)provision Resources for this
+        // slot — written every time Resources is assigned in Capture/Prewarm. The background
+        // keepalive timer (KeepaliveTick below) needs a MonitorInfo to re-provision a dead device
+        // proactively; without remembering it here, the timer could only ever null out a dead
+        // slot's Resources and wait for the next real capture to supply one, defeating the point of
+        // catching the failure ahead of time.
+        public MonitorInfo? LastMonitor;
     }
 
     private sealed class MonitorResources : IDisposable
@@ -52,6 +60,20 @@ public sealed class WgcCapturer : IScreenCapturer
         public required ID3D11Device D3dDevice { get; init; }
         public required IDirect3DDevice WinrtDevice { get; init; }
         public required nint HMonitor { get; init; }
+
+        // r5-latency round 2 (D5 follow-up): the size Item was created for, cached at provisioning
+        // time from the SAME MonitorInfo.BoundsPx CreateResources used to build it — NOT read back
+        // via Item.Size. IsReusable used to compare against a live Item.Size read, which turned out
+        // to be a genuine WinRT/COM round-trip into the capture stack (not merely a field read) and
+        // was still measured costing tens of ms on a trigger after an idle gap on the DD-broken
+        // monitor — the exact GPU-wake-adjacent cost D5 set out to remove from the hot path in the
+        // first place, just hiding behind a different property than DeviceRemovedReason. Comparing
+        // against these cached ints instead makes IsReusable a pure in-memory check with no live
+        // interop call anywhere in it. CaptureCore's own resources.Item.Size read (framepool
+        // creation) is unaffected — that one is on the real capture-session path, where a live query
+        // is expected and necessary.
+        public required int Width { get; init; }
+        public required int Height { get; init; }
 
         public void Dispose()
         {
@@ -76,23 +98,39 @@ public sealed class WgcCapturer : IScreenCapturer
 
     public CapturedFrame Capture(MonitorInfo monitor)
     {
+        // Latency instrumentation (r5-latency): splits the device-liveness recheck (IsReusable) from
+        // the actual capture session. This used to include a DeviceRemovedReason TDR query that a
+        // trigger-1-coldness investigation measured costing ~30-90 ms — after an idle gap, not just
+        // on the very first call — on an otherwise fully warmed-up cached device; that check has
+        // since moved off this hot path entirely onto a background keepalive timer (r5-latency round
+        // 2, D5 — see KeepaliveTick below and IsReusable's own doc comment), so deviceCheckMs below
+        // should now read ~0 ms on every capture. The split itself is kept as the observability hook
+        // for verifying that.
+        var deviceCheckWatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var slot = s_slots.GetOrAdd(monitor.DeviceName, _ => new MonitorSlot());
             lock (slot.Gate)
             {
                 bool fromCache = IsReusable(slot.Resources, monitor);
+                long deviceCheckMs = deviceCheckWatch.ElapsedMilliseconds;
                 if (!fromCache)
                 {
                     slot.Resources?.Dispose();
                     slot.Resources = null;
                     slot.Resources = CreateResources(monitor);
+                    slot.LastMonitor = monitor;
                 }
                 MonitorResources resources = slot.Resources!;
 
                 try
                 {
-                    return CaptureCore(monitor, resources);
+                    var sessionWatch = System.Diagnostics.Stopwatch.StartNew();
+                    var frame = CaptureCore(monitor, resources);
+                    Console.Error.WriteLine(
+                        $"RoeSnip: WGC capture {monitor.DeviceName} deviceCheck={deviceCheckMs}ms " +
+                        $"session={sessionWatch.ElapsedMilliseconds}ms");
+                    return frame;
                 }
                 catch (Exception ex)
                 {
@@ -108,6 +146,7 @@ public sealed class WgcCapturer : IScreenCapturer
                 }
 
                 slot.Resources = CreateResources(monitor);
+                slot.LastMonitor = monitor;
                 try
                 {
                     return CaptureCore(monitor, slot.Resources);
@@ -151,15 +190,116 @@ public sealed class WgcCapturer : IScreenCapturer
                 slot.Resources?.Dispose();
                 slot.Resources = null;
                 slot.Resources = CreateResources(monitor);
+                slot.LastMonitor = monitor;
             }
+        }
+    }
+
+    /// <summary>Background WGC device-health keepalive (r5-latency round 2, D5). A driver
+    /// timeout/reset (TDR) leaves a cached ID3D11Device object alive as a .NET reference but
+    /// internally dead; this used to be discovered synchronously on the capture hot path (the
+    /// DeviceRemovedReason check IsReusable used to make — see its doc comment), costing a measured
+    /// ~30-90 ms on the first capture after an idle gap. Moving that check here, onto a periodic
+    /// background timer, means a dead device is found and proactively re-provisioned while the app
+    /// is merely sitting in the tray, so the very next real capture never pays for the discovery —
+    /// only a genuinely-just-died device (dead within the last KeepaliveIntervalMs) can still reach
+    /// the hot path, where the existing cached-resources retry-once path in Capture already handles
+    /// it exactly like any other capture failure. Started once, runs for the process's whole
+    /// lifetime — this is a static cache with no shutdown hook, so a simple always-running
+    /// System.Threading.Timer (thread-pool backed, no dispatcher/UI-thread dependency) is
+    /// sufficient; see the class doc for the general "static, process-lifetime cache" pattern this
+    /// already follows.</summary>
+    private const int KeepaliveIntervalMs = 10_000;
+
+    private static readonly System.Threading.Timer s_keepaliveTimer =
+        new(KeepaliveTick, null, KeepaliveIntervalMs, KeepaliveIntervalMs);
+
+    // Guards against overlapping ticks (e.g. a slow device re-provision still running when the next
+    // 10-second tick fires) — never lets two ticks touch the same slot's Gate concurrently, and
+    // never lets the timer itself pile up work.
+    private static int s_keepaliveRunning;
+
+    private static void KeepaliveTick(object? state)
+    {
+        if (System.Threading.Interlocked.CompareExchange(ref s_keepaliveRunning, 1, 0) != 0)
+        {
+            return; // a previous tick is still running — skip this one rather than overlap it
+        }
+        try
+        {
+            foreach (var slot in s_slots.Values)
+            {
+                // Same Gate a real capture (or Prewarm) holds for its whole duration (class doc) —
+                // this can never fight a real capture: it either runs cleanly between captures, or
+                // simply waits its turn for whichever monitor happens to be capturing right now,
+                // exactly like Prewarm already does today.
+                lock (slot.Gate)
+                {
+                    var resources = slot.Resources;
+                    if (resources is null)
+                    {
+                        continue; // nothing provisioned for this monitor yet — nothing to keep alive
+                    }
+
+                    bool alive;
+                    try
+                    {
+                        alive = resources.D3dDevice.DeviceRemovedReason.Success;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"RoeSnip: WGC keepalive health check failed (non-fatal): {ex.Message}");
+                        continue;
+                    }
+                    if (alive)
+                    {
+                        continue;
+                    }
+
+                    Console.Error.WriteLine(
+                        "RoeSnip: WGC keepalive found a dead cached device; re-provisioning proactively.");
+                    resources.Dispose();
+                    slot.Resources = null;
+                    if (slot.LastMonitor is { } monitor)
+                    {
+                        try
+                        {
+                            slot.Resources = CreateResources(monitor);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.Error.WriteLine(
+                                $"RoeSnip: WGC keepalive re-provisioning failed (non-fatal; the next real " +
+                                $"capture will retry): {ex.Message}");
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            System.Threading.Volatile.Write(ref s_keepaliveRunning, 0);
         }
     }
 
     private static bool IsReusable(MonitorResources? resources, MonitorInfo monitor) =>
         resources is not null
         && resources.HMonitor == monitor.HMonitor
-        && resources.Item.Size.Width == monitor.BoundsPx.Width
-        && resources.Item.Size.Height == monitor.BoundsPx.Height;
+        && resources.Width == monitor.BoundsPx.Width
+        && resources.Height == monitor.BoundsPx.Height;
+        // NVIDIA/TDR health check (originally r5-latency S8; moved off this hot path by r5-latency
+        // round 2's D5): a driver timeout/reset (TDR — e.g. a GPU driver crash, hang, or a
+        // long-running compute workload elsewhere on the machine) leaves a cached ID3D11Device
+        // object alive as a .NET reference but internally dead — every real call on it fails. This
+        // method used to also check resources.D3dDevice.DeviceRemovedReason.Success right here,
+        // which caught that case up front but was measured costing ~30-90 ms on the first capture
+        // after an idle gap — a real cost paid on the hot path for a rare failure mode. That check
+        // now runs in the background instead (see KeepaliveTick above), so this method TRUSTS the
+        // cached resources unconditionally once the cheap identity/size checks above pass. A device
+        // that died more recently than the keepalive's last tick still fails fast inside CaptureCore
+        // (framepool creation throws against a removed device), which Capture's existing
+        // cached-resources retry-once path already recovers from exactly like any other capture
+        // failure — so correctness is unchanged, only WHERE the common case's health check runs.
 
     private static MonitorResources CreateResources(MonitorInfo monitor)
     {
@@ -202,6 +342,8 @@ public sealed class WgcCapturer : IScreenCapturer
                 D3dDevice = d3dDevice,
                 WinrtDevice = winrtDevice,
                 HMonitor = monitor.HMonitor,
+                Width = monitor.BoundsPx.Width,
+                Height = monitor.BoundsPx.Height,
             };
         }
         catch
@@ -215,6 +357,18 @@ public sealed class WgcCapturer : IScreenCapturer
             throw;
         }
     }
+
+    /// <summary>Bound on the FrameArrived wait (r5-latency, S8). A healthy WGC session delivers its
+    /// first frame within a frame or two — well under 100 ms — even capturing a completely static
+    /// screen; a wait this long stalling means the session is stale or wedged (e.g. a TDR'd device
+    /// IsReusable's health check above didn't catch, or a monitor that just went to sleep), not that
+    /// a real frame is merely "running a little late". Failing fast here lets Capture's own
+    /// cached-resources retry (one re-provision + retry) or CaptureService's per-monitor
+    /// omit-the-monitor contract take over, instead of hanging the hotkey. The old TimeSpan.FromSeconds(5)
+    /// meant the worst case — a cached-resources attempt that times out, then its retry against
+    /// freshly provisioned resources ALSO timing out — was up to 2x5s = ~10s frozen on the hotkey
+    /// path.</summary>
+    private const int FrameWaitMs = 1200;
 
     private static CapturedFrame CaptureCore(MonitorInfo monitor, MonitorResources resources)
     {
@@ -260,7 +414,7 @@ public sealed class WgcCapturer : IScreenCapturer
             try
             {
                 session.StartCapture();
-                if (!frameReady.Wait(TimeSpan.FromSeconds(5)))
+                if (!frameReady.Wait(FrameWaitMs))
                 {
                     throw new CaptureException($"WGC frame wait timed out for monitor {monitor.DeviceName}.");
                 }
