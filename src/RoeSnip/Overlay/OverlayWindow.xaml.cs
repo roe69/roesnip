@@ -1862,12 +1862,17 @@ public partial class OverlayWindow : Window
         if (Annotations.SelectedShape is { } selectedShape
             && (_currentTool == AnnotationTool.None || _currentTool == selectedShape.Tool))
         {
+            // Each branch ALSO adopts the dialed size as the CURRENT tool size (SetStrokeWidth /
+            // SetTextFontSize instead of a bare indicator): the tool's brush cursor visibly grows
+            // and shrinks with the wheel (it renders from _currentStrokeWidth, which a
+            // selected-shape-only mutation left stale — user-reported), the toolbar's size box
+            // stays honest, and the next shape drawn inherits the size just dialed in.
             if (selectedShape.Tool == AnnotationTool.Pixelate)
             {
                 Annotations.BeginDragSelected(); // no-op if a gesture from an earlier notch is still open
                 double newBlock = Math.Clamp(selectedShape.StrokeWidthPx + notches * 2.0, 3.0, SizeInput.MaxStrokePx);
                 Annotations.SetSelectedPixelateBlock(newBlock);
-                ShowSizeIndicator(cursorDip, SizeInput.FormatPx(newBlock), circleDiameterDip: null);
+                SetStrokeWidth(newBlock, cursorDip);
                 e.Handled = true;
                 return;
             }
@@ -1877,7 +1882,7 @@ public partial class OverlayWindow : Window
                 Annotations.BeginDragSelected();
                 double newWidth = SizeInput.ClampStroke(selectedShape.StrokeWidthPx + notches);
                 Annotations.SetSelectedStrokeWidth(newWidth);
-                ShowSizeIndicator(cursorDip, SizeInput.FormatPx(newWidth), circleDiameterDip: null);
+                SetStrokeWidth(newWidth, cursorDip);
                 e.Handled = true;
                 return;
             }
@@ -1888,7 +1893,7 @@ public partial class OverlayWindow : Window
                 Annotations.BeginDragSelected(); // no-op if a gesture from an earlier notch is still open
                 double resizedFont = SizeInput.ClampFont(selectedShape.StrokeWidthPx + notches * 2.0);
                 Annotations.SetSelectedFontSize(resizedFont);
-                ShowSizeIndicator(cursorDip, SizeInput.FormatPt(resizedFont), circleDiameterDip: null);
+                SetTextFontSize(resizedFont, showIndicator: true, cursorDip);
                 e.Handled = true;
                 return;
             }
