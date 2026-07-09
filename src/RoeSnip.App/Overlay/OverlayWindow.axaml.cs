@@ -65,6 +65,11 @@ public partial class OverlayWindow : Window
     private Point _dragAnchorPx;
     private Point _dragAnchorDip;
     private bool _newSelectionPending;
+
+    /// <summary>Last physical-pixel pointer position seen by <see cref="OnPreviewPointerMoved"/> —
+    /// kept around so <see cref="UpdateCursor"/> can re-hit-test the same spot when it's invoked
+    /// from a non-pointer-move trigger (a tool change), where there's no fresh position to hand it.</summary>
+    private Point _lastHoverPx;
     private RectPhysical _dragStartRect;
     private Border? _colorInfoPanel;
     private IPointer? _capturedPointer;
@@ -370,6 +375,7 @@ public partial class OverlayWindow : Window
 
         var dip = e.GetPosition(this);
         var px = ToPhysical(dip);
+        _lastHoverPx = px;
 
         _magnifier.Update(_preview, _frame, dip, px);
 
@@ -411,6 +417,8 @@ public partial class OverlayWindow : Window
                 _annotations.UpdateShape(px);
                 break;
         }
+
+        UpdateCursor();
     }
 
     private void OnPreviewPointerReleased(object? sender, PointerReleasedEventArgs e)
@@ -454,9 +462,26 @@ public partial class OverlayWindow : Window
                 break;
         }
 
+        bool wasAreaDrag = _dragMode is DragMode.NewSelection or DragMode.Move or DragMode.Resize;
         _dragMode = DragMode.None;
         _activeHandle = SelectionHandle.None;
         ReleasePointer();
+
+        if (wasAreaDrag)
+        {
+            // SetSelection() above (for the NewSelection/Resize/Move branches) ran while _dragMode
+            // still held the drag value, so UpdateToolbarPlacement() suppressed the toolbar even for
+            // this final rect. Re-evaluate now that _dragMode is None: the toolbar (re)appears at the
+            // settled selection, or stays hidden if the drag ended with no selection at all (either
+            // SetSelection(null) above, or the click-to-pick path where _selectionPx was never
+            // touched). Gated to area drags: an Annotation mouse-up never hid the toolbar, so there
+            // is nothing to re-show.
+            UpdateToolbarPlacement();
+            // The release point of a NewSelection drag is, by construction, a corner of the fresh
+            // selection — re-evaluate now so the cursor shows that handle's resize arrow immediately
+            // instead of keeping the drag's crosshair until the next pointer jitter.
+            UpdateCursor();
+        }
     }
 
     private void CapturePointer(IPointer pointer)
@@ -646,6 +671,21 @@ public partial class OverlayWindow : Window
             return;
         }
 
+        // A drag that's creating/moving/resizing the selection shouldn't show the toolbar
+        // mid-drag — it belongs at the FINAL rect, not flickering along for the ride. Annotation
+        // drags are exempt: they draw inside the already-settled selection and never change its
+        // bounds. Just collapse the existing element (if any) rather than HideToolbar(), which
+        // also resets _currentTool and the toolbar's checked-tool state as if the selection had
+        // been cleared — neither of which should happen mid-drag.
+        if (_dragMode is DragMode.NewSelection or DragMode.Move or DragMode.Resize)
+        {
+            if (_toolbar is not null)
+            {
+                _toolbar.IsVisible = false;
+            }
+            return;
+        }
+
         ShowToolbar();
         if (_toolbar is not { } toolbar)
         {
@@ -689,7 +729,7 @@ public partial class OverlayWindow : Window
         if (_toolbar is null)
         {
             _toolbar = new ToolbarControl();
-            _toolbar.ToolSelected += tool => _currentTool = tool;
+            _toolbar.ToolSelected += tool => { _currentTool = tool; UpdateCursor(); };
             _toolbar.ColorSelected += color => _currentColor = color;
             _toolbar.StrokeWidthSelected += width => _currentStrokeWidth = width;
             _toolbar.UndoClicked += () => _annotations.Undo();
@@ -723,6 +763,47 @@ public partial class OverlayWindow : Window
             _toolbar.ResetToolSelection();
         }
         _currentTool = AnnotationTool.None;
+        UpdateCursor();
+    }
+
+    /// <summary>Keeps the pointer cursor honest about what a click would do right now. A drawing
+    /// tool being active always wins (crosshair, same as this window's default) — otherwise, with
+    /// the Select tool active, hovering the selection body shows a grab cursor and hovering a
+    /// resize handle shows the matching directional resize cursor, so an already-placed selection
+    /// doesn't keep looking like a fresh crosshair-drag target. Re-run on every pointer move (using
+    /// the live drag/hit-test state) and whenever _currentTool changes.</summary>
+    private void UpdateCursor()
+    {
+        if (_currentTool != AnnotationTool.None)
+        {
+            Cursor = new Cursor(StandardCursorType.Cross);
+            return;
+        }
+
+        // While a drag IS active, the cursor tracks the drag kind rather than re-hit-testing —
+        // a Move/Resize drag can carry the pointer off the body/handle it started on (fast mouse
+        // movement outruns the rect), and it must still read as the drag it actually is.
+        SelectionHandle handle = _dragMode switch
+        {
+            DragMode.Move => SelectionHandle.Body,
+            DragMode.Resize => _activeHandle,
+            DragMode.NewSelection => SelectionHandle.None, // dragging out a new rect: stay crosshair
+            _ => _adorner.HitTestHandle(_lastHoverPx),
+        };
+
+        Cursor = handle switch
+        {
+            SelectionHandle.Body => new Cursor(StandardCursorType.Hand),
+            SelectionHandle.TopLeft => new Cursor(StandardCursorType.TopLeftCorner),
+            SelectionHandle.TopRight => new Cursor(StandardCursorType.TopRightCorner),
+            SelectionHandle.BottomLeft => new Cursor(StandardCursorType.BottomLeftCorner),
+            SelectionHandle.BottomRight => new Cursor(StandardCursorType.BottomRightCorner),
+            SelectionHandle.Top => new Cursor(StandardCursorType.TopSide),
+            SelectionHandle.Bottom => new Cursor(StandardCursorType.BottomSide),
+            SelectionHandle.Left => new Cursor(StandardCursorType.LeftSide),
+            SelectionHandle.Right => new Cursor(StandardCursorType.RightSide),
+            _ => new Cursor(StandardCursorType.Cross),
+        };
     }
 
     // ---------- Click-to-inspect color info panel ----------
