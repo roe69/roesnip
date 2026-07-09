@@ -1,0 +1,63 @@
+name: build-windows
+
+# Builds and tests the whole solution on Windows (the only host that can compile the frozen WPF
+# app in src/RoeSnip — its XAML compiler, PresentationBuildTasks, is Windows-only, so this is also
+# the one job that exercises the no-RID "compiles all three RoeSnip.Platform.* projects at once"
+# design-time gate documented in TESTING.md). Publishes the WPF app via its committed win-x64
+# publish profile (self-contained, single-file, ReadyToRun — see
+# src/RoeSnip/Properties/PublishProfiles/win-x64.pubxml).
+
+on:
+  workflow_dispatch: {}
+  # Runnable standalone (push) or as part of build-all.yml (workflow_call) — see build-all.yml's
+  # test-gate job for why a redundant build+test here is intentional rather than wasteful.
+  workflow_call: {}
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "**/*.props"
+      - "RoeSnip.sln"
+      - ".github/workflows/build-windows.yml"
+
+jobs:
+  build:
+    name: Build, test, and publish (win-x64)
+    runs-on: windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build solution (Release)
+        run: dotnet build RoeSnip.sln -c Release
+
+      - name: Test
+        run: dotnet test RoeSnip.sln -c Release --no-build
+
+      # win-x64.pubxml pins RuntimeIdentifier/SelfContained/PublishSingleFile/PublishReadyToRun —
+      # see TESTING.md's publish-gates list. Output lands at
+      # src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe.
+      - name: Publish WPF app (win-x64)
+        run: dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64
+
+      - name: Report artifact size
+        shell: pwsh
+        run: |
+          $exe = "src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe"
+          $bytes = (Get-Item $exe).Length
+          $mb = [math]::Round($bytes / 1MB, 2)
+          "### RoeSnip.exe (win-x64)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          "$mb MB ($bytes bytes)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoeSnip-win-x64
+          path: src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe
+          if-no-files-found: error
