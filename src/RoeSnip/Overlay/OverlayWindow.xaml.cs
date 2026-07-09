@@ -1504,7 +1504,7 @@ public partial class OverlayWindow : Window
                 }
                 if (_dragMode == DragMode.SelectedEndpoint)
                 {
-                    Cursor = Cursors.SizeAll;
+                    Cursor = CursorForSegmentEndpoint(Annotations.SelectedShape);
                     return;
                 }
                 if (_dragMode == DragMode.None)
@@ -1518,7 +1518,7 @@ public partial class OverlayWindow : Window
                     }
                     if (Annotations.HitTestSelectedEndpoint(hoverPx) >= 0)
                     {
-                        Cursor = Cursors.SizeAll;
+                        Cursor = CursorForSegmentEndpoint(Annotations.SelectedShape);
                         return;
                     }
                     if (Annotations.HitTestEditable(hoverPx, interiorGrab: IsGrabModifierHeld) is not null)
@@ -1545,9 +1545,34 @@ public partial class OverlayWindow : Window
             DragMode.NewSelection => Cursors.Cross,
             DragMode.SelectedMove => Cursors.Hand,
             DragMode.SelectedResize => CursorForHandle(_activeHandle),
-            DragMode.SelectedEndpoint => Cursors.SizeAll,
+            DragMode.SelectedEndpoint => CursorForSegmentEndpoint(Annotations.SelectedShape),
             _ => CursorForHover(ToPhysical(Mouse.GetPosition(this))),
         };
+    }
+
+    /// <summary>Directional resize cursor for a Line/Arrow endpoint, chosen by the segment's own
+    /// angle — dragging an endpoint stretches ALONG the segment, so the pointer should say
+    /// "resize this way" (a diagonal double-arrow on a diagonal line, WE/NS near the axes), not
+    /// SizeAll's four-way move arrows, which read as "move the whole thing" — the grabbing hand
+    /// already means that. Buckets at ~22.5° off each axis (tan 67.5° ≈ 2.414); screen Y grows
+    /// downward, so same-sign dx/dy is the NW–SE diagonal.</summary>
+    private static Cursor CursorForSegmentEndpoint(AnnotationShape? shape)
+    {
+        if (shape is null || shape.PointsPx.Count < 2)
+        {
+            return Cursors.SizeNWSE;
+        }
+        var d = shape.PointsPx[1] - shape.PointsPx[0];
+        double adx = Math.Abs(d.X), ady = Math.Abs(d.Y);
+        if (adx >= ady * 2.414)
+        {
+            return Cursors.SizeWE;
+        }
+        if (ady >= adx * 2.414)
+        {
+            return Cursors.SizeNS;
+        }
+        return (d.X > 0) == (d.Y > 0) ? Cursors.SizeNWSE : Cursors.SizeNESW;
     }
 
     /// <summary>Maps a selection hit-test result to the matching WPF cursor for the Select tool:
@@ -1577,11 +1602,12 @@ public partial class OverlayWindow : Window
             {
                 return CursorForHandle(selectedHandle);
             }
-            // Item 2: Line/Arrow's endpoint handles — SizeAll, distinct from the plain Hand a body
-            // hover gets a few lines below.
+            // Item 2: Line/Arrow's endpoint handles — a directional resize pointer along the
+            // segment's own angle, distinct from the plain Hand a body hover gets a few lines
+            // below (an endpoint drag stretches the segment; the hand means "move the whole thing").
             if (Annotations.HitTestSelectedEndpoint(px) >= 0)
             {
-                return Cursors.SizeAll;
+                return CursorForSegmentEndpoint(Annotations.SelectedShape);
             }
         }
 
