@@ -1382,6 +1382,8 @@ public partial class OverlayWindow : Window
             _toolbar.CopyClicked += () => _onCommand(OverlayCommand.Copy);
             _toolbar.SaveClicked += () => _onCommand(OverlayCommand.Save);
             _toolbar.SaveHdrClicked += () => _onCommand(OverlayCommand.SaveHdr);
+            _toolbar.RecordMp4Clicked += () => _onCommand(OverlayCommand.RecordMp4);
+            _toolbar.RecordGifClicked += () => _onCommand(OverlayCommand.RecordGif);
             // The toolbar's X button always closes the whole overlay outright — deliberately NOT
             // the staged CancelStage semantics Esc has.
             _toolbar.CancelClicked += () => _onCommand(OverlayCommand.Cancel);

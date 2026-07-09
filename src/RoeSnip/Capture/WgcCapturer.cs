@@ -54,7 +54,14 @@ public sealed class WgcCapturer : IScreenCapturer
         public MonitorInfo? LastMonitor;
     }
 
-    private sealed class MonitorResources : IDisposable
+    // internal (not private): Recording/RegionRecorder.cs calls CreateResources directly to get its
+    // own dedicated device/item, deliberately bypassing the s_slots cache below — see that class's
+    // doc comment for why a recording must never share the cached per-monitor slot the background
+    // keepalive timer polls. This is a pure accessibility change; CreateResources itself is a pure
+    // factory with no cache interaction (only Capture/Prewarm/KeepaliveTick touch s_slots), so
+    // widening it costs nothing here and avoids duplicating ~130 lines of fragile CsWinRT/COM
+    // interop (the HSTRING/RoGetActivationFactory dance, the FromAbi-then-Release wrapping).
+    internal sealed class MonitorResources : IDisposable
     {
         public required GraphicsCaptureItem Item { get; init; }
         public required ID3D11Device D3dDevice { get; init; }
@@ -301,7 +308,9 @@ public sealed class WgcCapturer : IScreenCapturer
         // cached-resources retry-once path already recovers from exactly like any other capture
         // failure — so correctness is unchanged, only WHERE the common case's health check runs.
 
-    private static MonitorResources CreateResources(MonitorInfo monitor)
+    // internal (not private): see the MonitorResources accessibility note above — RegionRecorder
+    // calls this directly for a private, never-cached device/item pair.
+    internal static MonitorResources CreateResources(MonitorInfo monitor)
     {
         GraphicsCaptureItem item = CreateItemForMonitor(monitor.HMonitor);
         ID3D11Device? d3dDevice = null;
@@ -484,7 +493,12 @@ public sealed class WgcCapturer : IScreenCapturer
         }
     }
 
-    private static ID3D11Texture2D GetTextureForSurface(IDirect3DSurface surface)
+    // internal (not private): RegionRecorder's own FrameArrived handler needs this same
+    // CsWinRT-interop-to-classic-COM bridge for its own captured frames — deliberately widened
+    // rather than duplicated (unlike the ~15-line accessibility candidates elsewhere in this file,
+    // this one has a subtle ownership contract in its doc comment below that's easy to get wrong a
+    // second time).
+    internal static ID3D11Texture2D GetTextureForSurface(IDirect3DSurface surface)
     {
         // surface is a CsWinRT-projected object, not a classic COM RCW — a direct cast to our
         // ComImport interface fails ("Invalid cast from WinRT.IInspectable"). Query the interface

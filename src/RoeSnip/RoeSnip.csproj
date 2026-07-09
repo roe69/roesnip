@@ -35,6 +35,10 @@
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
     <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
+    <!-- Recording feature (MP4 export via IMFSinkWriter/H.264). Same 3.8.3 line + identical
+         Vortice.DirectX/SharpGen.Runtime dependency versions as the three references above — no
+         version conflict, no downgrade warnings. -->
+    <PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
   </ItemGroup>
 
 </Project>

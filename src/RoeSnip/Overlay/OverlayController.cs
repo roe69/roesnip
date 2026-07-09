@@ -31,6 +31,8 @@ public enum OverlayCommand
     Copy,
     Save,
     SaveHdr,
+    RecordMp4,
+    RecordGif,
 }
 
 public static class OverlayController
@@ -762,7 +764,56 @@ public static class OverlayController
                     // SelectionPx, per PLAN.md §3.2 ("does not call any HDR-export API itself").
                     Confirm(copy: _settings.CopyOnSelect, save: false, saveHdr: true);
                     break;
+
+                case OverlayCommand.RecordMp4:
+                    Record(RecordingFormat.Mp4);
+                    break;
+
+                case OverlayCommand.RecordGif:
+                    Record(RecordingFormat.Gif);
+                    break;
             }
+        }
+
+        /// <summary>Record MP4/GIF: unlike Copy/Save/SaveHdr this performs no clipboard/PNG/HDR I/O
+        /// itself — it packages (Monitor, SelectionPx, Format) onto the OverlayResult and closes the
+        /// overlay normally. The actual WGC capture session starts back in
+        /// AppComposition.RunCaptureFlowAsync via the StartRecording hook, exactly like SaveHdr's
+        /// write happens back there via WriteJxr.</summary>
+        private void Record(RecordingFormat format)
+        {
+            var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
+            if (window is null)
+            {
+                return; // no-op until something is selected, same guard as Confirm
+            }
+
+            SdrImage rendered;
+            try
+            {
+                // Still needed: OverlayResult.RenderedImage is non-nullable, and recording ignores
+                // annotations on the video itself — this is a cheap one-time crop+composite of a
+                // still frame, not a per-frame cost. Keeps every call site (including this one) able
+                // to rely on RenderedImage always being populated, avoiding a nullability change to
+                // a record every other path already depends on.
+                rendered = window.RenderSelectionWithAnnotations();
+            }
+            catch (InvalidOperationException)
+            {
+                return;
+            }
+
+            var result = new OverlayResult(
+                window.Monitor,
+                window.SelectionPx!.Value,
+                rendered,
+                window.Frame,
+                CopyPerformed: false,
+                SavedPngPath: null,
+                SaveHdrRequested: false,
+                RecordingRequested: new RecordingRequest(format));
+
+            Finish(result);
         }
 
         /// <summary>Esc's two-stage behavior, decided here because only the session can see every

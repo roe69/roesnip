@@ -30,6 +30,10 @@ converts it properly.
   undo/redo.
 - **Color picker.** A plain click inspects the pixel under the cursor into a
   compact picker window (hex / RGB / HSL / nits, HDR-aware).
+- **Screen recording.** Record the selected region to MP4 or GIF straight
+  from the overlay toolbar. A small floating control bar shows elapsed time
+  and lets you stop and save or cancel. Pressing PrintScreen again while
+  recording stops and saves it, the same shortcut you used to start it.
 - **Multi-monitor.** One overlay per monitor, per-monitor HDR state and SDR
   white levels, capture via Desktop Duplication with a
   Windows.Graphics.Capture fallback per monitor.

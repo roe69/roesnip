@@ -5,12 +5,24 @@ using System.Threading.Tasks;
 
 namespace RoeSnip;
 
+/// <summary>Which container the Record toolbar button/menu asked for. Set on
+/// <see cref="OverlayResult.RecordingRequested"/> by Overlay/OverlayController.cs (WP-B); consumed
+/// by Recording/RecordingController.cs (WP-D) via the <see cref="AppComposition.StartRecording"/>
+/// hook. A plain flat enum (mirrors <see cref="CliMode"/>'s style) since it never carries a
+/// payload of its own.</summary>
+public enum RecordingFormat { Mp4, Gif }
+
+/// <summary>Data-only "the user asked to record" marker packaged onto <see cref="OverlayResult"/>
+/// by OverlayController.Record — see that method's doc comment for why it's a payload record
+/// rather than a bare bool+enum pair (keeps OverlayResult's constructor call sites readable).</summary>
+public sealed record RecordingRequest(RecordingFormat Format);
+
 /// <summary>Data-only result of one overlay session. The Overlay package (WP-B) produces this;
 /// it performs Copy (clipboard) and Save (PNG dialog + file write) itself before returning, using
 /// only WP-A leaf APIs (PngWriter) and its own ClipboardService — so those two actions need no
-/// hook. Only the cross-cutting bits (HDR export, "saved" tray balloon) are threaded back through
-/// AppComposition, because they need WP-C types (JxrWriter, ITrayNotifier) that Overlay must not
-/// reference directly.</summary>
+/// hook. Only the cross-cutting bits (HDR export, "saved" tray balloon, recording) are threaded
+/// back through AppComposition, because they need WP-C/WP-D types (JxrWriter, ITrayNotifier,
+/// RecordingController) that Overlay must not reference directly.</summary>
 public sealed record OverlayResult(
     Capture.MonitorInfo Monitor,
     Capture.RectPhysical SelectionPx,      // selection rect, relative to Monitor.BoundsPx origin
@@ -18,7 +30,8 @@ public sealed record OverlayResult(
     Capture.CapturedFrame SourceFrame,       // original (uncropped) frame for this monitor — for HDR export
     bool CopyPerformed,                      // true if Overlay already wrote PNG+CF_DIBV5 to the clipboard
     string? SavedPngPath,                    // non-null if the user used Save and it succeeded
-    bool SaveHdrRequested                    // true if the user clicked "Save HDR" (independent of settings.AutoSaveHdrCopy)
+    bool SaveHdrRequested,                   // true if the user clicked "Save HDR" (independent of settings.AutoSaveHdrCopy)
+    RecordingRequest? RecordingRequested = null // non-null if the user clicked Record MP4/GIF — trailing optional param, non-breaking
 );
 
 /// <summary>Settings data shape (DESIGN.md §6). Persistence (JSON load/save, fail-closed-on-unreadable)
@@ -174,6 +187,14 @@ public static class AppComposition
 
     // Set by Imaging/JxrWriter.cs (WP-C). Writes frame (cropped to cropPx) as .jxr to path.
     public static Action<string, Capture.CapturedFrame, Capture.RectPhysical>? WriteJxr { get; set; }
+
+    // Set by Recording/RecordingController.cs. Starts a recording session for the given monitor/
+    // selection/format. The returned Task completes once the recording has STARTED (chrome shown,
+    // capture loop running) — NOT once it finishes. On success, CaptureGate ownership transfers to
+    // RecordingController, which calls CaptureGate.Exit() exactly once when the recording ends
+    // (Stop or Cancel). On failure (the Task throws), RecordingController must NOT have taken gate
+    // ownership — RunCaptureFlowAsync's own finally still releases it.
+    public static Func<Capture.MonitorInfo, Capture.RectPhysical, RecordingFormat, RoeSnipSettings, ITrayNotifier?, Task>? StartRecording { get; set; }
 
     // Set by App/TrayApp.cs (WP-C). Runs the tray message loop; returns process exit code on quit.
     public static Func<string[], int>? RunTrayApp { get; set; }
@@ -376,6 +397,12 @@ public static class AppComposition
             return;
         }
 
+        // Recording hand-off (Recording/RecordingController.cs): set to true the moment
+        // StartRecording's Task completes successfully, meaning RecordingController now owns
+        // CaptureGate and will call CaptureGate.Exit() itself when the recording ends. Left false
+        // on every other path (including a StartRecording failure) so the finally below releases
+        // the gate exactly once, on exactly one owner.
+        bool gateTransferred = false;
         try
         {
             // Hotkey-to-overlay latency instrumentation: this whole stretch (capture + tone-map)
@@ -432,6 +459,32 @@ public static class AppComposition
                     return; // user cancelled
                 }
 
+                if (result.RecordingRequested is { } recordingRequest)
+                {
+                    Console.Error.WriteLine($"RoeSnip: recording requested ({recordingRequest.Format})");
+                    // Recording has its own save/balloon path (RecordingController.Stop) — skip the
+                    // SaveHdr/SavedPngPath handling below entirely; this branch is the terminal one
+                    // for a Record command.
+                    if (StartRecording is null)
+                    {
+                        notifier?.ShowError("Recording unavailable — Recording package not present in this build.");
+                    }
+                    else
+                    {
+                        try
+                        {
+                            await StartRecording(result.Monitor, result.SelectionPx, recordingRequest.Format, settings, notifier);
+                            gateTransferred = true; // RecordingController now owns CaptureGate — see hook doc comment
+                        }
+                        catch (Exception ex)
+                        {
+                            notifier?.ShowError($"Failed to start recording: {ex.Message}");
+                            // gateTransferred stays false — outer finally releases the gate normally.
+                        }
+                    }
+                    return;
+                }
+
                 if (result.SaveHdrRequested || settings.AutoSaveHdrCopy)
                 {
                     if (WriteJxr is not null)
@@ -478,7 +531,16 @@ public static class AppComposition
         }
         finally
         {
-            CaptureGate.Exit();
+            // Correctness-critical seam: exactly one of {this finally, RecordingController.Stop/
+            // Cancel} must call CaptureGate.Exit() for a given trigger. CaptureGate.Exit() itself
+            // is idempotent, but calling it EARLY while a recording is still running would free the
+            // gate for an unrelated concurrent trigger to start a second overlay/capture stack
+            // while the recording's own WGC session is still live on that monitor — exactly the
+            // two-stacks-screenshot-each-other bug CaptureGate's own doc comment exists to prevent.
+            if (!gateTransferred)
+            {
+                CaptureGate.Exit();
+            }
         }
     }
 

@@ -91,6 +91,8 @@ public partial class ToolbarControl : UserControl
     public event Action? CopyClicked;
     public event Action? SaveClicked;
     public event Action? SaveHdrClicked;
+    public event Action? RecordMp4Clicked;
+    public event Action? RecordGifClicked;
     public event Action? CancelClicked;
 
     /// <summary>Text-style group (item 4) — Bold, Italic, font family. Only ever visible while the
@@ -134,6 +136,13 @@ public partial class ToolbarControl : UserControl
                 CommitSizeText();
             }
         };
+
+        // A ContextMenu isn't part of its owner Button's visual tree, so these can't be set as a
+        // XAML RelativeSource binding — set once here so the menu opens directly under the button
+        // (normal menu-button UX) instead of at the cursor (ContextMenu's default for a left-click
+        // open, since it has no mouse-position event to place itself against).
+        RecordContextMenu.PlacementTarget = RecordButton;
+        RecordContextMenu.Placement = PlacementMode.Bottom;
     }
 
     private void SelectTool(ToggleButton selected, AnnotationTool tool)
@@ -543,5 +552,12 @@ public partial class ToolbarControl : UserControl
     private void OnCopyClick(object sender, RoutedEventArgs e) => CopyClicked?.Invoke();
     private void OnSaveClick(object sender, RoutedEventArgs e) => SaveClicked?.Invoke();
     private void OnSaveHdrClick(object sender, RoutedEventArgs e) => SaveHdrClicked?.Invoke();
+
+    // Left-click opens the format menu (unlike Save's right-click-only HDR menu — Record has no
+    // single default format a plain click could commit to).
+    private void OnRecordClick(object sender, RoutedEventArgs e) => RecordButton.ContextMenu!.IsOpen = true;
+    private void OnRecordMp4Click(object sender, RoutedEventArgs e) => RecordMp4Clicked?.Invoke();
+    private void OnRecordGifClick(object sender, RoutedEventArgs e) => RecordGifClicked?.Invoke();
+
     private void OnCancelClick(object sender, RoutedEventArgs e) => CancelClicked?.Invoke();
 }

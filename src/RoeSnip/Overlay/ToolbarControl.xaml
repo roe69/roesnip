@@ -686,6 +686,26 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
                     <Border Width="1" Margin="8,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
+                    <!-- Record: left-click opens the format menu (unlike Save's right-click-only HDR
+                         menu — Record has no single default format to pick for a plain click). -->
+                    <Button x:Name="RecordButton" Style="{StaticResource QuietActionButtonStyle}"
+                            ToolTip="Record — MP4 or GIF" Click="OnRecordClick">
+                        <Button.ContextMenu>
+                            <!-- Placement/PlacementTarget set in the code-behind constructor (a
+                                 ContextMenu isn't part of the Button's visual tree, so a XAML-time
+                                 RelativeSource binding can't reach it) — see ToolbarControl(). -->
+                            <ContextMenu x:Name="RecordContextMenu" Style="{StaticResource DarkContextMenuStyle}">
+                                <MenuItem x:Name="RecordMp4MenuItem" Header="Record MP4" Style="{StaticResource DarkMenuItemStyle}" Click="OnRecordMp4Click"/>
+                                <MenuItem x:Name="RecordGifMenuItem" Header="Record GIF" Style="{StaticResource DarkMenuItemStyle}" Click="OnRecordGifClick"/>
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                        <!-- Filled red dot — the universal record affordance. Bespoke (not IconStyle,
+                             which sets Stroke not Fill): a flat literal red, not a themed brush — same
+                             "structure over glow" rule as CancelButtonStyle's hover red, used here as a
+                             persistent icon rather than a hover-only state so it reads as "record" at rest. -->
+                        <Ellipse Width="10" Height="10" Fill="#DC4646" IsHitTestVisible="False"/>
+                    </Button>
+
                     <Button x:Name="CopyButton" Style="{StaticResource ActionButtonStyle}"
                             ToolTip="Copy (Ctrl+C)" Click="OnCopyClick">
                         <!-- Two overlapping squares. Stroke overridden to the on-primary dark ink —

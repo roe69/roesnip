@@ -108,6 +108,19 @@ public sealed class TrayApp : ITrayNotifier
 
     private void TriggerCapture()
     {
+        // A recording is live: PrtScr stops+saves it instead of starting a new capture flow. Direct
+        // reference (not an AppComposition hook) — this file already calls
+        // RoeSnip.Overlay.OverlayController's own statics the same way (MarkTriggerTimestamp,
+        // TryShowFlash, ReleaseFlash below); the hook discipline in Program.cs exists to keep
+        // Program.cs itself decoupled from Overlay/App/Recording, not between App and Recording.
+        // Deliberately BEFORE MarkTriggerTimestamp: a stop-triggering PrtScr is not a new capture
+        // trigger and must not stamp latency instrumentation or touch the flash.
+        if (RoeSnip.Recording.RecordingController.IsActive)
+        {
+            RoeSnip.Recording.RecordingController.RequestStopAndSave();
+            return;
+        }
+
         // Honest trigger-based latency instrumentation (r5-latency, S2): stamp the moment the
         // ACTUAL trigger happened — before the flash, before capture, before anything else — so
         // every downstream latency log (hotkey-to-dim, first-overlay-visible, all-overlays-visible)
