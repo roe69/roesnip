@@ -7,24 +7,26 @@
 
 An HDR-correct screenshot tool: press PrintScreen, the screen dims instantly,
 drag a region, annotate, copy or save. On HDR desktops Windows composites in
-linear scRGB FP16 and legacy tools (Snipping Tool, Lightshot, ShareX's default
-path) clip or mis-scale that buffer — which is why their screenshots come out
-washed-out and gray. RoeSnip captures the true FP16 frame and converts it
-properly.
+linear scRGB FP16, and legacy tools (Snipping Tool, Lightshot, ShareX's
+default path) clip or mis-scale that buffer, which is why their screenshots
+come out washed-out and gray. RoeSnip captures the true FP16 frame and
+converts it properly.
+
+![RoeSnip capture overlay](docs/screenshot.png)
 
 - **HDR done right.** SDR content (the common case) comes out
-  **pixel-identical** to a plain SDR monitor's screenshot — exact
-  pass-through, matched to the "SDR content brightness" level; genuine HDR
-  highlights get a smooth, hue-preserving rolloff instead of blowing out.
-  Optionally saves the untouched HDR original as a `.jxr` alongside the PNG,
-  the way Xbox Game Bar does.
+  pixel-identical to a plain SDR monitor's screenshot: an exact pass-through,
+  matched to the "SDR content brightness" level. Genuine HDR highlights get a
+  smooth, hue-preserving rolloff instead of blowing out. Optionally saves the
+  untouched HDR original as a `.jxr` alongside the PNG, the way Xbox Game Bar
+  does.
 - **Instant response.** A resident tray process with pre-provisioned capture
   sessions and overlay windows: the dim lands in single-digit milliseconds
-  and the interactive overlay well under 100 ms, warm or cold.
+  and the interactive overlay opens in under 100 ms, warm or cold.
 - **Annotations.** Rectangle, ellipse, arrow, line, freehand, highlighter,
   pixelate (censor mosaic), and text in any installed font. Every placed
-  shape stays editable — click it under any tool to move it, drag its handles
-  or endpoints, scroll to adjust its stroke/mosaic/font size — with full
+  shape stays editable: click it under any tool to move it, drag its handles
+  or endpoints, scroll to adjust its stroke/mosaic/font size, with full
   undo/redo.
 - **Color picker.** A plain click inspects the pixel under the cursor into a
   compact picker window (hex / RGB / HSL / nits, HDR-aware).
@@ -47,12 +49,11 @@ dotnet test RoeSnip.sln
 dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64
 ```
 
-Run `RoeSnip.exe` with no arguments to start the tray app; **PrintScreen**
-opens the capture overlay. If Windows currently intercepts PrintScreen for
-Snipping Tool, RoeSnip asks once whether to disable that or use
-**Ctrl+PrintScreen** instead — the hotkey is changeable from the tray icon's
-Settings window. Launching the exe again triggers a capture on the running
-instance.
+Run `RoeSnip.exe` with no arguments to start the tray app; PrintScreen opens
+the capture overlay. If Windows currently intercepts PrintScreen for Snipping
+Tool, RoeSnip asks once whether to disable that or use Ctrl+PrintScreen
+instead. The hotkey can be changed later from the tray icon's Settings
+window. Launching the exe again triggers a capture on the running instance.
 
 Settings live at `%APPDATA%\RoeSnip\settings.json` (hotkey, save directory,
 auto-HDR-copy, tone-map overrides, run-at-startup, copy-on-select). A missing
@@ -74,12 +75,12 @@ RoeSnip.exe --capture [--monitor N] [--out shot.png] [--jxr]
 
 ## Docs
 
-- [DESIGN.md](DESIGN.md) — behavioral spec: capture paths, tone mapping,
-  overlay semantics, failure modes.
-- [PLAN.md](PLAN.md) — the implementation plan the WPF app was built against.
-- [DESIGN-XPLAT.md](DESIGN-XPLAT.md) / [PLAN-XPLAT.md](PLAN-XPLAT.md) — the
+- [DESIGN.md](DESIGN.md): behavioral spec covering capture paths, tone
+  mapping, overlay semantics, and failure modes.
+- [PLAN.md](PLAN.md): the implementation plan the WPF app was built against.
+- [DESIGN-XPLAT.md](DESIGN-XPLAT.md) / [PLAN-XPLAT.md](PLAN-XPLAT.md): the
   in-progress cross-platform port (`src/RoeSnip.App`, Avalonia +
   `RoeSnip.Core` + `RoeSnip.Platform.*`) targeting Linux (X11) and macOS
-  (`helpers/scksnap`); the WPF app in `src/RoeSnip` is the Windows daily
+  (`helpers/scksnap`). The WPF app in `src/RoeSnip` is the Windows daily
   driver.
-- [TESTING.md](TESTING.md) — what has actually been verified, per OS and how.
+- [TESTING.md](TESTING.md): what has actually been verified, per OS and how.
