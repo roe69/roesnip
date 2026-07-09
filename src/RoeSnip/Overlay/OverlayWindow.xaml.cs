@@ -297,6 +297,17 @@ public partial class OverlayWindow : Window
         PreviewMouseLeftButtonUp += OnPreviewMouseLeftButtonUp;
         PreviewMouseWheel += OnPreviewMouseWheel;
         PreviewKeyDown += OnPreviewKeyDown;
+        // Pressing/releasing Shift or Ctrl must refresh the cursor immediately (the modifier-grab
+        // Hand appears over outline interiors while held) — a mouse-move alone would leave the
+        // cursor stale until the pointer jitters.
+        PreviewKeyUp += (_, ke) =>
+        {
+            if (!_initialized) return;
+            if (ke.Key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl)
+            {
+                UpdateToolCursor();
+            }
+        };
         MouseEnter += OnMouseEnter;
         MouseLeave += OnMouseLeave;
         Deactivated += OnDeactivated;
@@ -608,6 +619,27 @@ public partial class OverlayWindow : Window
         if (e.ClickCount >= 2 && _selectionPx is { } existing && RectContains(existing, px))
         {
             _onCommand(OverlayCommand.ConfirmPlain);
+            e.Handled = true;
+            return;
+        }
+
+        // Modifier-grab: Shift/Ctrl + click is an explicit "grab whatever drawn object is under
+        // the cursor" that beats every tool behavior. Crucially it hit-tests GENEROUSLY
+        // (interiorGrab): the middle of a rectangle/ellipse counts, not just the stroke ring the
+        // plain click rules use — so a box drawn around content can be repositioned from anywhere
+        // inside it without hunting for its outline, while plain clicks keep falling through to
+        // draw/select/color-pick as before. The grab is always a move; handles/endpoints still
+        // resize via plain clicks once the shape is selected.
+        if (IsGrabModifierHeld
+            && Annotations.HitTestEditable(px, interiorGrab: true) is { } grabbed)
+        {
+            Annotations.Select(grabbed);
+            _dragMode = DragMode.SelectedMove;
+            _dragAnchorPx = px;
+            Annotations.BeginDragSelected();
+            CaptureMouse();
+            MagnifierControl.Hide();
+            UpdateToolCursor();
             e.Handled = true;
             return;
         }
@@ -1051,6 +1083,10 @@ public partial class OverlayWindow : Window
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (!_initialized) return; // D2 belt-and-braces — see _initialized's doc comment
+        if (e.Key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl)
+        {
+            UpdateToolCursor(); // modifier-grab affordance — see the PreviewKeyUp twin
+        }
         if (_textInputFocused && _activeTextEditor is null)
         {
             // A toolbar text input (the size ComboBox) holds focus: every key — Enter included —
@@ -1485,7 +1521,7 @@ public partial class OverlayWindow : Window
                         Cursor = Cursors.SizeAll;
                         return;
                     }
-                    if (Annotations.HitTestEditable(hoverPx) is not null)
+                    if (Annotations.HitTestEditable(hoverPx, interiorGrab: IsGrabModifierHeld) is not null)
                     {
                         Cursor = Cursors.Hand;
                         return;
@@ -1555,13 +1591,19 @@ public partial class OverlayWindow : Window
             return CursorForHandle(cropHandle);
         }
 
-        if (Annotations.HitTestEditable(px) is not null)
+        if (Annotations.HitTestEditable(px, interiorGrab: IsGrabModifierHeld) is not null)
         {
             return Cursors.Hand;
         }
 
         return CursorForHandle(cropHandle); // Body -> Hand, None -> Cross
     }
+
+    /// <summary>True while Shift or Ctrl is down — the modifier-grab chord (see the mouse-down
+    /// branch): a click grabs the drawn object under the cursor, hit-testing outline interiors
+    /// too, regardless of the active tool.</summary>
+    private static bool IsGrabModifierHeld =>
+        (Keyboard.Modifiers & (ModifierKeys.Shift | ModifierKeys.Control)) != 0;
 
     // ---------- Click-to-pick: standalone ColorPickerWindow (replaces the old inline click panel) ----------
 

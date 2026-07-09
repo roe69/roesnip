@@ -337,8 +337,12 @@ public sealed class AnnotationLayer : FrameworkElement
     /// bounds counts. Rectangle/Ellipse are OUTLINES: only a click near the stroke itself counts —
     /// bounds-contains would make a box drawn around content swallow every interior click (you
     /// could no longer draw a second overlapping shape starting inside it, and the Select tool
-    /// would grab the frame when aiming at what it frames).</summary>
-    private static bool HitsShapeBody(AnnotationShape shape, Rect bounds, Point pt)
+    /// would grab the frame when aiming at what it frames). <paramref name="interiorGrab"/>
+    /// (Shift/Ctrl held — OverlayWindow's modifier-grab) deliberately relaxes exactly that: the
+    /// user is explicitly asking to grab, so the outline kinds hit on their whole interior too
+    /// (segments keep the distance test — a diagonal line's bounding box is mostly empty space
+    /// even for a deliberate grab).</summary>
+    private static bool HitsShapeBody(AnnotationShape shape, Rect bounds, Point pt, bool interiorGrab)
     {
         // Line/Arrow: a segment, so "body" is proximity to the segment itself — the bounding box
         // of a diagonal line is mostly empty space and must not swallow clicks. The arrow head is
@@ -350,7 +354,7 @@ public sealed class AnnotationLayer : FrameworkElement
                     <= shape.StrokeWidthPx / 2.0 + OutlineHitPaddingPx;
         }
 
-        if (shape.Tool is not (AnnotationTool.Rectangle or AnnotationTool.Ellipse))
+        if (interiorGrab || shape.Tool is not (AnnotationTool.Rectangle or AnnotationTool.Ellipse))
         {
             return bounds.Contains(pt);
         }
@@ -405,15 +409,17 @@ public sealed class AnnotationLayer : FrameworkElement
 
     /// <summary>Topmost (most recently drawn) editable shape whose bounds contain a physical-pixel
     /// point — the Select tool's click/hover hit test (OverlayWindow's item 7/8 priority chains).
-    /// Never changes the selection itself; callers decide what a hit means.</summary>
-    public AnnotationShape? HitTestEditable(Point physicalPt)
+    /// Never changes the selection itself; callers decide what a hit means.
+    /// <paramref name="interiorGrab"/> = the Shift/Ctrl modifier-grab: outline interiors count as
+    /// hits too (see <see cref="HitsShapeBody"/>).</summary>
+    public AnnotationShape? HitTestEditable(Point physicalPt, bool interiorGrab = false)
     {
         var shapes = _history.Shapes;
         for (int i = shapes.Count - 1; i >= 0; i--)
         {
             var shape = shapes[i];
             if (IsEditable(shape.Tool) && EditableBounds(shape) is { } bounds
-                && HitsShapeBody(shape, bounds, physicalPt))
+                && HitsShapeBody(shape, bounds, physicalPt, interiorGrab))
             {
                 return shape;
             }
