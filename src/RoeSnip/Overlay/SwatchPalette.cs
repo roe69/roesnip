@@ -12,23 +12,31 @@ namespace RoeSnip.Overlay;
 public static class SwatchPalette
 {
     /// <summary>Display cap: the palette row never grows past this many swatches; appending to a
-    /// full palette evicts the front-most (oldest) entry (see <see cref="Append"/>).</summary>
-    public const int MaxColors = 12;
+    /// full palette evicts the front-most (oldest) entry (see <see cref="Append"/>). 13 = the
+    /// 11-swatch default seed plus room for two legacy CustomColors migrants.</summary>
+    public const int MaxColors = 13;
 
-    /// <summary>The built-in seed palette — exactly the six preset swatches the toolbar always
-    /// showed before the palette became editable.</summary>
+    /// <summary>The built-in seed palette. Eleven swatches (was six): the toolbar's bottom row has
+    /// the width for it (palette left, actions right, a star column of slack between), so the seed
+    /// covers the practical annotation hues — spectrum order, then the three neutrals last.</summary>
     public static readonly IReadOnlyList<string> DefaultColors = new[]
     {
-        "#E53935", "#FFB300", "#43A047", "#1E88E5", "#FFFFFF", "#212121",
+        "#E53935", "#FB8C00", "#FFB300", "#43A047", "#00ACC1",
+        "#1E88E5", "#8E24AA", "#D81B60", "#FFFFFF", "#9E9E9E", "#212121",
     };
 
     private static readonly Dictionary<string, string> DefaultNames = new(StringComparer.OrdinalIgnoreCase)
     {
         ["#E53935"] = "Red",
+        ["#FB8C00"] = "Orange",
         ["#FFB300"] = "Amber",
         ["#43A047"] = "Green",
+        ["#00ACC1"] = "Cyan",
         ["#1E88E5"] = "Blue",
+        ["#8E24AA"] = "Purple",
+        ["#D81B60"] = "Pink",
         ["#FFFFFF"] = "White",
+        ["#9E9E9E"] = "Gray",
         ["#212121"] = "Black",
     };
 

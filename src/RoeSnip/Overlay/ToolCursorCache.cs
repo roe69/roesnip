@@ -33,13 +33,15 @@ using FlowDir = System.Windows.FlowDirection;
 public readonly record struct CursorKey(AnnotationTool Tool, Color Color, double StrokeWidthPx)
 {
     /// <summary>Builds a normalized key: stroke width is zeroed for AnnotationTool.None/Text (it
-    /// plays no part in either glyph) and rounded to the nearest whole pixel for the five stroke
-    /// tools (Rectangle/Ellipse/Arrow/Line/Freehand), so repeated scroll-wheel deltas that land on
-    /// the same integer width reuse one cached cursor instead of spawning a new one per float.</summary>
+    /// plays no part in either glyph) and rounded to the nearest whole pixel for the stroke tools
+    /// (Rectangle/Ellipse/Arrow/Line/Freehand, plus Highlight's marker width and Pixelate's block
+    /// size), so repeated scroll-wheel deltas that land on the same integer width reuse one cached
+    /// cursor instead of spawning a new one per float.</summary>
     public static CursorKey For(AnnotationTool tool, Color color, double strokeWidthPx)
     {
         bool widthMatters = tool is AnnotationTool.Rectangle or AnnotationTool.Ellipse
-            or AnnotationTool.Arrow or AnnotationTool.Line or AnnotationTool.Freehand;
+            or AnnotationTool.Arrow or AnnotationTool.Line or AnnotationTool.Freehand
+            or AnnotationTool.Highlight or AnnotationTool.Pixelate;
         double normalizedWidth = widthMatters ? Math.Round(strokeWidthPx, MidpointRounding.AwayFromZero) : 0.0;
         return new CursorKey(tool, color, normalizedWidth);
     }

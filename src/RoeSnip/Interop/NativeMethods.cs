@@ -151,6 +151,42 @@ public static class NativeMethods
     public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
     public const uint SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040, SWP_NOZORDER = 0x0004;
 
+    // Raw HWND foreground-activation call (no WPF dispatcher-thread affinity — unlike
+    // Window.Activate(), this can be called from ANY thread with just the target HWND). Used by
+    // FlashDimmer.ShowAll to negotiate foreground off the UI thread — see its doc comment.
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    // ---------- Extended window styles ----------
+
+    // win-x64-only build (see RoeSnip.csproj's RuntimeIdentifiers) — GetWindowLongPtr/
+    // SetWindowLongPtr are real user32.dll exports on 64-bit Windows (unlike the 32-bit build,
+    // where they're header-only macros aliasing GetWindowLong/SetWindowLong), so declaring them
+    // directly is safe without a 32-bit fallback.
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    public const int GWL_EXSTYLE = -20;
+    public const int WS_EX_TOOLWINDOW = 0x00000080;
+
+    // ---------- Capture exclusion ----------
+
+    // Shared by FlashDimmer's flash windows (which declare their own copy locally, per the
+    // OverlayInputInterop convention of one small local P/Invoke per file — kept as-is there to
+    // avoid an unrelated churn) and OverlayWindow's own overlay windows (see OverlayWindow.
+    // OnSourceInitialized), which use this shared declaration since two independent files now need
+    // the exact same API.
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
+
+    public const uint WDA_NONE = 0x00000000;
+    public const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+
     // ---------- Clipboard ----------
 
     [DllImport("user32.dll", SetLastError = true)] public static extern bool OpenClipboard(IntPtr hWndNewOwner);

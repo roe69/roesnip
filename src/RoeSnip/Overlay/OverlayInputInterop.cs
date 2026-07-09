@@ -140,8 +140,9 @@ internal static class OverlayInputInterop
 ///
 /// A WH_KEYBOARD_LL hook intercepts these keys at the OS level regardless of which window has
 /// focus, so the overlay's session keys work with zero dependence on foreground/focus. It only
-/// intercepts (and swallows, so the keystroke doesn't leak through to the background app) the five
-/// keys the overlay cares about; everything else passes through untouched via CallNextHookEx.
+/// intercepts (and swallows, so the keystroke doesn't leak through to the background app) the keys
+/// the overlay cares about (Esc/Enter/Ctrl+C/Ctrl+S/Ctrl+Z, plus Delete/Back whenever a placed
+/// annotation is selected — Feature B); everything else passes through untouched via CallNextHookEx.
 ///
 /// EXCEPTION (per spec): while a text annotation edit is active AND the overlay window genuinely
 /// holds OS foreground/focus (via ForegroundActivator's activation ladder), only Esc is intercepted
@@ -261,7 +262,14 @@ internal sealed class SessionKeyboardHook : IDisposable
                     return OverlayInputInterop.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
                 }
 
-                bool isSessionKey = key == Key.Escape || key == Key.Enter
+                // Feature B items 5/6: Delete/Back/Esc-deselect must work through this hook too, the
+                // same as every other session key — but Delete/Back are only "ours" while there's
+                // actually a selected annotation to delete (HasSelectedAnnotation); otherwise they
+                // must pass through untouched to whatever app genuinely has focus, exactly like any
+                // other non-session keystroke a background tray process shouldn't be eating.
+                bool deleteRequested = (key == Key.Delete || key == Key.Back)
+                    && activeWindow?.HasSelectedAnnotation == true;
+                bool isSessionKey = key == Key.Escape || key == Key.Enter || deleteRequested
                     || (ctrl && (key == Key.C || key == Key.S || key == Key.Z));
 
                 // While typing (and the window does hold real focus, per the branch above), only Esc

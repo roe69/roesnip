@@ -6,10 +6,66 @@
              SnapsToDevicePixels="True"
              UseLayoutRounding="True">
     <UserControl.Resources>
+        <!-- Design tokens lifted from the roelite-net site's CSS custom properties (RoeLite's brand
+             palette: warm near-black surfaces, a single gold accent, cream body text — never pure
+             white/black or neutral gray). Every color used below routes through one of these so the
+             toolbar reads as the same product as the site instead of a generic dark-mode dev tool.
+             Alpha-tinted golds are pre-multiplied hex (#AARRGGBB) since WPF brushes don't take a
+             separate opacity channel the way CSS rgba() does. -->
+        <SolidColorBrush x:Key="RlTextPrimaryBrush" Color="#E4E4CE"/>
+        <!-- rl-text: warm cream body/icon color, ~16:1 on black — never pure white. -->
+        <SolidColorBrush x:Key="RlTextMutedBrush" Color="#B8A87A"/>
+        <!-- rl-text-muted -->
+        <SolidColorBrush x:Key="RlTextDimBrush" Color="#9A8C5C"/>
+        <!-- rl-text-dim: disabled/label text -->
+        <SolidColorBrush x:Key="RlTextOnPrimaryBrush" Color="#1A1008"/>
+        <!-- dark text placed on bright gold fills -->
+        <SolidColorBrush x:Key="RlPrimaryGoldBrush" Color="#FF9F09"/>
+        <!-- rl-primary / rl-gold-500, the OSRS-orange brand accent -->
+        <SolidColorBrush x:Key="RlPrimaryGoldLightBrush" Color="#FFC14F"/>
+        <!-- rl-primary-light / rl-gold-300, primary-button hover fill -->
+        <SolidColorBrush x:Key="RlGoldBorderSolidBrush" Color="#D98200"/>
+        <!-- rl-border-gold / rl-gold-600, solid-color button edges + press fill -->
+        <SolidColorBrush x:Key="RlBgSecondaryBrush" Color="#0A0807"/>
+        <!-- rl-bg-secondary: card fill, used here for popup/menu chrome -->
+        <SolidColorBrush x:Key="RlBgElevatedBrush" Color="#1C1610"/>
+        <!-- rl-bg-elevated: nested chip/input fill -->
+        <SolidColorBrush x:Key="RlBorderBrush" Color="#26FF9F09"/>
+        <!-- rl-border, rgba(gold,.15): the workhorse hairline for inputs/menus -->
+        <SolidColorBrush x:Key="RlBorderStrongBrush" Color="#59FF9F09"/>
+        <!-- rl-border-strong, rgba(gold,.35): emphasized edges — the floating panel's own border
+             and the toolbar's internal group dividers, both of which need to read clearly against
+             arbitrary screenshot content rather than a consistent page background. -->
+        <SolidColorBrush x:Key="RlSecondaryBorderBrush" Color="#66FF9F09"/>
+        <!-- rgba(gold,.40): v_secondary button border (Save) -->
+        <SolidColorBrush x:Key="RlGhostHoverBrush" Color="#1AFF9F09"/>
+        <!-- rgba(gold,.10): v_ghost hover fill (tool buttons, "+") -->
+        <SolidColorBrush x:Key="RlGhostPressedBrush" Color="#2EFF9F09"/>
+        <!-- rgba(gold,.18): v_ghost pressed fill / v_secondary hover fill / dropdown row hover -->
+        <SolidColorBrush x:Key="RlActiveTintBrush" Color="#14FF9F09"/>
+        <!-- rgba(gold,.08): the flat background tint half of the site's active-item recipe -->
+        <SolidColorBrush x:Key="RlSelectedItemBrush" Color="#47FF9F09"/>
+        <!-- rgba(gold,.28): a still-flat, slightly stronger tint for a genuinely-selected dropdown row -->
+        <SolidColorBrush x:Key="RlDangerHoverBrush" Color="#DC4646"/>
+        <!-- the admonition-danger literal (not rl-danger's lighter coral) — chosen deliberately so
+             the always-cream Cancel icon keeps enough contrast when the button fills solid on hover;
+             rl-danger #F08068 is close enough to the cream icon color to read poorly here. -->
+        <SolidColorBrush x:Key="RlPanelBackgroundBrush" Color="#EB14100C"/>
+        <!-- The Modal glass-card recipe (rgba(20,16,12,.5) + hairline border, no blur attempt needed
+             since the dimmed screenshot behind IS the blur) pushed from 50% to ~92% opacity: the
+             product's dark-on-dim readability requirement means a floating toolbar can't be as
+             translucent as a card sitting on the page's own near-black background. Same warm-black
+             hue as the site, just less see-through. -->
+        <SolidColorBrush x:Key="RlDropdownArrowBrush" Color="#B8A87A"/>
+
         <!-- All icons are inline vector Path geometries (no image assets). Uniform stretch into a
-             14x14 box; round caps/joins for a clean hand-drawn-free look. -->
+             14x14 box; round caps/joins for a clean hand-drawn-free look. Stroke is the roelite-net
+             cream body-text color rather than the old flat white — every icon stays this one color
+             regardless of button state (ghost fills/tints do the state signaling instead), except
+             the two buttons whose rest/hover fill is itself bright gold (Copy, Save), which override
+             Stroke locally to the site's on-primary/accent text color for contrast. -->
         <Style x:Key="IconStyle" TargetType="Path">
-            <Setter Property="Stroke" Value="#F0F0F0"/>
+            <Setter Property="Stroke" Value="{StaticResource RlTextPrimaryBrush}"/>
             <Setter Property="StrokeThickness" Value="1.6"/>
             <Setter Property="StrokeStartLineCap" Value="Round"/>
             <Setter Property="StrokeEndLineCap" Value="Round"/>
@@ -26,31 +82,44 @@
              off the overlay window, so Esc/Enter/Ctrl+... always reach the window's key handler. -->
         <Style x:Key="ToolButtonStyle" TargetType="ToggleButton">
             <Setter Property="Width" Value="34"/>
-            <Setter Property="Height" Value="28"/>
+            <Setter Property="Height" Value="30"/>
             <Setter Property="Margin" Value="2"/>
-            <Setter Property="Background" Value="#2A2A2E"/>
-            <Setter Property="Foreground" Value="#EAEAEA"/>
-            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="4">
+                        <Grid>
+                            <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="8"/>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
+                            <!-- Active-tool indicator, roelite-net's "active item" recipe (a solid 2px
+                                 inset bar on the leading edge, never a glow) rotated for a horizontal
+                                 toolbar row: a flat 2px gold bar along the bottom edge. Structure, not
+                                 color-washing the whole button, carries the selected state. -->
+                            <Border x:Name="ActiveBar" Height="2" VerticalAlignment="Bottom"
+                                    Background="{StaticResource RlPrimaryGoldBrush}"
+                                    CornerRadius="0,0,7,7" Visibility="Collapsed"/>
+                        </Grid>
                         <ControlTemplate.Triggers>
-                            <!-- Active tool is visually obvious: solid accent fill. -->
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter Property="Background" Value="#3A7CFD"/>
-                                <Setter Property="BorderBrush" Value="#5C9CFF"/>
-                            </Trigger>
+                            <!-- Hover/pressed = an ascending flat gold tint (v_ghost), active tool =
+                                 the site's flat active-tint + inset bar. Quiet-until-hovered (transparent
+                                 rest state) reads far less busy than a wall of identical outlined squares. -->
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="BorderBrush" Value="#8A8A92"/>
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGhostHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlActiveTintBrush}"/>
+                                <Setter TargetName="ActiveBar" Property="Visibility" Value="Visible"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -58,24 +127,42 @@
             </Setter>
         </Style>
 
+        <!-- Primary action per roelite-net's v_primary recipe: solid gold fill, dark-on-gold text,
+             a solid gold-600 edge. Flat color swaps only on hover/press — no gradient, no glow — per
+             the product's hard rule against colored glow/drop-shadow chrome. Used for Copy, the most
+             common terminal action (the site's button hierarchy reserves solid-primary for exactly
+             that: the one action most users take). -->
         <Style x:Key="ActionButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="34"/>
-            <Setter Property="Height" Value="28"/>
+            <Setter Property="Height" Value="30"/>
             <Setter Property="Margin" Value="2"/>
-            <Setter Property="Background" Value="#2A2A2E"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="{StaticResource RlPrimaryGoldBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextOnPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlGoldBorderSolidBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                        <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Opacity" Value="0.85"/>
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlPrimaryGoldLightBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGoldBorderSolidBrush}"/>
+                            </Trigger>
+                            <!-- Disabled = clearly inert (undo with nothing to undo, redo with
+                                 nothing undone) but still occupying its spot — no layout shifts. -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -83,26 +170,98 @@
             </Setter>
         </Style>
 
-        <!-- The Cancel X: quiet until hovered, then unmistakably red. Always fully closes the
+        <!-- Secondary action per roelite-net's v_secondary recipe: translucent gold fill + gold
+             text/icon, warming up further on hover. One weight quieter than ActionButtonStyle's
+             solid-primary look — used for Save, which the site's button hierarchy would treat as the
+             secondary of the pair (Copy being the more common single action). -->
+        <Style x:Key="SecondaryActionButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Background" Value="{StaticResource RlActiveTintBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource RlPrimaryGoldBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlSecondaryBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
+                                <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
+                                <Setter Property="Foreground" Value="{StaticResource RlPrimaryGoldLightBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Undo/Redo (and any future secondary action): the same v_ghost look as the tool buttons —
+             transparent at rest, a flat gold tint on hover/press — but a plain Button, sharing
+             ActionButtonStyle's disabled-opacity trigger (icon-button disabled opacity is 0.4 per the
+             site's IconButton spec, one notch lighter than a full Button's 0.5, since these are the
+             icon-only analogue). -->
+        <Style x:Key="QuietActionButtonStyle" TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGhostHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- The Cancel X: quiet until hovered, then unmistakably red (the admonition-danger literal,
+             not the softer rl-danger token — see RlDangerHoverBrush). Always fully closes the
              overlay (never the staged Esc behavior). -->
         <Style x:Key="CancelButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="34"/>
-            <Setter Property="Height" Value="28"/>
+            <Setter Property="Height" Value="30"/>
             <Setter Property="Margin" Value="2"/>
-            <Setter Property="Background" Value="#2A2A2E"/>
-            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="4">
+                        <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="8">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#C62828"/>
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlDangerHoverBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -111,10 +270,10 @@
         </Style>
 
         <Style x:Key="ColorSwatchStyle" TargetType="ToggleButton">
-            <Setter Property="Width" Value="20"/>
-            <Setter Property="Height" Value="20"/>
-            <Setter Property="Margin" Value="2"/>
-            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Margin" Value="3,2"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
@@ -124,10 +283,16 @@
                         <Border Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="10"/>
+                                CornerRadius="11"/>
                         <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="BorderBrush" Value="{StaticResource RlTextMutedBrush}"/>
+                            </Trigger>
+                            <!-- Checked ring uses the SITE's accent gold (not a generic white ring),
+                                 so the selected swatch reads as "the brand color says yes" rather than
+                                 a plain outline. -->
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter Property="BorderBrush" Value="White"/>
+                                <Setter Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
                                 <Setter Property="BorderThickness" Value="2"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -142,16 +307,16 @@
              Cursor=Arrow explicitly — menus live in their own Popup visual tree, so they don't
              inherit the toolbar's own Arrow (item 1, UX round 5). -->
         <Style x:Key="DarkContextMenuStyle" TargetType="ContextMenu">
-            <Setter Property="Background" Value="#22222A"/>
-            <Setter Property="Foreground" Value="#EAEAEA"/>
-            <Setter Property="BorderBrush" Value="#4A4A52"/>
+            <Setter Property="Background" Value="{StaticResource RlBgSecondaryBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
             <Setter Property="Cursor" Value="Arrow"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ContextMenu">
                         <Border Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="1" CornerRadius="4" Padding="3"
+                                BorderThickness="1" CornerRadius="8" Padding="3"
                                 SnapsToDevicePixels="True">
                             <ItemsPresenter/>
                         </Border>
@@ -161,7 +326,7 @@
         </Style>
 
         <Style x:Key="DarkMenuItemStyle" TargetType="MenuItem">
-            <Setter Property="Foreground" Value="#EAEAEA"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
             <Setter Property="Cursor" Value="Arrow"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -172,10 +337,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#3A7CFD"/>
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="#6A6A72"/>
+                                <Setter Property="Foreground" Value="{StaticResource RlTextDimBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -190,7 +355,7 @@
              control is hovered — this exact bug crashed the tray in round 5 verification. -->
         <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#EAEAEA"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
             <Setter Property="Padding" Value="8,6"/>
             <Setter Property="Focusable" Value="True"/>
             <Setter Property="Template">
@@ -202,10 +367,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#3A7CFD"/>
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="#2F5FCC"/>
+                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlSelectedItemBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -220,9 +385,9 @@
              focus) — the session keyboard hook knows to stand down while it holds focus via
              OverlayWindow.IsTextInputFocused (see OverlayInputInterop.cs). -->
         <Style x:Key="DarkEditableComboBoxStyle" TargetType="ComboBox">
-            <Setter Property="Background" Value="#2A2A2E"/>
-            <Setter Property="Foreground" Value="#EAEAEA"/>
-            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="6,3"/>
             <Setter Property="FontSize" Value="13"/>
@@ -234,7 +399,7 @@
                             <Border Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}"
-                                    CornerRadius="4">
+                                    CornerRadius="8">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
@@ -242,8 +407,8 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBox x:Name="PART_EditableTextBox" Grid.Column="0"
                                              Background="Transparent" BorderThickness="0"
-                                             Foreground="{TemplateBinding Foreground}" CaretBrush="#EAEAEA"
-                                             SelectionBrush="#3A7CFD"
+                                             Foreground="{TemplateBinding Foreground}" CaretBrush="{StaticResource RlTextPrimaryBrush}"
+                                             SelectionBrush="{StaticResource RlGhostPressedBrush}"
                                              Margin="{TemplateBinding Padding}" Padding="0"
                                              VerticalContentAlignment="Center"
                                              Cursor="IBeam"/>
@@ -253,7 +418,7 @@
                                         <ToggleButton.Template>
                                             <ControlTemplate TargetType="ToggleButton">
                                                 <Border Background="Transparent">
-                                                    <Path Fill="#B8B8C0" Data="M0,0 L4,4 L8,0 Z"
+                                                    <Path Fill="{StaticResource RlDropdownArrowBrush}" Data="M0,0 L4,4 L8,0 Z"
                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                 </Border>
                                             </ControlTemplate>
@@ -264,10 +429,10 @@
                             <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True"
                                    Focusable="False" PopupAnimation="Slide"
                                    IsOpen="{TemplateBinding IsDropDownOpen}">
-                                <Border Background="#22222A" BorderBrush="#4A4A52"
-                                        BorderThickness="1" CornerRadius="4" Cursor="Arrow"
+                                <Border Background="{StaticResource RlBgSecondaryBrush}" BorderBrush="{StaticResource RlBorderStrongBrush}"
+                                        BorderThickness="1" CornerRadius="8" Cursor="Arrow"
                                         MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260">
-                                    <ScrollViewer Margin="2" SnapsToDevicePixels="True">
+                                    <ScrollViewer Margin="2" SnapsToDevicePixels="True" ScrollViewer.CanContentScroll="True">
                                         <ItemsPresenter/>
                                     </ScrollViewer>
                                 </Border>
@@ -280,13 +445,14 @@
 
         <!-- The "+" custom-color swatch: same round footprint as ColorSwatchStyle but (unlike that
              style's template) actually presents its child content, since this button needs the "+"
-             glyph rather than a flat color fill. -->
+             glyph rather than a flat color fill. Ghost hover recipe (flat gold tint + gold ring),
+             matching AddCustomColorButtonStyle's sibling toolbar buttons. -->
         <Style x:Key="AddCustomColorButtonStyle" TargetType="ToggleButton">
-            <Setter Property="Width" Value="20"/>
-            <Setter Property="Height" Value="20"/>
-            <Setter Property="Margin" Value="2"/>
-            <Setter Property="Background" Value="#2A2A2E"/>
-            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="Margin" Value="3,2"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
@@ -296,12 +462,13 @@
                         <Border Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="10">
+                                CornerRadius="11">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="BorderBrush" Value="#8A8A92"/>
+                                <Setter Property="Background" Value="{StaticResource RlGhostHoverBrush}"/>
+                                <Setter Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -320,9 +487,9 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="{Binding}" FontFamily="Segoe UI" FontSize="13"
-                           Foreground="#EAEAEA" VerticalAlignment="Center"/>
+                           Foreground="{StaticResource RlTextPrimaryBrush}" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Text="AaBb" FontFamily="{Binding}" FontSize="13"
-                           Foreground="#A8A8B2" Margin="12,0,2,0" VerticalAlignment="Center"/>
+                           Foreground="{StaticResource RlTextMutedBrush}" Margin="12,0,2,0" VerticalAlignment="Center"/>
             </Grid>
         </DataTemplate>
 
@@ -332,14 +499,25 @@
              above it, which is exactly why the plain-property version of this style read as
              illegible on the dark overlay. -->
         <Style x:Key="DarkComboBoxStyle" TargetType="ComboBox">
-            <Setter Property="Background" Value="#2A2A2E"/>
-            <Setter Property="Foreground" Value="#EAEAEA"/>
-            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="6,3"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
+            <!-- Virtualization matters now that FontFamilyComboBox holds every installed system
+                 family (hundreds of rows, each rendering a live "AaBb" preview in its own font):
+                 without it the first dropdown open would realize the entire list at once. Needs
+                 both the panel below AND CanContentScroll=True on the template's ScrollViewer. -->
+            <Setter Property="ItemsPanel">
+                <Setter.Value>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel/>
+                    </ItemsPanelTemplate>
+                </Setter.Value>
+            </Setter>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBox">
@@ -354,13 +532,13 @@
                                         <Border Background="{TemplateBinding Background}"
                                                 BorderBrush="{TemplateBinding BorderBrush}"
                                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                                CornerRadius="4">
+                                                CornerRadius="8">
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="16"/>
                                                 </Grid.ColumnDefinitions>
-                                                <Path Grid.Column="1" Fill="#B8B8C0" Data="M0,0 L4,4 L8,0 Z"
+                                                <Path Grid.Column="1" Fill="{StaticResource RlDropdownArrowBrush}" Data="M0,0 L4,4 L8,0 Z"
                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                             </Grid>
                                         </Border>
@@ -378,10 +556,10 @@
                                    IsOpen="{TemplateBinding IsDropDownOpen}">
                                 <!-- Cursor=Arrow: the dropdown lives in its own Popup visual tree, so it does
                                      not inherit the toolbar root's Arrow (item 1, UX round 5). -->
-                                <Border x:Name="DropDownBorder" Background="#22222A" BorderBrush="#4A4A52"
-                                        BorderThickness="1" CornerRadius="4" Cursor="Arrow"
+                                <Border x:Name="DropDownBorder" Background="{StaticResource RlBgSecondaryBrush}" BorderBrush="{StaticResource RlBorderStrongBrush}"
+                                        BorderThickness="1" CornerRadius="8" Cursor="Arrow"
                                         MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260">
-                                    <ScrollViewer Margin="2" SnapsToDevicePixels="True">
+                                    <ScrollViewer Margin="2" SnapsToDevicePixels="True" ScrollViewer.CanContentScroll="True">
                                         <ItemsPresenter/>
                                     </ScrollViewer>
                                 </Border>
@@ -393,8 +571,15 @@
         </Style>
     </UserControl.Resources>
 
-    <Border Background="#EE1B1B1D" CornerRadius="6" BorderBrush="#3F3F46" BorderThickness="1">
-        <StackPanel Orientation="Horizontal" Margin="4">
+    <!-- Double-stacked layout: row 1 is everything that CONFIGURES a drawing (tool, size, text
+         style), row 2 is the palette plus the session actions (undo / copy / save / cancel) —
+         keeps the toolbar roughly half as wide so it fits beside smaller selections.
+         Panel surface follows the roelite-net Modal glass-card recipe (warm near-black rgba fill +
+         single hairline gold border, 12px "popover" radius) — see RlPanelBackgroundBrush for why the
+         opacity is pushed well past the site's own 50% glass. -->
+    <Border Background="{StaticResource RlPanelBackgroundBrush}" CornerRadius="12" BorderBrush="{StaticResource RlBorderStrongBrush}" BorderThickness="1">
+        <StackPanel Margin="6,5">
+            <StackPanel Orientation="Horizontal">
             <!-- Tools -->
             <ToggleButton x:Name="SelectToolButton" Style="{StaticResource ToolButtonStyle}"
                           ToolTip="Select / move (default)" IsChecked="True" Click="OnSelectToolClick">
@@ -420,24 +605,22 @@
                           ToolTip="Freehand" Click="OnFreehandToolClick">
                 <Path Style="{StaticResource IconStyle}" Data="M1,13 C3,4 6,4 8,9 C10,14 13,13 15,4"/>
             </ToggleButton>
+            <ToggleButton x:Name="HighlightToolButton" Style="{StaticResource ToolButtonStyle}"
+                          ToolTip="Highlighter — translucent marker (scroll wheel adjusts width)" Click="OnHighlightToolClick">
+                <!-- Chisel-tip marker: angled body with a flat tip stroke at the paper line -->
+                <Path Style="{StaticResource IconStyle}" Data="M4,9 L9,4 L12,7 L7,12 Z M7,12 L4,9 M2,14 H7"/>
+            </ToggleButton>
+            <ToggleButton x:Name="PixelateToolButton" Style="{StaticResource ToolButtonStyle}"
+                          ToolTip="Pixelate — censor a region (scroll wheel adjusts block size)" Click="OnPixelateToolClick">
+                <!-- Mosaic grid -->
+                <Path Style="{StaticResource IconStyle}" StrokeThickness="1.2" Data="M2,2 H14 V14 H2 Z M6,2 V14 M10,2 V14 M2,6 H14 M2,10 H14"/>
+            </ToggleButton>
             <ToggleButton x:Name="TextToolButton" Style="{StaticResource ToolButtonStyle}"
                           ToolTip="Text" Click="OnTextToolClick">
                 <Path Style="{StaticResource IconStyle}" Data="M3,2 H13 M8,2 V14"/>
             </ToggleButton>
 
-            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
-
-            <!-- The single editable palette (item 3, UX round 5): every swatch is built in code from
-                 the persisted RoeSnipSettings.PaletteColors list and carries a right-click
-                 Replace/Remove menu; the "+" swatch appends. The old separate CustomColorPanel row
-                 is gone — custom and preset colors are one list now. -->
-            <StackPanel x:Name="ColorSwatchPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
-            <ToggleButton x:Name="AddCustomColorButton" Style="{StaticResource AddCustomColorButtonStyle}"
-                          ToolTip="Add color..." Click="OnAddCustomColorClick">
-                <Path Style="{StaticResource IconStyle}" Width="10" Height="10" Data="M7,1 V13 M1,7 H13"/>
-            </ToggleButton>
-
-            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+            <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
             <!-- Numeric size input (item 2, UX round 5 — replaced the small/medium/big stroke dots):
                  shows "Npx" (stroke width) for the drawing tools and "Npt" (font size) while the
@@ -450,61 +633,114 @@
                       KeyDown="OnSizeComboKeyDown"
                       SelectionChanged="OnSizeComboSelectionChanged"/>
 
-            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+            <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
-            <!-- Text-style group (item 4): only ever visible while the Text tool is active. The font
-                 size itself moved into SizeComboBox (which switches to pt mode for the Text tool). -->
-            <StackPanel x:Name="TextStylePanel" Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
-                <ToggleButton x:Name="BoldToggleButton" Style="{StaticResource ToolButtonStyle}" Width="26"
-                              Content="B" FontWeight="Bold" Click="OnBoldToggleClick" ToolTip="Bold"/>
-                <ToggleButton x:Name="ItalicToggleButton" Style="{StaticResource ToolButtonStyle}" Width="26"
-                              Content="I" FontStyle="Italic" FontWeight="Bold" Click="OnItalicToggleClick" ToolTip="Italic"/>
-
-                <Border Width="1" Margin="4,3" Background="#3F3F46"/>
-
-                <ComboBox x:Name="FontFamilyComboBox" Style="{StaticResource DarkComboBoxStyle}"
-                          ItemTemplate="{StaticResource FontFamilyItemTemplate}"
-                          Width="190" Margin="2" VerticalAlignment="Center"
-                          SelectionChanged="OnFontFamilyChanged"/>
-            </StackPanel>
-
-            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
-
-            <Button x:Name="UndoButton" Style="{StaticResource ActionButtonStyle}"
-                    ToolTip="Undo (Ctrl+Z)" Click="OnUndoClick">
+            <!-- Undo/Redo sit at a FIXED spot (before the collapsible text-style group), so
+                 switching to the Text tool never shoves them sideways mid-reach. Both start
+                 disabled; OverlayWindow drives IsEnabled from the annotation history
+                 (SetHistoryState) so an inapplicable action is visibly grayed out. -->
+            <Button x:Name="UndoButton" Style="{StaticResource QuietActionButtonStyle}"
+                    IsEnabled="False" ToolTip="Undo (Ctrl+Z)" Click="OnUndoClick">
                 <!-- Curved undo arrow: head pointing left, tail sweeping down and back -->
                 <Path Style="{StaticResource IconStyle}" Data="M2,6 L6,2 M2,6 L6,10 M2,6 H10 A4.5,4.5 0 0 1 10,15 H6"/>
             </Button>
-
-            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
-
-            <Button x:Name="CopyButton" Style="{StaticResource ActionButtonStyle}" Background="#2E7D32"
-                    ToolTip="Copy (Ctrl+C)" Click="OnCopyClick">
-                <!-- Two overlapping squares -->
-                <Path Style="{StaticResource IconStyle}" Data="M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5"/>
-            </Button>
-            <!-- HDR export moved off the toolbar (item 4, UX round 5): 99% of saves are plain PNGs,
-                 so left-click Save = PNG exactly as before and the old dedicated Save-HDR button is
-                 now a right-click menu item here, raising the same SaveHdr command path unchanged. -->
-            <Button x:Name="SaveButton" Style="{StaticResource ActionButtonStyle}" Background="#1565C0"
-                    ToolTip="Save (Ctrl+S) — right-click for HDR" Click="OnSaveClick">
-                <Button.ContextMenu>
-                    <ContextMenu Style="{StaticResource DarkContextMenuStyle}">
-                        <MenuItem x:Name="SaveHdrMenuItem" Style="{StaticResource DarkMenuItemStyle}"
-                                  Header="Save HDR (.jxr)" Click="OnSaveHdrClick"
-                                  ToolTip="Save the untouched FP16 HDR original (no annotations)"/>
-                    </ContextMenu>
-                </Button.ContextMenu>
-                <!-- Down-arrow into tray -->
-                <Path Style="{StaticResource IconStyle}" Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
+            <Button x:Name="RedoButton" Style="{StaticResource QuietActionButtonStyle}"
+                    IsEnabled="False" ToolTip="Redo (Ctrl+Y)" Click="OnRedoClick">
+                <!-- Mirrored undo arrow -->
+                <Path Style="{StaticResource IconStyle}" Data="M14,6 L10,2 M14,6 L10,10 M14,6 H6 A4.5,4.5 0 0 0 6,15 H10"/>
             </Button>
 
-            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+            </StackPanel>
 
-            <Button x:Name="CancelButton" Style="{StaticResource CancelButtonStyle}"
-                    ToolTip="Cancel — close without capturing" Click="OnCancelClick">
-                <Path Style="{StaticResource IconStyle}" Width="11" Height="11" Data="M2,2 L14,14 M14,2 L2,14"/>
-            </Button>
+            <Border Height="1" Margin="1,4" Background="{StaticResource RlBorderStrongBrush}"/>
+
+            <!-- Row 2 is now a Grid (Auto | * | Auto) instead of one left-aligned row, so it can hold
+                 two visually distinct sections that both keep their natural width regardless of how
+                 wide row 1 ends up: the editable palette stays pinned bottom-left, and the terminal
+                 actions stay pinned bottom-right — hugging the panel's actual edge (via the star
+                 column absorbing the slack) rather than just trailing after the palette. The
+                 separation between them is a plain hairline divider immediately ahead of the action
+                 group (roelite-net's structural-not-glow separator convention), not a boxed-in band —
+                 the panel itself is already the one contained surface. -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- BOTTOM-LEFT: the editable palette only (item 3, UX round 5) — every swatch is
+                     built in code from the persisted RoeSnipSettings.PaletteColors list and carries a
+                     right-click Replace/Remove menu; the "+" swatch appends. The old separate
+                     CustomColorPanel row is gone — custom and preset colors are one list now. -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel x:Name="ColorSwatchPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
+                    <ToggleButton x:Name="AddCustomColorButton" Style="{StaticResource AddCustomColorButtonStyle}"
+                                  ToolTip="Add color..." Click="OnAddCustomColorClick">
+                        <Path Style="{StaticResource IconStyle}" Width="10" Height="10" Data="M7,1 V13 M1,7 H13"/>
+                    </ToggleButton>
+                </StackPanel>
+
+                <!-- BOTTOM-RIGHT: the session actions, right-aligned so they hug the panel's real
+                     edge via the Auto column + the star spacer column above soaking up the slack. -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                    <Border Width="1" Margin="8,3" Background="{StaticResource RlBorderStrongBrush}"/>
+
+                    <Button x:Name="CopyButton" Style="{StaticResource ActionButtonStyle}"
+                            ToolTip="Copy (Ctrl+C)" Click="OnCopyClick">
+                        <!-- Two overlapping squares. Stroke overridden to the on-primary dark ink —
+                             this button's fill is bright gold, so the shared cream IconStyle default
+                             would read poorly here. -->
+                        <Path Style="{StaticResource IconStyle}" Stroke="{StaticResource RlTextOnPrimaryBrush}"
+                              Data="M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5"/>
+                    </Button>
+                    <!-- HDR export moved off the toolbar (item 4, UX round 5): 99% of saves are plain PNGs,
+                         so left-click Save = PNG exactly as before and the old dedicated Save-HDR button is
+                         now a right-click menu item here, raising the same SaveHdr command path unchanged. -->
+                    <Button x:Name="SaveButton" Style="{StaticResource SecondaryActionButtonStyle}"
+                            ToolTip="Save (Ctrl+S) — right-click for HDR" Click="OnSaveClick">
+                        <Button.ContextMenu>
+                            <ContextMenu Style="{StaticResource DarkContextMenuStyle}">
+                                <MenuItem x:Name="SaveHdrMenuItem" Style="{StaticResource DarkMenuItemStyle}"
+                                          Header="Save HDR (.jxr)" Click="OnSaveHdrClick"
+                                          ToolTip="Save the untouched FP16 HDR original (no annotations)"/>
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                        <!-- Down-arrow into tray. Stroke overridden to the site's primary gold so it
+                             matches this button's gold text/border (v_secondary recipe). -->
+                        <Path Style="{StaticResource IconStyle}" Stroke="{StaticResource RlPrimaryGoldBrush}"
+                              Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
+                    </Button>
+
+                    <Button x:Name="CancelButton" Style="{StaticResource CancelButtonStyle}"
+                            ToolTip="Cancel — close without capturing" Click="OnCancelClick">
+                        <Path Style="{StaticResource IconStyle}" Width="11" Height="11" Data="M2,2 L14,14 M14,2 L2,14"/>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- Text-style row (item 4; moved out of row 1): only ever visible while the Text tool
+                 is active. A separate BOTTOM row (leading hairline INSIDE, so it collapses with the
+                 panel) — the panel grows downward instead of stretching row 1 sideways, keeping the
+                 two permanent rows' layout stable no matter which tool is active. The font list is
+                 every installed system family (see ToolbarControl.xaml.cs FontFamilyChoices); the
+                 font size itself lives in SizeComboBox (pt mode for the Text tool). -->
+            <StackPanel x:Name="TextStylePanel" Visibility="Collapsed">
+                <Border Height="1" Margin="1,4" Background="{StaticResource RlBorderStrongBrush}"/>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <ToggleButton x:Name="BoldToggleButton" Style="{StaticResource ToolButtonStyle}" Width="26"
+                                  Content="B" FontWeight="Bold" Click="OnBoldToggleClick" ToolTip="Bold"/>
+                    <ToggleButton x:Name="ItalicToggleButton" Style="{StaticResource ToolButtonStyle}" Width="26"
+                                  Content="I" FontStyle="Italic" FontWeight="Bold" Click="OnItalicToggleClick" ToolTip="Italic"/>
+
+                    <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
+
+                    <ComboBox x:Name="FontFamilyComboBox" Style="{StaticResource DarkComboBoxStyle}"
+                              ItemTemplate="{StaticResource FontFamilyItemTemplate}"
+                              Width="230" Margin="2" VerticalAlignment="Center"
+                              SelectionChanged="OnFontFamilyChanged"/>
+                </StackPanel>
+            </StackPanel>
         </StackPanel>
     </Border>
 </UserControl>

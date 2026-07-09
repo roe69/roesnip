@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -37,12 +38,38 @@ using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 /// don't inherit it.</summary>
 public partial class ToolbarControl : UserControl
 {
-    /// <summary>The fixed font-family choices for the text-style group (item 4) — a small,
-    /// universally-installed set rather than an open-ended system font enumeration.</summary>
-    private static readonly string[] FontFamilyChoices =
+    /// <summary>Every installed system font family, sorted by display name — enumerated once per
+    /// process (Lazy) since the installed set doesn't change under a running session. Replaces the
+    /// old fixed six-font list; the dropdown stays cheap despite hundreds of entries because
+    /// DarkComboBoxStyle's popup virtualizes (only the visible rows realize their live-font "AaBb"
+    /// preview). Names come from FamilyNames for the current UI culture (falling back to Source)
+    /// so localized families show their friendly name.</summary>
+    private static readonly Lazy<string[]> FontFamilyChoices = new(() =>
     {
-        "Segoe UI", "Arial", "Calibri", "Consolas", "Times New Roman", "Comic Sans MS",
-    };
+        var names = new SortedSet<string>(StringComparer.CurrentCultureIgnoreCase);
+        foreach (var family in System.Windows.Media.Fonts.SystemFontFamilies)
+        {
+            try
+            {
+                var language = System.Windows.Markup.XmlLanguage.GetLanguage(
+                    System.Globalization.CultureInfo.CurrentUICulture.IetfLanguageTag);
+                if (!family.FamilyNames.TryGetValue(language, out string? name) || string.IsNullOrWhiteSpace(name))
+                {
+                    name = family.FamilyNames.Values.FirstOrDefault(n => !string.IsNullOrWhiteSpace(n))
+                        ?? family.Source;
+                }
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    names.Add(name);
+                }
+            }
+            catch (Exception)
+            {
+                // A single corrupt font registration must never take the whole list down.
+            }
+        }
+        return names.ToArray();
+    });
 
     private readonly ToggleButton[] _toolButtons;
     private ToggleButton? _selectedColorSwatch;
@@ -60,6 +87,7 @@ public partial class ToolbarControl : UserControl
     public event Action<Color>? ColorSelected;
     public event Action<double>? StrokeWidthSelected;
     public event Action? UndoClicked;
+    public event Action? RedoClicked;
     public event Action? CopyClicked;
     public event Action? SaveClicked;
     public event Action? SaveHdrClicked;
@@ -88,8 +116,9 @@ public partial class ToolbarControl : UserControl
 
         _toolButtons = new[]
         {
-            SelectToolButton, RectToolButton, EllipseToolButton,
-            ArrowToolButton, LineToolButton, FreehandToolButton, TextToolButton,
+            SelectToolButton, RectToolButton, EllipseToolButton, ArrowToolButton,
+            LineToolButton, FreehandToolButton, HighlightToolButton, PixelateToolButton,
+            TextToolButton,
         };
 
         BuildFontFamilyChoices();
@@ -130,6 +159,8 @@ public partial class ToolbarControl : UserControl
     private void OnArrowToolClick(object sender, RoutedEventArgs e) => SelectTool(ArrowToolButton, AnnotationTool.Arrow);
     private void OnLineToolClick(object sender, RoutedEventArgs e) => SelectTool(LineToolButton, AnnotationTool.Line);
     private void OnFreehandToolClick(object sender, RoutedEventArgs e) => SelectTool(FreehandToolButton, AnnotationTool.Freehand);
+    private void OnHighlightToolClick(object sender, RoutedEventArgs e) => SelectTool(HighlightToolButton, AnnotationTool.Highlight);
+    private void OnPixelateToolClick(object sender, RoutedEventArgs e) => SelectTool(PixelateToolButton, AnnotationTool.Pixelate);
     private void OnTextToolClick(object sender, RoutedEventArgs e) => SelectTool(TextToolButton, AnnotationTool.Text);
 
     // ---------- Editable swatch palette (item 3, UX round 5) ----------
@@ -432,11 +463,27 @@ public partial class ToolbarControl : UserControl
 
     private void BuildFontFamilyChoices()
     {
-        foreach (var family in FontFamilyChoices)
+        foreach (var family in FontFamilyChoices.Value)
         {
             FontFamilyComboBox.Items.Add(family);
         }
-        FontFamilyComboBox.SelectedIndex = 0;
+        int segoe = IndexOfFontFamily("Segoe UI");
+        FontFamilyComboBox.SelectedIndex = segoe >= 0 ? segoe : 0;
+    }
+
+    /// <summary>Case-insensitive lookup so a persisted name round-trips regardless of casing;
+    /// -1 when the font isn't installed (anymore).</summary>
+    private static int IndexOfFontFamily(string fontFamily)
+    {
+        var choices = FontFamilyChoices.Value;
+        for (int i = 0; i < choices.Length; i++)
+        {
+            if (string.Equals(choices[i], fontFamily, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /// <summary>Called by OverlayWindow whenever the toolbar is (re)shown, so the displayed style
@@ -449,7 +496,13 @@ public partial class ToolbarControl : UserControl
         _suppressFontFamilyEvent = true;
         try
         {
-            int index = Array.IndexOf(FontFamilyChoices, fontFamily);
+            // A persisted font that's since been uninstalled falls back to Segoe UI (then to the
+            // list head as a last resort) rather than silently selecting an unrelated first entry.
+            int index = IndexOfFontFamily(fontFamily);
+            if (index < 0)
+            {
+                index = IndexOfFontFamily("Segoe UI");
+            }
             FontFamilyComboBox.SelectedIndex = index >= 0 ? index : 0;
         }
         finally
@@ -477,7 +530,16 @@ public partial class ToolbarControl : UserControl
         }
     }
 
+    /// <summary>Grays out Undo/Redo when they'd be no-ops — driven by OverlayWindow from
+    /// AnnotationLayer.HistoryChanged and on every toolbar (re)show.</summary>
+    public void SetHistoryState(bool canUndo, bool canRedo)
+    {
+        UndoButton.IsEnabled = canUndo;
+        RedoButton.IsEnabled = canRedo;
+    }
+
     private void OnUndoClick(object sender, RoutedEventArgs e) => UndoClicked?.Invoke();
+    private void OnRedoClick(object sender, RoutedEventArgs e) => RedoClicked?.Invoke();
     private void OnCopyClick(object sender, RoutedEventArgs e) => CopyClicked?.Invoke();
     private void OnSaveClick(object sender, RoutedEventArgs e) => SaveClicked?.Invoke();
     private void OnSaveHdrClick(object sender, RoutedEventArgs e) => SaveHdrClicked?.Invoke();
