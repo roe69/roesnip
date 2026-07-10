@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using RoeSnip.Imaging;
 using Vortice.MediaFoundation;
+using Vortice.Multimedia;
 
 namespace RoeSnip.Recording;
 
@@ -48,18 +49,30 @@ public sealed class Mp4Encoder : IDisposable
     public static long ComputeBitrate(int width, int height, int fps) =>
         Math.Clamp((long)(0.1 * width * height * fps), 2_000_000, 16_000_000);
 
+    /// <summary>The one PCM format every audio path speaks (AudioCaptureEngine converts both
+    /// WASAPI sources to it via AUTOCONVERTPCM, this class encodes it to AAC): 48 kHz, stereo,
+    /// 16-bit — 4 bytes per sample block.</summary>
+    public const int AudioSampleRate = 48_000;
+    public const int AudioChannels = 2;
+    public const int AudioBitsPerSample = 16;
+    public const int AudioBlockAlign = AudioChannels * AudioBitsPerSample / 8;
+
     private readonly IMFSinkWriter _writer;
     private readonly int _streamIndex;
+    private readonly int _audioStreamIndex; // -1 when this recording has no audio track
     private readonly long _frameDuration100ns;
 
-    private Mp4Encoder(IMFSinkWriter writer, int streamIndex, int fps)
+    public bool HasAudio => _audioStreamIndex >= 0;
+
+    private Mp4Encoder(IMFSinkWriter writer, int streamIndex, int audioStreamIndex, int fps)
     {
         _writer = writer;
         _streamIndex = streamIndex;
+        _audioStreamIndex = audioStreamIndex;
         _frameDuration100ns = 10_000_000L / fps;
     }
 
-    public static Mp4Encoder Create(string tempFilePath, int width, int height, int fps)
+    public static Mp4Encoder Create(string tempFilePath, int width, int height, int fps, bool withAudio = false)
     {
         EnsureStarted();
         long bitrate = ComputeBitrate(width, height, fps);
@@ -96,9 +109,32 @@ public sealed class Mp4Encoder : IDisposable
         IMFSinkWriter writer = MediaFactory.MFCreateSinkWriterFromURL(tempFilePath, null, attrs);
         int streamIndex = writer.AddStream(outputType);
         writer.SetInputMediaType(streamIndex, inputType, null);
+
+        // The AAC audio track, when any capture source is enabled. Both streams MUST be added and
+        // typed before the single shared BeginWriting call — MF rejects AddStream afterwards.
+        int audioStreamIndex = -1;
+        if (withAudio)
+        {
+            using var audioOutputType = MediaFactory.MFCreateMediaType();
+            audioOutputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Audio).CheckError();
+            audioOutputType.Set(MediaTypeAttributeKeys.Subtype, AudioFormatGuids.Aac).CheckError();
+            audioOutputType.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, (uint)AudioSampleRate).CheckError();
+            audioOutputType.Set(MediaTypeAttributeKeys.AudioNumChannels, (uint)AudioChannels).CheckError();
+            audioOutputType.Set(MediaTypeAttributeKeys.AudioBitsPerSample, (uint)AudioBitsPerSample).CheckError();
+            // 128 kbps AAC, the standard screen-recording choice: 128000 / 8 = 16000 bytes/second.
+            audioOutputType.Set(MediaTypeAttributeKeys.AudioAvgBytesPerSecond, 16_000u).CheckError();
+            audioStreamIndex = writer.AddStream(audioOutputType);
+
+            // PCM input type built straight from a WaveFormat — MFCreateAudioMediaType fills in
+            // every audio attribute (rate/channels/bits/block-align/avg-bytes) from the struct.
+            var pcmFormat = new WaveFormat(AudioSampleRate, AudioBitsPerSample, AudioChannels);
+            using var audioInputType = MediaFactory.MFCreateAudioMediaType(ref pcmFormat);
+            writer.SetInputMediaType(audioStreamIndex, audioInputType, null);
+        }
+
         writer.BeginWriting();
 
-        return new Mp4Encoder(writer, streamIndex, fps);
+        return new Mp4Encoder(writer, streamIndex, audioStreamIndex, fps);
     }
 
     /// <summary>Encoder thread only. SdrImage.Pixels is guaranteed tightly packed
@@ -124,6 +160,35 @@ public sealed class Mp4Encoder : IDisposable
         sample.SampleTime = timestamp100ns;
         sample.SampleDuration = _frameDuration100ns;
         _writer.WriteSample(_streamIndex, sample); // void-returning — SharpGen auto-throws on HRESULT failure
+    }
+
+    /// <summary>Encoder thread only, same single-thread discipline as <see cref="WriteFrame"/>.
+    /// <paramref name="pcm"/> is 48 kHz stereo 16-bit PCM (see the Audio* constants); duration is
+    /// derived from the byte count so callers only supply the chunk's start timestamp.</summary>
+    public void WriteAudioSamples(byte[] pcm, int length, long timestamp100ns)
+    {
+        if (_audioStreamIndex < 0 || length <= 0)
+        {
+            return;
+        }
+
+        using var buffer = MediaFactory.MFCreateMemoryBuffer(length);
+        buffer.Lock(out IntPtr ptr, out _, out _);
+        try
+        {
+            Marshal.Copy(pcm, 0, ptr, length);
+        }
+        finally
+        {
+            buffer.Unlock();
+        }
+        buffer.CurrentLength = length;
+
+        using var sample = MediaFactory.MFCreateSample();
+        sample.AddBuffer(buffer);
+        sample.SampleTime = timestamp100ns;
+        sample.SampleDuration = 10_000_000L * (length / AudioBlockAlign) / AudioSampleRate;
+        _writer.WriteSample(_audioStreamIndex, sample);
     }
 
     public void FinalizeAndClose() => _writer.Finalize(); // IMFSinkWriter's own interface method, not System.Object.Finalize

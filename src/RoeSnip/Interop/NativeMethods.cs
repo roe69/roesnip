@@ -172,6 +172,8 @@ public static class NativeMethods
 
     public const int GWL_EXSTYLE = -20;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
+    public const int WS_EX_TRANSPARENT = 0x00000020; // click-through: invisible to hit testing
+    public const int WS_EX_NOACTIVATE = 0x08000000;
 
     // ---------- Capture exclusion ----------
 
@@ -186,6 +188,22 @@ public static class NativeMethods
 
     public const uint WDA_NONE = 0x00000000;
     public const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
+
+    // ---------- Window regions (RegionOutline's frame-shaped HWND) ----------
+
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
+
+    [DllImport("gdi32.dll")]
+    public static extern int CombineRgn(IntPtr dest, IntPtr src1, IntPtr src2, int mode);
+
+    [DllImport("user32.dll")]
+    public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool redraw);
+
+    [DllImport("gdi32.dll")]
+    public static extern bool DeleteObject(IntPtr hObject);
+
+    public const int RGN_DIFF = 4;
 
     // ---------- Clipboard ----------
 

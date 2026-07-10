@@ -1446,9 +1446,16 @@ public partial class OverlayWindow : Window
                 }
             };
 
-            // Editable palette (item 3, UX round 5): "+" appends via ColorDialog; each swatch's
-            // right-click menu edits in place. All mutations persist immediately via SettingsStore.
+            // Palette editing: each swatch's right-click menu recolors it in place. All mutations
+            // persist immediately via SettingsStore.
             _toolbar.PaletteReplaceRequested += OnPaletteReplaceRequested;
+
+            // The record menu's MP4 audio-source toggles persist the same way.
+            _toolbar.RecordAudioTogglesChanged += (mic, systemAudio) =>
+            {
+                _liveSettings = _liveSettings with { RecordMicrophone = mic, RecordSystemAudio = systemAudio };
+                TrySaveLiveSettings();
+            };
 
             OverlayCanvas.Children.Add(_toolbar);
         }
@@ -1457,6 +1464,7 @@ public partial class OverlayWindow : Window
         RefreshToolbarPalette();
         _toolbar.SetStrokeWidth(_currentStrokeWidth);
         _toolbar.SetHistoryState(Annotations.CanUndo, Annotations.CanRedo);
+        _toolbar.SetRecordAudioToggles(_liveSettings.RecordMicrophone, _liveSettings.RecordSystemAudio);
         _toolbar.Visibility = Visibility.Visible;
     }
 

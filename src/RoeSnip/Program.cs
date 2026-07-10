@@ -110,6 +110,12 @@ public sealed record RoeSnipSettings
     /// SwatchPalette.EffectivePalette and only persist the list once the user first edits it.</summary>
     public List<string> PaletteColors { get; init; } = new();
 
+    /// <summary>MP4 recording audio sources, toggled from the toolbar's Record dropdown and
+    /// persisted immediately. Both default off: a screen recorder must never capture the user's
+    /// microphone or system audio without an explicit opt-in. GIF recordings ignore both.</summary>
+    public bool RecordMicrophone { get; init; } = false;
+    public bool RecordSystemAudio { get; init; } = false;
+
     public static RoeSnipSettings Default { get; } = new();
 
     private static string DefaultSaveDirectory() =>
@@ -514,7 +520,11 @@ public static class AppComposition
                     {
                         try
                         {
-                            await StartRecording(result.Monitor, result.SelectionPx, recordingRequest.Format, settings, notifier);
+                            // Fresh settings, not this flow's trigger-time snapshot: the audio
+                            // toggles live in the record menu the user may have JUST flipped in
+                            // this very session, and those edits persist through SettingsStore.
+                            var recordingSettings = LoadSettings?.Invoke() ?? settings;
+                            await StartRecording(result.Monitor, result.SelectionPx, recordingRequest.Format, recordingSettings, notifier);
                             gateTransferred = true; // RecordingController now owns CaptureGate — see hook doc comment
                         }
                         catch (Exception ex)

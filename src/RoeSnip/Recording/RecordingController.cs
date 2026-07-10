@@ -82,12 +82,6 @@ internal static class RecordingController
 /// OverlayController.OverlaySession.Finish's "single terminal point" pattern.</summary>
 internal sealed class RecordingSession
 {
-    // v1 hard cap for GIF recordings (PLAN.md §Flag-5): GifBitmapEncoder is a batch API with no
-    // incremental write, so frames sit fully decoded in memory (~W*H*4 bytes each) until Stop() —
-    // at 12fps a large selection can still reach roughly 1-1.5 GB resident before Save(). The chrome
-    // shows a live countdown (SetElapsed's cap parameter) so hitting it is never a silent surprise.
-    private const int GifCapSeconds = 60;
-
     private readonly MonitorInfo _monitor;
     private readonly RectPhysical _selectionPx;
     private readonly RecordingFormat _format;
@@ -98,6 +92,8 @@ internal sealed class RecordingSession
     private Mp4Encoder? _mp4Encoder;
     private GifEncoder? _gifEncoder;
     private RecordingChrome? _chrome;
+    private RegionOutline? _outline;
+    private AudioCaptureEngine? _audio;
     private Thread? _encoderThread;
     private DispatcherTimer? _uiTimer;
     private Dispatcher? _uiDispatcher;
@@ -106,6 +102,7 @@ internal sealed class RecordingSession
     private RoeSnip.Color.ToneMapOptions _fixedToneMapOpts;
     private int _targetFps;
     private string? _mp4TempPath;
+    private string? _gifTempPath;
     private int _stopped; // Interlocked guard — Stop() must run its body exactly once
 
     private bool _hasGifPrevTimestamp;
@@ -149,13 +146,31 @@ internal sealed class RecordingSession
 
             if (_format == RecordingFormat.Mp4)
             {
+                // Audio first: the encoder only gets an AAC track if a capture source genuinely
+                // came up, so a device failure can never leave a sample-less audio stream for
+                // Finalize to choke on. Engine failure is non-fatal (video-only recording).
+                if (_settings.RecordMicrophone || _settings.RecordSystemAudio)
+                {
+                    _audio = AudioCaptureEngine.TryStart(_settings.RecordMicrophone, _settings.RecordSystemAudio);
+                    if (_audio is null)
+                    {
+                        _notifier?.ShowError("Audio capture unavailable; recording video only.");
+                    }
+                }
                 _mp4TempPath = Path.Combine(Path.GetTempPath(), $"roesnip_rec_{Guid.NewGuid():N}.mp4");
-                _mp4Encoder = Mp4Encoder.Create(_mp4TempPath, _selectionPx.Width, _selectionPx.Height, _targetFps);
+                _mp4Encoder = Mp4Encoder.Create(
+                    _mp4TempPath, _selectionPx.Width, _selectionPx.Height, _targetFps, withAudio: _audio is not null);
             }
             else
             {
-                _gifEncoder = new GifEncoder();
+                _gifTempPath = Path.Combine(Path.GetTempPath(), $"roesnip_rec_{Guid.NewGuid():N}.gif");
+                _gifEncoder = GifEncoder.Create(_gifTempPath, _selectionPx.Width, _selectionPx.Height);
             }
+
+            // The visible "this area is being recorded" frame (both formats): dashed outline just
+            // OUTSIDE the region, capture-excluded, click-through — see RegionOutline's doc.
+            _outline = new RegionOutline(_monitor, _selectionPx);
+            _outline.Show();
 
             _chrome = new RecordingChrome(_monitor, _selectionPx);
             _chrome.StopRequested += () => RequestStop(save: true);
@@ -186,21 +201,21 @@ internal sealed class RecordingSession
             // device or leaves a chrome window stranded topmost with nothing to close it.
             try { _recorder?.Dispose(); } catch { /* best-effort */ }
             try { _chrome?.Close(); } catch { /* best-effort */ }
+            try { _outline?.CloseOutline(); } catch { /* best-effort */ }
+            try { _audio?.Dispose(); } catch { /* best-effort */ }
             try { _mp4Encoder?.Dispose(); } catch { /* best-effort */ }
+            try { _gifEncoder?.Dispose(); } catch { /* best-effort */ }
             try { if (_mp4TempPath is not null && File.Exists(_mp4TempPath)) File.Delete(_mp4TempPath); } catch { /* best-effort */ }
+            try { if (_gifTempPath is not null && File.Exists(_gifTempPath)) File.Delete(_gifTempPath); } catch { /* best-effort */ }
             throw;
         }
     }
 
     private void OnTimerTick(object? sender, EventArgs e)
     {
-        var elapsed = _stopwatch!.Elapsed;
-        TimeSpan? cap = _format == RecordingFormat.Gif ? TimeSpan.FromSeconds(GifCapSeconds) : null;
-        _chrome!.SetElapsed(elapsed, cap);
-        if (_format == RecordingFormat.Gif && elapsed.TotalSeconds >= GifCapSeconds)
-        {
-            RequestStop(save: true);
-        }
+        // No duration cap for either format: GIF frames stream to a temp file now (see
+        // GifEncoder), so the old 60-second in-memory-buffering cap has no reason to exist.
+        _chrome!.SetElapsed(_stopwatch!.Elapsed, cap: null);
     }
 
     private void OnRecorderFaulted(Exception ex)
@@ -243,7 +258,14 @@ internal sealed class RecordingSession
             _displayChangedHandler = null;
         }
         _uiTimer?.Stop();
+        try { _outline?.CloseOutline(); }
+        catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: closing the recording outline failed (non-fatal): {ex.Message}"); }
 
+        // Audio shuts down FULLY (flag + bounded thread join, which is what Dispose does) before
+        // the video channel completes: the encoder thread's terminal DrainAudio runs almost
+        // immediately after _recorder.Stop(), so a fire-and-forget audio stop would race the
+        // capture thread's final flush and silently drop the recording's last ~10ms of audio.
+        _audio?.Dispose();
         _recorder!.Stop(); // stops feeding the queue and completes it
 
         // Bounded join: a wedged encoder (stuck MF call, disk stall) must never hang the UI thread
@@ -312,6 +334,7 @@ internal sealed class RecordingSession
         if (joined)
         {
             _mp4Encoder?.Dispose(); // only safe once the encoder thread — the only other owner — has actually finished
+            _gifEncoder?.Dispose(); // same ownership rule for the GIF temp-file stream
         }
 
         RoeSnip.CaptureGate.Exit(); // exactly once, last — see AppComposition.StartRecording's doc comment
@@ -369,33 +392,30 @@ internal sealed class RecordingSession
             finalPath = dialog.FileName;
         }
 
-        if (_format == RecordingFormat.Mp4)
-        {
-            File.Move(_mp4TempPath!, finalPath, overwrite: true);
-        }
-        else
-        {
-            _gifEncoder!.SaveTo(finalPath);
-        }
+        // Both formats stream to a temp file now; saving is one atomic move either way.
+        File.Move(_format == RecordingFormat.Mp4 ? _mp4TempPath! : _gifTempPath!, finalPath, overwrite: true);
         return finalPath;
     }
 
     private void CleanupTempFile()
     {
-        if (_mp4TempPath is null)
+        foreach (var tempPath in new[] { _mp4TempPath, _gifTempPath })
         {
-            return; // GIF never writes a temp file — SaveTo only ever runs when save=true
-        }
-        try
-        {
-            if (File.Exists(_mp4TempPath))
+            if (tempPath is null)
             {
-                File.Delete(_mp4TempPath);
+                continue;
             }
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"RoeSnip: failed to delete abandoned recording temp file: {ex.Message}");
+            try
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: failed to delete abandoned recording temp file: {ex.Message}");
+            }
         }
     }
 
@@ -419,8 +439,22 @@ internal sealed class RecordingSession
 
         try
         {
-            while (reader.WaitToReadAsync().AsTask().GetAwaiter().GetResult())
+            var waitTask = reader.WaitToReadAsync().AsTask();
+            while (true)
             {
+                // Bounded wait rather than a plain block: audio must keep flowing into the writer
+                // even when the screen is static and WGC delivers no video frame (it only fires on
+                // dirty updates) — otherwise queued audio would pile up until the next pixel moved.
+                if (!waitTask.Wait(50))
+                {
+                    DrainAudio(freq, epochTicks);
+                    continue;
+                }
+                if (!waitTask.Result)
+                {
+                    break; // channel completed — RegionRecorder.Stop() was called
+                }
+
                 while (reader.TryRead(out var queued))
                 {
                     using var frame = queued.Frame;
@@ -437,12 +471,11 @@ internal sealed class RecordingSession
                     {
                         ushort delayCs = ComputeGifDelayCentiseconds(queued.TimestampTicks, freq);
                         _gifEncoder!.AddFrame(sdr, delayCs);
-                        if (_gifEncoder.AtCap(GifCapSeconds, _targetFps))
-                        {
-                            RequestStop(save: true);
-                        }
                     }
                 }
+
+                DrainAudio(freq, epochTicks);
+                waitTask = reader.WaitToReadAsync().AsTask();
             }
         }
         catch (Exception ex)
@@ -457,9 +490,42 @@ internal sealed class RecordingSession
             Console.Error.WriteLine($"RoeSnip: encoder loop exiting, {framesWritten} frame(s) processed");
             if (_format == RecordingFormat.Mp4)
             {
+                // Whatever audio was still queued when the video channel completed belongs in the
+                // file — Stop() halts the audio engine BEFORE completing the channel, so this final
+                // drain is bounded.
+                try { DrainAudio(freq, epochTicks); }
+                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: final audio drain failed: {ex}"); }
                 try { _mp4Encoder?.FinalizeAndClose(); }
                 catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: MP4 finalize failed: {ex}"); }
             }
+            else
+            {
+                try { _gifEncoder?.FinalizeAndClose(); }
+                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: GIF finalize failed: {ex}"); }
+            }
+        }
+    }
+
+    /// <summary>Encoder thread only. Moves every queued audio chunk into the MP4 writer, mapping
+    /// each chunk's QPC timestamp onto the video timeline (same epoch: the first dequeued video
+    /// frame). Chunks captured before that epoch are dropped — the track starts with the video.</summary>
+    private void DrainAudio(double freq, long? epochTicks)
+    {
+        var audio = _audio;
+        var encoder = _mp4Encoder;
+        if (audio is null || encoder is null)
+        {
+            return;
+        }
+
+        while (audio.TryDequeue(out var chunk))
+        {
+            if (epochTicks is null || chunk.QpcTicks < epochTicks.Value)
+            {
+                continue; // pre-roll audio from before the first video frame
+            }
+            long timestamp100ns = (long)((chunk.QpcTicks - epochTicks.Value) / freq * 10_000_000.0);
+            encoder.WriteAudioSamples(chunk.Pcm, chunk.Pcm.Length, timestamp100ns);
         }
     }
 
