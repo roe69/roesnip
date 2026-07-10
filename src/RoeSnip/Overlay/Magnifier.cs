@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
@@ -68,6 +69,30 @@ public sealed class Magnifier : FrameworkElement
     public double DeviceScaleX { get; set; } = 1.0;
     public double DeviceScaleY { get; set; } = 1.0;
 
+    /// <summary>Which value lines the loupe shows below the pixel grid — the same ordered
+    /// ColorFormats list the ColorPickerWindow's gear popover manages, so configuring the formats
+    /// once configures both readouts. Set from OverlayWindow.AssignSessionFields; the widget
+    /// sizes itself to exactly the enabled lines.</summary>
+    public RoeSnipSettings Formats { get; set; } = RoeSnipSettings.Default;
+
+    // The enabled subset of Formats' color-format list, derived lazily and cached by settings
+    // reference — OnRender runs per mouse move, so it must not re-run the catalog merge each time.
+    private RoeSnipSettings? _activeFormatsSource;
+    private List<ColorFormatEntry> _activeFormats = new();
+
+    private List<ColorFormatEntry> ActiveFormats
+    {
+        get
+        {
+            if (!ReferenceEquals(_activeFormatsSource, Formats))
+            {
+                _activeFormatsSource = Formats;
+                _activeFormats = ColorFormatCatalog.EffectiveFormats(Formats).FindAll(e => e.Enabled);
+            }
+            return _activeFormats;
+        }
+    }
+
     public string CurrentHex { get; private set; } = string.Empty;
 
     private bool HasSample => _sampleX >= 0 && _sampleY >= 0 && _preview is not null && _frame is not null;
@@ -118,12 +143,57 @@ public sealed class Magnifier : FrameworkElement
             Math.Clamp(cy, 0, frame.Height - 1));
         CurrentHex = string.Create(CultureInfo.InvariantCulture, $"#{r:X2}{g:X2}{b:X2}");
 
-        // Fixed-footprint loupe: the widget never resizes with zoom — the per-pixel swatch size is
-        // derived from how many pixels have to fit, so wheel-zooming only changes magnification.
+        // Value lines below the pixel grid — the same ordered, user-managed format list the
+        // ColorPickerWindow shows (see ActiveFormats), each expanded by ColorFormatTemplate. The
+        // first line leads slightly larger, the rest are quiet secondary lines, and any
+        // nits-bearing format (the killer HDR feature) stays the largest and boldest, amber when
+        // the pixel is brighter than a typical SDR white.
+        var mono = new FontFamily("Consolas");
+        var semiFace = new Typeface(mono, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
+        var bodyFace = new Typeface(mono, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+        var boldFace = new Typeface(mono, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+
+        bool isHighlight = nits > 250.0;
+        var lines = new List<FormattedText>();
+        FormattedText? nitsText = null;
+        bool firstLine = true;
+        foreach (var entry in ActiveFormats)
+        {
+            string value = ColorFormatTemplate.Format(entry.Format, r, g, b, nits);
+            if (entry.Format.Contains("%Nt", StringComparison.Ordinal))
+            {
+                var nitsBrush = isHighlight ? new SolidColorBrush(Color.FromRgb(0xFF, 0xD5, 0x4F)) : Brushes.White;
+                nitsText = new FormattedText(value, CultureInfo.InvariantCulture, FlowDir.LeftToRight, boldFace, 16.0, nitsBrush, 1.0);
+                continue;
+            }
+            lines.Add(firstLine
+                ? new FormattedText(value, CultureInfo.InvariantCulture, FlowDir.LeftToRight, semiFace, 12.5, Brushes.White, 1.0)
+                : new FormattedText(value, CultureInfo.InvariantCulture, FlowDir.LeftToRight, bodyFace, 11.0, Brushes.LightGray, 1.0));
+            firstLine = false;
+        }
+
+        // Fixed-footprint loupe: the pixel grid never resizes with zoom — the per-pixel swatch
+        // size is derived from how many pixels have to fit, so wheel-zooming only changes
+        // magnification. The widget's total size hugs exactly the enabled value lines (compact:
+        // no reserved space for hidden formats), growing wider only if a long line (cmyk) needs it.
         double loupeSize = LoupeDip;
         double swatchDip = LoupeDip / (_sampleRadius * 2 + 1);
-        double widgetWidth = Math.Max(loupeSize, 150.0);
-        double widgetHeight = loupeSize + 78.0; // room for hex/rgb/nits lines below the loupe
+
+        const double PadDip = 6.0, LineGapDip = 1.5;
+        double textHeight = 0;
+        double maxLineWidth = 0;
+        foreach (var line in lines)
+        {
+            textHeight += line.Height + LineGapDip;
+            maxLineWidth = Math.Max(maxLineWidth, line.Width);
+        }
+        if (nitsText is not null)
+        {
+            textHeight += nitsText.Height + (lines.Count > 0 ? 2.5 : 0);
+            maxLineWidth = Math.Max(maxLineWidth, nitsText.Width);
+        }
+        double widgetWidth = Math.Max(loupeSize + PadDip * 2, maxLineWidth + PadDip * 2 + 4);
+        double widgetHeight = PadDip + loupeSize + (textHeight > 0 ? 5.0 + textHeight : 0) + PadDip;
 
         double x = _cursorDip.X + WidgetMarginDip;
         double y = _cursorDip.Y + WidgetMarginDip;
@@ -140,6 +210,7 @@ public sealed class Magnifier : FrameworkElement
 
         // Pixelated loupe: draw each sampled source pixel as a flat-colored square.
         double loupeLeft = x + (widgetWidth - loupeSize) / 2;
+        double loupeTop = y + PadDip;
         for (int dy = -_sampleRadius; dy <= _sampleRadius; dy++)
         {
             for (int dx = -_sampleRadius; dx <= _sampleRadius; dx++)
@@ -149,40 +220,28 @@ public sealed class Magnifier : FrameworkElement
                 var (pr, pg, pb) = ReadPreviewPixel(preview, sx, sy);
                 var brush = new SolidColorBrush(Color.FromRgb(pr, pg, pb));
                 double swatchX = loupeLeft + (dx + _sampleRadius) * swatchDip;
-                double swatchY = y + 6.0 + (dy + _sampleRadius) * swatchDip;
+                double swatchY = loupeTop + (dy + _sampleRadius) * swatchDip;
                 dc.DrawRectangle(brush, null, new Rect(swatchX, swatchY, swatchDip, swatchDip));
             }
         }
 
         // Crosshair over the center (sampled) pixel.
         double centerX = loupeLeft + loupeSize / 2;
-        double centerY = y + 6.0 + loupeSize / 2;
+        double centerY = loupeTop + loupeSize / 2;
         var crossPen = new Pen(Brushes.White, 1.0);
         dc.DrawRectangle(null, crossPen, new Rect(centerX - swatchDip / 2, centerY - swatchDip / 2, swatchDip, swatchDip));
 
-        var monoFace = new Typeface(new FontFamily("Consolas"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
-        var hexText = new FormattedText(CurrentHex, CultureInfo.InvariantCulture, FlowDir.LeftToRight, monoFace, 14.0, Brushes.White, 1.0);
-        var rgbText = new FormattedText(
-            string.Create(CultureInfo.InvariantCulture, $"R{r} G{g} B{b}"),
-            CultureInfo.InvariantCulture, FlowDir.LeftToRight, monoFace, 12.0, Brushes.LightGray, 1.0);
-
-        // The nits readout is the killer feature — largest, boldest, most prominent line, and
-        // called out in amber whenever it exceeds SDR white (1.0 in the frame's normalized sense
-        // corresponds to 80 nits; anything above plain 1.0 nits here just means "not pure black",
-        // so use a clearly-HDR-ish threshold instead: highlight once we're brighter than a
-        // typical SDR white level).
-        bool isHighlight = nits > 250.0;
-        var nitsBrush = isHighlight ? new SolidColorBrush(Color.FromRgb(0xFF, 0xD5, 0x4F)) : Brushes.White;
-        var nitsText = new FormattedText(
-            string.Create(CultureInfo.InvariantCulture, $"{nits:0.#} nits"),
-            CultureInfo.InvariantCulture, FlowDir.LeftToRight,
-            new Typeface(new FontFamily("Consolas"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
-            19.0, nitsBrush, 1.0);
-
-        double textY = y + loupeSize + 12.0;
-        dc.DrawText(hexText, new Point(x + 8.0, textY));
-        dc.DrawText(rgbText, new Point(x + 8.0, textY + hexText.Height + 2.0));
-        dc.DrawText(nitsText, new Point(x + 8.0, textY + hexText.Height + rgbText.Height + 5.0));
+        double textX = x + PadDip + 2;
+        double textY = loupeTop + loupeSize + 5.0;
+        foreach (var line in lines)
+        {
+            dc.DrawText(line, new Point(textX, textY));
+            textY += line.Height + LineGapDip;
+        }
+        if (nitsText is not null)
+        {
+            dc.DrawText(nitsText, new Point(textX, textY + (lines.Count > 0 ? 2.5 : 0)));
+        }
     }
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)

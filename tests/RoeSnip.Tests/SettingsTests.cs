@@ -129,6 +129,11 @@ public class SettingsTests : IDisposable
             TextItalic = true,
             CustomColors = new List<string> { "#FF00FF", "#00FFAA" },
             PaletteColors = new List<string> { "#E53935", "#123456", "#654321" },
+            ColorFormats = new List<ColorFormatEntry>
+            {
+                new() { Name = "HEX", Format = "%Rex%Grx%Blx", Enabled = true },
+                new() { Name = "Mine", Format = "R=%Re", Enabled = false, IsCustom = true },
+            },
         };
 
         SettingsStore.Save(original, settingsPath);
@@ -145,11 +150,15 @@ public class SettingsTests : IDisposable
         Assert.Equal(original.RecentPickedColors, loaded.RecentPickedColors);
         Assert.Equal(original.CustomColors, loaded.CustomColors);
         Assert.Equal(original.PaletteColors, loaded.PaletteColors);
+        // ColorFormatEntry is itself a record, so xUnit's sequence compare checks entry VALUES here
+        // (name/format/enabled/custom all round-trip), unlike the string lists above.
+        Assert.Equal(original.ColorFormats, loaded.ColorFormats);
         var originalWithLoadedLists = original with
         {
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
             PaletteColors = loaded.PaletteColors,
+            ColorFormats = loaded.ColorFormats,
         };
         Assert.Equal(originalWithLoadedLists, loaded);
     }
@@ -176,11 +185,13 @@ public class SettingsTests : IDisposable
         Assert.Equal(original.RecentPickedColors, loaded.RecentPickedColors);
         Assert.Equal(original.CustomColors, loaded.CustomColors);
         Assert.Equal(original.PaletteColors, loaded.PaletteColors);
+        Assert.Equal(original.ColorFormats, loaded.ColorFormats);
         var originalWithLoadedLists = original with
         {
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
             PaletteColors = loaded.PaletteColors,
+            ColorFormats = loaded.ColorFormats,
         };
         Assert.Equal(originalWithLoadedLists, loaded);
     }

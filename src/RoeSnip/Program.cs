@@ -57,12 +57,26 @@ public sealed record RoeSnipSettings
     /// the front rather than adding a second copy) via Overlay/BoundedColorList.Push.</summary>
     public List<string> RecentPickedColors { get; init; } = new();
 
-    /// <summary>Which format rows the ColorPickerWindow shows, toggled from its gear popover. All
-    /// default true (every format visible out of the box).</summary>
+    /// <summary>LEGACY (superseded by <see cref="ColorFormats"/>, the ordered/editable format
+    /// list): the original four per-format visibility toggles plus the short-lived HSV/CMYK pair.
+    /// Kept — read once as the migration seed by ColorFormatCatalog.EffectiveFormats, never
+    /// written or displayed separately — so a downgrade to an older build still sees its
+    /// choices, mirroring the CustomColors -> PaletteColors migration pattern below.</summary>
     public bool ColorFormatShowHex { get; init; } = true;
     public bool ColorFormatShowRgb { get; init; } = true;
     public bool ColorFormatShowHsl { get; init; } = true;
     public bool ColorFormatShowNits { get; init; } = true;
+    public bool ColorFormatShowHsv { get; init; } = false;
+    public bool ColorFormatShowCmyk { get; init; } = false;
+
+    /// <summary>The ordered color-format list shown by BOTH readout surfaces (the
+    /// ColorPickerWindow's rows and the magnifier loupe's value lines), managed from the picker's
+    /// gear popover: toggle, reorder, and add/edit/delete custom entries. Each entry's Format is a
+    /// ColorFormatTemplate string ("%Re"/"%Hu"/... parameters — see that class). Empty (the
+    /// default) means "not migrated yet": consumers seed from ColorFormatCatalog.BuiltIns with the
+    /// legacy ColorFormatShow* bools applied, and only persist the list once the user first edits
+    /// it (same contract as <see cref="PaletteColors"/>).</summary>
+    public List<ColorFormatEntry> ColorFormats { get; init; } = new();
 
     /// <summary>Magnifier loupe zoom: how many source pixels the FIXED-size loupe shows —
     /// a (2r+1)x(2r+1) block around the cursor, so a SMALLER radius means fewer, bigger pixels
@@ -101,6 +115,19 @@ public sealed record RoeSnipSettings
     private static string DefaultSaveDirectory() =>
         System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "RoeSnip");
+}
+
+/// <summary>One row of <see cref="RoeSnipSettings.ColorFormats"/>. For a built-in entry Name
+/// matches a ColorFormatCatalog.BuiltIns name and Format holds that built-in's template (kept in
+/// the settings file so the row survives even if a future build renames/retires the built-in);
+/// for a user-defined entry (<see cref="IsCustom"/>) both are free-form. Persisted PascalCase like
+/// every other settings type; unknown fields are ignored on load (forward compat).</summary>
+public sealed record ColorFormatEntry
+{
+    public string Name { get; init; } = string.Empty;
+    public string Format { get; init; } = string.Empty;
+    public bool Enabled { get; init; } = true;
+    public bool IsCustom { get; init; } = false;
 }
 
 /// <summary>Implemented by App/TrayApp.cs (WP-C). Passed into AppComposition.RunCaptureFlowAsync

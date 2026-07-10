@@ -8,7 +8,7 @@
         Topmost="True"
         WindowStartupLocation="Manual"
         SizeToContent="Height"
-        Width="304"
+        Width="268"
         Background="#FF1B1B1D"
         Foreground="White"
         FontFamily="Segoe UI"
@@ -18,58 +18,59 @@
     <Border BorderBrush="#3F3F46" BorderThickness="1">
         <StackPanel>
             <!-- Custom title bar: draggable, "Color Picker" + close X -->
-            <Grid x:Name="TitleBar" Height="32" Background="#FF141416" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
-                <TextBlock Text="Color Picker" VerticalAlignment="Center" Margin="10,0,0,0" FontWeight="SemiBold" FontSize="12.5"/>
-                <Button x:Name="CloseButton" Content="&#x2715;" Width="32" Height="32"
+            <Grid x:Name="TitleBar" Height="28" Background="#FF141416" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <TextBlock Text="Color Picker" VerticalAlignment="Center" Margin="10,0,0,0" FontWeight="SemiBold" FontSize="12"/>
+                <Button x:Name="CloseButton" Content="&#x2715;" Width="28" Height="28"
                         HorizontalAlignment="Right" VerticalAlignment="Center"
                         Background="Transparent" Foreground="#CFCFCF" BorderThickness="0"
                         Cursor="Hand" Click="CloseButton_Click" Focusable="False"/>
             </Grid>
 
             <!-- Pick / recents / settings row -->
-            <Grid Margin="10,10,10,8">
+            <Grid Margin="8,8,8,6">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <Button x:Name="PickButton" Grid.Column="0" Content="Pick" Padding="10,4"
-                        Background="#3A7CFD" Foreground="White" BorderThickness="0" Cursor="Hand"
+                <Button x:Name="PickButton" Grid.Column="0" Content="Pick" Padding="10,3"
+                        Background="#FF9F09" Foreground="#141416" FontWeight="SemiBold"
+                        BorderThickness="0" Cursor="Hand"
                         Click="PickButton_Click" Focusable="False"
                         ToolTip="Capture the screen again and click to pick a new color into this window"/>
 
                 <StackPanel x:Name="RecentColorsPanel" Grid.Column="1" Orientation="Horizontal"
-                            HorizontalAlignment="Right" VerticalAlignment="Center" Margin="8,0,8,0"/>
+                            HorizontalAlignment="Right" VerticalAlignment="Center" Margin="6,0,6,0"/>
 
-                <Button x:Name="GearButton" Grid.Column="2" Content="&#x2699;" Width="26" Height="26"
+                <Button x:Name="GearButton" Grid.Column="2" Content="&#x2699;" Width="24" Height="24"
                         Background="#2A2A2E" Foreground="#EAEAEA" BorderThickness="1" BorderBrush="#3F3F46"
                         Cursor="Hand" Click="GearButton_Click" Focusable="False" ToolTip="Choose which formats to show"/>
 
                 <Popup x:Name="FormatsPopup" Grid.Column="2" PlacementTarget="{Binding ElementName=GearButton}"
                        Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
-                    <Border Background="#FF242428" BorderBrush="#3F3F46" BorderThickness="1" CornerRadius="4" Padding="10">
-                        <StackPanel x:Name="FormatsPopupPanel" MinWidth="110"/>
+                    <Border Background="#FF242428" BorderBrush="#3F3F46" BorderThickness="1" CornerRadius="4" Padding="8">
+                        <StackPanel x:Name="FormatsPopupPanel" MinWidth="190"/>
                     </Border>
                 </Popup>
             </Grid>
 
             <!-- Swatch + lightness shades -->
-            <Grid Margin="10,0,10,10">
+            <Grid Margin="8,0,8,6">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="8"/>
-                    <ColumnDefinition Width="28"/>
+                    <ColumnDefinition Width="6"/>
+                    <ColumnDefinition Width="24"/>
                 </Grid.ColumnDefinitions>
 
-                <Border x:Name="MainSwatch" Grid.Column="0" Height="64" CornerRadius="4"
+                <Border x:Name="MainSwatch" Grid.Column="0" Height="48" CornerRadius="4"
                         BorderBrush="#3F3F46" BorderThickness="1"/>
 
                 <StackPanel x:Name="ShadesPanel" Grid.Column="2"/>
             </Grid>
 
-            <!-- Format rows (Hex/RGB/HSL/Nits) -->
-            <StackPanel x:Name="FormatRowsPanel" Margin="10,0,10,12"/>
+            <!-- Format rows (Hex/RGB/HSL/HSV/CMYK/Nits, per the gear popover's toggles) -->
+            <StackPanel x:Name="FormatRowsPanel" Margin="8,0,8,8"/>
         </StackPanel>
     </Border>
 </Window>

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -18,8 +19,11 @@ using FontFamily = System.Windows.Media.FontFamily;
 using Button = System.Windows.Controls.Button;
 using CheckBox = System.Windows.Controls.CheckBox;
 using Border = System.Windows.Controls.Border;
+using TextBox = System.Windows.Controls.TextBox;
 using Cursors = System.Windows.Input.Cursors;
 using MouseButtonEventArgs = System.Windows.Input.MouseButtonEventArgs;
+using Orientation = System.Windows.Controls.Orientation;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
 
 /// <summary>Small standalone always-on-top eyedropper window (modeled on PowerToys Color Picker),
 /// singleton per app (owned/recreated on demand by OverlayController — see OnColorPicked there).
@@ -35,10 +39,15 @@ public partial class ColorPickerWindow : Window
 {
     private const int MaxRecentColors = 8;
     private const int ShadeCount = 7;
-    private const double SwatchHeightDip = 64.0;
+    private const double SwatchHeightDip = 48.0; // must match MainSwatch's Height in the XAML
 
     private readonly Action _onPickRequested;
     private RoeSnipSettings _settings;
+
+    /// <summary>Working copy of the ordered format list (see RoeSnipSettings.ColorFormats /
+    /// ColorFormatCatalog.EffectiveFormats) — every popover mutation edits this list, persists it,
+    /// and re-renders both the rows and the popover itself.</summary>
+    private List<ColorFormatEntry> _formats;
 
     private byte _r, _g, _b;
     private double? _nits; // null when the active color isn't a live capture sample (a shade or a reloaded recent)
@@ -48,12 +57,18 @@ public partial class ColorPickerWindow : Window
         InitializeComponent();
         _onPickRequested = onPickRequested;
         _settings = SettingsStore.Load();
+        _formats = ColorFormatCatalog.EffectiveFormats(_settings);
 
         // Exclude this window from screen capture (same fix as FlashDimmer): a "Pick" re-capture
         // freezes the screen WITH this window still up — without the affinity it photobombs the
         // frozen frame and the user can't pick colors from pixels underneath it.
         SourceInitialized += (_, _) =>
         {
+            if (Environment.GetEnvironmentVariable("ROESNIP_DIAG_NOEXCLUDE") == "1")
+            {
+                return; // same diagnostic escape hatch as FlashDimmer/OverlayWindow — lets the
+                        // external screenshot harness see this window
+            }
             var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
             if (!SetWindowDisplayAffinity(hwnd, 0x00000011 /* WDA_EXCLUDEFROMCAPTURE */))
             {
@@ -177,31 +192,22 @@ public partial class ColorPickerWindow : Window
     private void RefreshFormatRowsPanel()
     {
         FormatRowsPanel.Children.Clear();
-
-        if (_settings.ColorFormatShowHex)
+        foreach (var entry in _formats)
         {
-            AddFormatRow("HEX", ColorFormatting.Hex(_r, _g, _b));
-        }
-        if (_settings.ColorFormatShowRgb)
-        {
-            AddFormatRow("RGB", ColorFormatting.Rgb(_r, _g, _b));
-        }
-        if (_settings.ColorFormatShowHsl)
-        {
-            AddFormatRow("HSL", ColorFormatting.Hsl(_r, _g, _b));
-        }
-        if (_settings.ColorFormatShowNits)
-        {
-            // No live nits sample for a shade / a reloaded recent color — show a dash rather than a
-            // misleading 0.0.
-            AddFormatRow("NITS", _nits is { } n ? ColorFormatting.Nits(n) : "—");
+            if (!entry.Enabled)
+            {
+                continue;
+            }
+            // %Nt renders an em dash when _nits is null (a shade / a reloaded recent color has no
+            // live capture sample) — handled inside the template engine.
+            AddFormatRow(entry.Name, ColorFormatTemplate.Format(entry.Format, _r, _g, _b, _nits));
         }
     }
 
     private void AddFormatRow(string label, string value)
     {
-        var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
+        var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(38) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -209,7 +215,7 @@ public partial class ColorPickerWindow : Window
         {
             Text = label,
             Foreground = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)),
-            FontSize = 10.5,
+            FontSize = 10,
             VerticalAlignment = VerticalAlignment.Center,
         };
         Grid.SetColumn(labelText, 0);
@@ -218,7 +224,7 @@ public partial class ColorPickerWindow : Window
         {
             Text = value,
             FontFamily = new FontFamily("Consolas"),
-            FontSize = 13,
+            FontSize = 12,
             VerticalAlignment = VerticalAlignment.Center,
         };
         Grid.SetColumn(valueText, 1);
@@ -226,7 +232,8 @@ public partial class ColorPickerWindow : Window
         var copyButton = new Button
         {
             Content = "Copy",
-            Padding = new Thickness(8, 2, 8, 2),
+            Padding = new Thickness(7, 1, 7, 1),
+            FontSize = 11,
             Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2E)),
             Foreground = Brushes.White,
             BorderThickness = new Thickness(0),
@@ -314,32 +321,137 @@ public partial class ColorPickerWindow : Window
 
     private void GearButton_Click(object sender, RoutedEventArgs e) => FormatsPopup.IsOpen = !FormatsPopup.IsOpen;
 
+    /// <summary>The gear popover is the format MANAGER (PowerToys parity): every entry can be
+    /// toggled and reordered; custom entries can be edited and deleted; "Add custom format" opens
+    /// the template dialog. Every mutation goes through <see cref="MutateFormats"/>, which
+    /// persists the list and re-renders both this popover and the visible rows.</summary>
     private void BuildFormatsPopup()
     {
         FormatsPopupPanel.Children.Clear();
-        FormatsPopupPanel.Children.Add(BuildFormatCheckBox("HEX", _settings.ColorFormatShowHex,
-            v => _settings = _settings with { ColorFormatShowHex = v }));
-        FormatsPopupPanel.Children.Add(BuildFormatCheckBox("RGB", _settings.ColorFormatShowRgb,
-            v => _settings = _settings with { ColorFormatShowRgb = v }));
-        FormatsPopupPanel.Children.Add(BuildFormatCheckBox("HSL", _settings.ColorFormatShowHsl,
-            v => _settings = _settings with { ColorFormatShowHsl = v }));
-        FormatsPopupPanel.Children.Add(BuildFormatCheckBox("Nits", _settings.ColorFormatShowNits,
-            v => _settings = _settings with { ColorFormatShowNits = v }));
-    }
 
-    private CheckBox BuildFormatCheckBox(string label, bool initial, Action<bool> applyToSettings)
-    {
-        var checkBox = new CheckBox
+        for (int i = 0; i < _formats.Count; i++)
         {
-            Content = label,
-            IsChecked = initial,
+            int index = i; // capture a stable copy for the click closures below
+            var entry = _formats[i];
+
+            var row = new Grid { Margin = new Thickness(0, 1, 0, 1) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var checkBox = new CheckBox
+            {
+                Content = entry.Name,
+                IsChecked = entry.Enabled,
+                Foreground = Brushes.White,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 10, 0),
+                Focusable = false,
+                ToolTip = entry.Format,
+            };
+            checkBox.Checked += (_, _) => MutateFormats(() => _formats[index] = _formats[index] with { Enabled = true });
+            checkBox.Unchecked += (_, _) => MutateFormats(() => _formats[index] = _formats[index] with { Enabled = false });
+            Grid.SetColumn(checkBox, 0);
+            row.Children.Add(checkBox);
+
+            var up = PopupIconButton("▴", "Move up", enabled: index > 0);
+            up.Click += (_, _) => MutateFormats(() =>
+                (_formats[index - 1], _formats[index]) = (_formats[index], _formats[index - 1]));
+            Grid.SetColumn(up, 1);
+            row.Children.Add(up);
+
+            var down = PopupIconButton("▾", "Move down", enabled: index < _formats.Count - 1);
+            down.Click += (_, _) => MutateFormats(() =>
+                (_formats[index + 1], _formats[index]) = (_formats[index], _formats[index + 1]));
+            Grid.SetColumn(down, 2);
+            row.Children.Add(down);
+
+            if (entry.IsCustom)
+            {
+                var edit = PopupIconButton("✎", "Edit this custom format", enabled: true);
+                edit.Click += (_, _) =>
+                {
+                    var dialog = new CustomFormatDialog(this, entry.Name, entry.Format, _r, _g, _b, _nits);
+                    if (dialog.ShowDialog() == true)
+                    {
+                        MutateFormats(() => _formats[index] = _formats[index] with
+                        {
+                            Name = dialog.FormatName,
+                            Format = dialog.FormatTemplate,
+                        });
+                    }
+                };
+                Grid.SetColumn(edit, 3);
+                row.Children.Add(edit);
+
+                var delete = PopupIconButton("✕", "Delete this custom format", enabled: true);
+                delete.Click += (_, _) => MutateFormats(() => _formats.RemoveAt(index));
+                Grid.SetColumn(delete, 4);
+                row.Children.Add(delete);
+            }
+
+            FormatsPopupPanel.Children.Add(row);
+        }
+
+        var addButton = new Button
+        {
+            Content = "+ Add custom format",
+            Margin = new Thickness(0, 6, 0, 0),
+            Padding = new Thickness(8, 3, 8, 3),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2E)),
             Foreground = Brushes.White,
-            Margin = new Thickness(0, 2, 0, 2),
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x3F, 0x3F, 0x46)),
+            Cursor = Cursors.Hand,
             Focusable = false,
         };
-        checkBox.Checked += (_, _) => { applyToSettings(true); TrySaveSettings(); RefreshFormatRowsPanel(); };
-        checkBox.Unchecked += (_, _) => { applyToSettings(false); TrySaveSettings(); RefreshFormatRowsPanel(); };
-        return checkBox;
+        addButton.Click += (_, _) =>
+        {
+            var dialog = new CustomFormatDialog(this, null, null, _r, _g, _b, _nits);
+            if (dialog.ShowDialog() == true)
+            {
+                MutateFormats(() => _formats.Add(new ColorFormatEntry
+                {
+                    Name = dialog.FormatName,
+                    Format = dialog.FormatTemplate,
+                    Enabled = true,
+                    IsCustom = true,
+                }));
+            }
+        };
+        FormatsPopupPanel.Children.Add(addButton);
+    }
+
+    private static Button PopupIconButton(string glyph, string tooltip, bool enabled) => new()
+    {
+        Content = glyph,
+        Width = 20,
+        Height = 20,
+        Margin = new Thickness(2, 0, 0, 0),
+        Padding = new Thickness(0),
+        Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2E)),
+        Foreground = enabled ? Brushes.White : new SolidColorBrush(Color.FromRgb(0x6A, 0x6A, 0x6A)),
+        BorderThickness = new Thickness(0),
+        Cursor = enabled ? Cursors.Hand : Cursors.Arrow,
+        Focusable = false,
+        IsEnabled = enabled,
+        ToolTip = tooltip,
+    };
+
+    /// <summary>Single mutation seam for the format list: apply, persist (the stored list becomes
+    /// the user's truth from the first edit on — see ColorFormatCatalog.EffectiveFormats), and
+    /// re-render the rows AND the popover (indices/enabled states baked into the closures above
+    /// go stale after any mutation, so the popover is always rebuilt wholesale).</summary>
+    private void MutateFormats(Action mutation)
+    {
+        mutation();
+        _settings = _settings with { ColorFormats = new List<ColorFormatEntry>(_formats) };
+        TrySaveSettings();
+        RefreshFormatRowsPanel();
+        BuildFormatsPopup();
     }
 
     private void TrySaveSettings()
@@ -357,4 +469,144 @@ public partial class ColorPickerWindow : Window
     [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
     [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
     private static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
+
+    /// <summary>"Add/edit custom color format" dialog (PowerToys parity), built in code to match
+    /// the picker's dark chrome: name + template inputs, a live preview against the picker's
+    /// current color, and a condensed parameter reference. Owned + modal so it always sits above
+    /// the (topmost) picker window.</summary>
+    private sealed class CustomFormatDialog : Window
+    {
+        public string FormatName => _nameBox.Text.Trim();
+        public string FormatTemplate => _formatBox.Text;
+
+        private readonly TextBox _nameBox;
+        private readonly TextBox _formatBox;
+        private readonly TextBlock _preview;
+        private readonly Button _saveButton;
+        private readonly byte _r, _g, _b;
+        private readonly double? _nits;
+
+        public CustomFormatDialog(Window owner, string? name, string? format, byte r, byte g, byte b, double? nits)
+        {
+            _r = r; _g = g; _b = b; _nits = nits;
+
+            Owner = owner;
+            Title = name is null ? "Add custom color format" : "Edit custom color format";
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            SizeToContent = SizeToContent.Height;
+            Width = 360;
+            ResizeMode = ResizeMode.NoResize;
+            ShowInTaskbar = false;
+            WindowStyle = WindowStyle.ToolWindow;
+            Background = new SolidColorBrush(Color.FromRgb(0x1B, 0x1B, 0x1D));
+            Foreground = Brushes.White;
+            FontSize = 12;
+            UseLayoutRounding = true;
+
+            _nameBox = DarkTextBox(name ?? string.Empty);
+            _formatBox = DarkTextBox(format ?? "new Color (R = %Re, G = %Gr, B = %Bl)");
+            _formatBox.FontFamily = new FontFamily("Consolas");
+            _preview = new TextBlock
+            {
+                FontFamily = new FontFamily("Consolas"),
+                Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x09)),
+                Margin = new Thickness(0, 4, 0, 8),
+                TextWrapping = TextWrapping.Wrap,
+            };
+
+            var reference = new TextBlock
+            {
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 10.5,
+                Foreground = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+                Text =
+                    "%Re %Gr %Bl %Al  red/green/blue/alpha\n" +
+                    "%Cy %Ma %Ye %Bk  cmyk        %Hu hue  %Hn natural hue\n" +
+                    "%Sl %Sb %Si      saturation (hsl/hsb/hsi)\n" +
+                    "%Ll %Va %Br %In  lightness/value/brightness/intensity\n" +
+                    "%Wh %Bn          whiteness/blackness    %Na color name\n" +
+                    "%Lc %Ca %Cb      CIELab      %Xv %Yv %Zv  CIEXYZ\n" +
+                    "%Lo %Oa %Ob      oklab       %Oc %Oh      oklch\n" +
+                    "%Dv %Dr          decimal (BGR/RGB)      %Nt nits\n" +
+                    "suffixes on %Re/%Gr/%Bl/%Al: b byte  h/H hex1  x/X hex2\n" +
+                    "f/F float (with/without leading 0);  i on CIELab values\n" +
+                    "example: %ReX = red as hex uppercase two digits",
+            };
+
+            _saveButton = new Button
+            {
+                Content = "Save",
+                Padding = new Thickness(18, 4, 18, 4),
+                Background = new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x09)),
+                Foreground = new SolidColorBrush(Color.FromRgb(0x14, 0x14, 0x16)),
+                FontWeight = FontWeights.SemiBold,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand,
+                IsDefault = true,
+            };
+            _saveButton.Click += (_, _) => DialogResult = true;
+
+            var cancelButton = new Button
+            {
+                Content = "Cancel",
+                Margin = new Thickness(8, 0, 0, 0),
+                Padding = new Thickness(14, 4, 14, 4),
+                Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2E)),
+                Foreground = Brushes.White,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand,
+                IsCancel = true,
+            };
+
+            var buttons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+            };
+            buttons.Children.Add(_saveButton);
+            buttons.Children.Add(cancelButton);
+
+            var root = new StackPanel { Margin = new Thickness(12) };
+            root.Children.Add(Label("Name"));
+            root.Children.Add(_nameBox);
+            root.Children.Add(Label("Format"));
+            root.Children.Add(_formatBox);
+            root.Children.Add(_preview);
+            root.Children.Add(reference);
+            root.Children.Add(buttons);
+            Content = root;
+
+            _nameBox.TextChanged += (_, _) => RefreshState();
+            _formatBox.TextChanged += (_, _) => RefreshState();
+            RefreshState();
+        }
+
+        private void RefreshState()
+        {
+            _preview.Text = ColorFormatTemplate.Format(_formatBox.Text, _r, _g, _b, _nits);
+            _saveButton.IsEnabled = FormatName.Length > 0 && _formatBox.Text.Length > 0;
+        }
+
+        private static TextBlock Label(string text) => new()
+        {
+            Text = text,
+            FontSize = 10.5,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)),
+            Margin = new Thickness(0, 0, 0, 2),
+        };
+
+        private static TextBox DarkTextBox(string text) => new()
+        {
+            Text = text,
+            Margin = new Thickness(0, 0, 0, 8),
+            Padding = new Thickness(5, 3, 5, 3),
+            Background = new SolidColorBrush(Color.FromRgb(0x24, 0x24, 0x28)),
+            Foreground = Brushes.White,
+            CaretBrush = Brushes.White,
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x3F, 0x3F, 0x46)),
+            BorderThickness = new Thickness(1),
+        };
+    }
 }

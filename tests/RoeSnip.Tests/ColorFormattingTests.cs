@@ -88,4 +88,43 @@ public class ColorFormattingTests
         Assert.InRange(g2, Math.Max(0, g - 1), Math.Min(255, g + 1));
         Assert.InRange(b2, Math.Max(0, b - 1), Math.Min(255, b + 1));
     }
+
+    [Fact]
+    public void Hsv_MatchesSpecExampleColor()
+    {
+        // Same #0d1117 worked example as the other formats: hue matches HSL's 216, V = max = 23/255.
+        Assert.Equal("hsv(216, 43%, 9%)", ColorFormatting.Hsv(13, 17, 23));
+    }
+
+    [Fact]
+    public void Hsv_WhiteAndBlack_AreAchromatic()
+    {
+        Assert.Equal("hsv(0, 0%, 100%)", ColorFormatting.Hsv(255, 255, 255));
+        Assert.Equal("hsv(0, 0%, 0%)", ColorFormatting.Hsv(0, 0, 0));
+    }
+
+    [Fact]
+    public void Hsv_PureRed()
+    {
+        Assert.Equal("hsv(0, 100%, 100%)", ColorFormatting.Hsv(255, 0, 0));
+    }
+
+    [Fact]
+    public void Cmyk_MatchesSpecExampleColor()
+    {
+        Assert.Equal("cmyk(43%, 26%, 0%, 91%)", ColorFormatting.Cmyk(13, 17, 23));
+    }
+
+    [Fact]
+    public void Cmyk_PureBlack_IsKOnly()
+    {
+        Assert.Equal("cmyk(0%, 0%, 0%, 100%)", ColorFormatting.Cmyk(0, 0, 0));
+    }
+
+    [Fact]
+    public void Cmyk_PureRedAndWhite()
+    {
+        Assert.Equal("cmyk(0%, 100%, 100%, 0%)", ColorFormatting.Cmyk(255, 0, 0));
+        Assert.Equal("cmyk(0%, 0%, 0%, 0%)", ColorFormatting.Cmyk(255, 255, 255));
+    }
 }

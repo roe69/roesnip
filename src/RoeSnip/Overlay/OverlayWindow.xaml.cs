@@ -287,6 +287,8 @@ public partial class OverlayWindow : Window
         // Last-used loupe zoom (wheel while the magnifier is up — see OnPreviewMouseWheel); the
         // property setter clamps, so a hand-edited settings.json value can't break the render.
         MagnifierControl.SampleRadius = settings.MagnifierSampleRadius;
+        // The loupe's value lines follow the same ColorFormatShow* toggles as the picker window.
+        MagnifierControl.Formats = settings;
     }
 
     /// <summary>Event wiring shared by both constructors — extracted verbatim from the (formerly
