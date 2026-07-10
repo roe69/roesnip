@@ -29,9 +29,33 @@ using FlowDir = System.Windows.FlowDirection;
 /// copy the current hex string to the clipboard as plain text.</summary>
 public sealed class Magnifier : FrameworkElement
 {
-    private const int SampleRadiusPx = 5;       // (2r+1)x(2r+1) block of preview pixels sampled
     private const double SwatchDip = 14.0;      // on-screen size (DIPs) per sampled source pixel
     private const double WidgetMarginDip = 24.0; // offset from the cursor, in DIPs
+
+    /// <summary>Clamp range for <see cref="SampleRadius"/>: 1 => 3x3 (tightest zoom), 10 => 21x21
+    /// (widest loupe that still fits comfortably at SwatchDip). 5 (11x11) is the historical fixed
+    /// size and remains the settings default.</summary>
+    public const int MinSampleRadius = 1;
+    public const int MaxSampleRadius = 10;
+
+    private int _sampleRadius = 5;
+
+    /// <summary>The loupe samples a (2r+1)x(2r+1) block of preview pixels — smaller radius =
+    /// smaller previewed area = more zoomed in. Wheel-adjustable per session (OverlayWindow's
+    /// wheel handler), seeded from RoeSnipSettings.MagnifierSampleRadius.</summary>
+    public int SampleRadius
+    {
+        get => _sampleRadius;
+        set
+        {
+            int clamped = Math.Clamp(value, MinSampleRadius, MaxSampleRadius);
+            if (clamped != _sampleRadius)
+            {
+                _sampleRadius = clamped;
+                InvalidateVisual();
+            }
+        }
+    }
 
     private SdrImage? _preview;
     private CapturedFrame? _frame;
@@ -91,7 +115,7 @@ public sealed class Magnifier : FrameworkElement
             Math.Clamp(cy, 0, frame.Height - 1));
         CurrentHex = string.Create(CultureInfo.InvariantCulture, $"#{r:X2}{g:X2}{b:X2}");
 
-        double loupeSize = SwatchDip * (SampleRadiusPx * 2 + 1);
+        double loupeSize = SwatchDip * (_sampleRadius * 2 + 1);
         double widgetWidth = Math.Max(loupeSize, 150.0);
         double widgetHeight = loupeSize + 78.0; // room for hex/rgb/nits lines below the loupe
 
@@ -110,16 +134,16 @@ public sealed class Magnifier : FrameworkElement
 
         // Pixelated loupe: draw each sampled source pixel as a flat-colored square.
         double loupeLeft = x + (widgetWidth - loupeSize) / 2;
-        for (int dy = -SampleRadiusPx; dy <= SampleRadiusPx; dy++)
+        for (int dy = -_sampleRadius; dy <= _sampleRadius; dy++)
         {
-            for (int dx = -SampleRadiusPx; dx <= SampleRadiusPx; dx++)
+            for (int dx = -_sampleRadius; dx <= _sampleRadius; dx++)
             {
                 int sx = Math.Clamp(cx + dx, 0, preview.Width - 1);
                 int sy = Math.Clamp(cy + dy, 0, preview.Height - 1);
                 var (pr, pg, pb) = ReadPreviewPixel(preview, sx, sy);
                 var brush = new SolidColorBrush(Color.FromRgb(pr, pg, pb));
-                double swatchX = loupeLeft + (dx + SampleRadiusPx) * SwatchDip;
-                double swatchY = y + 6.0 + (dy + SampleRadiusPx) * SwatchDip;
+                double swatchX = loupeLeft + (dx + _sampleRadius) * SwatchDip;
+                double swatchY = y + 6.0 + (dy + _sampleRadius) * SwatchDip;
                 dc.DrawRectangle(brush, null, new Rect(swatchX, swatchY, SwatchDip, SwatchDip));
             }
         }

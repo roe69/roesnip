@@ -283,6 +283,10 @@ public partial class OverlayWindow : Window
         _textFontSize = settings.TextFontSize;
         _textBold = settings.TextBold;
         _textItalic = settings.TextItalic;
+
+        // Last-used loupe zoom (wheel while the magnifier is up — see OnPreviewMouseWheel); the
+        // property setter clamps, so a hand-edited settings.json value can't break the render.
+        MagnifierControl.SampleRadius = settings.MagnifierSampleRadius;
     }
 
     /// <summary>Event wiring shared by both constructors — extracted verbatim from the (formerly
@@ -1954,7 +1958,23 @@ public partial class OverlayWindow : Window
 
         if (_currentTool == AnnotationTool.None)
         {
-            return; // nothing selected (a selected shape was already handled+returned above) — no zoom
+            // Select tool, nothing selected: if the magnifier loupe is up (dimmed screen, no
+            // selection/drag), the wheel zooms it — up = smaller sampled area = more zoom. The
+            // dialed level persists immediately (same pattern as palette edits) so it is the
+            // default for every later session.
+            if (IsMagnifierActive)
+            {
+                int newRadius = Math.Clamp(
+                    MagnifierControl.SampleRadius - notches, Magnifier.MinSampleRadius, Magnifier.MaxSampleRadius);
+                if (newRadius != MagnifierControl.SampleRadius)
+                {
+                    MagnifierControl.SampleRadius = newRadius;
+                    _liveSettings = _liveSettings with { MagnifierSampleRadius = newRadius };
+                    TrySaveLiveSettings();
+                }
+                e.Handled = true;
+            }
+            return; // otherwise: nothing selected (a selected shape was already handled+returned above)
         }
 
         if (_currentTool == AnnotationTool.Text)
@@ -2189,7 +2209,7 @@ public partial class OverlayWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to save custom color settings: {ex.Message}");
+            Console.Error.WriteLine($"RoeSnip: failed to save live overlay settings: {ex.Message}");
         }
     }
 

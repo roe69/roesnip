@@ -64,6 +64,13 @@ public sealed record RoeSnipSettings
     public bool ColorFormatShowHsl { get; init; } = true;
     public bool ColorFormatShowNits { get; init; } = true;
 
+    /// <summary>Magnifier loupe zoom: the sampled block is (2r+1)x(2r+1) source pixels, so a
+    /// SMALLER radius shows a smaller previewed area (more zoomed in). Adjusted live by scrolling
+    /// the wheel while the loupe is up (Select tool, no selection — see OverlayWindow's wheel
+    /// handler), persisted immediately so the last-used zoom is every later session's default.
+    /// Clamped on use to Overlay/Magnifier.Min/MaxSampleRadius.</summary>
+    public int MagnifierSampleRadius { get; init; } = 5;
+
     /// <summary>Last-used text-annotation style (toolbar's text-style group), applied to new text
     /// annotations and carried across overlay sessions.</summary>
     public string TextFontFamily { get; init; } = "Segoe UI";
