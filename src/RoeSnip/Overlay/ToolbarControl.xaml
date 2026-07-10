@@ -667,7 +667,7 @@
                              the record affordance. The old solid 10px red dot carried far more visual
                              weight than the line-drawn icons around it. -->
                         <Grid IsHitTestVisible="False">
-                            <Ellipse Width="13" Height="13" Stroke="{StaticResource RlTextBrush}" StrokeThickness="1.5"/>
+                            <Ellipse Width="13" Height="13" Stroke="{StaticResource RlTextPrimaryBrush}" StrokeThickness="1.5"/>
                             <Ellipse Width="6" Height="6" Fill="#DC4646"/>
                         </Grid>
                     </Button>
