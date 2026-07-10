@@ -32,11 +32,13 @@ public sealed class Magnifier : FrameworkElement
     private const double LoupeDip = 154.0;       // fixed on-screen loupe size (the historical 11 x 14 DIP footprint)
     private const double WidgetMarginDip = 24.0; // offset from the cursor, in DIPs
 
-    /// <summary>Clamp range for <see cref="SampleRadius"/>: 1 => 3x3 source pixels at ~51 DIPs
-    /// each (tightest zoom), 10 => 21x21 at ~7 DIPs each (widest context). 5 (11x11) is the
-    /// historical fixed sampling and remains the settings default.</summary>
-    public const int MinSampleRadius = 1;
-    public const int MaxSampleRadius = 10;
+    /// <summary>Clamp range for <see cref="SampleRadius"/>: 2 => 5x5 source pixels at ~31 DIPs
+    /// each (tightest zoom — 3x3 was dropped as more zoom than useful), 15 => 31x31 at ~5 DIPs
+    /// each (widest context; also keeps the per-render swatch count sane — the loupe redraws
+    /// every mouse move). 5 (11x11) is the historical fixed sampling and remains the settings
+    /// default.</summary>
+    public const int MinSampleRadius = 2;
+    public const int MaxSampleRadius = 15;
 
     private int _sampleRadius = 5;
 
