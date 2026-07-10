@@ -74,10 +74,10 @@ public class ColorFormatTemplateTests
     }
 
     [Fact]
-    public void Nits_RendersValueOrDash()
+    public void Nits_RendersValueOrNa()
     {
         Assert.Equal("116.4 nits", ColorFormatTemplate.Format("%Nt nits", R, G, B, 116.4));
-        Assert.Equal("— nits", ColorFormatTemplate.Format("%Nt nits", R, G, B, null));
+        Assert.Equal("n/a nits", ColorFormatTemplate.Format("%Nt nits", R, G, B, null));
     }
 
     [Fact]

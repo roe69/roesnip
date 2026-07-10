@@ -496,7 +496,7 @@ internal static class FlashDimmer
                 && !SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
             {
                 Console.Error.WriteLine(
-                    "RoeSnip: SetWindowDisplayAffinity(EXCLUDEFROMCAPTURE) failed on a flash window — " +
+                    "RoeSnip: SetWindowDisplayAffinity(EXCLUDEFROMCAPTURE) failed on a flash window; " +
                     "captures taken while the flash is up will include the dim!");
             }
 

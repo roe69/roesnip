@@ -443,39 +443,6 @@
             </Setter>
         </Style>
 
-        <!-- The "+" custom-color swatch: same round footprint as ColorSwatchStyle but (unlike that
-             style's template) actually presents its child content, since this button needs the "+"
-             glyph rather than a flat color fill. Ghost hover recipe (flat gold tint + gold ring),
-             matching AddCustomColorButtonStyle's sibling toolbar buttons. -->
-        <Style x:Key="AddCustomColorButtonStyle" TargetType="ToggleButton">
-            <Setter Property="Width" Value="22"/>
-            <Setter Property="Height" Value="22"/>
-            <Setter Property="Margin" Value="3,2"/>
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Focusable" Value="False"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="ToggleButton">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="11">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{StaticResource RlGhostHoverBrush}"/>
-                                <Setter Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
         <!-- Font-family dropdown item template: a fixed-size, standard-UI-font label on the left
              (always legible regardless of which family it names) plus a small "AaBb" sample
              rendered in that item's own family on the right — used for both the closed selection
@@ -606,12 +573,12 @@
                 <Path Style="{StaticResource IconStyle}" Data="M1,13 C3,4 6,4 8,9 C10,14 13,13 15,4"/>
             </ToggleButton>
             <ToggleButton x:Name="HighlightToolButton" Style="{StaticResource ToolButtonStyle}"
-                          ToolTip="Highlighter — translucent marker (scroll wheel adjusts width)" Click="OnHighlightToolClick">
+                          ToolTip="Highlighter: translucent marker (scroll wheel adjusts width)" Click="OnHighlightToolClick">
                 <!-- Chisel-tip marker: angled body with a flat tip stroke at the paper line -->
                 <Path Style="{StaticResource IconStyle}" Data="M4,9 L9,4 L12,7 L7,12 Z M7,12 L4,9 M2,14 H7"/>
             </ToggleButton>
             <ToggleButton x:Name="PixelateToolButton" Style="{StaticResource ToolButtonStyle}"
-                          ToolTip="Pixelate — censor a region (scroll wheel adjusts block size)" Click="OnPixelateToolClick">
+                          ToolTip="Pixelate: censor a region (scroll wheel adjusts block size)" Click="OnPixelateToolClick">
                 <!-- Mosaic grid -->
                 <Path Style="{StaticResource IconStyle}" StrokeThickness="1.2" Data="M2,2 H14 V14 H2 Z M6,2 V14 M10,2 V14 M2,6 H14 M2,10 H14"/>
             </ToggleButton>
@@ -629,7 +596,7 @@
             <ComboBox x:Name="SizeComboBox" Style="{StaticResource DarkEditableComboBoxStyle}"
                       Width="74" Margin="2" VerticalAlignment="Center"
                       IsEditable="True" IsTextSearchEnabled="False"
-                      ToolTip="Size — type a value or pick a preset (scroll wheel over the image also resizes)"
+                      ToolTip="Size: type a value or pick a preset (scroll wheel over the image also resizes)"
                       KeyDown="OnSizeComboKeyDown"
                       SelectionChanged="OnSizeComboSelectionChanged"/>
 
@@ -669,16 +636,12 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- BOTTOM-LEFT: the editable palette only (item 3, UX round 5) — every swatch is
-                     built in code from the persisted RoeSnipSettings.PaletteColors list and carries a
-                     right-click Replace/Remove menu; the "+" swatch appends. The old separate
-                     CustomColorPanel row is gone — custom and preset colors are one list now. -->
+                <!-- BOTTOM-LEFT: the fixed-size palette — every swatch is built in code from the
+                     persisted RoeSnipSettings.PaletteColors list and carries a right-click
+                     "Replace..." menu (the only palette edit: the row's slot count never changes,
+                     so there is no add or remove). -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <StackPanel x:Name="ColorSwatchPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
-                    <ToggleButton x:Name="AddCustomColorButton" Style="{StaticResource AddCustomColorButtonStyle}"
-                                  ToolTip="Add color..." Click="OnAddCustomColorClick">
-                        <Path Style="{StaticResource IconStyle}" Width="10" Height="10" Data="M7,1 V13 M1,7 H13"/>
-                    </ToggleButton>
                 </StackPanel>
 
                 <!-- BOTTOM-RIGHT: the session actions, right-aligned so they hug the panel's real
@@ -689,7 +652,7 @@
                     <!-- Record: left-click opens the format menu (unlike Save's right-click-only HDR
                          menu — Record has no single default format to pick for a plain click). -->
                     <Button x:Name="RecordButton" Style="{StaticResource QuietActionButtonStyle}"
-                            ToolTip="Record — MP4 or GIF" Click="OnRecordClick">
+                            ToolTip="Record as MP4 or GIF" Click="OnRecordClick">
                         <Button.ContextMenu>
                             <!-- Placement/PlacementTarget set in the code-behind constructor (a
                                  ContextMenu isn't part of the Button's visual tree, so a XAML-time
@@ -699,11 +662,14 @@
                                 <MenuItem x:Name="RecordGifMenuItem" Header="Record GIF" Style="{StaticResource DarkMenuItemStyle}" Click="OnRecordGifClick"/>
                             </ContextMenu>
                         </Button.ContextMenu>
-                        <!-- Filled red dot — the universal record affordance. Bespoke (not IconStyle,
-                             which sets Stroke not Fill): a flat literal red, not a themed brush — same
-                             "structure over glow" rule as CancelButtonStyle's hover red, used here as a
-                             persistent icon rather than a hover-only state so it reads as "record" at rest. -->
-                        <Ellipse Width="10" Height="10" Fill="#DC4646" IsHitTestVisible="False"/>
+                        <!-- Record icon, restyled to sit with its stroked siblings: the same cream
+                             1.5px outline ring every other icon uses, with a small flat red core as
+                             the record affordance. The old solid 10px red dot carried far more visual
+                             weight than the line-drawn icons around it. -->
+                        <Grid IsHitTestVisible="False">
+                            <Ellipse Width="13" Height="13" Stroke="{StaticResource RlTextBrush}" StrokeThickness="1.5"/>
+                            <Ellipse Width="6" Height="6" Fill="#DC4646"/>
+                        </Grid>
                     </Button>
 
                     <Button x:Name="CopyButton" Style="{StaticResource ActionButtonStyle}"
@@ -718,7 +684,7 @@
                          so left-click Save = PNG exactly as before and the old dedicated Save-HDR button is
                          now a right-click menu item here, raising the same SaveHdr command path unchanged. -->
                     <Button x:Name="SaveButton" Style="{StaticResource SecondaryActionButtonStyle}"
-                            ToolTip="Save (Ctrl+S) — right-click for HDR" Click="OnSaveClick">
+                            ToolTip="Save (Ctrl+S), right-click for HDR" Click="OnSaveClick">
                         <Button.ContextMenu>
                             <ContextMenu Style="{StaticResource DarkContextMenuStyle}">
                                 <MenuItem x:Name="SaveHdrMenuItem" Style="{StaticResource DarkMenuItemStyle}"
@@ -733,7 +699,7 @@
                     </Button>
 
                     <Button x:Name="CancelButton" Style="{StaticResource CancelButtonStyle}"
-                            ToolTip="Cancel — close without capturing" Click="OnCancelClick">
+                            ToolTip="Cancel: close without capturing" Click="OnCancelClick">
                         <Path Style="{StaticResource IconStyle}" Width="11" Height="11" Data="M2,2 L14,14 M14,2 L2,14"/>
                     </Button>
                 </StackPanel>

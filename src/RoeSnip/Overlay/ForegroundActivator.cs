@@ -30,7 +30,7 @@ internal static class ForegroundActivator
         IntPtr hwnd = new WindowInteropHelper(window).Handle;
         if (hwnd == IntPtr.Zero)
         {
-            Console.Error.WriteLine($"RoeSnip: {context} activation skipped — window has no HWND yet.");
+            Console.Error.WriteLine($"RoeSnip: {context} activation skipped, window has no HWND yet.");
             return;
         }
 
@@ -44,7 +44,7 @@ internal static class ForegroundActivator
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: {context} activation — Window.Activate() threw: {ex.Message}");
+            Console.Error.WriteLine($"RoeSnip: {context} activation: Window.Activate() threw: {ex.Message}");
         }
 
         if (TryTier1(hwnd)) { LogResult(context, 1); return; }
@@ -52,7 +52,7 @@ internal static class ForegroundActivator
         if (TryTier3(hwnd)) { LogResult(context, 3); return; }
 
         Console.Error.WriteLine(
-            $"RoeSnip: {context} activation — all tiers failed; foreground remains 0x{OverlayInputInterop.GetForegroundWindow().ToInt64():X}.");
+            $"RoeSnip: {context} activation: all tiers failed; foreground remains 0x{OverlayInputInterop.GetForegroundWindow().ToInt64():X}.");
     }
 
     private static bool IsForeground(IntPtr hwnd) => OverlayInputInterop.GetForegroundWindow() == hwnd;

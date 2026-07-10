@@ -155,7 +155,7 @@ internal sealed class RecordingChrome : Window
             && !NativeMethods.SetWindowDisplayAffinity(hwnd, NativeMethods.WDA_EXCLUDEFROMCAPTURE))
         {
             Console.Error.WriteLine(
-                "RoeSnip: SetWindowDisplayAffinity(EXCLUDEFROMCAPTURE) failed on the recording chrome — it will appear IN the recording!");
+                "RoeSnip: SetWindowDisplayAffinity(EXCLUDEFROMCAPTURE) failed on the recording chrome; it will appear IN the recording!");
         }
 
         PositionNearSelection(hwnd);

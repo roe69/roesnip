@@ -16,7 +16,7 @@ namespace RoeSnip.Overlay;
 /// (all 0-100), %Lc lightness (CIE), %Ca/%Cb chromaticity A/B (CIELAB), %Lo lightness
 /// (Oklab/Oklch), %Oa/%Ob Oklab a/b, %Oc chroma (Oklch), %Oh hue (Oklch), %Xv/%Yv/%Zv CIEXYZ,
 /// %Dv decimal (BGR), %Dr decimal (RGB), %Na nearest CSS color name, %Nt nits (needs a live HDR
-/// sample; renders an em dash when unavailable).
+/// sample; renders "n/a" when unavailable).
 ///
 /// Format suffixes — %Re/%Gr/%Bl/%Al accept one of: b byte (default), h/H hex one digit
 /// (low/uppercase), x/X hex two digits, f float 0-1 with leading zero, F float without leading
@@ -26,7 +26,7 @@ public static class ColorFormatTemplate
 {
     /// <summary>Expands <paramref name="template"/> for the given sRGB pixel.
     /// <paramref name="nits"/> is the live HDR luminance sample if one exists (magnifier / a
-    /// fresh pick); null (a shade, a reloaded recent color) renders %Nt as an em dash.</summary>
+    /// fresh pick); null (a shade, a reloaded recent color) renders %Nt as "n/a".</summary>
     public static string Format(string template, byte r, byte g, byte b, double? nits)
     {
         var sb = new StringBuilder(template.Length + 16);
@@ -108,7 +108,7 @@ public static class ColorFormatTemplate
 
             // ---- name / nits ----
             case "Na": expanded = ColorNames.Nearest(r, g, b); return true;
-            case "Nt": expanded = nits is { } n ? n.ToString("0.0", CultureInfo.InvariantCulture) : "—"; return true;
+            case "Nt": expanded = nits is { } n ? n.ToString("0.0", CultureInfo.InvariantCulture) : "n/a"; return true;
 
             default:
                 expanded = string.Empty;

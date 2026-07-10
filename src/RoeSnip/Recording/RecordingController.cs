@@ -205,7 +205,7 @@ internal sealed class RecordingSession
 
     private void OnRecorderFaulted(Exception ex)
     {
-        Console.Error.WriteLine($"RoeSnip: recording capture failed mid-session (non-fatal — stopping with what was captured): {ex.Message}");
+        Console.Error.WriteLine($"RoeSnip: recording capture failed mid-session (non-fatal, stopping with what was captured): {ex.Message}");
         RequestStop(save: true);
     }
 
@@ -299,11 +299,11 @@ internal sealed class RecordingSession
         }
         else if (joined && cancelled)
         {
-            _notifier?.ShowError("Recording discarded — save was cancelled.");
+            _notifier?.ShowError("Recording discarded: the save was cancelled.");
         }
         else if (!joined)
         {
-            _notifier?.ShowError("Recording could not be saved — the encoder did not stop in time.");
+            _notifier?.ShowError("Recording could not be saved: the encoder did not stop in time.");
         }
 
         // The recorder's own device/item are never shared with the encoder thread (which only reads

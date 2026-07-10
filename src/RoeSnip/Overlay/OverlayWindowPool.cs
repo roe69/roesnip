@@ -84,7 +84,7 @@ internal static class OverlayWindowPool
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine(
-                        $"RoeSnip: overlay pool build failed for monitor {monitor.DeviceName} (non-fatal — " +
+                        $"RoeSnip: overlay pool build failed for monitor {monitor.DeviceName} (non-fatal, " +
                         $"that monitor falls back to on-demand construction): {ex.Message}");
                 }
             }

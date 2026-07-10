@@ -73,9 +73,29 @@ public partial class ColorPickerWindow : Window
             if (!SetWindowDisplayAffinity(hwnd, 0x00000011 /* WDA_EXCLUDEFROMCAPTURE */))
             {
                 Console.Error.WriteLine(
-                    "RoeSnip: SetWindowDisplayAffinity failed on the color picker window — " +
+                    "RoeSnip: SetWindowDisplayAffinity failed on the color picker window; " +
                     "pick-mode re-captures will include this window in the frozen frame.");
             }
+        };
+
+        // Esc closes this window (user-reported: it previously fell through and could end up
+        // cancelling an overlay session instead). PreviewKeyDown so it wins over any focused
+        // child; the formats popup gets to close itself first if it is open.
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != System.Windows.Input.Key.Escape)
+            {
+                return;
+            }
+            if (FormatsPopup.IsOpen)
+            {
+                FormatsPopup.IsOpen = false;
+            }
+            else
+            {
+                Close();
+            }
+            e.Handled = true;
         };
 
         BuildFormatsPopup();

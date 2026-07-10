@@ -102,15 +102,11 @@ public partial class ToolbarControl : UserControl
     public event Action<bool>? ItalicToggled;
     public event Action<string>? FontFamilySelected;
 
-    /// <summary>The "+" swatch — OverlayWindow owns the actual System.Windows.Forms.ColorDialog
-    /// (it needs the window's HWND as dialog owner), appends the pick to the persisted palette.</summary>
-    public event Action? CustomColorRequested;
-
-    /// <summary>Right-click palette editing (item 3, UX round 5): the argument is the swatch's
-    /// index into the palette list last passed to <see cref="SetPaletteColors"/>. OverlayWindow
-    /// owns the mutation + persistence (and the Replace dialog) and calls SetPaletteColors again.</summary>
+    /// <summary>Right-click palette editing: the argument is the swatch's index into the palette
+    /// list last passed to <see cref="SetPaletteColors"/>. OverlayWindow owns the mutation +
+    /// persistence (and the Replace color dialog) and calls SetPaletteColors again. Replace is the
+    /// only palette edit: the row is a fixed set of recolorable slots, never grown or shrunk.</summary>
     public event Action<int>? PaletteReplaceRequested;
-    public event Action<int>? PaletteRemoveRequested;
 
     public ToolbarControl()
     {
@@ -185,7 +181,6 @@ public partial class ToolbarControl : UserControl
         _selectedColorSwatch = null;
 
         string selectedHex = ColorFormatting.HexWithHash(selectedColor.R, selectedColor.G, selectedColor.B);
-        bool removeEnabled = hexColors.Count > 1;
 
         for (int i = 0; i < hexColors.Count; i++)
         {
@@ -210,7 +205,7 @@ public partial class ToolbarControl : UserControl
                 Background = new SolidColorBrush(color),
                 Tag = color,
                 ToolTip = SwatchPalette.NameFor(hex),
-                ContextMenu = BuildSwatchContextMenu(i, removeEnabled),
+                ContextMenu = BuildSwatchContextMenu(i),
             };
             swatch.Click += OnColorSwatchClick;
             ColorSwatchPanel.Children.Add(swatch);
@@ -231,10 +226,10 @@ public partial class ToolbarControl : UserControl
         }
     }
 
-    /// <summary>Per-swatch right-click menu: Replace... / Remove (item 3, UX round 5). Remove is
-    /// disabled whenever it would leave the palette empty. Index is captured per swatch — the whole
-    /// row is rebuilt on every palette change, so indices can never go stale.</summary>
-    private ContextMenu BuildSwatchContextMenu(int paletteIndex, bool removeEnabled)
+    /// <summary>Per-swatch right-click menu: Replace... only (a swatch is a recolorable slot, not
+    /// a removable row). Index is captured per swatch — the whole row is rebuilt on every palette
+    /// change, so indices can never go stale.</summary>
+    private ContextMenu BuildSwatchContextMenu(int paletteIndex)
     {
         var replaceItem = new MenuItem
         {
@@ -243,18 +238,8 @@ public partial class ToolbarControl : UserControl
         };
         replaceItem.Click += (_, _) => PaletteReplaceRequested?.Invoke(paletteIndex);
 
-        var removeItem = new MenuItem
-        {
-            Header = "Remove",
-            Style = (Style)Resources["DarkMenuItemStyle"],
-            IsEnabled = removeEnabled,
-            ToolTip = removeEnabled ? null : "The palette must keep at least one color",
-        };
-        removeItem.Click += (_, _) => PaletteRemoveRequested?.Invoke(paletteIndex);
-
         var menu = new ContextMenu { Style = (Style)Resources["DarkContextMenuStyle"] };
         menu.Items.Add(replaceItem);
-        menu.Items.Add(removeItem);
         return menu;
     }
 
@@ -273,13 +258,6 @@ public partial class ToolbarControl : UserControl
             swatch.IsChecked = ReferenceEquals(swatch, clicked);
         }
         _selectedColorSwatch = clicked;
-    }
-
-    private void OnAddCustomColorClick(object sender, RoutedEventArgs e)
-    {
-        // This is a plain trigger button, not a real toggle state — it never stays "checked".
-        AddCustomColorButton.IsChecked = false;
-        CustomColorRequested?.Invoke();
     }
 
     /// <summary>Re-checks the default Select tool without raising ToolSelected — called by the

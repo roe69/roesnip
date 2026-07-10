@@ -347,7 +347,7 @@ public static class AppComposition
                 else
                 {
                     anyWriteFailed = true;
-                    Console.Error.WriteLine("RoeSnip: HDR export unavailable — App package not present in this build.");
+                    Console.Error.WriteLine("RoeSnip: HDR export unavailable, the App package is not present in this build.");
                 }
             }
 
@@ -508,7 +508,7 @@ public static class AppComposition
                     // for a Record command.
                     if (StartRecording is null)
                     {
-                        notifier?.ShowError("Recording unavailable — Recording package not present in this build.");
+                        notifier?.ShowError("Recording unavailable: the Recording package is not present in this build.");
                     }
                     else
                     {
@@ -544,7 +544,7 @@ public static class AppComposition
                     {
                         // Only surface this when the user explicitly asked for it; a silent auto-save
                         // setting shouldn't nag on every capture in a WP-A-only build.
-                        notifier?.ShowError("HDR export unavailable — App package not present in this build.");
+                        notifier?.ShowError("HDR export unavailable: the App package is not present in this build.");
                     }
                 }
 

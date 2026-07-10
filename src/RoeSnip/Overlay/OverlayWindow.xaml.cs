@@ -1448,9 +1448,7 @@ public partial class OverlayWindow : Window
 
             // Editable palette (item 3, UX round 5): "+" appends via ColorDialog; each swatch's
             // right-click menu edits in place. All mutations persist immediately via SettingsStore.
-            _toolbar.CustomColorRequested += OnCustomColorRequested;
             _toolbar.PaletteReplaceRequested += OnPaletteReplaceRequested;
-            _toolbar.PaletteRemoveRequested += OnPaletteRemoveRequested;
 
             OverlayCanvas.Children.Add(_toolbar);
         }
@@ -2140,23 +2138,8 @@ public partial class OverlayWindow : Window
         }
     }
 
-    /// <summary>The toolbar's "+" swatch: the chosen color becomes the active draw color and is
-    /// appended to the persisted palette (capped at SwatchPalette.MaxColors, oldest evicted).</summary>
-    private void OnCustomColorRequested()
-    {
-        if (!TryPickColorFromDialog(out var picked))
-        {
-            return;
-        }
-
-        _currentColor = picked;
-        UpdateToolCursor();
-        string hex = ColorFormatting.HexWithHash(picked.R, picked.G, picked.B);
-        UpdatePalette(SwatchPalette.Append(CurrentEffectivePalette(), hex));
-    }
-
-    /// <summary>Right-click "Replace...": same ColorDialog as "+", swaps that palette entry in
-    /// place. If the replaced swatch was the active color, the replacement becomes active.</summary>
+    /// <summary>Right-click "Replace...": a ColorDialog pick swaps that palette entry in place.
+    /// If the replaced swatch was the active color, the replacement becomes active.</summary>
     private void OnPaletteReplaceRequested(int index)
     {
         var palette = CurrentEffectivePalette();
@@ -2176,31 +2159,6 @@ public partial class OverlayWindow : Window
 
         string hex = ColorFormatting.HexWithHash(picked.R, picked.G, picked.B);
         UpdatePalette(SwatchPalette.ReplaceAt(palette, index, hex));
-    }
-
-    /// <summary>Right-click "Remove": deletes the palette entry (the menu item is disabled at one
-    /// remaining color; SwatchPalette.RemoveAt refuses regardless as a second net). If the removed
-    /// swatch was the active color, the first remaining swatch becomes active.</summary>
-    private void OnPaletteRemoveRequested(int index)
-    {
-        var palette = CurrentEffectivePalette();
-        if (index < 0 || index >= palette.Count || palette.Count <= 1)
-        {
-            return;
-        }
-
-        bool wasActive = string.Equals(
-            palette[index], ColorFormatting.HexWithHash(_currentColor.R, _currentColor.G, _currentColor.B),
-            StringComparison.OrdinalIgnoreCase);
-
-        var updated = SwatchPalette.RemoveAt(palette, index);
-        if (wasActive && updated.Count > 0 && TryParseHex(updated[0]) is { } first)
-        {
-            _currentColor = first;
-            UpdateToolCursor();
-        }
-
-        UpdatePalette(updated);
     }
 
     private void TrySaveLiveSettings()

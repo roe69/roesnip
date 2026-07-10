@@ -5,9 +5,9 @@ using Xunit;
 
 namespace RoeSnip.Tests;
 
-/// <summary>The pure list operations behind the editable swatch palette (UX round 5, item 3):
-/// migration from the legacy defaults+CustomColors layout, append (the "+" swatch), and the
-/// right-click Replace/Remove edits.</summary>
+/// <summary>The pure list operations behind the toolbar's swatch palette: migration from the
+/// legacy defaults+CustomColors layout, and the right-click Replace edit (the only mutation the
+/// palette supports; the slot count is fixed).</summary>
 public class SwatchPaletteTests
 {
     [Fact]
@@ -58,29 +58,10 @@ public class SwatchPaletteTests
     }
 
     [Fact]
-    public void Append_AddsToEnd()
+    public void DefaultColors_TenSlots_NoGray()
     {
-        var result = SwatchPalette.Append(new List<string> { "#111111" }, "#222222");
-        Assert.Equal(new[] { "#111111", "#222222" }, result);
-    }
-
-    [Fact]
-    public void Append_CaseInsensitiveDuplicate_LeavesPaletteUnchanged()
-    {
-        var palette = new List<string> { "#AABBCC", "#112233" };
-        var result = SwatchPalette.Append(palette, "#aabbcc");
-        Assert.Equal(palette, result);
-    }
-
-    [Fact]
-    public void Append_AtCap_EvictsOldestFrontEntry()
-    {
-        var palette = Enumerable.Range(0, SwatchPalette.MaxColors).Select(i => $"#0000{i:00}").ToList();
-        var result = SwatchPalette.Append(palette, "#FFFFFF");
-
-        Assert.Equal(SwatchPalette.MaxColors, result.Count);
-        Assert.DoesNotContain(palette[0], result);
-        Assert.Equal("#FFFFFF", result[^1]);
+        Assert.Equal(10, SwatchPalette.DefaultColors.Count);
+        Assert.DoesNotContain("#9E9E9E", SwatchPalette.DefaultColors);
     }
 
     [Fact]
@@ -101,31 +82,6 @@ public class SwatchPaletteTests
     }
 
     [Fact]
-    public void RemoveAt_DeletesEntry()
-    {
-        var result = SwatchPalette.RemoveAt(new List<string> { "#111111", "#222222" }, 0);
-        Assert.Equal(new[] { "#222222" }, result);
-    }
-
-    [Fact]
-    public void RemoveAt_RefusesToEmptyThePalette()
-    {
-        var palette = new List<string> { "#111111" };
-        var result = SwatchPalette.RemoveAt(palette, 0);
-        Assert.Equal(palette, result);
-    }
-
-    [Theory]
-    [InlineData(-1)]
-    [InlineData(2)]
-    public void RemoveAt_OutOfRange_ReturnsUnchanged(int index)
-    {
-        var palette = new List<string> { "#111111", "#222222" };
-        var result = SwatchPalette.RemoveAt(palette, index);
-        Assert.Equal(palette, result);
-    }
-
-    [Fact]
     public void NameFor_KnowsBuiltInDefaults_FallsBackToHex()
     {
         Assert.Equal("Red", SwatchPalette.NameFor("#E53935"));
@@ -137,9 +93,7 @@ public class SwatchPaletteTests
     public void Mutations_NeverAliasTheInputList()
     {
         var palette = new List<string> { "#111111", "#222222" };
-        Assert.NotSame(palette, SwatchPalette.Append(palette, "#222222"));
         Assert.NotSame(palette, SwatchPalette.ReplaceAt(palette, 9, "#333333"));
-        Assert.NotSame(palette, SwatchPalette.RemoveAt(palette, 9));
         Assert.NotSame(palette, SwatchPalette.EffectivePalette(palette, new List<string>()));
     }
 }

@@ -345,7 +345,7 @@ public sealed class TrayApp : ITrayNotifier
         };
         _notifyIcon.BalloonTipClicked += _activeBalloonClickHandler;
         _notifyIcon.BalloonTipTitle = "RoeSnip";
-        _notifyIcon.BalloonTipText = $"Saved {Path.GetFileName(filePath)} — click to open folder";
+        _notifyIcon.BalloonTipText = $"Saved {Path.GetFileName(filePath)}. Click to open the folder.";
         _notifyIcon.ShowBalloonTip(4000);
     }
 

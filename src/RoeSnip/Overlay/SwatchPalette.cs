@@ -11,18 +11,18 @@ namespace RoeSnip.Overlay;
 /// unit-testable in isolation, matching BoundedColorList's convention.</summary>
 public static class SwatchPalette
 {
-    /// <summary>Display cap: the palette row never grows past this many swatches; appending to a
-    /// full palette evicts the front-most (oldest) entry (see <see cref="Append"/>). 13 = the
-    /// 11-swatch default seed plus room for two legacy CustomColors migrants.</summary>
+    /// <summary>Migration cap: a legacy seed (defaults plus old CustomColors migrants) never
+    /// exceeds this many swatches. The palette has no append path anymore (swatches are fixed
+    /// slots, editable only via right-click Replace), so this only bounds the one-time seed.</summary>
     public const int MaxColors = 13;
 
-    /// <summary>The built-in seed palette. Eleven swatches (was six): the toolbar's bottom row has
-    /// the width for it (palette left, actions right, a star column of slack between), so the seed
-    /// covers the practical annotation hues — spectrum order, then the three neutrals last.</summary>
+    /// <summary>The built-in seed palette: the practical annotation hues in spectrum order, then
+    /// the two neutrals last. The toolbar's bottom row is a fixed set of these slots; each is
+    /// recolorable via the right-click Replace menu but the count never changes.</summary>
     public static readonly IReadOnlyList<string> DefaultColors = new[]
     {
         "#E53935", "#FB8C00", "#FFB300", "#43A047", "#00ACC1",
-        "#1E88E5", "#8E24AA", "#D81B60", "#FFFFFF", "#9E9E9E", "#212121",
+        "#1E88E5", "#8E24AA", "#D81B60", "#FFFFFF", "#212121",
     };
 
     private static readonly Dictionary<string, string> DefaultNames = new(StringComparer.OrdinalIgnoreCase)
@@ -36,7 +36,6 @@ public static class SwatchPalette
         ["#8E24AA"] = "Purple",
         ["#D81B60"] = "Pink",
         ["#FFFFFF"] = "White",
-        ["#9E9E9E"] = "Gray",
         ["#212121"] = "Black",
     };
 
@@ -74,25 +73,6 @@ public static class SwatchPalette
         return result;
     }
 
-    /// <summary>The "+" swatch: appends to the end of the palette. A case-insensitive duplicate
-    /// leaves the list unchanged (the UI just selects the existing swatch); at <see cref="MaxColors"/>
-    /// the front-most (oldest) entry is evicted to make room.</summary>
-    public static List<string> Append(IReadOnlyList<string> palette, string hex)
-    {
-        if (Contains(palette, hex))
-        {
-            return palette.ToList();
-        }
-
-        var result = palette.ToList();
-        while (result.Count >= MaxColors)
-        {
-            result.RemoveAt(0);
-        }
-        result.Add(hex);
-        return result;
-    }
-
     /// <summary>Right-click "Replace...": swaps the entry at <paramref name="index"/> in place.
     /// Out-of-range indices return the list unchanged.</summary>
     public static List<string> ReplaceAt(IReadOnlyList<string> palette, int index, string hex)
@@ -101,19 +81,6 @@ public static class SwatchPalette
         if (index >= 0 && index < result.Count)
         {
             result[index] = hex;
-        }
-        return result;
-    }
-
-    /// <summary>Right-click "Remove": deletes the entry at <paramref name="index"/> — refused
-    /// (list returned unchanged) when it would leave the palette empty, matching the UI's disabled
-    /// Remove item at count 1. Out-of-range indices also return the list unchanged.</summary>
-    public static List<string> RemoveAt(IReadOnlyList<string> palette, int index)
-    {
-        var result = palette.ToList();
-        if (result.Count > 1 && index >= 0 && index < result.Count)
-        {
-            result.RemoveAt(index);
         }
         return result;
     }

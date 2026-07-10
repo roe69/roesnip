@@ -44,7 +44,7 @@ public static class JxrWriter
         {
             throw new InvalidOperationException(
                 $"WIC JXR encoder negotiated an unexpected pixel format ({pixelFormat}) instead of " +
-                "128bppRGBAFloat — HDR headroom would be lost.");
+                "128bppRGBAFloat; HDR headroom would be lost.");
         }
 
         frameEncode.WritePixels((uint)height, stride, floatPixels);
