@@ -633,6 +633,11 @@ internal static class CaptureGate
 
     public static bool TryEnter() => Interlocked.CompareExchange(ref s_busy, 1, 0) == 0;
     public static void Exit() => Interlocked.Exchange(ref s_busy, 0);
+
+    /// <summary>Peek for IdleMemoryTrimmer's am-I-actually-idle check — never used for entry
+    /// decisions (that's TryEnter's compare-exchange), so a stale read is harmless: the trimmer
+    /// skipping or running against a just-changed gate is safe either way.</summary>
+    public static bool IsBusy => Volatile.Read(ref s_busy) != 0;
 }
 
 public static class Program

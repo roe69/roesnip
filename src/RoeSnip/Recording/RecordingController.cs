@@ -316,6 +316,12 @@ internal sealed class RecordingSession
 
         RoeSnip.CaptureGate.Exit(); // exactly once, last — see AppComposition.StartRecording's doc comment
         RecordingController.OnSessionEnded(this);
+
+        // A recording is the app's biggest allocation burst (GifEncoder buffers every frame in
+        // memory until SaveTo — its own doc comment cites ~1-1.5 GB peak for a 60 s GIF). Without
+        // an explicit trim that peak stays committed for the rest of the process's life; this is
+        // the recording-path counterpart of TrayApp.ObserveCaptureTask's post-snip schedule.
+        RoeSnip.IdleMemoryTrimmer.Schedule(Dispatcher.CurrentDispatcher);
     }
 
     /// <summary>UI thread (called from <see cref="Stop"/>). Test hook: when

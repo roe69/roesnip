@@ -29,6 +29,12 @@
     <TieredCompilation>false</TieredCompilation>
   </PropertyGroup>
 
+  <!-- Idle-memory note (2026-07): footprint is reclaimed by IdleMemoryTrimmer's explicit post-burst
+       Aggressive collect, NOT by a global System.GC.ConserveMemory knob — that setting is
+       process-wide and un-scopeable, so it would also bias the automatic collections firing inside
+       the timed capture burst (the 51-60 ms first-overlay-visible budget). Reviewed and rejected. -->
+
+
   <ItemGroup>
     <!-- Pinned 2026-07: verified on nuget.org. WIC bindings live in Vortice.Direct2D1, NOT a
          standalone "Vortice.WIC" package — see Plan-time flags. -->

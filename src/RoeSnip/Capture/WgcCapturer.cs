@@ -202,6 +202,45 @@ public sealed class WgcCapturer : IScreenCapturer
         }
     }
 
+    /// <summary>Idle-memory hook (IdleMemoryTrimmer): asks the driver to release the internal
+    /// allocations it has cached against each permanently-warm per-monitor device —
+    /// IDXGIDevice3::Trim, the API Windows documents for exactly this "app went idle, give the
+    /// driver scratch memory back, keep the device" situation (measured here: the driver retains
+    /// on the order of 150-200 MB of process-private allocations after capture sessions). The
+    /// device object itself stays cached and warm, so the r5-latency pre-provisioning design is
+    /// untouched; the next capture after a trim just lets the driver re-grow its scratch buffers,
+    /// a cost that lands on the same first-capture-after-idle path that already pays the GPU wake.
+    /// Never blocks: a slot whose Gate is held (capture/keepalive in flight) is skipped — the app
+    /// isn't idle for that monitor anyway, and the next trim catches it.</summary>
+    public static void TrimCachedDeviceMemory()
+    {
+        foreach (var slot in s_slots.Values)
+        {
+            if (!Monitor.TryEnter(slot.Gate))
+            {
+                continue;
+            }
+            try
+            {
+                var device = slot.Resources?.D3dDevice;
+                if (device is null)
+                {
+                    continue;
+                }
+                using var dxgiDevice = device.QueryInterfaceOrNull<IDXGIDevice3>();
+                dxgiDevice?.Trim();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: DXGI device trim failed (non-fatal): {ex.Message}");
+            }
+            finally
+            {
+                Monitor.Exit(slot.Gate);
+            }
+        }
+    }
+
     /// <summary>Background WGC device-health keepalive (r5-latency round 2, D5). A driver
     /// timeout/reset (TDR) leaves a cached ID3D11Device object alive as a .NET reference but
     /// internally dead; this used to be discovered synchronously on the capture hot path (the

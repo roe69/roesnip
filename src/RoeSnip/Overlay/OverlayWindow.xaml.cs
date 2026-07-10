@@ -514,6 +514,31 @@ public partial class OverlayWindow : Window
         // idempotent field-null, so there is no double-dispose hazard either way.
         _ownedPlaceholderFrame?.Dispose();
         _ownedPlaceholderFrame = null;
+
+        // Deterministic release of the session's big pixel buffers (idle-memory audit, 2026-07):
+        // per monitor this window references the ~14.75 MB SdrImage preview AND the ~14.75 MB
+        // frozen BitmapSource copy WPF made of it (BitmapSource.Create copies, it does not wrap —
+        // see SdrImage.ToBitmapSource), and the magnifier may still reference both the preview and
+        // the ~28 MB FP16 frame. A closed WPF window can stay reachable well past Close() (pending
+        // dispatcher work, input state), so drop every heavy reference here instead of riding the
+        // window graph's own collection. The frame's pixel buffer itself is disposed by the flow
+        // that owns it (Program.cs / pick-mode finally) — nulling _frame here just decouples this
+        // window from that object graph. Nothing reads Frame/Monitor after OnClosed (verified: the
+        // controller reads them strictly before CloseOverlay; the pool only touches parked, never
+        // closed, windows), so the null!-suppressions cannot surface as NREs.
+        MagnifierControl.Hide();
+        PreviewImage.Source = null;
+        Annotations.PreviewSource = null;
+        Background = null;
+        _frame = null!;
+        _preview = null!;
+        _toolbar = null;
+        _activeTextEditor = null;
+        _sizeIndicator = null;
+        // A still-running indicator timer is rooted by the Dispatcher and its Tick closure roots
+        // this whole window (with everything above) for up to its 600 ms interval — stop it now.
+        _sizeIndicatorTimer?.Stop();
+        _sizeIndicatorTimer = null;
     }
 
     private void SyncChromeSizes()

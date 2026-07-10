@@ -403,6 +403,9 @@ public static class OverlayController
         finally
         {
             CaptureGate.Exit();
+            // Pick-mode never goes through TrayApp.ObserveCaptureTask, so it schedules its own
+            // post-flow memory trim (same ApplicationIdle deferral — see IdleMemoryTrimmer).
+            IdleMemoryTrimmer.Schedule(System.Windows.Threading.Dispatcher.CurrentDispatcher);
         }
     }
 

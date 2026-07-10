@@ -185,6 +185,12 @@ public sealed class TrayApp : ITrayNotifier
             // Re-enumerate for the NEXT trigger's flash placement off the hot path (monitors may
             // have changed while the overlay was up).
             RefreshMonitorCacheInBackground(prewarmFlash: false);
+
+            // Give the snip's burst allocations (~127 MB of LOH frame/preview buffers on this
+            // class of machine) back to the OS once everything above — including the ContextIdle
+            // pool reprovision — has run. If this flow handed the gate to a recording,
+            // TrimNow's busy-check skips and RecordingSession.Stop schedules the trim instead.
+            RoeSnip.IdleMemoryTrimmer.Schedule(System.Windows.Threading.Dispatcher.CurrentDispatcher);
         }
     }
 
@@ -432,6 +438,16 @@ public sealed class TrayApp : ITrayNotifier
             WarmupCaptureSessions(monitors);
             stopwatch.Stop();
             Console.Error.WriteLine($"RoeSnip: warmup completed in {stopwatch.ElapsedMilliseconds} ms");
+
+            // Warmup itself is a full-scale burst (throwaway full-res captures + tonemaps) — sweep
+            // its garbage so the app starts its resident life at the small footprint, not at the
+            // warmup high-water mark. NOT run inline here (review finding): a blocking collect on
+            // this thread would fire at the exact moment the app becomes hotkey-armed and suspend
+            // every managed thread — including the UI thread's 3-7 ms hotkey-to-dim path — for the
+            // collect's duration. Marshal to the UI thread and take the same ApplicationIdle-
+            // deferred Schedule() route as every other call site instead.
+            _uiThreadMarshal?.BeginInvoke(new Action(() =>
+                RoeSnip.IdleMemoryTrimmer.Schedule(System.Windows.Threading.Dispatcher.CurrentDispatcher)));
         }
         catch (Exception ex)
         {
