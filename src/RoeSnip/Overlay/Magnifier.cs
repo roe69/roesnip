@@ -87,7 +87,8 @@ public sealed class Magnifier : FrameworkElement
             if (!ReferenceEquals(_activeFormatsSource, Formats))
             {
                 _activeFormatsSource = Formats;
-                _activeFormats = ColorFormatCatalog.EffectiveFormats(Formats).FindAll(e => e.Enabled);
+                _activeFormats = ColorFormatCatalog.EffectiveFormats(Formats)
+                    .FindAll(e => e.Enabled && e.InLoupe);
             }
             return _activeFormats;
         }
@@ -143,33 +144,25 @@ public sealed class Magnifier : FrameworkElement
             Math.Clamp(cy, 0, frame.Height - 1));
         CurrentHex = string.Create(CultureInfo.InvariantCulture, $"#{r:X2}{g:X2}{b:X2}");
 
-        // Value lines below the pixel grid — the same ordered, user-managed format list the
-        // ColorPickerWindow shows (see ActiveFormats), each expanded by ColorFormatTemplate. The
-        // first line leads slightly larger, the rest are quiet secondary lines, and any
-        // nits-bearing format (the killer HDR feature) stays the largest and boldest, amber when
-        // the pixel is brighter than a typical SDR white.
+        // Value lines below the pixel grid — the loupe-enabled subset of the same ordered,
+        // user-managed format list the ColorPickerWindow shows (see ActiveFormats), each expanded
+        // by ColorFormatTemplate. ONE consistent style for every line (same face, size, and
+        // color); the single deliberate exception is a STATE signal, not a styling one: a
+        // nits-bearing line turns amber when the pixel is brighter than a typical SDR white.
         var mono = new FontFamily("Consolas");
-        var semiFace = new Typeface(mono, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
-        var bodyFace = new Typeface(mono, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
-        var boldFace = new Typeface(mono, FontStyles.Normal, FontWeights.Bold, FontStretches.Normal);
+        var lineFace = new Typeface(mono, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
+        const double LineFontSize = 12.0;
 
         bool isHighlight = nits > 250.0;
+        var amber = new SolidColorBrush(Color.FromRgb(0xFF, 0xD5, 0x4F));
         var lines = new List<FormattedText>();
-        FormattedText? nitsText = null;
-        bool firstLine = true;
         foreach (var entry in ActiveFormats)
         {
             string value = ColorFormatTemplate.Format(entry.Format, r, g, b, nits);
-            if (entry.Format.Contains("%Nt", StringComparison.Ordinal))
-            {
-                var nitsBrush = isHighlight ? new SolidColorBrush(Color.FromRgb(0xFF, 0xD5, 0x4F)) : Brushes.White;
-                nitsText = new FormattedText(value, CultureInfo.InvariantCulture, FlowDir.LeftToRight, boldFace, 16.0, nitsBrush, 1.0);
-                continue;
-            }
-            lines.Add(firstLine
-                ? new FormattedText(value, CultureInfo.InvariantCulture, FlowDir.LeftToRight, semiFace, 12.5, Brushes.White, 1.0)
-                : new FormattedText(value, CultureInfo.InvariantCulture, FlowDir.LeftToRight, bodyFace, 11.0, Brushes.LightGray, 1.0));
-            firstLine = false;
+            bool isNitsLine = entry.Format.Contains("%Nt", StringComparison.Ordinal);
+            lines.Add(new FormattedText(
+                value, CultureInfo.InvariantCulture, FlowDir.LeftToRight, lineFace, LineFontSize,
+                isNitsLine && isHighlight ? amber : Brushes.White, 1.0));
         }
 
         // Fixed-footprint loupe: the pixel grid never resizes with zoom — the per-pixel swatch
@@ -179,18 +172,13 @@ public sealed class Magnifier : FrameworkElement
         double loupeSize = LoupeDip;
         double swatchDip = LoupeDip / (_sampleRadius * 2 + 1);
 
-        const double PadDip = 6.0, LineGapDip = 1.5;
+        const double PadDip = 6.0, LineGapDip = 2.0;
         double textHeight = 0;
         double maxLineWidth = 0;
         foreach (var line in lines)
         {
             textHeight += line.Height + LineGapDip;
             maxLineWidth = Math.Max(maxLineWidth, line.Width);
-        }
-        if (nitsText is not null)
-        {
-            textHeight += nitsText.Height + (lines.Count > 0 ? 2.5 : 0);
-            maxLineWidth = Math.Max(maxLineWidth, nitsText.Width);
         }
         double widgetWidth = Math.Max(loupeSize + PadDip * 2, maxLineWidth + PadDip * 2 + 4);
         double widgetHeight = PadDip + loupeSize + (textHeight > 0 ? 5.0 + textHeight : 0) + PadDip;
@@ -225,11 +213,14 @@ public sealed class Magnifier : FrameworkElement
             }
         }
 
-        // Crosshair over the center (sampled) pixel.
+        // Crosshair over the center (sampled) pixel: a white ring nested inside a black ring, so
+        // it reads against ANY background — a lone white ring vanished on white pixels (and a
+        // lone black one would vanish on black), but one of the two always contrasts.
         double centerX = loupeLeft + loupeSize / 2;
         double centerY = loupeTop + loupeSize / 2;
-        var crossPen = new Pen(Brushes.White, 1.0);
-        dc.DrawRectangle(null, crossPen, new Rect(centerX - swatchDip / 2, centerY - swatchDip / 2, swatchDip, swatchDip));
+        var crossRect = new Rect(centerX - swatchDip / 2, centerY - swatchDip / 2, swatchDip, swatchDip);
+        dc.DrawRectangle(null, new Pen(Brushes.Black, 1.0), Rect.Inflate(crossRect, 1.0, 1.0));
+        dc.DrawRectangle(null, new Pen(Brushes.White, 1.0), crossRect);
 
         double textX = x + PadDip + 2;
         double textY = loupeTop + loupeSize + 5.0;
@@ -237,10 +228,6 @@ public sealed class Magnifier : FrameworkElement
         {
             dc.DrawText(line, new Point(textX, textY));
             textY += line.Height + LineGapDip;
-        }
-        if (nitsText is not null)
-        {
-            dc.DrawText(nitsText, new Point(textX, textY + (lines.Count > 0 ? 2.5 : 0)));
         }
     }
 

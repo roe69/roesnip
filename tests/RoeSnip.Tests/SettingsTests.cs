@@ -132,7 +132,7 @@ public class SettingsTests : IDisposable
             ColorFormats = new List<ColorFormatEntry>
             {
                 new() { Name = "HEX", Format = "%Rex%Grx%Blx", Enabled = true },
-                new() { Name = "Mine", Format = "R=%Re", Enabled = false, IsCustom = true },
+                new() { Name = "Mine", Format = "R=%Re", Enabled = false, IsCustom = true, InLoupe = false },
             },
         };
 

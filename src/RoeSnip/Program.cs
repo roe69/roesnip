@@ -128,6 +128,12 @@ public sealed record ColorFormatEntry
     public string Format { get; init; } = string.Empty;
     public bool Enabled { get; init; } = true;
     public bool IsCustom { get; init; } = false;
+
+    /// <summary>Whether this format ALSO renders under the magnifier loupe's pixel preview (the
+    /// loupe shows the subset of enabled formats with this on, so it can stay tighter than the
+    /// picker window's rows). Defaults true so entries persisted before this field existed keep
+    /// the old both-surfaces behavior.</summary>
+    public bool InLoupe { get; init; } = true;
 }
 
 /// <summary>Implemented by App/TrayApp.cs (WP-C). Passed into AppComposition.RunCaptureFlowAsync

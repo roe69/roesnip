@@ -329,17 +329,23 @@ public partial class ColorPickerWindow : Window
     {
         FormatsPopupPanel.Children.Clear();
 
+        // Header: names the two checkbox columns (rows here / lines under the magnifier loupe).
+        var header = FormatGrid();
+        var showLabel = PopupColumnLabel("show");
+        Grid.SetColumn(showLabel, 0);
+        header.Children.Add(showLabel);
+        var loupeLabel = PopupColumnLabel("loupe");
+        loupeLabel.HorizontalAlignment = HorizontalAlignment.Center;
+        Grid.SetColumn(loupeLabel, 1);
+        header.Children.Add(loupeLabel);
+        FormatsPopupPanel.Children.Add(header);
+
         for (int i = 0; i < _formats.Count; i++)
         {
             int index = i; // capture a stable copy for the click closures below
             var entry = _formats[i];
 
-            var row = new Grid { Margin = new Thickness(0, 1, 0, 1) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var row = FormatGrid();
 
             var checkBox = new CheckBox
             {
@@ -356,16 +362,31 @@ public partial class ColorPickerWindow : Window
             Grid.SetColumn(checkBox, 0);
             row.Children.Add(checkBox);
 
+            var loupeBox = new CheckBox
+            {
+                IsChecked = entry.InLoupe,
+                IsEnabled = entry.Enabled, // the loupe shows the enabled subset — a disabled format never renders there
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0),
+                Focusable = false,
+                ToolTip = "Also show this format under the magnifier preview",
+            };
+            loupeBox.Checked += (_, _) => MutateFormats(() => _formats[index] = _formats[index] with { InLoupe = true });
+            loupeBox.Unchecked += (_, _) => MutateFormats(() => _formats[index] = _formats[index] with { InLoupe = false });
+            Grid.SetColumn(loupeBox, 1);
+            row.Children.Add(loupeBox);
+
             var up = PopupIconButton("▴", "Move up", enabled: index > 0);
             up.Click += (_, _) => MutateFormats(() =>
                 (_formats[index - 1], _formats[index]) = (_formats[index], _formats[index - 1]));
-            Grid.SetColumn(up, 1);
+            Grid.SetColumn(up, 2);
             row.Children.Add(up);
 
             var down = PopupIconButton("▾", "Move down", enabled: index < _formats.Count - 1);
             down.Click += (_, _) => MutateFormats(() =>
                 (_formats[index + 1], _formats[index]) = (_formats[index], _formats[index + 1]));
-            Grid.SetColumn(down, 2);
+            Grid.SetColumn(down, 3);
             row.Children.Add(down);
 
             if (entry.IsCustom)
@@ -383,12 +404,12 @@ public partial class ColorPickerWindow : Window
                         });
                     }
                 };
-                Grid.SetColumn(edit, 3);
+                Grid.SetColumn(edit, 4);
                 row.Children.Add(edit);
 
                 var delete = PopupIconButton("✕", "Delete this custom format", enabled: true);
                 delete.Click += (_, _) => MutateFormats(() => _formats.RemoveAt(index));
-                Grid.SetColumn(delete, 4);
+                Grid.SetColumn(delete, 5);
                 row.Children.Add(delete);
             }
 
@@ -424,6 +445,28 @@ public partial class ColorPickerWindow : Window
         };
         FormatsPopupPanel.Children.Add(addButton);
     }
+
+    /// <summary>Shared column layout for the popover's header and every format row, so the two
+    /// checkbox columns line up: [name+show (star)] [loupe] [up] [down] [edit] [delete].</summary>
+    private static Grid FormatGrid()
+    {
+        var grid = new Grid { Margin = new Thickness(0, 1, 0, 1) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(26) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        return grid;
+    }
+
+    private static TextBlock PopupColumnLabel(string text) => new()
+    {
+        Text = text,
+        FontSize = 9.5,
+        Foreground = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)),
+        Margin = new Thickness(0, 0, 0, 2),
+    };
 
     private static Button PopupIconButton(string glyph, string tooltip, bool enabled) => new()
     {
