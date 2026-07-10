@@ -29,20 +29,22 @@ using FlowDir = System.Windows.FlowDirection;
 /// copy the current hex string to the clipboard as plain text.</summary>
 public sealed class Magnifier : FrameworkElement
 {
-    private const double SwatchDip = 14.0;      // on-screen size (DIPs) per sampled source pixel
+    private const double LoupeDip = 154.0;       // fixed on-screen loupe size (the historical 11 x 14 DIP footprint)
     private const double WidgetMarginDip = 24.0; // offset from the cursor, in DIPs
 
-    /// <summary>Clamp range for <see cref="SampleRadius"/>: 1 => 3x3 (tightest zoom), 10 => 21x21
-    /// (widest loupe that still fits comfortably at SwatchDip). 5 (11x11) is the historical fixed
-    /// size and remains the settings default.</summary>
+    /// <summary>Clamp range for <see cref="SampleRadius"/>: 1 => 3x3 source pixels at ~51 DIPs
+    /// each (tightest zoom), 10 => 21x21 at ~7 DIPs each (widest context). 5 (11x11) is the
+    /// historical fixed sampling and remains the settings default.</summary>
     public const int MinSampleRadius = 1;
     public const int MaxSampleRadius = 10;
 
     private int _sampleRadius = 5;
 
-    /// <summary>The loupe samples a (2r+1)x(2r+1) block of preview pixels — smaller radius =
-    /// smaller previewed area = more zoomed in. Wheel-adjustable per session (OverlayWindow's
-    /// wheel handler), seeded from RoeSnipSettings.MagnifierSampleRadius.</summary>
+    /// <summary>How many source pixels the loupe shows: a (2r+1)x(2r+1) block around the cursor,
+    /// rendered inside the FIXED-size loupe (the widget never changes size — the per-pixel swatch
+    /// size scales instead, so a smaller radius means fewer, bigger pixels: zoomed in).
+    /// Wheel-adjustable per session (OverlayWindow's wheel handler), seeded from
+    /// RoeSnipSettings.MagnifierSampleRadius.</summary>
     public int SampleRadius
     {
         get => _sampleRadius;
@@ -115,7 +117,10 @@ public sealed class Magnifier : FrameworkElement
             Math.Clamp(cy, 0, frame.Height - 1));
         CurrentHex = string.Create(CultureInfo.InvariantCulture, $"#{r:X2}{g:X2}{b:X2}");
 
-        double loupeSize = SwatchDip * (_sampleRadius * 2 + 1);
+        // Fixed-footprint loupe: the widget never resizes with zoom — the per-pixel swatch size is
+        // derived from how many pixels have to fit, so wheel-zooming only changes magnification.
+        double loupeSize = LoupeDip;
+        double swatchDip = LoupeDip / (_sampleRadius * 2 + 1);
         double widgetWidth = Math.Max(loupeSize, 150.0);
         double widgetHeight = loupeSize + 78.0; // room for hex/rgb/nits lines below the loupe
 
@@ -142,9 +147,9 @@ public sealed class Magnifier : FrameworkElement
                 int sy = Math.Clamp(cy + dy, 0, preview.Height - 1);
                 var (pr, pg, pb) = ReadPreviewPixel(preview, sx, sy);
                 var brush = new SolidColorBrush(Color.FromRgb(pr, pg, pb));
-                double swatchX = loupeLeft + (dx + _sampleRadius) * SwatchDip;
-                double swatchY = y + 6.0 + (dy + _sampleRadius) * SwatchDip;
-                dc.DrawRectangle(brush, null, new Rect(swatchX, swatchY, SwatchDip, SwatchDip));
+                double swatchX = loupeLeft + (dx + _sampleRadius) * swatchDip;
+                double swatchY = y + 6.0 + (dy + _sampleRadius) * swatchDip;
+                dc.DrawRectangle(brush, null, new Rect(swatchX, swatchY, swatchDip, swatchDip));
             }
         }
 
@@ -152,7 +157,7 @@ public sealed class Magnifier : FrameworkElement
         double centerX = loupeLeft + loupeSize / 2;
         double centerY = y + 6.0 + loupeSize / 2;
         var crossPen = new Pen(Brushes.White, 1.0);
-        dc.DrawRectangle(null, crossPen, new Rect(centerX - SwatchDip / 2, centerY - SwatchDip / 2, SwatchDip, SwatchDip));
+        dc.DrawRectangle(null, crossPen, new Rect(centerX - swatchDip / 2, centerY - swatchDip / 2, swatchDip, swatchDip));
 
         var monoFace = new Typeface(new FontFamily("Consolas"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
         var hexText = new FormattedText(CurrentHex, CultureInfo.InvariantCulture, FlowDir.LeftToRight, monoFace, 14.0, Brushes.White, 1.0);
