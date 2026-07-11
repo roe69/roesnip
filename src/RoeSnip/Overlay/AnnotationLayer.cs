@@ -109,7 +109,7 @@ public sealed class AnnotationLayer : FrameworkElement
     private AnnotationShape? _dragSnapshotBefore;
 
     private const double HandleHitPaddingPx = 7.0; // mirrors SelectionAdorner's own handle padding
-    private static readonly Color ChromeGold = Color.FromRgb(0xFF, 0x9F, 0x09); // roelite-net accent
+    private static readonly Color ChromeGold = Color.FromRgb(0xFF, 0x6B, 0x35); // roeshare primary (orange) accent
 
     /// <summary>1 physical pixel == 1/DeviceScaleX (or Y) DIPs on this window's monitor.</summary>
     public double DeviceScaleX { get; set; } = 1.0;

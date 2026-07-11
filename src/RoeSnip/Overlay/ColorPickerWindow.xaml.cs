@@ -234,7 +234,7 @@ public partial class ColorPickerWindow : Window
         var labelText = new TextBlock
         {
             Text = label,
-            Foreground = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)),
+            Foreground = new SolidColorBrush(Color.FromRgb(0xA2, 0xA2, 0xAB)),
             FontSize = 10,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -254,8 +254,8 @@ public partial class ColorPickerWindow : Window
             Content = "Copy",
             Padding = new Thickness(7, 1, 7, 1),
             FontSize = 11,
-            Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2E)),
-            Foreground = Brushes.White,
+            Background = new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x1D)),
+            Foreground = new SolidColorBrush(Color.FromRgb(0xED, 0xED, 0xF0)),
             BorderThickness = new Thickness(0),
             Cursor = Cursors.Hand,
             Focusable = false,
@@ -371,7 +371,7 @@ public partial class ColorPickerWindow : Window
             {
                 Content = entry.Name,
                 IsChecked = entry.Enabled,
-                Foreground = Brushes.White,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xED, 0xED, 0xF0)),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 10, 0),
                 Focusable = false,
@@ -442,10 +442,10 @@ public partial class ColorPickerWindow : Window
             Margin = new Thickness(0, 6, 0, 0),
             Padding = new Thickness(8, 3, 8, 3),
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2E)),
-            Foreground = Brushes.White,
+            Background = new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x1D)),
+            Foreground = new SolidColorBrush(Color.FromRgb(0xED, 0xED, 0xF0)),
             BorderThickness = new Thickness(1),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x3F, 0x3F, 0x46)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF)),
             Cursor = Cursors.Hand,
             Focusable = false,
         };
@@ -484,7 +484,7 @@ public partial class ColorPickerWindow : Window
     {
         Text = text,
         FontSize = 9.5,
-        Foreground = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)),
+        Foreground = new SolidColorBrush(Color.FromRgb(0xA2, 0xA2, 0xAB)),
         Margin = new Thickness(0, 0, 0, 2),
     };
 
@@ -495,8 +495,8 @@ public partial class ColorPickerWindow : Window
         Height = 20,
         Margin = new Thickness(2, 0, 0, 0),
         Padding = new Thickness(0),
-        Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2E)),
-        Foreground = enabled ? Brushes.White : new SolidColorBrush(Color.FromRgb(0x6A, 0x6A, 0x6A)),
+        Background = new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x1D)),
+        Foreground = enabled ? new SolidColorBrush(Color.FromRgb(0xED, 0xED, 0xF0)) : new SolidColorBrush(Color.FromRgb(0x71, 0x71, 0x7B)),
         BorderThickness = new Thickness(0),
         Cursor = enabled ? Cursors.Hand : Cursors.Arrow,
         Focusable = false,
@@ -561,8 +561,8 @@ public partial class ColorPickerWindow : Window
             ResizeMode = ResizeMode.NoResize;
             ShowInTaskbar = false;
             WindowStyle = WindowStyle.ToolWindow;
-            Background = new SolidColorBrush(Color.FromRgb(0x1B, 0x1B, 0x1D));
-            Foreground = Brushes.White;
+            Background = new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x1D));
+            Foreground = new SolidColorBrush(Color.FromRgb(0xED, 0xED, 0xF0));
             FontSize = 12;
             UseLayoutRounding = true;
 
@@ -572,7 +572,7 @@ public partial class ColorPickerWindow : Window
             _preview = new TextBlock
             {
                 FontFamily = new FontFamily("Consolas"),
-                Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x09)),
+                Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x35)),
                 Margin = new Thickness(0, 4, 0, 8),
                 TextWrapping = TextWrapping.Wrap,
             };
@@ -581,7 +581,7 @@ public partial class ColorPickerWindow : Window
             {
                 FontFamily = new FontFamily("Consolas"),
                 FontSize = 10.5,
-                Foreground = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)),
+                Foreground = new SolidColorBrush(Color.FromRgb(0x71, 0x71, 0x7B)),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 0, 0, 8),
                 Text =
@@ -602,8 +602,8 @@ public partial class ColorPickerWindow : Window
             {
                 Content = "Save",
                 Padding = new Thickness(18, 4, 18, 4),
-                Background = new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x09)),
-                Foreground = new SolidColorBrush(Color.FromRgb(0x14, 0x14, 0x16)),
+                Background = new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x35)),
+                Foreground = new SolidColorBrush(Color.FromRgb(0x18, 0x0D, 0x07)),
                 FontWeight = FontWeights.SemiBold,
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand,
@@ -616,8 +616,8 @@ public partial class ColorPickerWindow : Window
                 Content = "Cancel",
                 Margin = new Thickness(8, 0, 0, 0),
                 Padding = new Thickness(14, 4, 14, 4),
-                Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2E)),
-                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x1D)),
+                Foreground = new SolidColorBrush(Color.FromRgb(0xED, 0xED, 0xF0)),
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand,
                 IsCancel = true,
@@ -656,7 +656,7 @@ public partial class ColorPickerWindow : Window
         {
             Text = text,
             FontSize = 10.5,
-            Foreground = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A)),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x71, 0x71, 0x7B)),
             Margin = new Thickness(0, 0, 0, 2),
         };
 
@@ -665,10 +665,10 @@ public partial class ColorPickerWindow : Window
             Text = text,
             Margin = new Thickness(0, 0, 0, 8),
             Padding = new Thickness(5, 3, 5, 3),
-            Background = new SolidColorBrush(Color.FromRgb(0x24, 0x24, 0x28)),
-            Foreground = Brushes.White,
-            CaretBrush = Brushes.White,
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x3F, 0x3F, 0x46)),
+            Background = new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x1D)),
+            Foreground = new SolidColorBrush(Color.FromRgb(0xED, 0xED, 0xF0)),
+            CaretBrush = new SolidColorBrush(Color.FromRgb(0xED, 0xED, 0xF0)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF)),
             BorderThickness = new Thickness(1),
         };
     }

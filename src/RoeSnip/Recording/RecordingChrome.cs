@@ -77,7 +77,7 @@ internal sealed class RecordingChrome : Window
             Text = "00:00",
             FontFamily = new FontFamily("Segoe UI"),
             FontSize = 13,
-            Foreground = new SolidColorBrush(Color.FromRgb(0xE4, 0xE4, 0xCE)), // RlTextPrimary
+            Foreground = new SolidColorBrush(Color.FromRgb(0xED, 0xED, 0xF0)), // RlTextPrimary
             VerticalAlignment = VAlign.Center,
             Margin = new Thickness(0, 0, 14, 0),
             MinWidth = 40,
@@ -101,8 +101,8 @@ internal sealed class RecordingChrome : Window
 
         Content = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(0xEB, 0x14, 0x10, 0x0C)), // RlPanelBackground
-            BorderBrush = new SolidColorBrush(Color.FromArgb(0x59, 0xFF, 0x9F, 0x09)), // RlBorderStrong
+            Background = new SolidColorBrush(Color.FromArgb(0xEB, 0x0E, 0x0E, 0x11)), // RlPanelBackground
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF)), // RlBorderStrong
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
             Child = row,
@@ -119,9 +119,9 @@ internal sealed class RecordingChrome : Window
             Cursor = Cursors.Hand,
             Focusable = false,
             Background = isDanger
-                ? new SolidColorBrush(Color.FromArgb(0x26, 0xDC, 0x46, 0x46))
-                : new SolidColorBrush(Color.FromArgb(0x1A, 0xFF, 0x9F, 0x09)),
-            Foreground = new SolidColorBrush(Color.FromRgb(0xE4, 0xE4, 0xCE)),
+                ? new SolidColorBrush(Color.FromArgb(0x26, 0xDC, 0x26, 0x26))
+                : new SolidColorBrush(Color.FromArgb(0x0F, 0xFF, 0xFF, 0xFF)),
+            Foreground = new SolidColorBrush(Color.FromRgb(0xED, 0xED, 0xF0)),
             BorderThickness = new Thickness(0),
         };
         var template = new ControlTemplate(typeof(Button));

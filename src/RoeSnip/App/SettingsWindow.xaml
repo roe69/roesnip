@@ -5,36 +5,41 @@
         Width="420" SizeToContent="Height"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
-        Background="#FF1E1E1E"
-        Foreground="#FFE8E8E8"
+        Background="#FF000000"
+        Foreground="#FFEDEDF0"
         FontFamily="Segoe UI"
         FontSize="13">
     <Window.Resources>
-        <SolidColorBrush x:Key="PanelBrush" Color="#FF2A2A2A"/>
-        <SolidColorBrush x:Key="BorderBrush2" Color="#FF3C3C3C"/>
-        <SolidColorBrush x:Key="AccentBrush" Color="#FF4A9EFF"/>
+        <!-- Neutral near-black surfaces + one hot orange accent, tracking roeshare's design
+             tokens (public/css/tokens.css) instead of a generic VS-dark-theme gray+blue look.
+             Window background is pure #000 for OLED; PanelBrush is the elevated-surface tone
+             used for inputs/buttons, BorderBrush2 is a white-alpha hairline (rgba(255,255,255,.07)
+             pre-multiplied as WPF #AARRGGBB), AccentBrush is the roeshare primary orange. -->
+        <SolidColorBrush x:Key="PanelBrush" Color="#FF18181D"/>
+        <SolidColorBrush x:Key="BorderBrush2" Color="#12FFFFFF"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#FFFF6B35"/>
 
         <Style TargetType="Label">
-            <Setter Property="Foreground" Value="#FFCFCFCF"/>
+            <Setter Property="Foreground" Value="#FFA2A2AB"/>
             <Setter Property="Padding" Value="0,0,0,2"/>
         </Style>
 
         <Style TargetType="TextBox">
             <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
-            <Setter Property="Foreground" Value="#FFE8E8E8"/>
+            <Setter Property="Foreground" Value="#FFEDEDF0"/>
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
             <Setter Property="Padding" Value="6,4"/>
-            <Setter Property="CaretBrush" Value="#FFE8E8E8"/>
+            <Setter Property="CaretBrush" Value="#FFEDEDF0"/>
         </Style>
 
         <Style TargetType="CheckBox">
-            <Setter Property="Foreground" Value="#FFE8E8E8"/>
+            <Setter Property="Foreground" Value="#FFEDEDF0"/>
             <Setter Property="Margin" Value="0,4"/>
         </Style>
 
         <Style TargetType="Button">
             <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
-            <Setter Property="Foreground" Value="#FFE8E8E8"/>
+            <Setter Property="Foreground" Value="#FFEDEDF0"/>
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
             <Setter Property="Padding" Value="10,5"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -71,9 +76,9 @@
         <CheckBox x:Name="RunElevatedCheckBox"
                   Content="Run as administrator (starts via scheduled task, no UAC prompt)"
                   Checked="RunElevatedCheckBox_Checked" Unchecked="RunElevatedCheckBox_Unchecked"/>
-        <TextBlock x:Name="ElevationStatusText" Margin="20,0,0,4" FontSize="11" Foreground="#FF9A9A9A"/>
+        <TextBlock x:Name="ElevationStatusText" Margin="20,0,0,4" FontSize="11" Foreground="#FF71717B"/>
 
-        <TextBlock Text="Advanced tone-map overrides (leave blank for automatic)" Margin="0,14,0,6" Foreground="#FF9A9A9A"/>
+        <TextBlock Text="Advanced tone-map overrides (leave blank for automatic)" Margin="0,14,0,6" Foreground="#FF71717B"/>
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -92,7 +97,7 @@
 
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
             <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click" Margin="0,0,8,0"/>
-            <Button x:Name="SaveButton" Content="Save" Click="SaveButton_Click" Background="{StaticResource AccentBrush}" Foreground="White"/>
+            <Button x:Name="SaveButton" Content="Save" Click="SaveButton_Click" Background="{StaticResource AccentBrush}" Foreground="#FF180D07"/>
         </StackPanel>
     </StackPanel>
 </Window>

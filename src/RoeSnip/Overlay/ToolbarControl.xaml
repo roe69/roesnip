@@ -6,57 +6,63 @@
              SnapsToDevicePixels="True"
              UseLayoutRounding="True">
     <UserControl.Resources>
-        <!-- Design tokens lifted from the roelite-net site's CSS custom properties (RoeLite's brand
-             palette: warm near-black surfaces, a single gold accent, cream body text — never pure
-             white/black or neutral gray). Every color used below routes through one of these so the
-             toolbar reads as the same product as the site instead of a generic dark-mode dev tool.
-             Alpha-tinted golds are pre-multiplied hex (#AARRGGBB) since WPF brushes don't take a
-             separate opacity channel the way CSS rgba() does. -->
-        <SolidColorBrush x:Key="RlTextPrimaryBrush" Color="#E4E4CE"/>
-        <!-- rl-text: warm cream body/icon color, ~16:1 on black — never pure white. -->
-        <SolidColorBrush x:Key="RlTextMutedBrush" Color="#B8A87A"/>
+        <!-- Design tokens lifted from the roelite-net site's CSS custom properties. Now tracking
+             roeshare's NEUTRAL palette (E:\GitHub\RoeLite\roeshare\public\css\tokens.css): a cool
+             near-black foundation with hairline WHITE-ALPHA glass borders and ONE hot accent, the
+             brand ORANGE, reserved for primary actions / the active item / focus. The old warm
+             cream/gold interpretation is gone — gold is now only a rare accent elsewhere in the
+             product, not this toolbar's primary. Every color used below routes through one of these
+             so the toolbar reads as the same product as the site instead of a generic dark-mode dev
+             tool. Alpha-tinted colors are pre-multiplied hex (#AARRGGBB) since WPF brushes don't take
+             a separate opacity channel the way CSS rgba() does. -->
+        <SolidColorBrush x:Key="RlTextPrimaryBrush" Color="#EDEDF0"/>
+        <!-- rl-text: neutral off-white body/icon color, ~16:1 on black — never pure white. -->
+        <SolidColorBrush x:Key="RlTextMutedBrush" Color="#A2A2AB"/>
         <!-- rl-text-muted -->
-        <SolidColorBrush x:Key="RlTextDimBrush" Color="#9A8C5C"/>
+        <SolidColorBrush x:Key="RlTextDimBrush" Color="#71717B"/>
         <!-- rl-text-dim: disabled/label text -->
-        <SolidColorBrush x:Key="RlTextOnPrimaryBrush" Color="#1A1008"/>
-        <!-- dark text placed on bright gold fills -->
-        <SolidColorBrush x:Key="RlPrimaryGoldBrush" Color="#FF9F09"/>
-        <!-- rl-primary / rl-gold-500, the OSRS-orange brand accent -->
-        <SolidColorBrush x:Key="RlPrimaryGoldLightBrush" Color="#FFC14F"/>
-        <!-- rl-primary-light / rl-gold-300, primary-button hover fill -->
-        <SolidColorBrush x:Key="RlGoldBorderSolidBrush" Color="#D98200"/>
-        <!-- rl-border-gold / rl-gold-600, solid-color button edges + press fill -->
-        <SolidColorBrush x:Key="RlBgSecondaryBrush" Color="#0A0807"/>
+        <SolidColorBrush x:Key="RlTextOnPrimaryBrush" Color="#180D07"/>
+        <!-- dark text placed on bright orange fills -->
+        <SolidColorBrush x:Key="RlPrimaryGoldBrush" Color="#FF6B35"/>
+        <!-- rl-primary / rl-orange-400, the brand accent (primary action color; key name kept for
+             XAML StaticResource stability) -->
+        <SolidColorBrush x:Key="RlPrimaryGoldLightBrush" Color="#FF8A5C"/>
+        <!-- rl-primary-light / rl-orange-300, primary-button hover fill -->
+        <SolidColorBrush x:Key="RlGoldBorderSolidBrush" Color="#E5561F"/>
+        <!-- rl-primary-dark / rl-orange-500, solid-color button edges + press fill -->
+        <SolidColorBrush x:Key="RlBgSecondaryBrush" Color="#0E0E11"/>
         <!-- rl-bg-secondary: card fill, used here for popup/menu chrome -->
-        <SolidColorBrush x:Key="RlBgElevatedBrush" Color="#1C1610"/>
+        <SolidColorBrush x:Key="RlBgElevatedBrush" Color="#18181D"/>
         <!-- rl-bg-elevated: nested chip/input fill -->
-        <SolidColorBrush x:Key="RlBorderBrush" Color="#26FF9F09"/>
-        <!-- rl-border, rgba(gold,.15): the workhorse hairline for inputs/menus -->
-        <SolidColorBrush x:Key="RlBorderStrongBrush" Color="#59FF9F09"/>
-        <!-- rl-border-strong, rgba(gold,.35): emphasized edges — the floating panel's own border
-             and the toolbar's internal group dividers, both of which need to read clearly against
-             arbitrary screenshot content rather than a consistent page background. -->
-        <SolidColorBrush x:Key="RlSecondaryBorderBrush" Color="#66FF9F09"/>
-        <!-- rgba(gold,.40): v_secondary button border (Save) -->
-        <SolidColorBrush x:Key="RlGhostHoverBrush" Color="#1AFF9F09"/>
-        <!-- rgba(gold,.10): v_ghost hover fill (tool buttons, "+") -->
-        <SolidColorBrush x:Key="RlGhostPressedBrush" Color="#2EFF9F09"/>
-        <!-- rgba(gold,.18): v_ghost pressed fill / v_secondary hover fill / dropdown row hover -->
-        <SolidColorBrush x:Key="RlActiveTintBrush" Color="#14FF9F09"/>
-        <!-- rgba(gold,.08): the flat background tint half of the site's active-item recipe -->
-        <SolidColorBrush x:Key="RlSelectedItemBrush" Color="#47FF9F09"/>
-        <!-- rgba(gold,.28): a still-flat, slightly stronger tint for a genuinely-selected dropdown row -->
-        <SolidColorBrush x:Key="RlDangerHoverBrush" Color="#DC4646"/>
-        <!-- the admonition-danger literal (not rl-danger's lighter coral) — chosen deliberately so
-             the always-cream Cancel icon keeps enough contrast when the button fills solid on hover;
-             rl-danger #F08068 is close enough to the cream icon color to read poorly here. -->
-        <SolidColorBrush x:Key="RlPanelBackgroundBrush" Color="#EB14100C"/>
-        <!-- The Modal glass-card recipe (rgba(20,16,12,.5) + hairline border, no blur attempt needed
-             since the dimmed screenshot behind IS the blur) pushed from 50% to ~92% opacity: the
-             product's dark-on-dim readability requirement means a floating toolbar can't be as
-             translucent as a card sitting on the page's own near-black background. Same warm-black
-             hue as the site, just less see-through. -->
-        <SolidColorBrush x:Key="RlDropdownArrowBrush" Color="#B8A87A"/>
+        <SolidColorBrush x:Key="RlBorderBrush" Color="#12FFFFFF"/>
+        <!-- rl-border, rgba(255,255,255,.07): the workhorse hairline for inputs/menus -->
+        <SolidColorBrush x:Key="RlBorderStrongBrush" Color="#24FFFFFF"/>
+        <!-- rl-border-strong, rgba(255,255,255,.14): emphasized edges — the floating panel's own
+             border and the toolbar's internal group dividers, both of which need to read clearly
+             against arbitrary screenshot content rather than a consistent page background. -->
+        <SolidColorBrush x:Key="RlSecondaryBorderBrush" Color="#2EFFFFFF"/>
+        <!-- rgba(255,255,255,.18): v_secondary button border (Save) -->
+        <SolidColorBrush x:Key="RlGhostHoverBrush" Color="#0FFFFFFF"/>
+        <!-- rgba(255,255,255,.06): v_ghost hover fill (tool buttons, "+") -->
+        <SolidColorBrush x:Key="RlGhostPressedBrush" Color="#1AFFFFFF"/>
+        <!-- rgba(255,255,255,.10): v_ghost pressed fill / v_secondary hover fill / dropdown row hover -->
+        <SolidColorBrush x:Key="RlActiveTintBrush" Color="#1FFF6B35"/>
+        <!-- rgba(primary,.12): the flat background tint half of the site's active-item recipe —
+             roeshare's active nav item/primary button use the one hot orange accent, so the active
+             tool here gets an orange tint rather than a neutral one. -->
+        <SolidColorBrush x:Key="RlSelectedItemBrush" Color="#33FF6B35"/>
+        <!-- rgba(primary,.20): a still-flat, slightly stronger orange tint for a genuinely-selected
+             dropdown row -->
+        <SolidColorBrush x:Key="RlDangerHoverBrush" Color="#DC2626"/>
+        <!-- rl-danger-600: solid hover fill for Cancel; the neutral-bright Cancel icon keeps enough
+             contrast against this deeper red than the lighter rl-danger-400 coral would give. -->
+        <SolidColorBrush x:Key="RlPanelBackgroundBrush" Color="#EB0E0E11"/>
+        <!-- The Modal glass-card recipe (rgba(14,14,17,.5), rl-bg-secondary + hairline border, no
+             blur attempt needed since the dimmed screenshot behind IS the blur) pushed from 50% to
+             ~92% opacity: the product's dark-on-dim readability requirement means a floating toolbar
+             can't be as translucent as a card sitting on the page's own near-black background. Same
+             neutral near-black hue as the site, just less see-through. -->
+        <SolidColorBrush x:Key="RlDropdownArrowBrush" Color="#A2A2AB"/>
 
         <!-- All icons are inline vector Path geometries (no image assets). Uniform stretch into a
              14x14 box; round caps/joins for a clean hand-drawn-free look. Stroke is the roelite-net
@@ -101,14 +107,14 @@
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             <!-- Active-tool indicator, roelite-net's "active item" recipe (a solid 2px
                                  inset bar on the leading edge, never a glow) rotated for a horizontal
-                                 toolbar row: a flat 2px gold bar along the bottom edge. Structure, not
+                                 toolbar row: a flat 2px orange bar along the bottom edge. Structure, not
                                  color-washing the whole button, carries the selected state. -->
                             <Border x:Name="ActiveBar" Height="2" VerticalAlignment="Bottom"
                                     Background="{StaticResource RlPrimaryGoldBrush}"
                                     CornerRadius="0,0,7,7" Visibility="Collapsed"/>
                         </Grid>
                         <ControlTemplate.Triggers>
-                            <!-- Hover/pressed = an ascending flat gold tint (v_ghost), active tool =
+                            <!-- Hover/pressed = an ascending flat neutral tint (v_ghost), active tool =
                                  the site's flat active-tint + inset bar. Quiet-until-hovered (transparent
                                  rest state) reads far less busy than a wall of identical outlined squares. -->
                             <Trigger Property="IsMouseOver" Value="True">
@@ -127,11 +133,11 @@
             </Setter>
         </Style>
 
-        <!-- Primary action per roelite-net's v_primary recipe: solid gold fill, dark-on-gold text,
-             a solid gold-600 edge. Flat color swaps only on hover/press — no gradient, no glow — per
-             the product's hard rule against colored glow/drop-shadow chrome. Used for Copy, the most
-             common terminal action (the site's button hierarchy reserves solid-primary for exactly
-             that: the one action most users take). -->
+        <!-- Primary action per roelite-net's v_primary recipe: solid orange fill, dark-on-primary
+             text, a solid primary-dark edge. Flat color swaps only on hover/press — no gradient, no
+             glow — per the product's hard rule against colored glow/drop-shadow chrome. Used for
+             Copy, the most common terminal action (the site's button hierarchy reserves
+             solid-primary for exactly that: the one action most users take). -->
         <Style x:Key="ActionButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="34"/>
             <Setter Property="Height" Value="30"/>
@@ -170,7 +176,7 @@
             </Setter>
         </Style>
 
-        <!-- Secondary action per roelite-net's v_secondary recipe: translucent gold fill + gold
+        <!-- Secondary action per roelite-net's v_secondary recipe: translucent orange fill + orange
              text/icon, warming up further on hover. One weight quieter than ActionButtonStyle's
              solid-primary look — used for Save, which the site's button hierarchy would treat as the
              secondary of the pair (Copy being the more common single action). -->
@@ -288,7 +294,7 @@
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter Property="BorderBrush" Value="{StaticResource RlTextMutedBrush}"/>
                             </Trigger>
-                            <!-- Checked ring uses the SITE's accent gold (not a generic white ring),
+                            <!-- Checked ring uses the SITE's brand orange (not a generic white ring),
                                  so the selected swatch reads as "the brand color says yes" rather than
                                  a plain outline. -->
                             <Trigger Property="IsChecked" Value="True">
@@ -581,9 +587,9 @@
     <!-- Double-stacked layout: row 1 is everything that CONFIGURES a drawing (tool, size, text
          style), row 2 is the palette plus the session actions (undo / copy / save / cancel) —
          keeps the toolbar roughly half as wide so it fits beside smaller selections.
-         Panel surface follows the roelite-net Modal glass-card recipe (warm near-black rgba fill +
-         single hairline gold border, 12px "popover" radius) — see RlPanelBackgroundBrush for why the
-         opacity is pushed well past the site's own 50% glass. -->
+         Panel surface follows the roelite-net Modal glass-card recipe (neutral near-black rgba fill +
+         single hairline white-alpha border, 12px "popover" radius) — see RlPanelBackgroundBrush for
+         why the opacity is pushed well past the site's own 50% glass. -->
     <Border Background="{StaticResource RlPanelBackgroundBrush}" CornerRadius="12" BorderBrush="{StaticResource RlBorderStrongBrush}" BorderThickness="1">
         <StackPanel Margin="6,5">
             <StackPanel Orientation="Horizontal">
