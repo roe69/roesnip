@@ -275,6 +275,19 @@ public sealed class TrayApp : ITrayNotifier
                 {
                     using var writableKey = Registry.CurrentUser.OpenSubKey(PrintScreenRegistryKeyPath, writable: true);
                     writableKey?.SetValue(PrintScreenValueName, 0, RegistryValueKind.DWord);
+
+                    // The shell only reads PrintScreenKeyForSnippingEnabled at logon, so writing
+                    // the value alone leaves it grabbing PrtScr for Snipping Tool for the rest of
+                    // this session. Broadcast WM_SETTINGCHANGE (what the Settings toggle does) so
+                    // it applies immediately and RegisterHotKey below actually receives PrtScr.
+                    NativeMethods.SendMessageTimeout(
+                        NativeMethods.HWND_BROADCAST,
+                        NativeMethods.WM_SETTINGCHANGE,
+                        IntPtr.Zero,
+                        "Control Panel\\Keyboard",
+                        NativeMethods.SMTO_ABORTIFHUNG,
+                        1000,
+                        out _);
                 }
                 catch (Exception ex)
                 {

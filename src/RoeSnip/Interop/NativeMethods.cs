@@ -143,6 +143,16 @@ public static class NativeMethods
     public const int WM_HOTKEY = 0x0312;
     public const int VK_SNAPSHOT = 0x2C;
 
+    // Broadcasts a policy-change notification (e.g. after writing a Control Panel\Keyboard
+    // registry value) so the shell picks it up live instead of only at the next logon. See
+    // TrayApp.ResolvePrintScreenConsent's use on the PrintScreenKeyForSnippingEnabled write.
+    [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+    public const uint WM_SETTINGCHANGE = 0x001A;
+    public static readonly IntPtr HWND_BROADCAST = new IntPtr(0xffff);
+    public const uint SMTO_ABORTIFHUNG = 0x0002;
+
     // ---------- Window positioning ----------
 
     [DllImport("user32.dll", SetLastError = true)]
