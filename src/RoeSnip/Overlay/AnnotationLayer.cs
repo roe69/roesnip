@@ -214,6 +214,23 @@ public sealed class AnnotationLayer : FrameworkElement
         InvalidateVisual();
     }
 
+    /// <summary>The tool of the shape being drawn right now (mouse held, not yet released), or null
+    /// if no draw is in progress. Lets OverlayWindow route a mid-draw scroll to the live shape.</summary>
+    public AnnotationTool? InProgressTool => _inProgress?.Tool;
+
+    /// <summary>Live-sets the size of the shape being drawn (a wheel notch mid-drag): stroke width
+    /// for the outline/marker tools, mosaic block size for Pixelate. Redraws so it resizes in place
+    /// under the cursor instead of only affecting the next shape.</summary>
+    public void SetInProgressStrokeWidth(double widthPx)
+    {
+        if (_inProgress is null)
+        {
+            return;
+        }
+        _inProgress.StrokeWidthPx = widthPx;
+        InvalidateVisual();
+    }
+
     /// <summary>Commits a completed text annotation. Used by OverlayWindow's inline text editor
     /// (a real WPF TextBox, for native IME support) rather than the Begin/Update/EndShape drag
     /// pipeline, since text entry isn't a drag gesture. fontFamily/bold/italic (item 4) default to

@@ -1567,6 +1567,14 @@ public partial class OverlayWindow : Window
                     }
                 }
             }
+            if (_currentTool == AnnotationTool.Pixelate)
+            {
+                // The blur/pixelate tool drags out a region like the area selector, so its cursor is
+                // a fixed crosshair - NOT the brush circle whose diameter tracks the size. Scrolling
+                // the block size must not grow or shrink the crosshair (user-reported).
+                Cursor = Cursors.Cross;
+                return;
+            }
             Cursor = _toolCursorCache.GetOrCreate(_currentTool, _currentColor, _currentStrokeWidth);
             return;
         }
@@ -1913,6 +1921,20 @@ public partial class OverlayWindow : Window
         {
             double editorSize = SizeInput.ClampFont(_activeTextEditor.FontSize + notches * 2.0);
             SetTextFontSize(editorSize, showIndicator: true, cursorDip);
+            e.Handled = true;
+            return;
+        }
+
+        // A shape is half-drawn (mouse held, not yet released): the wheel resizes THAT shape in place
+        // rather than only the next one - block size for Pixelate, stroke width for the rest. The new
+        // size is also adopted as the current tool size so it carries to the following shape.
+        if (Annotations.InProgressTool is { } drawingTool)
+        {
+            double newSize = drawingTool == AnnotationTool.Pixelate
+                ? Math.Clamp(_currentStrokeWidth + notches * 2.0, 3.0, SizeInput.MaxStrokePx)
+                : SizeInput.ClampStroke(_currentStrokeWidth + notches);
+            Annotations.SetInProgressStrokeWidth(newSize);
+            SetStrokeWidth(newSize, cursorDip);
             e.Handled = true;
             return;
         }
