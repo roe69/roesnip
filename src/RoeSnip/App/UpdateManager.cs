@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
 
@@ -44,6 +45,7 @@ public static class UpdateManager
 
     private static string StaleExePath => InstalledExePath + ".old";
     private static string DownloadingExePath => Path.Combine(InstallDir, "RoeSnip.exe.new");
+    private static string PendingSourceCleanupMarkerPath => Path.Combine(InstallDir, "pending-source-cleanup.txt");
 
     /// <summary>The running build's version, straight off the assembly (set by the csproj's
     /// &lt;Version&gt;) - compared against each release's tag_name.</summary>
@@ -175,6 +177,19 @@ public static class UpdateManager
                 Console.Error.WriteLine($"RoeSnip: install could not persist the run-at-startup setting (non-fatal): {ex.Message}");
             }
 
+            // Make install behave like a MOVE, not a copy: the source exe (currentExe, confirmed
+            // above to differ from InstalledExePath) can't delete itself while it's still running,
+            // so record it for the installed copy to clean up on its next startup, once the
+            // replace-on-run handoff below has this process exit and release its file lock.
+            try
+            {
+                File.WriteAllText(PendingSourceCleanupMarkerPath, currentExe);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: could not record source exe for post-install cleanup (non-fatal): {ex.Message}");
+            }
+
             Process.Start(new ProcessStartInfo(InstalledExePath) { UseShellExecute = true });
         }
         catch (Exception ex)
@@ -185,6 +200,63 @@ public static class UpdateManager
             // error and staying put is the correct outcome.
             Console.Error.WriteLine($"RoeSnip: install failed: {ex.Message}");
             throw;
+        }
+    }
+
+    /// <summary>Best-effort cleanup of the source exe left behind by a prior <see cref="Install"/>
+    /// "move" (see the marker written there): reads <see cref="PendingSourceCleanupMarkerPath"/> if
+    /// present and, only when the recorded path exists, is a file literally named "RoeSnip.exe",
+    /// and is NOT <see cref="InstalledExePath"/>, deletes it with a short bounded retry (the old
+    /// process may still be releasing its file lock right after the replace-on-run handoff). The
+    /// marker is removed afterward regardless of whether the delete succeeded. Runs on a background
+    /// thread (see the Task.Run at the call site) so a locked file's retry loop can never stall
+    /// startup, and never throws into the tray.</summary>
+    public static void ProcessPendingSourceCleanup()
+    {
+        string markerPath = PendingSourceCleanupMarkerPath;
+        try
+        {
+            if (!File.Exists(markerPath))
+            {
+                return;
+            }
+
+            string sourcePath = File.ReadAllText(markerPath).Trim();
+
+            if (!string.IsNullOrEmpty(sourcePath) &&
+                File.Exists(sourcePath) &&
+                string.Equals(Path.GetFileName(sourcePath), "RoeSnip.exe", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(InstalledExePath), StringComparison.OrdinalIgnoreCase))
+            {
+                const int maxAttempts = 10;
+                const int retryDelayMs = 200; // ~2s total, bounded so a still-locked file never stalls startup
+                for (int attempt = 0; attempt < maxAttempts; attempt++)
+                {
+                    try
+                    {
+                        File.Delete(sourcePath);
+                        break;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        if (attempt == maxAttempts - 1)
+                        {
+                            Console.Error.WriteLine($"RoeSnip: could not delete old source exe '{sourcePath}' after install (non-fatal): {ex.Message}");
+                            break;
+                        }
+
+                        Thread.Sleep(retryDelayMs);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: post-install source cleanup failed (non-fatal): {ex.Message}");
+        }
+        finally
+        {
+            TryDelete(markerPath);
         }
     }
 

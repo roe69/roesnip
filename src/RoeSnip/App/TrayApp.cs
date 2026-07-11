@@ -173,6 +173,10 @@ public sealed class TrayApp : ITrayNotifier
         // release. Fire-and-forget: CheckForUpdateAsync never throws and this must never delay
         // startup or block the UI thread.
         UpdateManager.CleanupStaleUpdateFiles();
+        // Best-effort cleanup of the source exe a prior Install() left behind (see the
+        // pending-source-cleanup marker it writes) - runs on a background thread since a still-
+        // locked file's bounded retry loop must never stall startup.
+        _ = Task.Run(UpdateManager.ProcessPendingSourceCleanup);
         if (UpdateManager.IsInstalled)
         {
             _ = CheckForUpdatesOnStartupAsync();

@@ -1,0 +1,59 @@
+name: release
+
+# Builds RoeSnip.exe (win-x64, single-file) versioned to the release tag and publishes a GitHub
+# Release with it attached as an asset named exactly "RoeSnip.exe". This is what RoeSnip's in-app
+# self-updater (UpdateManager.cs) polls via GET /repos/roe69/roesnip/releases/latest — see
+# build-windows.yml for the underlying publish profile (win-x64.pubxml: self-contained,
+# PublishSingleFile, PublishReadyToRun).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version e.g. 1.0.1"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release (win-x64)
+    runs-on: windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ inputs.version }}"
+          } else {
+            $version = "${{ github.ref_name }}" -replace "^v", ""
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # win-x64.pubxml pins RuntimeIdentifier/SelfContained/PublishSingleFile/PublishReadyToRun.
+      # Output lands at src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe.
+      - name: Publish WPF app (win-x64)
+        run: dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64 -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: RoeSnip ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe

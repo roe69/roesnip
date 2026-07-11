@@ -49,7 +49,7 @@ public sealed record RoeSnipSettings
     public bool RunAtStartup { get; init; } = false;
     public bool CopyOnSelect { get; init; } = false;              // confirming a selection also performs Copy
     public bool PrintScreenPromptAnswered { get; init; } = false; // one-time PrtScr/Snipping-Tool consent dialog already answered
-    public bool ColorPickerEnabled { get; init; } = true;         // false => no click-to-pick, no ColorPickerWindow, no loupe colour codes
+    public bool ColorPickerEnabled { get; init; } = false;        // false => no click-to-pick, no ColorPickerWindow, no loupe colour codes
 
     // ---------- UX round 2 (additive; see DESIGN.md addendum / Overlay/ColorPickerWindow etc.) ----------
 
