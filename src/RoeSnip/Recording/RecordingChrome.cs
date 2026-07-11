@@ -67,7 +67,7 @@ internal sealed class RecordingChrome : Window
     private static readonly Color DangerSolid = Color.FromRgb(0xDC, 0x26, 0x26);
 
     private readonly MonitorInfo _monitor;
-    private readonly RectPhysical _selectionPx;
+    private RectPhysical _selectionPx; // re-anchored when the user drags the region (RegionOutline)
     private readonly RecordingFormat _format;
     private ChromeState _state = ChromeState.Setup;
     private bool _showingRestartConfirm;
@@ -413,6 +413,14 @@ internal sealed class RecordingChrome : Window
         y = Math.Clamp(y, bounds.Top, Math.Max(bounds.Top, bounds.Bottom - barHeightPx));
 
         NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_TOPMOST, x, y, barWidthPx, barHeightPx, NativeMethods.SWP_NOACTIVATE);
+    }
+
+    /// <summary>The user dragged the recorded region (RegionOutline): follow it so the HUD stays
+    /// anchored to the region's new spot. UI thread.</summary>
+    public void UpdateSelection(RectPhysical selectionPx)
+    {
+        _selectionPx = selectionPx;
+        RequestReposition();
     }
 
     /// <summary>Re-anchors once the pending layout pass from a content/state change has actually

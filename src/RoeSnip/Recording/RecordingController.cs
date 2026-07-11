@@ -99,7 +99,7 @@ internal sealed class RecordingSession
     private enum Phase { Setup, Capturing, Reviewing }
 
     private readonly MonitorInfo _monitor;
-    private readonly RectPhysical _selectionPx;
+    private RectPhysical _selectionPx; // position slides when the user drags RegionOutline; size fixed
     private readonly RecordingFormat _format;
     private readonly RoeSnipSettings _settings;
     private readonly ITrayNotifier? _notifier;
@@ -173,6 +173,7 @@ internal sealed class RecordingSession
             // OUTSIDE the region, capture-excluded, click-through — see RegionOutline's doc. Shown
             // for the whole session (Setup through Reviewing), not just while actually capturing.
             _outline = new RegionOutline(_monitor, _selectionPx);
+            _outline.RegionMoved += OnRegionMoved;
             _outline.Show();
 
             _chrome = new RecordingChrome(_monitor, _selectionPx, _format, _mic, _systemAudio);
@@ -238,6 +239,17 @@ internal sealed class RecordingSession
         {
             Console.Error.WriteLine($"RoeSnip: failed to persist recording audio toggle: {ex.Message}");
         }
+    }
+
+    /// <summary>The user dragged the recorded region (RegionOutline). UI thread. Re-anchor the HUD to
+    /// the region's new spot and, if a take is actively capturing, slide the recorder's crop origin so
+    /// the recording follows too (the encoder dimensions are unchanged, only the captured position).
+    /// The outline repositions itself; this only propagates to the other two moving parts.</summary>
+    private void OnRegionMoved(RectPhysical selectionPx)
+    {
+        _selectionPx = selectionPx;
+        _chrome?.UpdateSelection(selectionPx);
+        _recorder?.SetOrigin(selectionPx.Left, selectionPx.Top);
     }
 
     private void AdvanceOnPrtScr()

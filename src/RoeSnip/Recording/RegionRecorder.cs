@@ -38,7 +38,7 @@ internal sealed class RegionRecorder : IDisposable
 {
     private readonly WgcCapturer.MonitorResources _resources; // via WgcCapturer.CreateResources — never the s_slots cache
     private readonly MonitorInfo _monitor;
-    private readonly RectPhysical _selectionPx;                // even-WxH already enforced by the caller (RecordingController)
+    private RectPhysical _selectionPx;                          // even-WxH enforced by the caller; POSITION slides via SetOrigin, size fixed
     private readonly int _targetFps;
     private readonly long _minIntervalTicks;
     private readonly object _gpuLock = new();                  // serializes THIS recorder's own ImmediateContext use only
@@ -73,6 +73,22 @@ internal sealed class RegionRecorder : IDisposable
     }
 
     public ChannelReader<QueuedFrame> Frames => _queue.Reader;
+
+    /// <summary>Slides the crop origin while recording (the user dragged the region). Only the
+    /// position changes - the width/height, staging texture, and encoder dimensions stay fixed - so
+    /// no pipeline rebuild is needed. Taken under <see cref="_gpuLock"/>, the SAME lock OnFrameArrived
+    /// reads _selectionPx under, so the crop box is never torn mid-frame. Clamped to the monitor so
+    /// the CopySubresourceRegion box can never exceed the captured surface.</summary>
+    public void SetOrigin(int left, int top)
+    {
+        lock (_gpuLock)
+        {
+            int w = _selectionPx.Width, h = _selectionPx.Height;
+            int maxL = Math.Max(0, _monitor.BoundsPx.Width - w);
+            int maxT = Math.Max(0, _monitor.BoundsPx.Height - h);
+            _selectionPx = RectPhysical.FromSize(Math.Clamp(left, 0, maxL), Math.Clamp(top, 0, maxT), w, h);
+        }
+    }
 
     /// <summary>Starts the persistent capture session. Unlike WgcCapturer.CaptureCore's session,
     /// this one is NEVER disposed until <see cref="Stop"/> — that permanence is exactly what
