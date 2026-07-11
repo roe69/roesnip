@@ -135,9 +135,6 @@ internal sealed class RecordingSession
     private long _pausedTicks; // total paused Stopwatch ticks accumulated across all pauses this take
     private long _pauseStartTicks; // Stopwatch.GetTimestamp() when the current pause began (valid only while _paused)
 
-    private bool _hasGifPrevTimestamp;
-    private long _lastGifTimestampTicks;
-
     public RecordingSession(
         MonitorInfo monitor, RectPhysical selectionPx, RecordingFormat format,
         RoeSnipSettings settings, ITrayNotifier? notifier)
@@ -160,7 +157,10 @@ internal sealed class RecordingSession
         try
         {
             _uiDispatcher = Dispatcher.CurrentDispatcher;
-            _targetFps = _format == RecordingFormat.Gif ? 12 : 30;
+            // GIF delays are whole centiseconds, so 33fps (3cs) is the format's smooth sweet spot
+            // (2cs/50fps exists but roughly doubles motion bytes for marginal gain); size is kept
+            // down by GifEncoder's skip-identical + changed-region delta encoding, not by a low fps.
+            _targetFps = _format == RecordingFormat.Gif ? 33 : 30;
 
             // Fixed tone-map options, computed ONCE here from monitor metadata — never re-derived
             // per frame or per take (a Restart reuses these). Per-frame auto-derived peak
@@ -179,8 +179,9 @@ internal sealed class RecordingSession
             _systemAudio = _settings.RecordSystemAudio;
 
             // The visible "this area will be recorded" frame (both formats): dashed outline just
-            // OUTSIDE the region, capture-excluded, click-through — see RegionOutline's doc. Shown
-            // for the whole session (Setup through Reviewing), not just while actually capturing.
+            // OUTSIDE the region; the inner is unpainted (true click-through) except while Shift/
+            // Ctrl is held for a region move — see RegionOutline's doc. Shown for the whole session
+            // (Setup through Reviewing), not just while actually capturing.
             _outline = new RegionOutline(_monitor, _selectionPx);
             _outline.RegionChanged += OnRegionMoved;
             _outline.Show(); // Setup mode by default: band resizes, Shift/Ctrl inside moves
@@ -318,8 +319,6 @@ internal sealed class RecordingSession
                 _gifTempPath = Path.Combine(Path.GetTempPath(), $"roesnip_rec_{Guid.NewGuid():N}.gif");
                 _gifEncoder = GifEncoder.Create(_gifTempPath, _selectionPx.Width, _selectionPx.Height);
             }
-
-            _hasGifPrevTimestamp = false; // fresh delay-timestamp sequence for this take
 
             // Started last (after the encoder is ready to receive frames) so no captured frame is
             // ever silently dropped for lack of a sink.
@@ -566,7 +565,6 @@ internal sealed class RecordingSession
         CleanupTempFile();
         _mp4TempPath = null;
         _gifTempPath = null;
-        _hasGifPrevTimestamp = false;
 
         _phase = Phase.Setup;
         _chrome!.EnterSetup();
@@ -753,6 +751,11 @@ internal sealed class RecordingSession
         // Media Foundation's sink writer can reject. Deriving the epoch from the first real frame
         // makes timestamp 0 always correspond to an actual frame and every later one strictly larger.
         long? epochTicks = null;
+        // GIF only: the raw pixels of the last frame actually handed to the encoder. WGC's dirty
+        // tracking is monitor-wide, so a change anywhere on the monitor delivers a frame even when
+        // the recorded crop is untouched — comparing raw bytes here skips those before paying the
+        // (much more expensive) tone-map. GifEncoder's own SDR diff stays as the exact gate.
+        CapturedFrame? prevGifRaw = null;
 
         try
         {
@@ -774,28 +777,50 @@ internal sealed class RecordingSession
 
                 while (reader.TryRead(out var queued))
                 {
-                    using var frame = queued.Frame;
-                    // Subtract the accumulated paused time so the media clock is continuous across
-                    // a pause — frames captured DURING a pause never reach this queue at all
-                    // (RegionRecorder.Paused drops them before GPU readback), so the only thing left
-                    // to correct for is the gap the pause left behind in the raw QPC timestamps.
-                    // _pausedTicks only ever grows and Resume() updates it before any post-resume
-                    // frame is produced, so a per-frame Volatile.Read is safe here.
-                    long paused = Volatile.Read(ref _pausedTicks);
-                    long effectiveTicks = queued.TimestampTicks - paused;
-                    epochTicks ??= effectiveTicks;
-                    var sdr = SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts);
-                    framesWritten++;
+                    var frame = queued.Frame;
+                    bool frameKeptAsGifBaseline = false;
+                    try
+                    {
+                        // Subtract the accumulated paused time so the media clock is continuous across
+                        // a pause — frames captured DURING a pause never reach this queue at all
+                        // (RegionRecorder.Paused drops them before GPU readback), so the only thing left
+                        // to correct for is the gap the pause left behind in the raw QPC timestamps.
+                        // _pausedTicks only ever grows and Resume() updates it before any post-resume
+                        // frame is produced, so a per-frame Volatile.Read is safe here.
+                        long paused = Volatile.Read(ref _pausedTicks);
+                        long effectiveTicks = queued.TimestampTicks - paused;
 
-                    if (_format == RecordingFormat.Mp4)
-                    {
-                        long timestamp100ns = (long)((effectiveTicks - epochTicks.Value) / freq * 10_000_000.0);
-                        _mp4Encoder!.WriteFrame(sdr, timestamp100ns);
+                        if (_format == RecordingFormat.Gif && prevGifRaw is not null && RawFramesEqual(prevGifRaw, frame))
+                        {
+                            continue; // crop unchanged (monitor was dirty elsewhere) — skip pre-tone-map
+                        }
+
+                        epochTicks ??= effectiveTicks;
+                        var sdr = SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts);
+                        framesWritten++;
+
+                        if (_format == RecordingFormat.Mp4)
+                        {
+                            long timestamp100ns = (long)((effectiveTicks - epochTicks.Value) / freq * 10_000_000.0);
+                            _mp4Encoder!.WriteFrame(sdr, timestamp100ns);
+                        }
+                        else
+                        {
+                            // GifEncoder owns the timing: it diffs against the last emitted frame,
+                            // skips no-change frames, crops to the changed region, and patches each
+                            // frame's delay to its real display duration once the next frame lands.
+                            _gifEncoder!.AddFrame(sdr, effectiveTicks);
+                            prevGifRaw?.Dispose();
+                            prevGifRaw = frame; // becomes the raw-skip baseline for the next frame
+                            frameKeptAsGifBaseline = true;
+                        }
                     }
-                    else
+                    finally
                     {
-                        ushort delayCs = ComputeGifDelayCentiseconds(effectiveTicks, freq);
-                        _gifEncoder!.AddFrame(sdr, delayCs);
+                        if (!frameKeptAsGifBaseline)
+                        {
+                            frame.Dispose();
+                        }
                     }
                 }
 
@@ -813,6 +838,7 @@ internal sealed class RecordingSession
         finally
         {
             Console.Error.WriteLine($"RoeSnip: encoder loop exiting, {framesWritten} frame(s) processed");
+            prevGifRaw?.Dispose();
             if (_format == RecordingFormat.Mp4)
             {
                 // Whatever audio was still queued when the video channel completed belongs in the
@@ -825,10 +851,37 @@ internal sealed class RecordingSession
             }
             else
             {
-                try { _gifEncoder?.FinalizeAndClose(); }
+                // Finalize with the take's stop moment on the pause-adjusted clock so the LAST
+                // frame's delay covers the static tail the user held before stopping (without it,
+                // the final frame would flash for its 3cs provisional delay on every loop).
+                long now = System.Diagnostics.Stopwatch.GetTimestamp();
+                long pausedTotal = Volatile.Read(ref _pausedTicks);
+                if (_paused)
+                {
+                    pausedTotal += now - Volatile.Read(ref _pauseStartTicks); // stopped mid-pause
+                }
+                try { _gifEncoder?.FinalizeAndClose(now - pausedTotal); }
                 catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: GIF finalize failed: {ex}"); }
             }
         }
+    }
+
+    /// <summary>Encoder thread only. True when two raw captured frames carry identical pixel bytes
+    /// (row-wise, padding excluded). Dimension/format mismatches count as changed.</summary>
+    private static bool RawFramesEqual(CapturedFrame a, CapturedFrame b)
+    {
+        if (a.Format != b.Format || a.Width != b.Width || a.Height != b.Height)
+        {
+            return false;
+        }
+        for (int y = 0; y < a.Height; y++)
+        {
+            if (!a.Row(y).SequenceEqual(b.Row(y)))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>Encoder thread only. Moves every queued audio chunk into the MP4 writer, mapping
@@ -860,23 +913,6 @@ internal sealed class RecordingSession
             long timestamp100ns = (long)((effectiveTicks - epochTicks.Value) / freq * 10_000_000.0);
             encoder.WriteAudioSamples(chunk.Pcm, chunk.Pcm.Length, timestamp100ns);
         }
-    }
-
-    private ushort ComputeGifDelayCentiseconds(long timestampTicks, double freq)
-    {
-        ushort delay;
-        if (!_hasGifPrevTimestamp)
-        {
-            delay = (ushort)Math.Clamp(Math.Round(100.0 / _targetFps), 1, ushort.MaxValue);
-            _hasGifPrevTimestamp = true;
-        }
-        else
-        {
-            double seconds = (timestampTicks - _lastGifTimestampTicks) / freq;
-            delay = (ushort)Math.Clamp(Math.Round(seconds * 100.0), 1, ushort.MaxValue);
-        }
-        _lastGifTimestampTicks = timestampTicks;
-        return delay;
     }
 }
 

@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows.Media.Imaging;
+using RoeSnip.Capture;
 using RoeSnip.Imaging;
 
 namespace RoeSnip.Recording;
@@ -14,23 +16,50 @@ namespace RoeSnip.Recording;
 /// Color Table + LZW data and appends them to the output file. Net effect: flat memory (one
 /// frame's worth of encode scratch at a time) instead of the whole recording.
 ///
-/// Encoder thread only for <see cref="AddFrame"/> and <see cref="FinalizeAndClose"/> — <see cref="Create"/>
+/// Size/smoothness scheme (the timestamped <see cref="AddFrame(SdrImage, long)"/> overload — the
+/// recording path): high capture fps only costs bytes where pixels actually changed. Each incoming
+/// frame is diffed against the previously EMITTED one; an identical frame is skipped outright, a
+/// changed one is cropped to its changed bounding box and written as a GIF sub-rect frame (the
+/// disposal method is already "do not dispose", so untouched canvas pixels persist). Frame delays
+/// are exact-by-construction: a frame is written with a provisional delay and PATCHED to its real
+/// display duration (next emit's timestamp minus its own, whole centiseconds with carried
+/// remainder, 2cs floor — browsers clamp 0/1cs to 10cs) once the next frame lands; the temp
+/// FileStream is seekable, so the patch is a seek-back write. Skipped-frame time folds into that
+/// same patch for free. The raw <see cref="AddFrame(SdrImage, ushort)"/> primitive appends a
+/// full-canvas frame verbatim (tests use it); do not interleave the two overloads on one instance.
+///
+/// Encoder thread only for <see cref="AddFrame(SdrImage, long)"/> and <see cref="FinalizeAndClose"/> — <see cref="Create"/>
 /// runs on the UI thread before the encoder thread starts, and <see cref="Dispose"/> runs on the UI
 /// thread after the encoder thread has joined, matching Mp4Encoder's documented discipline. No
 /// locking: the two threads never touch the instance concurrently.</summary>
 public sealed class GifEncoder : IDisposable
 {
+    /// <summary>Provisional delay written with every frame before its real duration is known. Every
+    /// frame's delay is later patched: mid-take by the next emit, the final frame's by
+    /// <see cref="FinalizeAndClose(long)"/>'s stop timestamp (the parameterless finalize skips that
+    /// and leaves the final frame provisional).</summary>
+    private const ushort ProvisionalDelayCs = 3;
+    /// <summary>Browsers treat 0-1cs as "broken" and clamp to 10cs; 2cs (50fps) is the floor.</summary>
+    private const int MinDelayCs = 2;
+
     private readonly FileStream _stream;
     private readonly int _width;
     private readonly int _height;
+    private readonly long _timestampTicksPerSecond;
     private readonly MemoryStream _frameScratch = new();
     private bool _closed;
 
-    private GifEncoder(FileStream stream, int width, int height)
+    private byte[]? _prevPixels;         // full-canvas pixels of the last EMITTED frame
+    private long _lastEmitTimestampTicks;
+    private long _lastGceDelayOffset = -1; // file offset of the last frame's GCE delay LE16
+    private double _delayCarryCs;          // sub-centisecond remainder so rounding never drifts
+
+    private GifEncoder(FileStream stream, int width, int height, long timestampTicksPerSecond)
     {
         _stream = stream;
         _width = width;
         _height = height;
+        _timestampTicksPerSecond = timestampTicksPerSecond;
     }
 
     /// <summary>Opens <paramref name="tempFilePath"/> and writes everything that comes before the
@@ -38,8 +67,12 @@ public sealed class GifEncoder : IDisposable
     /// (every frame carries its own Local Color Table instead — see <see cref="AddFrame"/>), and
     /// the NETSCAPE2.0 loop-forever extension (WPF's encoder never emits this on its own, a
     /// well-documented gap; without it the GIF plays once and stops).</summary>
-    public static GifEncoder Create(string tempFilePath, int width, int height)
+    public static GifEncoder Create(string tempFilePath, int width, int height, long timestampTicksPerSecond = 0)
     {
+        if (timestampTicksPerSecond <= 0)
+        {
+            timestampTicksPerSecond = System.Diagnostics.Stopwatch.Frequency;
+        }
         var stream = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None);
 
         byte[] header =
@@ -62,11 +95,86 @@ public sealed class GifEncoder : IDisposable
         };
         stream.Write(netscape, 0, netscape.Length);
 
-        return new GifEncoder(stream, width, height);
+        return new GifEncoder(stream, width, height, timestampTicksPerSecond);
     }
 
-    /// <summary>Encoder thread only. Encodes this one frame in isolation via WPF's GifBitmapEncoder
-    /// (see <see cref="SdrImage.ToBitmapSource"/> for the BGRA8 -> BitmapSource conversion and why
+    /// <summary>Encoder thread only — the recording path. Diffs <paramref name="frame"/> (full
+    /// canvas, same size every call) against the last emitted frame: identical frames are skipped
+    /// (their display time folds into the previous frame's patched delay), changed frames are
+    /// cropped to the changed bounding box and appended as a sub-rect frame. See the class doc for
+    /// the delay patch-behind scheme. <paramref name="timestampTicks"/> is the frame's capture
+    /// timestamp in <see cref="_timestampTicksPerSecond"/> units, monotonic across the take.</summary>
+    public void AddFrame(SdrImage frame, long timestampTicks)
+    {
+        if (frame.Width != _width || frame.Height != _height)
+        {
+            throw new ArgumentException($"Frame is {frame.Width}x{frame.Height}; canvas is {_width}x{_height}.", nameof(frame));
+        }
+
+        if (_prevPixels is null)
+        {
+            // First frame establishes the whole canvas.
+            EmitFrame(frame, RectPhysical.FromSize(0, 0, _width, _height));
+            _prevPixels = frame.Pixels;
+            _lastEmitTimestampTicks = timestampTicks;
+            return;
+        }
+
+        if (!TryGetChangedBounds(_prevPixels, frame.Pixels, _width, _height, out var box))
+        {
+            return; // nothing changed — the previous frame just keeps displaying
+        }
+
+        PatchLastDelay(timestampTicks);
+        EmitFrame(frame, box);
+        _prevPixels = frame.Pixels; // full canvas, so future diffs see the true composite
+        _lastEmitTimestampTicks = timestampTicks;
+    }
+
+    /// <summary>Raw primitive: appends <paramref name="frame"/> (must be full-canvas) verbatim with
+    /// a fixed delay — no diffing, no delay patching. Kept for tests; the recording path uses the
+    /// timestamped overload, and the two must not be interleaved on one instance.</summary>
+    public void AddFrame(SdrImage frame, ushort delayCentiseconds)
+    {
+        if (frame.Width != _width || frame.Height != _height)
+        {
+            throw new ArgumentException($"Frame is {frame.Width}x{frame.Height}; canvas is {_width}x{_height}.", nameof(frame));
+        }
+        EncodeAndWrite(frame, RectPhysical.FromSize(0, 0, frame.Width, frame.Height), delayCentiseconds);
+    }
+
+    /// <summary>Writes the frame with the provisional delay and remembers where that delay lives in
+    /// the file so <see cref="PatchLastDelay"/> can rewrite it once the real duration is known.</summary>
+    private void EmitFrame(SdrImage canvasFrame, RectPhysical box)
+    {
+        _lastGceDelayOffset = _stream.Position + 4; // GCE = 21 F9 04 packed delayLo delayHi ...
+        EncodeAndWrite(canvasFrame, box, ProvisionalDelayCs);
+    }
+
+    /// <summary>Rewrites the previous frame's GCE delay to its actual display duration, in whole
+    /// centiseconds with the sub-centisecond remainder carried forward (so long runs never drift),
+    /// floored at <see cref="MinDelayCs"/>.</summary>
+    private void PatchLastDelay(long nowTicks)
+    {
+        if (_lastGceDelayOffset < 0)
+        {
+            return;
+        }
+        // Max(0, ...): a frame drained after a Resume can carry a pause-adjusted timestamp slightly
+        // behind the previous emit's — a negative span must not poison the carry.
+        double exactCs = Math.Max(0, nowTicks - _lastEmitTimestampTicks) * 100.0 / _timestampTicksPerSecond + _delayCarryCs;
+        int delay = (int)Math.Clamp(Math.Round(exactCs), MinDelayCs, ushort.MaxValue);
+        _delayCarryCs = Math.Clamp(exactCs - delay, -10.0, 10.0);
+
+        long end = _stream.Position;
+        _stream.Seek(_lastGceDelayOffset, SeekOrigin.Begin);
+        _stream.WriteByte((byte)(delay & 0xFF));
+        _stream.WriteByte((byte)(delay >> 8));
+        _stream.Seek(end, SeekOrigin.Begin);
+    }
+
+    /// <summary>Encodes one frame in isolation via WPF's GifBitmapEncoder (see
+    /// <see cref="SdrImage.ToBitmapSource"/> for the BGRA8 -> BitmapSource conversion and why
     /// Freeze is required before crossing back to the caller's expectations), then writes just the
     /// per-frame blocks straight to the output stream — see <see cref="WriteFrameBlocks"/> for the
     /// byte-layout details.
@@ -74,7 +182,7 @@ public sealed class GifEncoder : IDisposable
     /// Writes directly to <see cref="_stream"/> instead of building an intermediate concatenated
     /// byte[] (the old shape, still kept as <see cref="ExtractFrameBlocks"/> for tests): that array
     /// was sized to the compressed frame's byte count, which for a real desktop capture routinely
-    /// exceeds the 85,000-byte Large Object Heap threshold — at this method's ~12fps cadence that
+    /// exceeds the 85,000-byte Large Object Heap threshold — at recording cadence that
     /// meant a fresh LOH allocation, and thus LOH/Gen2 pressure, every single frame for the whole
     /// recording. Unlike Mp4Encoder.WriteFrame (whose per-frame buffer is native Media Foundation
     /// memory, never touching the managed heap), GifBitmapEncoder's output only exists as managed
@@ -83,9 +191,35 @@ public sealed class GifEncoder : IDisposable
     /// managed thread, including the UI thread — which is what made RegionOutline's WM_NCHITTEST
     /// hit-testing (and so click-through into the app being recorded) intermittently unresponsive
     /// specifically during GIF takes, never during MP4 ones.</summary>
-    public void AddFrame(SdrImage frame, ushort delayCentiseconds)
+    private void EncodeAndWrite(SdrImage canvasFrame, RectPhysical box, ushort delayCentiseconds)
     {
-        var bitmapFrame = BitmapFrame.Create(frame.ToBitmapSource());
+        if (box.Left < 0 || box.Top < 0 || box.Right > _width || box.Bottom > _height)
+        {
+            throw new ArgumentOutOfRangeException(nameof(box),
+                $"Frame rect {box} exceeds the {_width}x{_height} canvas.");
+        }
+
+        // Three source shapes, chosen to keep per-frame managed allocations out of the LOH (the
+        // f7aa9a3 lesson: LOH churn at recording cadence = Gen2 pauses = frozen UI hit-testing):
+        // full canvas encodes directly; a small box gets a cheap gen0 Crop; a large box goes
+        // through CroppedBitmap, which reads the full-canvas source strided at encode time instead
+        // of materializing a second LOH-sized managed copy.
+        const int lohThresholdBytes = 85_000;
+        BitmapSource source;
+        if (box.Width == _width && box.Height == _height)
+        {
+            source = canvasFrame.ToBitmapSource();
+        }
+        else if (box.Width * 4 * box.Height < lohThresholdBytes)
+        {
+            source = canvasFrame.Crop(box).ToBitmapSource();
+        }
+        else
+        {
+            source = new CroppedBitmap(canvasFrame.ToBitmapSource(), new System.Windows.Int32Rect(box.Left, box.Top, box.Width, box.Height));
+        }
+
+        var bitmapFrame = BitmapFrame.Create(source);
         if (bitmapFrame.CanFreeze)
         {
             bitmapFrame.Freeze();
@@ -97,7 +231,75 @@ public sealed class GifEncoder : IDisposable
         _frameScratch.SetLength(0);
         encoder.Save(_frameScratch);
 
-        WriteFrameBlocks(_stream, _frameScratch.GetBuffer(), (int)_frameScratch.Length, delayCentiseconds, _width, _height);
+        WriteFrameBlocks(_stream, _frameScratch.GetBuffer(), (int)_frameScratch.Length, delayCentiseconds, box.Width, box.Height, box.Left, box.Top);
+    }
+
+    /// <summary>Finds the tight bounding box of pixels that differ between two same-sized BGRA8
+    /// canvases (compared as whole 32-bit pixels — SdrImage alpha is always 255, so this is a color
+    /// compare). Returns false when the frames are identical. Row scans are vectorized
+    /// (SequenceEqual); the column scans are bounded by the best left/right found so far — cheap
+    /// when changes cluster (a full-frame change costs one row of scalar work), though adversarial
+    /// content (every row's only diffs hugging one edge) can degrade a scan toward
+    /// width-per-changed-row; the vectorized row pass still gates all of it to changed rows.</summary>
+    public static bool TryGetChangedBounds(byte[] prev, byte[] cur, int width, int height, out RectPhysical bounds)
+    {
+        if (prev.Length != cur.Length || prev.Length != width * 4 * height)
+        {
+            throw new ArgumentException("Canvas buffers must match width*4*height.", nameof(cur));
+        }
+        var p = MemoryMarshal.Cast<byte, uint>(prev.AsSpan());
+        var c = MemoryMarshal.Cast<byte, uint>(cur.AsSpan());
+
+        int top = -1;
+        for (int y = 0; y < height; y++)
+        {
+            if (!p.Slice(y * width, width).SequenceEqual(c.Slice(y * width, width)))
+            {
+                top = y;
+                break;
+            }
+        }
+        if (top < 0)
+        {
+            bounds = default;
+            return false;
+        }
+
+        int bottom = top;
+        for (int y = height - 1; y > top; y--)
+        {
+            if (!p.Slice(y * width, width).SequenceEqual(c.Slice(y * width, width)))
+            {
+                bottom = y;
+                break;
+            }
+        }
+
+        int left = width, right = -1;
+        for (int y = top; y <= bottom; y++)
+        {
+            var pr = p.Slice(y * width, width);
+            var cr = c.Slice(y * width, width);
+            for (int x = 0; x < left; x++)
+            {
+                if (pr[x] != cr[x])
+                {
+                    left = x;
+                    break;
+                }
+            }
+            for (int x = width - 1; x > right; x--)
+            {
+                if (pr[x] != cr[x])
+                {
+                    right = x;
+                    break;
+                }
+            }
+        }
+
+        bounds = RectPhysical.FromSize(left, top, right - left + 1, bottom - top + 1);
+        return true;
     }
 
     /// <summary>Pulls the per-frame GCE + Image Descriptor + Local Color Table + LZW data out of a
@@ -108,10 +310,10 @@ public sealed class GifEncoder : IDisposable
     /// encode may or may not exercise. A thin allocating wrapper around <see cref="WriteFrameBlocks"/>,
     /// which is what <see cref="AddFrame"/> actually calls on the hot path — tests only need a byte[]
     /// to assert against, they don't run at recording cadence.</summary>
-    public static byte[] ExtractFrameBlocks(byte[] gif, int length, ushort delayCentiseconds, int expectedWidth, int expectedHeight)
+    public static byte[] ExtractFrameBlocks(byte[] gif, int length, ushort delayCentiseconds, int expectedWidth, int expectedHeight, int frameLeft = 0, int frameTop = 0)
     {
         using var ms = new MemoryStream();
-        WriteFrameBlocks(ms, gif, length, delayCentiseconds, expectedWidth, expectedHeight);
+        WriteFrameBlocks(ms, gif, length, delayCentiseconds, expectedWidth, expectedHeight, frameLeft, frameTop);
         return ms.ToArray();
     }
 
@@ -124,7 +326,7 @@ public sealed class GifEncoder : IDisposable
     ///
     /// Reuses <see cref="GetHeaderAndGctLength"/> and <see cref="SkipSubBlocks"/>, both carried over
     /// unchanged from the old batch implementation's block-walk machinery.</summary>
-    private static void WriteFrameBlocks(Stream output, byte[] gif, int length, ushort delayCentiseconds, int expectedWidth, int expectedHeight)
+    private static void WriteFrameBlocks(Stream output, byte[] gif, int length, ushort delayCentiseconds, int expectedWidth, int expectedHeight, int frameLeft, int frameTop)
     {
         int pos = GetHeaderAndGctLength(gif);
         byte[] sourceGct = Array.Empty<byte>();
@@ -157,7 +359,7 @@ public sealed class GifEncoder : IDisposable
             {
                 gce ??= new byte[] { 0x21, 0xF9, 0x04, 0x04, (byte)(delayCentiseconds & 0xFF), (byte)(delayCentiseconds >> 8), 0x00, 0x00 };
                 output.Write(gce, 0, gce.Length);
-                WriteDescriptorAndData(output, gif, pos, length, expectedWidth, expectedHeight, sourceGct);
+                WriteDescriptorAndData(output, gif, pos, length, expectedWidth, expectedHeight, frameLeft, frameTop, sourceGct);
                 wroteDescriptor = true;
                 break; // exactly one frame in this GIF — nothing after its data matters
             }
@@ -192,12 +394,14 @@ public sealed class GifEncoder : IDisposable
     /// <summary>Validates the Image Descriptor's geometry, then either writes it (+ its Local Color
     /// Table + LZW data) verbatim, or — when WIC put the single frame's palette in a GLOBAL color
     /// table instead of a local one — synthesizes an equivalent descriptor with the LCT-present bit
-    /// set and the source GCT re-emitted as this frame's LCT. Writes straight to
-    /// <paramref name="output"/> — see <see cref="WriteFrameBlocks"/>'s doc comment for why: every
-    /// byte written here is either a slice of <paramref name="gif"/> (zero-copy) or one of a handful
-    /// of small fixed-size arrays (the 9/10-byte descriptor header, never LOH-sized), never a fresh
-    /// allocation sized to the whole frame.</summary>
-    private static void WriteDescriptorAndData(Stream output, byte[] gif, int pos, int length, int expectedWidth, int expectedHeight, byte[] sourceGct)
+    /// set and the source GCT re-emitted as this frame's LCT. The descriptor's left/top are patched
+    /// to <paramref name="frameLeft"/>/<paramref name="frameTop"/> — WIC encoded a standalone image
+    /// at (0,0), but on the animation's canvas this frame is a changed-region sub-rect. Writes
+    /// straight to <paramref name="output"/> — see <see cref="WriteFrameBlocks"/>'s doc comment for
+    /// why: every byte written here is either a slice of <paramref name="gif"/> (zero-copy) or one
+    /// of a handful of small fixed-size writes (the 10-byte descriptor, never LOH-sized), never a
+    /// fresh allocation sized to the whole frame.</summary>
+    private static void WriteDescriptorAndData(Stream output, byte[] gif, int pos, int length, int expectedWidth, int expectedHeight, int frameLeft, int frameTop, byte[] sourceGct)
     {
         int left = gif[pos + 1] | (gif[pos + 2] << 8);
         int top = gif[pos + 3] | (gif[pos + 4] << 8);
@@ -221,12 +425,14 @@ public sealed class GifEncoder : IDisposable
 
         if ((packed & 0x80) != 0)
         {
-            // Already carries its own Local Color Table — write descriptor + LCT + LZW data verbatim,
-            // straight out of gif (a slice of the caller's own buffer, not a copy).
+            // Already carries its own Local Color Table — write the position-patched descriptor,
+            // then LCT + LZW data verbatim straight out of gif (a slice of the caller's own
+            // buffer, not a copy).
             int lctSize = 3 * (1 << ((packed & 0x07) + 1));
             int dataStart = pos + 10 + lctSize;
             int dataEnd = SkipSubBlocks(gif, dataStart + 1); // +1 past the LZW min-code-size byte
-            output.Write(gif, pos, dataEnd - pos);
+            WriteDescriptorHeader(output, gif, pos, frameLeft, frameTop, packed);
+            output.Write(gif, pos + 10, dataEnd - (pos + 10));
         }
         else
         {
@@ -243,11 +449,37 @@ public sealed class GifEncoder : IDisposable
             int dataStart = pos + 10;
             int dataEnd = SkipSubBlocks(gif, dataStart + 1);
 
-            output.Write(gif, pos, 9); // left/top/width/height, unpacked fields
-            output.WriteByte(newPacked);
+            WriteDescriptorHeader(output, gif, pos, frameLeft, frameTop, newPacked);
             output.Write(sourceGct, 0, sourceGct.Length);
             output.Write(gif, dataStart, dataEnd - dataStart);
         }
+    }
+
+    /// <summary>The 10-byte Image Descriptor: 0x2C, left/top rewritten to the frame's canvas
+    /// position, width/height copied from the encode, and the caller's packed byte.</summary>
+    private static void WriteDescriptorHeader(Stream output, byte[] gif, int pos, int frameLeft, int frameTop, byte packed)
+    {
+        output.WriteByte(0x2C);
+        output.WriteByte((byte)(frameLeft & 0xFF));
+        output.WriteByte((byte)(frameLeft >> 8));
+        output.WriteByte((byte)(frameTop & 0xFF));
+        output.WriteByte((byte)(frameTop >> 8));
+        output.Write(gif, pos + 5, 4); // width/height LE16 pair, as encoded
+        output.WriteByte(packed);
+    }
+
+    /// <summary>Recording-path finalize: patches the LAST frame's delay to its real remaining
+    /// display time (last emit to <paramref name="endTimestampTicks"/>, the take's stop moment) —
+    /// without this, a recording that ends on a static tail (the common "hold the result, then
+    /// Stop" flow) would snap off its final frame after the 3cs provisional delay on every loop —
+    /// then writes the trailer and closes.</summary>
+    public void FinalizeAndClose(long endTimestampTicks)
+    {
+        if (!_closed)
+        {
+            PatchLastDelay(endTimestampTicks);
+        }
+        FinalizeAndClose();
     }
 
     /// <summary>Writes the trailer byte and flushes/closes the output stream. Idempotent — safe to
