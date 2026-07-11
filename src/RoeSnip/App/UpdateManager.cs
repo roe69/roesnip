@@ -52,6 +52,19 @@ public static class UpdateManager
     public static Version CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0, 0);
 
+    /// <summary>"1.0.4"-shaped display text for <see cref="CurrentVersion"/> - the SDK always fills
+    /// in a Revision component (always 0 for this project's x.y.z &lt;Version&gt; scheme), which
+    /// reads as noise ("1.0.4.0") anywhere this is shown to the user (About box, tray tooltip,
+    /// update-check result). Matches the release tag's own x.y.z shape exactly.</summary>
+    public static string CurrentVersionText
+    {
+        get
+        {
+            Version v = CurrentVersion;
+            return $"{v.Major}.{v.Minor}.{v.Build}";
+        }
+    }
+
     /// <summary>True when an installed copy already exists on disk
     /// (%LOCALAPPDATA%\RoeSnip\RoeSnip.exe), regardless of whether THIS process is that copy. Gates
     /// the one-time "Install RoeSnip" tray item: once an install exists it must not be re-offered,

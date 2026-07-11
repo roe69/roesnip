@@ -172,7 +172,7 @@ public sealed class TrayApp : ITrayNotifier
         menu.Items.Add("Exit", null, (_, _) => Application.Exit());
 
         _notifyIcon.ContextMenuStrip = menu;
-        _notifyIcon.Text = "RoeSnip";
+        _notifyIcon.Text = $"RoeSnip {UpdateManager.CurrentVersionText}";
         _notifyIcon.Visible = true;
         _notifyIcon.DoubleClick += (_, _) => TriggerCapture();
 
@@ -478,7 +478,7 @@ public sealed class TrayApp : ITrayNotifier
     private static void ShowAbout()
     {
         MessageBox.Show(
-            "RoeSnip\n\n" +
+            $"RoeSnip {UpdateManager.CurrentVersionText}\n\n" +
             "An HDR-correct screenshot tool. On HDR/Advanced-Color displays, RoeSnip captures the " +
             "true linear scRGB frame and tone-maps it properly (matching the SDR white level and " +
             "rolling off highlights) instead of producing the washed-out gray screenshots typical " +
@@ -535,23 +535,6 @@ public sealed class TrayApp : ITrayNotifier
             _notifyIcon.BalloonTipClicked -= _activeBalloonClickHandler;
         }
         _activeBalloonClickHandler = null;
-    }
-
-    /// <summary>A neutral informational balloon (e.g. "up to date") - same shape as ShowWarning
-    /// below, just with ToolTipIcon.Info. Not part of ITrayNotifier; only used internally.</summary>
-    private void ShowInfo(string message)
-    {
-        if (_notifyIcon is null)
-        {
-            Console.Error.WriteLine($"RoeSnip: {message}");
-            return;
-        }
-
-        DetachActiveBalloonHandler();
-        _notifyIcon.BalloonTipTitle = "RoeSnip";
-        _notifyIcon.BalloonTipText = message;
-        _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
-        _notifyIcon.ShowBalloonTip(4000);
     }
 
     // ---------------- Self-update (CHANGE 2) ----------------
@@ -635,13 +618,27 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>The "Check for updates" context-menu item: unlike the silent startup check, this
-    /// always reports back - the click-to-update balloon when an update is found, "up to date" when
-    /// none is, or a failure balloon if the check itself could not be completed. CheckForUpdateAsync
-    /// never throws in practice (it swallows network/parse failures and returns null the same as
-    /// "no update"), but this still wraps the await so a check can never crash the tray if that
-    /// ever changed.</summary>
+    /// always reports back via a MODAL MessageBox rather than a balloon - a deliberate, occasional,
+    /// user-initiated click is exactly the case a MessageBox is right for, and unlike a balloon it
+    /// cannot be silently eaten by Windows (Focus Assist, notification settings, or the Shell's own
+    /// long-standing habit of just not showing NotifyIcon balloons are all real and common - "I
+    /// clicked Check for updates and nothing happened" is the textbook symptom). Reports: not
+    /// installed (nothing to update itself into), up to date, an update available (offered inline as
+    /// Yes/No instead of requiring the user to notice and click a balloon), or a failure.
+    /// CheckForUpdateAsync never throws in practice (it swallows network/parse failures and returns
+    /// null the same as "no update"), but this still wraps the await so a check can never crash the
+    /// tray if that ever changed.</summary>
     private async Task CheckForUpdatesFromMenuAsync()
     {
+        if (!UpdateManager.IsInstalled)
+        {
+            _uiThreadMarshal?.BeginInvoke(new Action(() => MessageBox.Show(
+                $"You're running RoeSnip {UpdateManager.CurrentVersionText} as a portable copy - " +
+                "only the installed copy (Install RoeSnip in this menu) checks for and applies updates.",
+                "RoeSnip", MessageBoxButtons.OK, MessageBoxIcon.Information)));
+            return;
+        }
+
         UpdateManager.UpdateInfo? update;
         try
         {
@@ -650,8 +647,9 @@ public sealed class TrayApp : ITrayNotifier
         catch (Exception ex)
         {
             Console.Error.WriteLine($"RoeSnip: update check failed (non-fatal): {ex.Message}");
-            _uiThreadMarshal?.BeginInvoke(new Action(() =>
-                ShowError("Could not check for updates - GitHub could not be reached.")));
+            _uiThreadMarshal?.BeginInvoke(new Action(() => MessageBox.Show(
+                "Could not check for updates - GitHub could not be reached.",
+                "RoeSnip", MessageBoxButtons.OK, MessageBoxIcon.Error)));
             return;
         }
 
@@ -659,11 +657,19 @@ public sealed class TrayApp : ITrayNotifier
         {
             if (update is not null)
             {
-                ShowUpdateAvailableBalloon(update);
+                DialogResult choice = MessageBox.Show(
+                    $"RoeSnip {update.Version} is available (you have {UpdateManager.CurrentVersionText}). Update now?",
+                    "RoeSnip", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                if (choice == DialogResult.Yes)
+                {
+                    _ = ApplyUpdateFromBalloonAsync(update);
+                }
             }
             else
             {
-                ShowInfo("RoeSnip is up to date.");
+                MessageBox.Show(
+                    $"RoeSnip {UpdateManager.CurrentVersionText} is up to date.",
+                    "RoeSnip", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }));
     }
