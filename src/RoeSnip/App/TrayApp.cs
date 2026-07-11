@@ -44,6 +44,16 @@ public sealed class TrayApp : ITrayNotifier
     /// old "just poke the running instance to snip" behavior for scripting/tests.</summary>
     public static int Run(string[] args)
     {
+        if (Array.IndexOf(args, "--self-update-now") >= 0)
+        {
+            // One-shot "force update now": check GitHub and, if there is a newer release, download +
+            // swap it and let the new build take over via replace-on-run, then exit - no tray icon,
+            // no single-instance mutex (so it never fights the running instance the new build
+            // replaces). Drives the self-updater headlessly for scripts/tests and doubles as a manual
+            // force-update. See RunSelfUpdateNow.
+            return RunSelfUpdateNow();
+        }
+
         bool signalCaptureOnly = Array.IndexOf(args, "--signal-capture") >= 0;
         var mutex = new Mutex(initiallyOwned: true, MutexName, out bool createdNew);
 
@@ -149,10 +159,12 @@ public sealed class TrayApp : ITrayNotifier
         menu.Items.Add("Settings...", null, (_, _) => OpenSettings());
         menu.Items.Add("About", null, (_, _) => ShowAbout());
         menu.Items.Add(new ToolStripSeparator());
-        if (!UpdateManager.IsInstalled)
+        if (!UpdateManager.InstallExists)
         {
-            // Only offered for a portable/dev run - once installed, this copy IS the one
-            // "Install RoeSnip" would create, so the item would be a no-op.
+            // Only offered until an install actually exists on disk. Gating on InstallExists (not
+            // IsInstalled) means a rebuilt dev copy / fresh download / replace-on-run takeover of an
+            // already-installed app does NOT re-offer "Install" - to the user it is already
+            // installed, and the self-updater keeps that installed copy current from here.
             menu.Items.Add("Install RoeSnip", null, (_, _) => InstallRoeSnip());
         }
         menu.Items.Add("Check for updates", null, (_, _) => _ = CheckForUpdatesFromMenuAsync());
@@ -173,10 +185,17 @@ public sealed class TrayApp : ITrayNotifier
         // release. Fire-and-forget: CheckForUpdateAsync never throws and this must never delay
         // startup or block the UI thread.
         UpdateManager.CleanupStaleUpdateFiles();
-        // Best-effort cleanup of the source exe a prior Install() left behind (see the
-        // pending-source-cleanup marker it writes) - runs on a background thread since a still-
-        // locked file's bounded retry loop must never stall startup.
-        _ = Task.Run(UpdateManager.ProcessPendingSourceCleanup);
+        // Background cleanup that may need a bounded retry (a still-locked file must never stall
+        // startup): the source exe a prior Install() "move" left behind (pending-source-cleanup
+        // marker) AND the ".old" a just-applied update swapped out - right after an update hand-off
+        // the replaced process can still be exiting and holding that renamed exe locked, so the
+        // synchronous CleanupStaleUpdateFiles above can miss it. Retrying here frees the ~170 MB
+        // artefact the same session instead of leaving it until the next launch.
+        _ = Task.Run(() =>
+        {
+            UpdateManager.ProcessPendingSourceCleanup();
+            UpdateManager.CleanupStaleExeWithRetry();
+        });
         if (UpdateManager.IsInstalled)
         {
             _ = CheckForUpdatesOnStartupAsync();
@@ -536,6 +555,47 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     // ---------------- Self-update (CHANGE 2) ----------------
+
+    /// <summary>Backs the hidden --self-update-now flag: synchronously checks GitHub for a newer
+    /// release and, if there is one, downloads + swaps it (UpdateManager.ApplyUpdateAsync, which then
+    /// launches the new build so replace-on-run hands off to it) before returning. No tray icon and
+    /// no single-instance mutex are ever created here - this process's only job is to perform the
+    /// swap and exit, leaving the freshly-launched new build as the running instance. Returns 0 on
+    /// "updated" or "already current", 1 only if the check/download/swap itself errored; never
+    /// throws.</summary>
+    private static int RunSelfUpdateNow()
+    {
+        try
+        {
+            if (!UpdateManager.IsInstalled)
+            {
+                // Only the installed copy should force-update itself: CheckForUpdateAsync compares
+                // the release against THIS process's version, but ApplyUpdateAsync swaps the installed
+                // exe - run it from a portable/dev copy and that comparison is against the wrong
+                // baseline (and with no install present it would create one with no run-at-startup
+                // key). The installed copy is the only correct place to run this.
+                Console.Out.WriteLine(@"RoeSnip: --self-update-now applies only to the installed copy (%LOCALAPPDATA%\RoeSnip\RoeSnip.exe).");
+                return 0;
+            }
+
+            UpdateManager.UpdateInfo? update = UpdateManager.CheckForUpdateAsync().GetAwaiter().GetResult();
+            if (update is null)
+            {
+                Console.Out.WriteLine($"RoeSnip: already up to date (current {UpdateManager.CurrentVersion}).");
+                return 0;
+            }
+
+            Console.Out.WriteLine($"RoeSnip: updating {UpdateManager.CurrentVersion} -> {update.Version}...");
+            UpdateManager.ApplyUpdateAsync(update).GetAwaiter().GetResult();
+            Console.Out.WriteLine($"RoeSnip: updated to {update.Version}; new build launched.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: self-update failed: {ex.Message}");
+            return 1;
+        }
+    }
 
     /// <summary>The "Install RoeSnip" context-menu item (only shown when
     /// <see cref="UpdateManager.IsInstalled"/> is false): copies this portable/dev run into

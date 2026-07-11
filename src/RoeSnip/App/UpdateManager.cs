@@ -52,10 +52,31 @@ public static class UpdateManager
     public static Version CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0, 0);
 
+    /// <summary>True when an installed copy already exists on disk
+    /// (%LOCALAPPDATA%\RoeSnip\RoeSnip.exe), regardless of whether THIS process is that copy. Gates
+    /// the one-time "Install RoeSnip" tray item: once an install exists it must not be re-offered,
+    /// even when the user happens to be running a rebuilt dev copy, a fresh download, or a copy that
+    /// took over the running install via replace-on-run (all of which leave <see cref="IsInstalled"/>
+    /// false while the app is, to the user, plainly already installed).</summary>
+    public static bool InstallExists
+    {
+        get
+        {
+            try
+            {
+                return File.Exists(InstalledExePath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+    }
+
     /// <summary>True when this process is already running FROM the installed copy
-    /// (%LOCALAPPDATA%\RoeSnip\RoeSnip.exe) - the "Install RoeSnip" tray item only makes sense
-    /// when this is false, and update-checks only make sense when it's true (a portable/dev copy
-    /// has nothing sensible to swap itself for).</summary>
+    /// (%LOCALAPPDATA%\RoeSnip\RoeSnip.exe). Update-checks only make sense when it's true (a
+    /// portable/dev copy has nothing sensible to swap itself for); the "Install RoeSnip" item is
+    /// gated on <see cref="InstallExists"/> instead, not this.</summary>
     public static bool IsInstalled
     {
         get
@@ -90,11 +111,26 @@ public static class UpdateManager
 
     /// <summary>Best-effort delete of update leftovers (a ".old" from a prior swap that's unlocked
     /// once that older process exited, and any ".new" abandoned by a download that never
-    /// completed). Called once at startup; never throws.</summary>
+    /// completed). Called once, synchronously, at startup - a single fast attempt that clears both
+    /// in the common case (a normal launch, where any prior process is long gone). The just-updated
+    /// case, where the replaced process is still exiting and holding its renamed ".old" locked, is
+    /// covered by <see cref="CleanupStaleExeWithRetry"/> on a background thread. Never throws.</summary>
     public static void CleanupStaleUpdateFiles()
     {
         TryDelete(StaleExePath);
         TryDelete(DownloadingExePath);
+    }
+
+    /// <summary>Background bounded-retry delete of the ".old" exe a prior update swapped out. The
+    /// synchronous <see cref="CleanupStaleUpdateFiles"/> above tries once, but right after an update
+    /// hand-off the just-replaced process can still be exiting and holding its renamed exe locked,
+    /// so that first attempt misses and a full ~170 MB copy would otherwise sit in the install dir
+    /// until the NEXT launch. This retries briefly so the swap frees its old artefact the same
+    /// session and the install dir never keeps more than the one live exe. Never throws; call on a
+    /// background thread (the retry wait must never stall startup).</summary>
+    public static void CleanupStaleExeWithRetry()
+    {
+        TryDeleteWithRetry(StaleExePath);
     }
 
     private static void TryDelete(string path)
@@ -109,6 +145,39 @@ public static class UpdateManager
         catch (Exception ex)
         {
             Console.Error.WriteLine($"RoeSnip: could not clean up stale update file '{path}' (non-fatal): {ex.Message}");
+        }
+    }
+
+    /// <summary>Deletes <paramref name="path"/> with a short bounded retry - a file just released by
+    /// a sibling process that is only now exiting (a swapped-out ".old" exe, or the source exe a
+    /// "move" install left behind) can stay briefly locked. ~2 s total, bounded so a file that never
+    /// unlocks can't stall the caller; never throws. Call on a background thread.</summary>
+    private static void TryDeleteWithRetry(string path)
+    {
+        const int maxAttempts = 10;
+        const int retryDelayMs = 200; // ~2s total, bounded so a still-locked file never stalls startup
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    return;
+                }
+
+                File.Delete(path);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == maxAttempts - 1)
+                {
+                    Console.Error.WriteLine($"RoeSnip: could not delete '{path}' after retries (non-fatal): {ex.Message}");
+                    return;
+                }
+
+                Thread.Sleep(retryDelayMs);
+            }
         }
     }
 
@@ -136,26 +205,40 @@ public static class UpdateManager
                 return;
             }
 
+            // Stage the copy under a temp name, then swap it into place, so InstalledExePath is
+            // never observable half-written: a crash/kill mid-copy would otherwise leave a truncated
+            // RoeSnip.exe that still satisfies InstallExists (permanently hiding the "Install" item)
+            // yet is not runnable, with no in-app repair path. Same swap discipline ApplyUpdateAsync
+            // uses for updates.
+            string stagingPath = DownloadingExePath;
+            TryDelete(stagingPath);
+            File.Copy(currentExe, stagingPath, overwrite: true);
+
+            TryDelete(StaleExePath);
+            bool movedExisting = false;
             if (File.Exists(InstalledExePath))
             {
-                try
-                {
-                    File.Copy(currentExe, InstalledExePath, overwrite: true);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    // Locked by a running installed instance - rename it out of the way first
-                    // (renaming a running exe is allowed on Windows; that process keeps running
-                    // against its now-unnamed handle until it exits and CleanupStaleUpdateFiles
-                    // deletes the .old on a later startup), then copy the current build in fresh.
-                    TryDelete(StaleExePath);
-                    File.Move(InstalledExePath, StaleExePath);
-                    File.Copy(currentExe, InstalledExePath, overwrite: true);
-                }
+                // Rename any existing install out of the way first - works even when a running
+                // installed instance holds it locked (renaming a running exe is allowed on Windows;
+                // that process keeps running against its now-renamed handle until it exits, and
+                // CleanupStaleExeWithRetry deletes the .old once it does).
+                File.Move(InstalledExePath, StaleExePath);
+                movedExisting = true;
             }
-            else
+
+            try
             {
-                File.Copy(currentExe, InstalledExePath, overwrite: false);
+                File.Move(stagingPath, InstalledExePath);
+            }
+            catch
+            {
+                // Never leave the install location without a runnable exe: put the prior copy back.
+                if (movedExisting && !File.Exists(InstalledExePath) && File.Exists(StaleExePath))
+                {
+                    File.Move(StaleExePath, InstalledExePath);
+                }
+
+                throw;
             }
 
             try
@@ -228,26 +311,7 @@ public static class UpdateManager
                 string.Equals(Path.GetFileName(sourcePath), "RoeSnip.exe", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(InstalledExePath), StringComparison.OrdinalIgnoreCase))
             {
-                const int maxAttempts = 10;
-                const int retryDelayMs = 200; // ~2s total, bounded so a still-locked file never stalls startup
-                for (int attempt = 0; attempt < maxAttempts; attempt++)
-                {
-                    try
-                    {
-                        File.Delete(sourcePath);
-                        break;
-                    }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    {
-                        if (attempt == maxAttempts - 1)
-                        {
-                            Console.Error.WriteLine($"RoeSnip: could not delete old source exe '{sourcePath}' after install (non-fatal): {ex.Message}");
-                            break;
-                        }
-
-                        Thread.Sleep(retryDelayMs);
-                    }
-                }
+                TryDeleteWithRetry(sourcePath);
             }
         }
         catch (Exception ex)
