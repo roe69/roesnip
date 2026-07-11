@@ -75,6 +75,12 @@ public sealed class Magnifier : FrameworkElement
     /// sizes itself to exactly the enabled lines.</summary>
     public RoeSnipSettings Formats { get; set; } = RoeSnipSettings.Default;
 
+    /// <summary>When false the loupe shows ONLY the zoomed pixel grid, with no colour-value lines
+    /// below it - used by the blur/pixelate tool, which wants the same precise-placement loupe as
+    /// the initial selection but no colour readout (there is no colour being picked). The widget
+    /// then hugs just the grid.</summary>
+    public bool ShowColorReadout { get; set; } = true;
+
     // The enabled subset of Formats' color-format list, derived lazily and cached by settings
     // reference — OnRender runs per mouse move, so it must not re-run the catalog merge each time.
     private RoeSnipSettings? _activeFormatsSource;
@@ -156,13 +162,16 @@ public sealed class Magnifier : FrameworkElement
         bool isHighlight = nits > 250.0;
         var amber = new SolidColorBrush(Color.FromRgb(0xFF, 0xD5, 0x4F));
         var lines = new List<FormattedText>();
-        foreach (var entry in ActiveFormats)
+        if (ShowColorReadout)
         {
-            string value = ColorFormatTemplate.Format(entry.Format, r, g, b, nits);
-            bool isNitsLine = entry.Format.Contains("%Nt", StringComparison.Ordinal);
-            lines.Add(new FormattedText(
-                value, CultureInfo.InvariantCulture, FlowDir.LeftToRight, lineFace, LineFontSize,
-                isNitsLine && isHighlight ? amber : Brushes.White, 1.0));
+            foreach (var entry in ActiveFormats)
+            {
+                string value = ColorFormatTemplate.Format(entry.Format, r, g, b, nits);
+                bool isNitsLine = entry.Format.Contains("%Nt", StringComparison.Ordinal);
+                lines.Add(new FormattedText(
+                    value, CultureInfo.InvariantCulture, FlowDir.LeftToRight, lineFace, LineFontSize,
+                    isNitsLine && isHighlight ? amber : Brushes.White, 1.0));
+            }
         }
 
         // Fixed-footprint loupe: the pixel grid never resizes with zoom — the per-pixel swatch

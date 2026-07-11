@@ -201,7 +201,12 @@ public partial class OverlayWindow : Window
     /// finishes. Independently of this, MouseLeave/Deactivated always hide the magnifier outright
     /// (even in pick-only mode) so it can never freeze on a monitor the cursor has left — see
     /// OnMouseLeave/OnDeactivated.</summary>
-    private bool IsMagnifierActive => _pickOnlyMode || (_selectionPx is null && _dragMode == DragMode.None);
+    private bool IsMagnifierActive => _pickOnlyMode
+        || (_selectionPx is null && _dragMode == DragMode.None)
+        // The blur/pixelate tool shows the same placement loupe as the initial selection (but with
+        // no colour readout - see the ShowColorReadout set at the Update site) so its region edges
+        // can be placed to the pixel.
+        || (_currentTool == AnnotationTool.Pixelate && _dragMode == DragMode.None);
 
     internal OverlayWindow(
         CapturedFrame frame,
@@ -878,6 +883,8 @@ public partial class OverlayWindow : Window
 
         if (IsMagnifierActive)
         {
+            // Blur/pixelate tool: same loupe, but no colour-value lines below it (request 3).
+            MagnifierControl.ShowColorReadout = _currentTool != AnnotationTool.Pixelate;
             MagnifierControl.Update(_preview, _frame, dip, px);
         }
 
