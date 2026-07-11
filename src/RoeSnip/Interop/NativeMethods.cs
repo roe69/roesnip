@@ -143,6 +143,17 @@ public static class NativeMethods
     public const int WM_HOTKEY = 0x0312;
     public const int VK_SNAPSHOT = 0x2C;
 
+    // Friendly hotkey display names (bug 3, SettingsWindow.DescribeHotkey): MapVirtualKey turns a
+    // virtual-key code into the scan code GetKeyNameText expects (packed into lParam bits 16-23),
+    // which returns the real, localized key name ("S", "F5", "Delete") instead of a raw hex code.
+    [DllImport("user32.dll")]
+    public static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
+    public const uint MAPVK_VK_TO_VSC = 0;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetKeyNameText(int lParam, System.Text.StringBuilder lpString, int cchSize);
+
     // Broadcasts a policy-change notification (e.g. after writing a Control Panel\Keyboard
     // registry value) so the shell picks it up live instead of only at the next logon. See
     // TrayApp.ResolvePrintScreenConsent's use on the PrintScreenKeyForSnippingEnabled write.

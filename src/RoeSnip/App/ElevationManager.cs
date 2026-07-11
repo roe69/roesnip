@@ -145,6 +145,50 @@ public static class ElevationManager
     private static string FirstNonEmpty(string primary, string fallback) =>
         string.IsNullOrWhiteSpace(primary) ? fallback.Trim() : primary.Trim();
 
+    // ---------------- Cross-process error relay (bugs 1 & 7) ----------------
+
+    /// <summary>SettingsWindow's non-elevated path relaunches RoeSnip.exe elevated with
+    /// Process.Start(UseShellExecute=true, Verb="runas") to reach RunEnableElevatedStartupCli /
+    /// RunDisableElevatedStartupCli in a SEPARATE process. UseShellExecute=true (required for the
+    /// runas verb) cannot redirect that child's stdout/stderr, and this app is a console-less WinExe
+    /// besides, so a real schtasks failure inside the elevated verb used to be completely invisible
+    /// to the user - the checkbox just silently reverted with no explanation. The elevated verb
+    /// writes its failure message here before returning a nonzero exit code; the caller drains any
+    /// stale content before launching, then reads it back after a failed exit code to show the real
+    /// reason instead of a generic "failed" message.</summary>
+    private static readonly string LastErrorFilePath =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "RoeSnip-elevate-error.txt");
+
+    public static string? ConsumeLastError()
+    {
+        try
+        {
+            if (!System.IO.File.Exists(LastErrorFilePath))
+            {
+                return null;
+            }
+            string text = System.IO.File.ReadAllText(LastErrorFilePath).Trim();
+            System.IO.File.Delete(LastErrorFilePath);
+            return text.Length == 0 ? null : text;
+        }
+        catch
+        {
+            return null; // best-effort relay; the caller still sees the nonzero exit code either way
+        }
+    }
+
+    private static void WriteLastError(string message)
+    {
+        try
+        {
+            System.IO.File.WriteAllText(LastErrorFilePath, message);
+        }
+        catch
+        {
+            // Best-effort; the caller still sees SOME failure (nonzero exit / generic message).
+        }
+    }
+
     private static (int ExitCode, string StdOut, string StdErr) RunSchtasks(params string[] arguments)
     {
         var psi = new ProcessStartInfo("schtasks.exe")
@@ -178,7 +222,9 @@ public static class ElevationManager
     {
         if (!IsProcessElevated())
         {
-            Console.Error.WriteLine("RoeSnip: --enable-elevated-startup must be run elevated.");
+            const string message = "RoeSnip: --enable-elevated-startup must be run elevated (the UAC prompt may have been declined).";
+            Console.Error.WriteLine(message);
+            WriteLastError(message);
             return 1;
         }
 
@@ -192,6 +238,7 @@ public static class ElevationManager
         catch (Exception ex)
         {
             Console.Error.WriteLine($"RoeSnip: {ex.Message}");
+            WriteLastError(ex.Message);
             return 1;
         }
 
@@ -202,6 +249,7 @@ public static class ElevationManager
         catch (Exception ex)
         {
             Console.Error.WriteLine($"RoeSnip: failed to create the elevated startup task: {ex.Message}");
+            WriteLastError(ex.Message);
             return 1;
         }
 
@@ -229,7 +277,9 @@ public static class ElevationManager
     {
         if (!IsProcessElevated())
         {
-            Console.Error.WriteLine("RoeSnip: --disable-elevated-startup must be run elevated.");
+            const string message = "RoeSnip: --disable-elevated-startup must be run elevated (the UAC prompt may have been declined).";
+            Console.Error.WriteLine(message);
+            WriteLastError(message);
             return 1;
         }
 
@@ -240,6 +290,7 @@ public static class ElevationManager
         catch (Exception ex)
         {
             Console.Error.WriteLine($"RoeSnip: failed to remove the elevated startup task: {ex.Message}");
+            WriteLastError(ex.Message);
             return 1;
         }
 

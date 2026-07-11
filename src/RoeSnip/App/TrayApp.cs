@@ -30,6 +30,7 @@ public sealed class TrayApp : ITrayNotifier
     private CancellationTokenSource? _pipeListenerCts;
     private RoeSnipSettings _settings = RoeSnipSettings.Default;
     private EventHandler? _activeBalloonClickHandler;
+    private SettingsWindow? _settingsWindow;
 
     /// <summary>Runs the tray app: NotifyIcon + context menu + message loop. If another instance is
     /// already running (named mutex held), signals it to run the capture flow instead and returns
@@ -52,6 +53,19 @@ public sealed class TrayApp : ITrayNotifier
         Application.EnableVisualStyles();
 
         _settings = AppComposition.LoadSettings?.Invoke() ?? RoeSnipSettings.Default;
+
+        // Bug 4: make sure the save directory exists before anything (Browse, first save) touches
+        // it. Save-time paths already create it (OverlayController, RecordingController, Program's
+        // BuildOutputPath) so this is first-run polish, not load-bearing - never fatal.
+        try
+        {
+            Directory.CreateDirectory(_settings.SaveDirectory);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"RoeSnip: could not create save directory '{_settings.SaveDirectory}' at startup (non-fatal): {ex.Message}");
+        }
 
         // A hidden Control purely so the pipe-listener background task can marshal the capture
         // trigger back onto this (UI/message-loop) thread via BeginInvoke.
@@ -196,18 +210,42 @@ public sealed class TrayApp : ITrayNotifier
 
     private void OpenSettings()
     {
-        var window = new SettingsWindow(_settings, updated =>
+        if (_settingsWindow is not null)
         {
-            // Same resolved path as startup: if the saved hotkey is bare PrintScreen, run it
-            // through the consent resolution before registering. PrintScreenPromptAnswered will
-            // already be true after the first-ever resolution, so this cannot re-trigger the
-            // prompt then — it only fires the one-time dialog in the edge case where the user
-            // never had bare PrtScr configured before (prompt never applied) and just switched
-            // to it now.
-            _settings = ResolvePrintScreenConsent(updated);
-            _hotkeyManager?.Register(_settings);
-        });
-        window.ShowDialog();
+            _settingsWindow.Activate();
+            return;
+        }
+
+        // Bugs 2 & 5: SettingsWindow suspends the global hotkey only for the (brief) span it is
+        // actively capturing a new key combination — RegisterHotKey has first claim on a
+        // registered combo, so leaving it registered during capture is why re-binding PrintScreen
+        // never reached the window's own key events (bug 2). The rest of the time this window is
+        // open, the hotkey stays registered against _settings (whatever is currently saved), so
+        // pressing it still triggers a normal snip with Settings open (bug 5).
+        var window = new SettingsWindow(
+            _settings,
+            updated =>
+            {
+                // Same resolved path as startup: if the saved hotkey is bare PrintScreen, run it
+                // through the consent resolution before registering. PrintScreenPromptAnswered will
+                // already be true after the first-ever resolution, so this cannot re-trigger the
+                // prompt then — it only fires the one-time dialog in the edge case where the user
+                // never had bare PrtScr configured before (prompt never applied) and just switched
+                // to it now.
+                _settings = ResolvePrintScreenConsent(updated);
+                _hotkeyManager?.Register(_settings);
+            },
+            suspendGlobalHotkey: () => _hotkeyManager?.Unregister(),
+            resumeGlobalHotkey: () => _hotkeyManager?.Register(_settings));
+
+        // Shown NON-modally (bug 5): ShowDialog disables every other top-level window on this thread,
+        // including the parked overlay pool windows, so a snip triggered while Settings was open drew
+        // an overlay that could not take mouse input. Show() keeps the overlay live. Track the single
+        // instance so a second tray click focuses the existing window instead of stacking another.
+        _settingsWindow = window;
+        window.Closed += (_, _) => _settingsWindow = null;
+        window.Show();
+        window.Activate();
     }
 
     /// <summary>The one-time PrintScreen/Snipping-Tool consent flow (DESIGN.md §2), applicable only
@@ -834,6 +872,24 @@ public sealed class TrayApp : ITrayNotifier
 
     private static NotifyIcon CreateTrayIcon()
     {
+        // Prefer the on-brand app icon (Assets/roesnip.ico, embedded as a manifest resource so it
+        // survives single-file publish) so the tray glyph matches the taskbar/titlebar icon. Falls
+        // back to the original procedurally-drawn glyph below if the resource is ever missing or
+        // fails to decode, so tray startup can never regress/fail because of the icon.
+        try
+        {
+            using var iconStream = typeof(TrayApp).Assembly.GetManifestResourceStream("RoeSnip.Assets.roesnip.ico");
+            if (iconStream is not null)
+            {
+                using var loaded = new Icon(iconStream, 16, 16);
+                return new NotifyIcon { Icon = (Icon)loaded.Clone() };
+            }
+        }
+        catch
+        {
+            // fall through to the procedural glyph below
+        }
+
         using var bitmap = new Bitmap(16, 16);
         using (var g = Graphics.FromImage(bitmap))
         {

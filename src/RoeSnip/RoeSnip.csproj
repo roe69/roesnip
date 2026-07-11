@@ -11,6 +11,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\roesnip.ico</ApplicationIcon>
     <!-- InvariantGlobalization must stay OFF: WPF's font cache (MS.Internal.FontCache.MajorLanguages)
          constructs real cultures and hard-crashes the process on first text layout when it's enabled. -->
     <Platforms>x64</Platforms>
@@ -34,6 +35,19 @@
        process-wide and un-scopeable, so it would also bias the automatic collections firing inside
        the timed capture burst (the 51-60 ms first-overlay-visible budget). Reviewed and rejected. -->
 
+
+  <ItemGroup>
+    <!-- Embedded as a WPF Resource (not just the Win32 ApplicationIcon above) so
+         pack://application:,,,/Assets/roesnip.ico resolves for Window.Icon regardless of
+         on-disk layout (single-file publish included). -->
+    <Resource Include="Assets\roesnip.ico" />
+    <!-- Also embedded as a plain manifest resource (fixed LogicalName) so the WinForms tray
+         NotifyIcon can load it via Assembly.GetManifestResourceStream without depending on the
+         WPF pack:// resource system - keeps the two icon consumers independent. -->
+    <EmbeddedResource Include="Assets\roesnip.ico">
+      <LogicalName>RoeSnip.Assets.roesnip.ico</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Pinned 2026-07: verified on nuget.org. WIC bindings live in Vortice.Direct2D1, NOT a
