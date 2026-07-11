@@ -67,9 +67,22 @@ public sealed class GifEncoder : IDisposable
 
     /// <summary>Encoder thread only. Encodes this one frame in isolation via WPF's GifBitmapEncoder
     /// (see <see cref="SdrImage.ToBitmapSource"/> for the BGRA8 -> BitmapSource conversion and why
-    /// Freeze is required before crossing back to the caller's expectations), then extracts and
-    /// appends just the per-frame blocks to the output stream — see <see cref="ExtractFrameBlocks"/>
-    /// for the byte-layout details.</summary>
+    /// Freeze is required before crossing back to the caller's expectations), then writes just the
+    /// per-frame blocks straight to the output stream — see <see cref="WriteFrameBlocks"/> for the
+    /// byte-layout details.
+    ///
+    /// Writes directly to <see cref="_stream"/> instead of building an intermediate concatenated
+    /// byte[] (the old shape, still kept as <see cref="ExtractFrameBlocks"/> for tests): that array
+    /// was sized to the compressed frame's byte count, which for a real desktop capture routinely
+    /// exceeds the 85,000-byte Large Object Heap threshold — at this method's ~12fps cadence that
+    /// meant a fresh LOH allocation, and thus LOH/Gen2 pressure, every single frame for the whole
+    /// recording. Unlike Mp4Encoder.WriteFrame (whose per-frame buffer is native Media Foundation
+    /// memory, never touching the managed heap), GifBitmapEncoder's output only exists as managed
+    /// bytes, so this recording's whole managed-allocation profile was dominated by an array that
+    /// was written once and immediately discarded. A blocking Gen2/LOH collection stops every
+    /// managed thread, including the UI thread — which is what made RegionOutline's WM_NCHITTEST
+    /// hit-testing (and so click-through into the app being recorded) intermittently unresponsive
+    /// specifically during GIF takes, never during MP4 ones.</summary>
     public void AddFrame(SdrImage frame, ushort delayCentiseconds)
     {
         var bitmapFrame = BitmapFrame.Create(frame.ToBitmapSource());
@@ -84,19 +97,34 @@ public sealed class GifEncoder : IDisposable
         _frameScratch.SetLength(0);
         encoder.Save(_frameScratch);
 
-        byte[] blocks = ExtractFrameBlocks(_frameScratch.GetBuffer(), (int)_frameScratch.Length, delayCentiseconds, _width, _height);
-        _stream.Write(blocks, 0, blocks.Length);
+        WriteFrameBlocks(_stream, _frameScratch.GetBuffer(), (int)_frameScratch.Length, delayCentiseconds, _width, _height);
     }
 
     /// <summary>Pulls the per-frame GCE + Image Descriptor + Local Color Table + LZW data out of a
     /// single-frame GIF produced by <see cref="GifBitmapEncoder"/>, patching the delay and disposal
-    /// method along the way. Public (not private) so GifEncoderTests can verify this — the one
-    /// genuinely new piece of logic here — directly against hand-built single-frame GIFs, including
-    /// the global-color-table reassembly branch a live WIC encode may or may not exercise.
+    /// method along the way, and returns them concatenated into one array. Public (not private) so
+    /// GifEncoderTests can verify this — the one genuinely new piece of logic here — directly against
+    /// hand-built single-frame GIFs, including the global-color-table reassembly branch a live WIC
+    /// encode may or may not exercise. A thin allocating wrapper around <see cref="WriteFrameBlocks"/>,
+    /// which is what <see cref="AddFrame"/> actually calls on the hot path — tests only need a byte[]
+    /// to assert against, they don't run at recording cadence.</summary>
+    public static byte[] ExtractFrameBlocks(byte[] gif, int length, ushort delayCentiseconds, int expectedWidth, int expectedHeight)
+    {
+        using var ms = new MemoryStream();
+        WriteFrameBlocks(ms, gif, length, delayCentiseconds, expectedWidth, expectedHeight);
+        return ms.ToArray();
+    }
+
+    /// <summary>Same block-walk as the old <see cref="ExtractFrameBlocks"/>, but WRITES each piece
+    /// straight to <paramref name="output"/> instead of copying it into an intermediate array first
+    /// — see <see cref="AddFrame"/>'s doc comment for why that matters. The only allocation left is
+    /// the fixed 8-byte GCE (trivial, never LOH-sized): everything else (descriptor, Local Color
+    /// Table, LZW data) is written as a direct slice of <paramref name="gif"/>, which is itself
+    /// <see cref="_frameScratch"/>'s already-allocated, frame-to-frame-reused buffer.
     ///
     /// Reuses <see cref="GetHeaderAndGctLength"/> and <see cref="SkipSubBlocks"/>, both carried over
     /// unchanged from the old batch implementation's block-walk machinery.</summary>
-    public static byte[] ExtractFrameBlocks(byte[] gif, int length, ushort delayCentiseconds, int expectedWidth, int expectedHeight)
+    private static void WriteFrameBlocks(Stream output, byte[] gif, int length, ushort delayCentiseconds, int expectedWidth, int expectedHeight)
     {
         int pos = GetHeaderAndGctLength(gif);
         byte[] sourceGct = Array.Empty<byte>();
@@ -108,7 +136,7 @@ public sealed class GifEncoder : IDisposable
         }
 
         byte[]? gce = null;
-        byte[]? descriptorAndData = null;
+        bool wroteDescriptor = false;
 
         while (pos < length)
         {
@@ -127,7 +155,10 @@ public sealed class GifEncoder : IDisposable
             }
             else if (marker == 0x2C) // Image Descriptor
             {
-                descriptorAndData = BuildDescriptorAndData(gif, pos, length, expectedWidth, expectedHeight, sourceGct);
+                gce ??= new byte[] { 0x21, 0xF9, 0x04, 0x04, (byte)(delayCentiseconds & 0xFF), (byte)(delayCentiseconds >> 8), 0x00, 0x00 };
+                output.Write(gce, 0, gce.Length);
+                WriteDescriptorAndData(output, gif, pos, length, expectedWidth, expectedHeight, sourceGct);
+                wroteDescriptor = true;
                 break; // exactly one frame in this GIF — nothing after its data matters
             }
             else
@@ -137,17 +168,10 @@ public sealed class GifEncoder : IDisposable
             }
         }
 
-        gce ??= new byte[] { 0x21, 0xF9, 0x04, 0x04, (byte)(delayCentiseconds & 0xFF), (byte)(delayCentiseconds >> 8), 0x00, 0x00 };
-
-        if (descriptorAndData is null)
+        if (!wroteDescriptor)
         {
             throw new InvalidOperationException("Single-frame GIF encode produced no Image Descriptor.");
         }
-
-        var result = new byte[gce.Length + descriptorAndData.Length];
-        Array.Copy(gce, 0, result, 0, gce.Length);
-        Array.Copy(descriptorAndData, 0, result, gce.Length, descriptorAndData.Length);
-        return result;
     }
 
     /// <summary>Copies an existing GCE, patching the delay (bytes +4/+5) and forcing the disposal
@@ -165,11 +189,15 @@ public sealed class GifEncoder : IDisposable
         return gce;
     }
 
-    /// <summary>Validates the Image Descriptor's geometry, then either copies it (+ its Local Color
+    /// <summary>Validates the Image Descriptor's geometry, then either writes it (+ its Local Color
     /// Table + LZW data) verbatim, or — when WIC put the single frame's palette in a GLOBAL color
     /// table instead of a local one — synthesizes an equivalent descriptor with the LCT-present bit
-    /// set and the source GCT re-emitted as this frame's LCT.</summary>
-    private static byte[] BuildDescriptorAndData(byte[] gif, int pos, int length, int expectedWidth, int expectedHeight, byte[] sourceGct)
+    /// set and the source GCT re-emitted as this frame's LCT. Writes straight to
+    /// <paramref name="output"/> — see <see cref="WriteFrameBlocks"/>'s doc comment for why: every
+    /// byte written here is either a slice of <paramref name="gif"/> (zero-copy) or one of a handful
+    /// of small fixed-size arrays (the 9/10-byte descriptor header, never LOH-sized), never a fresh
+    /// allocation sized to the whole frame.</summary>
+    private static void WriteDescriptorAndData(Stream output, byte[] gif, int pos, int length, int expectedWidth, int expectedHeight, byte[] sourceGct)
     {
         int left = gif[pos + 1] | (gif[pos + 2] << 8);
         int top = gif[pos + 3] | (gif[pos + 4] << 8);
@@ -193,13 +221,12 @@ public sealed class GifEncoder : IDisposable
 
         if ((packed & 0x80) != 0)
         {
-            // Already carries its own Local Color Table — copy descriptor + LCT + LZW data verbatim.
+            // Already carries its own Local Color Table — write descriptor + LCT + LZW data verbatim,
+            // straight out of gif (a slice of the caller's own buffer, not a copy).
             int lctSize = 3 * (1 << ((packed & 0x07) + 1));
             int dataStart = pos + 10 + lctSize;
             int dataEnd = SkipSubBlocks(gif, dataStart + 1); // +1 past the LZW min-code-size byte
-            var result = new byte[dataEnd - pos];
-            Array.Copy(gif, pos, result, 0, result.Length);
-            return result;
+            output.Write(gif, pos, dataEnd - pos);
         }
         else
         {
@@ -216,12 +243,10 @@ public sealed class GifEncoder : IDisposable
             int dataStart = pos + 10;
             int dataEnd = SkipSubBlocks(gif, dataStart + 1);
 
-            var result = new byte[10 + sourceGct.Length + (dataEnd - dataStart)];
-            Array.Copy(gif, pos, result, 0, 9); // left/top/width/height, unpacked fields
-            result[9] = newPacked;
-            Array.Copy(sourceGct, 0, result, 10, sourceGct.Length);
-            Array.Copy(gif, dataStart, result, 10 + sourceGct.Length, dataEnd - dataStart);
-            return result;
+            output.Write(gif, pos, 9); // left/top/width/height, unpacked fields
+            output.WriteByte(newPacked);
+            output.Write(sourceGct, 0, sourceGct.Length);
+            output.Write(gif, dataStart, dataEnd - dataStart);
         }
     }
 
