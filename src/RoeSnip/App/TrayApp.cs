@@ -149,6 +149,14 @@ public sealed class TrayApp : ITrayNotifier
         menu.Items.Add("Settings...", null, (_, _) => OpenSettings());
         menu.Items.Add("About", null, (_, _) => ShowAbout());
         menu.Items.Add(new ToolStripSeparator());
+        if (!UpdateManager.IsInstalled)
+        {
+            // Only offered for a portable/dev run - once installed, this copy IS the one
+            // "Install RoeSnip" would create, so the item would be a no-op.
+            menu.Items.Add("Install RoeSnip", null, (_, _) => InstallRoeSnip());
+        }
+        menu.Items.Add("Check for updates", null, (_, _) => _ = CheckForUpdatesFromMenuAsync());
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => Application.Exit());
 
         _notifyIcon.ContextMenuStrip = menu;
@@ -158,6 +166,17 @@ public sealed class TrayApp : ITrayNotifier
 
         _pipeListenerCts = new CancellationTokenSource();
         _ = ListenForSignalAsync(_pipeListenerCts.Token);
+
+        // Self-update (CHANGE 2): best-effort cleanup of any leftover .old/.new from a prior
+        // install/update swap, then - only when this IS the installed copy (a portable/dev run has
+        // nothing sensible to update itself into) - a silent background check for a newer GitHub
+        // release. Fire-and-forget: CheckForUpdateAsync never throws and this must never delay
+        // startup or block the UI thread.
+        UpdateManager.CleanupStaleUpdateFiles();
+        if (UpdateManager.IsInstalled)
+        {
+            _ = CheckForUpdatesOnStartupAsync();
+        }
 
         // Cold-start warmup (item 6b, UX round 3): runs on its own background thread so it can
         // never delay the tray icon/pipe listener above coming up, and never blocks (or is blocked
@@ -493,6 +512,134 @@ public sealed class TrayApp : ITrayNotifier
             _notifyIcon.BalloonTipClicked -= _activeBalloonClickHandler;
         }
         _activeBalloonClickHandler = null;
+    }
+
+    /// <summary>A neutral informational balloon (e.g. "up to date") - same shape as ShowWarning
+    /// below, just with ToolTipIcon.Info. Not part of ITrayNotifier; only used internally.</summary>
+    private void ShowInfo(string message)
+    {
+        if (_notifyIcon is null)
+        {
+            Console.Error.WriteLine($"RoeSnip: {message}");
+            return;
+        }
+
+        DetachActiveBalloonHandler();
+        _notifyIcon.BalloonTipTitle = "RoeSnip";
+        _notifyIcon.BalloonTipText = message;
+        _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+        _notifyIcon.ShowBalloonTip(4000);
+    }
+
+    // ---------------- Self-update (CHANGE 2) ----------------
+
+    /// <summary>The "Install RoeSnip" context-menu item (only shown when
+    /// <see cref="UpdateManager.IsInstalled"/> is false): copies this portable/dev run into
+    /// %LOCALAPPDATA%\RoeSnip and hands off to it, then exits this process so the installed copy
+    /// takes over. Runs off the UI thread (file copy + registry write) and never lets a failure
+    /// take the tray down with it: UpdateManager.Install rethrows on failure, so the catch here shows
+    /// an error balloon and Application.Exit is skipped, leaving the tray running as it was.</summary>
+    private void InstallRoeSnip()
+    {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                UpdateManager.Install();
+                _uiThreadMarshal?.BeginInvoke(new Action(Application.Exit));
+            }
+            catch (Exception ex)
+            {
+                _uiThreadMarshal?.BeginInvoke(new Action(() => ShowError($"Install failed: {ex.Message}")));
+            }
+        });
+    }
+
+    /// <summary>Silent startup update check (only called when <see cref="UpdateManager.IsInstalled"/>
+    /// is true - see that property's doc comment). Says nothing when there is nothing to offer (no
+    /// update, no network, private-repo 404 - CheckForUpdateAsync already swallows all of that and
+    /// returns null); shows the click-to-update balloon only when a newer release actually
+    /// exists. Never blocks startup: this is fire-and-forget from RunInstance.</summary>
+    private async Task CheckForUpdatesOnStartupAsync()
+    {
+        UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
+        if (update is null)
+        {
+            return;
+        }
+        _uiThreadMarshal?.BeginInvoke(new Action(() => ShowUpdateAvailableBalloon(update)));
+    }
+
+    /// <summary>The "Check for updates" context-menu item: unlike the silent startup check, this
+    /// always reports back - the click-to-update balloon when an update is found, "up to date" when
+    /// none is, or a failure balloon if the check itself could not be completed. CheckForUpdateAsync
+    /// never throws in practice (it swallows network/parse failures and returns null the same as
+    /// "no update"), but this still wraps the await so a check can never crash the tray if that
+    /// ever changed.</summary>
+    private async Task CheckForUpdatesFromMenuAsync()
+    {
+        UpdateManager.UpdateInfo? update;
+        try
+        {
+            update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: update check failed (non-fatal): {ex.Message}");
+            _uiThreadMarshal?.BeginInvoke(new Action(() =>
+                ShowError("Could not check for updates - GitHub could not be reached.")));
+            return;
+        }
+
+        _uiThreadMarshal?.BeginInvoke(new Action(() =>
+        {
+            if (update is not null)
+            {
+                ShowUpdateAvailableBalloon(update);
+            }
+            else
+            {
+                ShowInfo("RoeSnip is up to date.");
+            }
+        }));
+    }
+
+    /// <summary>Shows the click-to-update balloon (must already be on the UI thread). Deliberately
+    /// never applies the update on its own - the click IS the whole UX (spec: "avoid surprise
+    /// restarts"). Uses the same DetachActiveBalloonHandler/_activeBalloonClickHandler pattern as
+    /// ShowSavedBalloon.</summary>
+    private void ShowUpdateAvailableBalloon(UpdateManager.UpdateInfo info)
+    {
+        if (_notifyIcon is null) return;
+
+        DetachActiveBalloonHandler();
+        _activeBalloonClickHandler = (_, _) =>
+        {
+            DetachActiveBalloonHandler();
+            _ = ApplyUpdateFromBalloonAsync(info);
+        };
+        _notifyIcon.BalloonTipClicked += _activeBalloonClickHandler;
+        _notifyIcon.BalloonTipTitle = "RoeSnip";
+        _notifyIcon.BalloonTipText = $"RoeSnip {info.Version} is available. Click to update.";
+        _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+        _notifyIcon.ShowBalloonTip(8000);
+    }
+
+    /// <summary>Runs off the UI thread (download + file swap); on success the new build takes over
+    /// via the same replace-on-run signal every other launch relies on, so this instance simply
+    /// gets told to exit shortly afterwards - nothing further to do here. On failure, surfaces it as
+    /// an error balloon instead of letting it vanish into an unobserved task.</summary>
+    private async Task ApplyUpdateFromBalloonAsync(UpdateManager.UpdateInfo info)
+    {
+        try
+        {
+            await UpdateManager.ApplyUpdateAsync(info).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _uiThreadMarshal?.BeginInvoke(new Action(() =>
+                ShowError($"Update to {info.Version} failed: {ex.Message}")));
+        }
     }
 
     // Well-known screenshot tools that grab the PrintScreen key (process name -> friendly name).
