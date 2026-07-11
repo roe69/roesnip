@@ -134,6 +134,8 @@ internal sealed class RecordingSession
     private volatile bool _paused;
     private long _pausedTicks; // total paused Stopwatch ticks accumulated across all pauses this take
     private long _pauseStartTicks; // Stopwatch.GetTimestamp() when the current pause began (valid only while _paused)
+    private bool _audioTrackEnabled; // this take's MP4 has an AAC track (fixed at BeginCapture)
+    private bool _saving; // reentrancy guard: the SaveFileDialog pumps messages, so a PrtScr press mid-dialog re-enters SaveAndFinish
 
     public RecordingSession(
         MonitorInfo monitor, RectPhysical selectionPx, RecordingFormat format,
@@ -192,7 +194,7 @@ internal sealed class RecordingSession
             _chrome.PauseRequested += Pause;
             _chrome.ResumeRequested += Resume;
             _chrome.RestartConfirmed += RestartTake;
-            _chrome.SaveRequested += SaveAndFinish;
+            _chrome.SaveRequested += () => SaveAndFinish();
             _chrome.CancelRequested += CancelAndDiscard;
             _chrome.MicToggled += v => SetAudioToggle(mic: v, systemAudio: null);
             _chrome.SystemAudioToggled += v => SetAudioToggle(mic: null, systemAudio: v);
@@ -313,6 +315,10 @@ internal sealed class RecordingSession
                 _mp4TempPath = Path.Combine(Path.GetTempPath(), $"roesnip_rec_{Guid.NewGuid():N}.mp4");
                 _mp4Encoder = Mp4Encoder.Create(
                     _mp4TempPath, _selectionPx.Width, _selectionPx.Height, _targetFps, withAudio: _audio is not null);
+                // Whether THIS take's MP4 carries an AAC track is fixed here forever — a soft stop
+                // releases the engine for the review span, and resume-from-review consults this to
+                // know whether to bring it back.
+                _audioTrackEnabled = _audio is not null;
             }
             else
             {
@@ -419,17 +425,41 @@ internal sealed class RecordingSession
     /// <summary>Chrome's Resume button — UI thread only. Folds the just-ended pause into the
     /// running total BEFORE flipping _paused/_recorder.Paused back off, so the very next frame the
     /// encoder thread sees already has the enlarged _pausedTicks available (see the EncoderLoop/
-    /// DrainAudio doc comments for why a per-frame Volatile.Read of it is safe here).</summary>
+    /// DrainAudio doc comments for why a per-frame Volatile.Read of it is safe here).
+    ///
+    /// Also reachable from REVIEWING (a soft-stopped take is just a paused take with review
+    /// chrome — see StopCaptureToReview): resuming there steps back into Capturing and the same
+    /// take keeps recording, with the whole review span excluded from the media timeline like any
+    /// other pause — that is what makes stop-review-resume cuts seamless in the output.</summary>
     private void Resume()
     {
-        if (_phase != Phase.Capturing || !_paused)
+        if (!_paused || (_phase != Phase.Capturing && _phase != Phase.Reviewing))
         {
             return;
         }
         _pausedTicks += System.Diagnostics.Stopwatch.GetTimestamp() - _pauseStartTicks;
         _paused = false;
         _recorder!.Paused = false;
-        _chrome!.SetPaused(false);
+        if (_phase == Phase.Reviewing)
+        {
+            // The soft stop released the audio engine (mic indicator off during review) — bring it
+            // back for takes whose MP4 already carries an AAC track. A device failure here keeps
+            // the video going; the track just has a silent gap.
+            if (_audioTrackEnabled)
+            {
+                _audio = AudioCaptureEngine.TryStart(_mic, _systemAudio); // replaces the disposed engine
+                if (_audio is null)
+                {
+                    _notifier?.ShowError("Audio capture unavailable; resuming video only.");
+                }
+            }
+            _phase = Phase.Capturing;
+            _chrome!.EnterRecording(); // resets the paused visuals itself
+        }
+        else
+        {
+            _chrome!.SetPaused(false);
+        }
     }
 
     private void OnRecorderFaulted(Exception ex)
@@ -466,11 +496,14 @@ internal sealed class RecordingSession
         }
         if (_phase == Phase.Capturing)
         {
-            StopCaptureToReview(); // may itself tear the session down if the encoder thread had to be abandoned
+            StopCaptureToReview(); // soft stop: always lands in Reviewing with the pipeline alive
         }
         if (_phase == Phase.Reviewing)
         {
-            SaveAndFinish();
+            // Never re-arm from this path: it runs because the pipeline faulted or the display
+            // topology changed, so "record another take on the same region" may not even be
+            // possible — save what exists and end the session.
+            SaveAndFinish(rearmAfterSave: false);
         }
     }
 
@@ -489,7 +522,10 @@ internal sealed class RecordingSession
     /// encoder thread had to be abandoned.</summary>
     private bool HardStopCaptureIfNeeded()
     {
-        if (_phase != Phase.Capturing)
+        // Gate on the pipeline, not the phase: since Stop became a soft stop, the recorder/encoder
+        // stay alive through Reviewing (so Resume can continue the take) and the hard stop happens
+        // from there — Save, Restart, and Cancel all funnel through here with _phase == Reviewing.
+        if (_recorder is null)
         {
             return true;
         }
@@ -524,26 +560,38 @@ internal sealed class RecordingSession
         return true;
     }
 
-    /// <summary>Chrome's Stop button (or PrtScr while Capturing). Ends the take and moves to
-    /// Reviewing — does NOT save. If the encoder thread had to be abandoned there is nothing left
-    /// to review, so the session tears down instead (message already shown here).</summary>
+    /// <summary>Chrome's Stop button (or PrtScr while Capturing). SOFT stop: pauses the pipeline
+    /// (identical bookkeeping to Pause — frames drop pre-readback, the review span accumulates as
+    /// paused time) and moves to Reviewing with the recorder and encoders still alive, so the
+    /// Reviewing chrome's Resume can step back into Capturing and CONTINUE the same take with a
+    /// seamless cut. The hard stop (encoder join + finalize) happens on the way out of Reviewing:
+    /// Save, Restart, and Cancel each call <see cref="HardStopCaptureIfNeeded"/> themselves.</summary>
     private void StopCaptureToReview()
     {
         if (_phase != Phase.Capturing)
         {
             return;
         }
-        Console.Error.WriteLine($"RoeSnip: recording capture stopping for review (elapsed={_stopwatch?.Elapsed})");
+        Console.Error.WriteLine($"RoeSnip: recording capture soft-stopping for review (elapsed={_stopwatch?.Elapsed})");
 
-        bool joined = HardStopCaptureIfNeeded();
-        if (!joined)
+        if (!_paused)
         {
-            _notifier?.ShowError("Recording could not be saved: the encoder did not stop in time.");
-            TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: false); // already messaged above
-            return;
+            _pauseStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            _paused = true;
+            _recorder!.Paused = true;
         }
+        // else: stopped while already paused — the running pause span simply continues.
+
+        // Release the microphone/loopback for the review span (unlike a quick Pause, a review can
+        // last minutes and must not keep the OS "microphone in use" indicator lit). The reference
+        // is deliberately KEPT: Dispose's final flush enqueues the last pre-stop chunks, and the
+        // encoder thread's periodic DrainAudio still drains that queue — its timestamp check
+        // writes everything captured before the stop and drops the rest. Resume re-creates the
+        // engine; the hard stop disposes again, which is documented-idempotent.
+        _audio?.Dispose();
 
         _phase = Phase.Reviewing;
+        _chrome!.SetPaused(true); // Reviewing's Pause/Resume button must read (and route as) Resume
         _chrome!.EnterReviewing();
     }
 
@@ -586,12 +634,28 @@ internal sealed class RecordingSession
     }
 
     /// <summary>Chrome's Save button (or PrtScr while Reviewing) — only valid once a take has
-    /// actually been stopped into review. Finalizes/moves the temp file to a real path, then tears
-    /// the session down.</summary>
-    private void SaveAndFinish()
+    /// actually been stopped into review. Hard-stops the still-alive pipeline (Stop is a soft stop
+    /// now), finalizes/moves the temp file to a real path, then — on a successful save — returns
+    /// to Setup with the same region so another take can be recorded immediately; every other
+    /// outcome tears the session down as before.</summary>
+    private void SaveAndFinish(bool rearmAfterSave = true)
     {
-        if (_phase != Phase.Reviewing)
+        if (_phase != Phase.Reviewing || _saving)
         {
+            // _saving: the save dialog below runs a nested message pump on this thread, so a
+            // PrtScr press while it is open dispatches straight back into this method with _phase
+            // still Reviewing — without this guard the reentrant call could save/re-arm first and
+            // the suspended outer call would then tear the fresh session down when it resumed.
+            return;
+        }
+        _saving = true;
+
+        bool joined = HardStopCaptureIfNeeded();
+        if (!joined)
+        {
+            _saving = false;
+            _notifier?.ShowError("Recording could not be saved: the encoder did not stop in time.");
+            TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: false); // already messaged above
             return;
         }
 
@@ -617,9 +681,33 @@ internal sealed class RecordingSession
             {
                 CleanupTempFile();
             }
+            _saving = false;
+        }
+
+        if (finalPath is not null && rearmAfterSave)
+        {
+            _notifier?.ShowSavedBalloon(finalPath);
+            RearmForAnotherTake();
+            return;
         }
 
         TeardownSession(finalPath, dialogCancelled, encoderAbandoned: false);
+    }
+
+    /// <summary>After a successful save: back to Setup with the SAME selected region instead of
+    /// tearing down, so the user can immediately record another take (chrome Start, or PrtScr).
+    /// Mirrors RestartTake's re-arm minus the discard — the finished file was already moved to its
+    /// final path, so only the stale temp-path fields need clearing. Cancel (chrome button) remains
+    /// the way to dismiss the session from here.</summary>
+    private void RearmForAnotherTake()
+    {
+        _mp4TempPath = null;
+        _gifTempPath = null;
+
+        _phase = Phase.Setup;
+        _chrome!.EnterSetup();
+        _chrome!.Show(); // was Hidden to own the save dialog
+        _outline?.SetInteractionMode(allowResize: true); // new take - the region can be reshaped again
     }
 
     /// <summary>The single terminal path every end-of-recording route funnels through (Save,
@@ -900,9 +988,13 @@ internal sealed class RecordingSession
 
         while (audio.TryDequeue(out var chunk))
         {
-            if (_paused)
+            // Judge by when the chunk was CAPTURED, not by the flag at drain time: at the moment
+            // of a Pause or soft Stop there is a small backlog of genuinely-recorded audio still
+            // queued (plus the engine's final flush, for a soft stop), and a flag-only check would
+            // silently chop that tail off the take. Chunks captured during the pause itself drop.
+            if (_paused && chunk.QpcTicks >= Volatile.Read(ref _pauseStartTicks))
             {
-                continue; // dropped while paused — never written
+                continue; // captured while paused — never written
             }
             long paused = Volatile.Read(ref _pausedTicks);
             long effectiveTicks = chunk.QpcTicks - paused;

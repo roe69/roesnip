@@ -486,6 +486,7 @@ internal sealed class RecordingChrome : Window
     {
         _state = ChromeState.Setup;
         _showingRestartConfirm = false;
+        _elapsedText.Text = "00:00"; // no take yet — clear a previous take's frozen clock
         ApplyState();
     }
 
@@ -526,14 +527,19 @@ internal sealed class RecordingChrome : Window
 
         _redDot.Visibility = _state == ChromeState.Recording ? Visibility.Visible : Visibility.Collapsed;
 
+        // Hidden (not disabled) in Reviewing: a grayed "Start" sitting next to the enabled
+        // "Resume" would show two begin-recording controls in contradictory states.
         _startStopButton.Content = _state == ChromeState.Recording ? "Stop" : "Start";
         _startStopButton.IsEnabled = _state != ChromeState.Reviewing;
+        _startStopButton.Visibility = _state == ChromeState.Reviewing ? Visibility.Collapsed : Visibility.Visible;
 
-        // Pause/Resume only makes sense mid-take - hidden in Setup/Reviewing, folded in here
-        // alongside Start/Stop per the same single-owner rule. Stop stays reachable in Recording
-        // regardless of _paused (the enable line above only checks _state), so Stop still works
-        // while paused.
-        _pauseResumeButton.Visibility = _state == ChromeState.Recording ? Visibility.Visible : Visibility.Collapsed;
+        // Pause/Resume shows mid-take AND in Reviewing: a soft-stopped take is a paused take (the
+        // session calls SetPaused(true) on Stop, so the button reads and routes as Resume), and
+        // resuming from review continues the same take with the review span cut out. Hidden only
+        // in Setup, where there is no take yet. Stop stays reachable in Recording regardless of
+        // _paused (the enable line above only checks _state), so Stop still works while paused.
+        _pauseResumeButton.Visibility = _state is ChromeState.Recording or ChromeState.Reviewing
+            ? Visibility.Visible : Visibility.Collapsed;
 
         // Audio config is fixed per take (baked into the encoder at Start) - only editable before
         // the first Start of the current take, i.e. in Setup. Disabled (not hidden) once running so
