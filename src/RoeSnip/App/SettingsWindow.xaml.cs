@@ -421,7 +421,13 @@ public partial class SettingsWindow : Window
                 CreateNoWindow = true,
             };
             psi.ArgumentList.Add("/c");
-            psi.ArgumentList.Add($"timeout /t 1 /nobreak >nul && schtasks /run /tn \"{ElevationManager.TaskName}\"");
+            // The ~1s delay lets this (exiting) instance release its single-instance mutex/pipe
+            // before the elevated one starts, so the new instance does not just signal this one and
+            // exit. Use ping, NOT timeout: timeout reads the console and aborts with "Input
+            // redirection is not supported" under CreateNoWindow (no console), which made the "&&"
+            // short-circuit so schtasks /run never ran and RoeSnip never relaunched (bug 1). ping
+            // needs no console, and "&" runs schtasks regardless of ping's exit code.
+            psi.ArgumentList.Add($"ping -n 2 127.0.0.1 >nul & schtasks /run /tn \"{ElevationManager.TaskName}\"");
             System.Diagnostics.Process.Start(psi);
         }
         catch (Exception ex)
