@@ -192,11 +192,13 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      # -f net8.0 is required: RoeSnip.App multi-targets net8.0 / net8.0-windows*, and the windows
-      # TFM's Platform.Windows reference can't restore off Windows. AssemblyName is RoeSnip, so the
-      # published binary is <publish>/RoeSnip.
+      # -f net8.0 builds only the cross-platform TFM, but the implicit restore still evaluates the
+      # project's net8.0-windows* TFM, which trips NETSDK1100 on Linux/macOS ("set EnableWindowsTargeting
+      # to true"). Setting that property lets restore resolve the windows TFM's ref packs without a
+      # Windows host; the actual publish stays net8.0 + the target RID (Platform.Windows is not
+      # referenced for a non-win RID). AssemblyName is RoeSnip, so the published binary is <publish>/RoeSnip.
       - name: Publish RoeSnip.App (${{ matrix.rid }})
-        run: dotnet publish src/RoeSnip.App -c Release -f net8.0 -r ${{ matrix.rid }} --self-contained -p:Version=${{ needs.prep.outputs.version }}
+        run: dotnet publish src/RoeSnip.App -c Release -f net8.0 -r ${{ matrix.rid }} --self-contained -p:EnableWindowsTargeting=true -p:Version=${{ needs.prep.outputs.version }}
 
       # ---- Linux: AppImage via the official static appimagetool -------------------------------
       - name: Package .AppImage
