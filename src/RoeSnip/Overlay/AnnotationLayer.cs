@@ -428,13 +428,16 @@ public sealed class AnnotationLayer : FrameworkElement
     /// point — the Select tool's click/hover hit test (OverlayWindow's item 7/8 priority chains).
     /// Never changes the selection itself; callers decide what a hit means.
     /// <paramref name="interiorGrab"/> = the Shift/Ctrl modifier-grab: outline interiors count as
-    /// hits too (see <see cref="HitsShapeBody"/>).</summary>
-    public AnnotationShape? HitTestEditable(Point physicalPt, bool interiorGrab = false)
+    /// hits too (see <see cref="HitsShapeBody"/>). <paramref name="restrictToTool"/>, when non-null,
+    /// limits hits to shapes of that same tool (the drawing-tool-specific selection gate); null means
+    /// any editable shape (the Select tool's behavior).</summary>
+    public AnnotationShape? HitTestEditable(Point physicalPt, bool interiorGrab = false, AnnotationTool? restrictToTool = null)
     {
         var shapes = _history.Shapes;
         for (int i = shapes.Count - 1; i >= 0; i--)
         {
             var shape = shapes[i];
+            if (restrictToTool is { } t && shape.Tool != t) continue;
             if (IsEditable(shape.Tool) && EditableBounds(shape) is { } bounds
                 && HitsShapeBody(shape, bounds, physicalPt, interiorGrab))
             {
@@ -760,17 +763,25 @@ public sealed class AnnotationLayer : FrameworkElement
                     continue; // its inline re-edit TextBox already shows this text live (item 4)
                 }
                 Draw(dc, shape, translate: default);
+                if (shape.Tool == AnnotationTool.Pixelate)
+                {
+                    // The mosaic alone doesn't read as a selectable/resizable shape - a gray dotted
+                    // border makes every placed blur obviously grabbable. Screen-only: RenderForExport
+                    // below never calls this, so it can't leak into a saved image.
+                    DrawPixelateChrome(dc, shape, translate: default);
+                }
             }
             if (_inProgress is not null)
             {
                 Draw(dc, _inProgress, translate: default);
                 if (_inProgress.Tool == AnnotationTool.Pixelate && _inProgress.PointsPx.Count >= 2)
                 {
-                    // Feature A: a plain mosaic mid-drag is illegible against busy content — outline
-                    // the in-progress region so the user can see exactly what they're about to
-                    // censor. Screen-only chrome: RenderForExport never touches _inProgress at all
-                    // (see its own doc comment below), so this can never leak into an export.
-                    dc.DrawRectangle(null, BuildChromePen(), new Rect(_inProgress.PointsPx[0], _inProgress.PointsPx[1]));
+                    // Feature A: a plain mosaic mid-drag is illegible against busy content - outline
+                    // the in-progress region with the same border the placed blurs get, so it's one
+                    // consistent look while drawing and after. Screen-only chrome: RenderForExport
+                    // never touches _inProgress at all (see its own doc comment below), so this can
+                    // never leak into an export.
+                    DrawPixelateChrome(dc, _inProgress, translate: default);
                 }
             }
             if (SelectedShape is { } selected && EditableBounds(selected) is { } selectedBounds)
@@ -798,6 +809,25 @@ public sealed class AnnotationLayer : FrameworkElement
             DashStyle = new DashStyle(new double[] { 4, 3 }, 0),
             DashCap = PenLineCap.Flat,
         };
+    }
+
+    private static readonly Color PixelateChromeGray = Color.FromRgb(0x88, 0x8C, 0x90);
+
+    /// <summary>Gray dotted border around a pixelate/blur region so the mosaic - which otherwise
+    /// looks like flat censored pixels, not a shape - obviously reads as selectable/resizable.
+    /// Called from OnRender only, for both placed Pixelate shapes and the in-progress one, so it
+    /// can never leak into RenderForExport's saved image.</summary>
+    private void DrawPixelateChrome(DrawingContext dc, AnnotationShape shape, Vector translate)
+    {
+        double thicknessPx = Math.Max(1.0, DeviceScaleX);
+        var pen = new Pen(new SolidColorBrush(PixelateChromeGray), thicknessPx)
+        {
+            DashStyle = new DashStyle(new double[] { 2.0, 2.0 }, 0),
+            DashCap = PenLineCap.Flat,
+        };
+        pen.Freeze();
+        var r = new Rect(shape.PointsPx[0] + translate, shape.PointsPx[1] + translate);
+        dc.DrawRectangle(null, pen, r);
     }
 
     private void DrawSelectionChrome(DrawingContext dc, AnnotationShape shape, Rect bounds)

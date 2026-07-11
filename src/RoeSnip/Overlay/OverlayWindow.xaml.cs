@@ -571,6 +571,14 @@ public partial class OverlayWindow : Window
 
     private Point ToPhysical(Point dip) => new(dip.X * _scaleX, dip.Y * _scaleY);
 
+    /// <summary>Gates HitTestEditable to the active drawing tool: only shapes of the SAME tool are
+    /// selectable/editable while a drawing tool is active (blur only grabs blurs, line only grabs
+    /// lines, etc.). The Select tool (AnnotationTool.None) passes null through, so it still grabs
+    /// any editable shape.</summary>
+    private AnnotationShape? HitEditableForTool(Point px, bool interiorGrab = false) =>
+        Annotations.HitTestEditable(px, interiorGrab,
+            _currentTool == AnnotationTool.None ? null : _currentTool);
+
     private void OnMouseEnter(object sender, MouseEventArgs e)
     {
         if (!_initialized) return; // D2 belt-and-braces — see _initialized's doc comment
@@ -644,7 +652,7 @@ public partial class OverlayWindow : Window
         // move drag); this ClickCount>=2 branch only ever fires on the second click of a
         // double-click, so it doesn't fight that gesture.
         if (e.ClickCount >= 2
-            && Annotations.HitTestEditable(px) is { Tool: AnnotationTool.Text } textHit)
+            && HitEditableForTool(px) is { Tool: AnnotationTool.Text } textHit)
         {
             Annotations.Select(textHit);
             BeginTextReEdit(textHit, dip);
@@ -667,7 +675,7 @@ public partial class OverlayWindow : Window
         // draw/select/color-pick as before. The grab is always a move; handles/endpoints still
         // resize via plain clicks once the shape is selected.
         if (IsGrabModifierHeld
-            && Annotations.HitTestEditable(px, interiorGrab: true) is { } grabbed)
+            && HitEditableForTool(px, interiorGrab: true) is { } grabbed)
         {
             Annotations.Select(grabbed);
             _dragMode = DragMode.SelectedMove;
@@ -680,21 +688,20 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        // With ANY drawing tool active, a click that lands on an ALREADY-PLACED editable shape (the
-        // selected one's resize handles or endpoints, or any shape's body — for the outline/segment
-        // kinds "body" means near the stroke, see AnnotationLayer.HitsShapeBody) edits that shape
-        // instead of starting a new one on top of it. Originally this was gated to the SAME kind as
-        // the active tool, but that read as "my object became uneditable" the moment another tool
-        // was chosen (user-reported) — a placed object must always be grabbable by clicking it,
-        // regardless of the active tool; tool-scoping only governs which STALE selection survives a
-        // tool switch (the ToolSelected deselect), never whether a deliberate click can pick a
-        // shape up. A press anywhere else still draws as before, so overlapping shapes stay
-        // reachable (outline interiors / off-segment space don't hit-test at all; filled kinds by
-        // starting the drag outside them).
+        // With a drawing tool active, a click that lands on an ALREADY-PLACED shape of THAT SAME
+        // TOOL (the selected one's resize handles or endpoints, or any same-tool shape's body - for
+        // the outline/segment kinds "body" means near the stroke, see AnnotationLayer.HitsShapeBody)
+        // edits that shape instead of starting a new one on top of it. Shapes of a DIFFERENT tool are
+        // not selectable here - blur only grabs blurs, line only grabs lines, etc. (see
+        // HitEditableForTool) - a press over another kind's shape just draws through it. Tool-scoping
+        // also governs which STALE selection survives a tool switch (the ToolSelected deselect). A
+        // press anywhere else still draws as before, so overlapping shapes stay reachable (outline
+        // interiors / off-segment space don't hit-test at all; filled kinds by starting the drag
+        // outside them).
         bool editsExistingShape =
             Annotations.HitTestSelectedHandle(px) != SelectionHandle.None
             || Annotations.HitTestSelectedEndpoint(px) >= 0
-            || Annotations.HitTestEditable(px) is not null;
+            || HitEditableForTool(px) is not null;
 
         if (_currentTool != AnnotationTool.None && !editsExistingShape)
         {
@@ -763,7 +770,7 @@ public partial class OverlayWindow : Window
             }
             else
             {
-                var hitShape = Annotations.HitTestEditable(px);
+                var hitShape = HitEditableForTool(px);
                 if (hitShape is not null)
                 {
                     // Click-selects AND immediately starts a drag in the same gesture — the common
@@ -1531,11 +1538,11 @@ public partial class OverlayWindow : Window
     {
         if (_currentTool != AnnotationTool.None)
         {
-            // Every drawing tool: ANY already-placed editable shape is click-editable regardless
-            // of the active tool (see the editsExistingShape branch in
-            // OnPreviewMouseLeftButtonDown), so the cursor must advertise that instead of showing
-            // the draw-a-new-one brush over it — hidden affordances aren't affordances. Same
-            // hand/arrow/SizeAll vocabulary as the Select tool.
+            // Every drawing tool: an already-placed shape of THAT SAME TOOL is click-editable (see
+            // the editsExistingShape branch in OnPreviewMouseLeftButtonDown and HitEditableForTool),
+            // so the cursor must advertise that instead of showing the draw-a-new-one brush over it —
+            // hidden affordances aren't affordances. Same hand/arrow/SizeAll vocabulary as the Select
+            // tool. Shapes of a different tool are not editable here, so they get no Hand cursor.
             if (!_pickOnlyMode)
             {
                 if (_dragMode == DragMode.SelectedMove)
@@ -1567,7 +1574,7 @@ public partial class OverlayWindow : Window
                         Cursor = CursorForSegmentEndpoint(Annotations.SelectedShape);
                         return;
                     }
-                    if (Annotations.HitTestEditable(hoverPx, interiorGrab: IsGrabModifierHeld) is not null)
+                    if (HitEditableForTool(hoverPx, interiorGrab: IsGrabModifierHeld) is not null)
                     {
                         Cursor = Cursors.Hand;
                         return;
@@ -1671,7 +1678,7 @@ public partial class OverlayWindow : Window
             return CursorForHandle(cropHandle);
         }
 
-        if (Annotations.HitTestEditable(px, interiorGrab: IsGrabModifierHeld) is not null)
+        if (HitEditableForTool(px, interiorGrab: IsGrabModifierHeld) is not null)
         {
             return Cursors.Hand;
         }
@@ -1932,14 +1939,13 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        // A shape is half-drawn (mouse held, not yet released): the wheel resizes THAT shape in place
-        // rather than only the next one - block size for Pixelate, stroke width for the rest. The new
-        // size is also adopted as the current tool size so it carries to the following shape.
-        if (Annotations.InProgressTool is { } drawingTool)
+        // A shape is half-drawn (mouse held, not yet released): the wheel resizes THAT shape's stroke
+        // width in place rather than only the next one, and adopts the size as the current tool size
+        // so it carries to the following shape. Pixelate is excluded - the blur tool's wheel zooms
+        // its placement loupe instead (handled below).
+        if (Annotations.InProgressTool is { } drawingTool && drawingTool != AnnotationTool.Pixelate)
         {
-            double newSize = drawingTool == AnnotationTool.Pixelate
-                ? Math.Clamp(_currentStrokeWidth + notches * 2.0, 3.0, SizeInput.MaxStrokePx)
-                : SizeInput.ClampStroke(_currentStrokeWidth + notches);
+            double newSize = SizeInput.ClampStroke(_currentStrokeWidth + notches);
             Annotations.SetInProgressStrokeWidth(newSize);
             SetStrokeWidth(newSize, cursorDip);
             e.Handled = true;
@@ -1991,6 +1997,27 @@ public partial class OverlayWindow : Window
                 e.Handled = true;
                 return;
             }
+        }
+
+        if (_currentTool == AnnotationTool.Pixelate)
+        {
+            // Blur tool wheel = zoom the placement loupe (level persists via MagnifierSampleRadius),
+            // NOT the mosaic block size, so no "Npx" size indicator shows. Block size is set from the
+            // toolbar size box. A SELECTED blur is handled by the selected-shape branch above (still
+            // resizes its block), so this only runs when nothing is selected.
+            if (IsMagnifierActive)
+            {
+                int newRadius = Math.Clamp(
+                    MagnifierControl.SampleRadius - notches, Magnifier.MinSampleRadius, Magnifier.MaxSampleRadius);
+                if (newRadius != MagnifierControl.SampleRadius)
+                {
+                    MagnifierControl.SampleRadius = newRadius;
+                    _liveSettings = _liveSettings with { MagnifierSampleRadius = newRadius };
+                    TrySaveLiveSettings();
+                }
+            }
+            e.Handled = true;
+            return;
         }
 
         if (_currentTool == AnnotationTool.None)
