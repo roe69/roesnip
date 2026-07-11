@@ -133,8 +133,13 @@ internal sealed class RegionOutline : Window
                     _dragStartSel = _selectionPx;
                     _element.Cursor = WpfCursorFor(_drag);
                     Native.SetCapture(hwnd);
+                    handled = true;
                 }
-                handled = true;
+                // _drag == None here means WM_NCHITTEST classified this point as HTTRANSPARENT (a
+                // plain click inside the region, meant to fall through to the app being recorded —
+                // see the class doc). Unconditionally setting handled = true regardless of _drag (the
+                // bug this fixes) swallowed WM_LBUTTONDOWN itself even for a click-through point,
+                // same as WM_MOUSEMOVE/WM_LBUTTONUP below already correctly avoid.
                 break;
             }
             case Native.WM_MOUSEMOVE:
