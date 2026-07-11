@@ -69,6 +69,7 @@ public partial class SettingsWindow : Window
         SaveDirectoryBox.Text = _original.SaveDirectory;
         AutoSaveHdrCheckBox.IsChecked = _original.AutoSaveHdrCopy;
         CopyOnSelectCheckBox.IsChecked = _original.CopyOnSelect;
+        ColorPickerCheckBox.IsChecked = _original.ColorPickerEnabled;
         KneeOverrideBox.Text = _original.ToneMapKneeOverride?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         PeakOverrideBox.Text = _original.ToneMapPeakOverride?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
 
@@ -478,6 +479,7 @@ public partial class SettingsWindow : Window
             SaveDirectory = SaveDirectoryBox.Text,
             AutoSaveHdrCopy = AutoSaveHdrCheckBox.IsChecked == true,
             CopyOnSelect = CopyOnSelectCheckBox.IsChecked == true,
+            ColorPickerEnabled = ColorPickerCheckBox.IsChecked == true,
             ToneMapKneeOverride = kneeOverride,
             ToneMapPeakOverride = peakOverride,
             RunAtStartup = runAtStartup,

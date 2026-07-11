@@ -203,6 +203,9 @@ public partial class OverlayWindow : Window
     /// OnMouseLeave/OnDeactivated.</summary>
     private bool IsMagnifierActive => _pickOnlyMode
         || (_selectionPx is null && _dragMode == DragMode.None)
+        // Keep the loupe up WHILE dragging out the initial selection (zoom still works) so the
+        // selection edges can be placed to the pixel, not just while hovering before the drag.
+        || _dragMode == DragMode.NewSelection
         // The blur/pixelate tool shows the same placement loupe as the initial selection (but with
         // no colour readout - see the ShowColorReadout set at the Update site) so its region edges
         // can be placed to the pixel.
@@ -890,8 +893,9 @@ public partial class OverlayWindow : Window
 
         if (IsMagnifierActive)
         {
-            // Blur/pixelate tool: same loupe, but no colour-value lines below it (request 3).
-            MagnifierControl.ShowColorReadout = _currentTool != AnnotationTool.Pixelate;
+            // Colour codes only when the colour picker is enabled AND not the blur tool - otherwise
+            // the loupe is a pure placement/zoom aid with no colour readout.
+            MagnifierControl.ShowColorReadout = _liveSettings.ColorPickerEnabled && _currentTool != AnnotationTool.Pixelate;
             MagnifierControl.Update(_preview, _frame, dip, px);
         }
 
@@ -977,7 +981,13 @@ public partial class OverlayWindow : Window
                     // standalone ColorPickerWindow with the clicked pixel's color, replacing the old
                     // inline click panel.
                     _newSelectionPending = false;
-                    TriggerColorPick(_dragAnchorPx, _dragAnchorDip);
+                    // A plain click opens the colour picker only when it is enabled (Settings). With
+                    // the colour picker off, a plain click does nothing - no pick, and it does not
+                    // drop the snip, so a mis-click can't open a picker or cancel the capture.
+                    if (_liveSettings.ColorPickerEnabled)
+                    {
+                        TriggerColorPick(_dragAnchorPx, _dragAnchorDip);
+                    }
                 }
                 else if (_selectionPx is { } sel)
                 {
@@ -1472,6 +1482,9 @@ public partial class OverlayWindow : Window
             };
 
             OverlayCanvas.Children.Add(_toolbar);
+            // Keep the zoom loupe ABOVE the toolbar (it is added after the Magnifier, so it would
+            // otherwise cover the loupe) - the loupe must stay visible, not hide behind the toolbar.
+            System.Windows.Controls.Panel.SetZIndex(MagnifierControl, 1);
         }
 
         _toolbar.InitializeTextStyle(_textFontFamily, _textFontSize, _textBold, _textItalic);
