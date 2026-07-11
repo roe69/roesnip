@@ -21,6 +21,10 @@ public sealed class TrayApp : ITrayNotifier
 {
     private const string MutexName = @"Global\RoeSnip-SingleInstance";
     private const string PipeName = "RoeSnip-SingleInstance-Capture";
+    // Single-instance pipe commands: a normal launch tells the running instance to EXIT so the new
+    // one can take over (running the exe = the latest build); --signal-capture asks it to snip.
+    private const byte SignalCapture = 1;
+    private const byte SignalExit = 2;
     private const string PrintScreenRegistryKeyPath = @"Control Panel\Keyboard";
     private const string PrintScreenValueName = "PrintScreenKeyForSnippingEnabled";
 
@@ -32,20 +36,85 @@ public sealed class TrayApp : ITrayNotifier
     private EventHandler? _activeBalloonClickHandler;
     private SettingsWindow? _settingsWindow;
 
-    /// <summary>Runs the tray app: NotifyIcon + context menu + message loop. If another instance is
-    /// already running (named mutex held), signals it to run the capture flow instead and returns
-    /// 0 immediately without creating a second tray icon.</summary>
+    /// <summary>Runs the tray app: NotifyIcon + context menu + message loop. A normal launch while
+    /// another instance is already running (named mutex held) REPLACES that instance with this one -
+    /// it asks the old one to exit, waits for it to release the mutex (force-terminating it as a last
+    /// resort), then takes over. That way a user only has to run the exe to get the latest build; no
+    /// need to hunt down and kill the old process first. The hidden --signal-capture flag keeps the
+    /// old "just poke the running instance to snip" behavior for scripting/tests.</summary>
     public static int Run(string[] args)
     {
-        using var mutex = new Mutex(initiallyOwned: true, MutexName, out bool createdNew);
-        if (!createdNew)
+        bool signalCaptureOnly = Array.IndexOf(args, "--signal-capture") >= 0;
+        var mutex = new Mutex(initiallyOwned: true, MutexName, out bool createdNew);
+
+        if (signalCaptureOnly)
         {
-            SignalExistingInstance();
+            if (!createdNew)
+            {
+                SignalExistingInstance(SignalCapture);
+            }
+            mutex.Dispose();
             return 0;
         }
 
-        var app = new TrayApp();
-        return app.RunInstance();
+        if (!createdNew)
+        {
+            // Ask the running instance to exit, then wait for it to drop the mutex so we can own it.
+            SignalExistingInstance(SignalExit);
+            bool acquired = TryAcquire(mutex, TimeSpan.FromSeconds(3));
+            if (!acquired)
+            {
+                // It would not go quietly (hung, mid-recording, or the pipe never landed) - force it.
+                KillOtherInstances();
+                acquired = TryAcquire(mutex, TimeSpan.FromSeconds(2));
+            }
+            if (!acquired)
+            {
+                Console.Error.WriteLine("RoeSnip: could not take over from the running instance; leaving it in place.");
+                mutex.Dispose();
+                return 0;
+            }
+        }
+
+        using (mutex)
+        {
+            var app = new TrayApp();
+            return app.RunInstance();
+        }
+    }
+
+    /// <summary>Waits to own the single-instance mutex. AbandonedMutexException (the previous owner
+    /// died without releasing) still hands us ownership, so it counts as success.</summary>
+    private static bool TryAcquire(Mutex mutex, TimeSpan timeout)
+    {
+        try { return mutex.WaitOne(timeout); }
+        catch (AbandonedMutexException) { return true; }
+    }
+
+    /// <summary>Force-terminates every OTHER RoeSnip process (last resort when a running instance
+    /// will not exit on request). Best-effort per process; never throws out.</summary>
+    private static void KillOtherInstances()
+    {
+        int self = Environment.ProcessId;
+        foreach (var p in Process.GetProcessesByName("RoeSnip"))
+        {
+            try
+            {
+                if (p.Id != self)
+                {
+                    p.Kill();
+                    p.WaitForExit(2000);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: could not terminate a stale instance (pid {p.Id}): {ex.Message}");
+            }
+            finally
+            {
+                p.Dispose();
+            }
+        }
     }
 
     private int RunInstance()
@@ -825,18 +894,18 @@ public sealed class TrayApp : ITrayNotifier
 
     // ---------------- Single-instance signalling (named mutex + named pipe) ----------------
 
-    private static void SignalExistingInstance()
+    private static void SignalExistingInstance(byte command)
     {
         try
         {
             using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
             client.Connect(2000);
-            client.WriteByte(1);
+            client.WriteByte(command);
             client.Flush();
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: another instance appears to be running, but signalling it failed: {ex.Message}");
+            Console.Error.WriteLine($"RoeSnip: another instance appears to be running, but signalling it (command {command}) failed: {ex.Message}");
         }
     }
 
@@ -850,8 +919,18 @@ public sealed class TrayApp : ITrayNotifier
                     PipeName, PipeDirection.In, maxNumberOfServerInstances: 1,
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
                 await server.WaitForConnectionAsync(token).ConfigureAwait(false);
-                _ = server.ReadByte(); // drain the single signal byte
-                _uiThreadMarshal?.BeginInvoke(new Action(TriggerCapture));
+                int command = server.ReadByte(); // the single signal byte
+                if (command == SignalExit)
+                {
+                    // A newer instance is taking over: exit so it can own the single-instance mutex.
+                    // Ends the WinForms message loop RunInstance is blocked on; its cleanup then
+                    // releases the mutex the new instance is waiting on.
+                    _uiThreadMarshal?.BeginInvoke(new Action(Application.Exit));
+                }
+                else
+                {
+                    _uiThreadMarshal?.BeginInvoke(new Action(TriggerCapture));
+                }
             }
             catch (OperationCanceledException)
             {
