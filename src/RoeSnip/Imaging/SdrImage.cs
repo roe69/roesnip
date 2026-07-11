@@ -34,15 +34,21 @@ public sealed class SdrImage
     /// DESIGN.md ("BGRA8-source frames bypass the tone-mapper entirely"), so no call site needs
     /// to know or duplicate that branch.</summary>
     public static SdrImage FromCapturedFrame(CapturedFrame frame, Color.ToneMapOptions opts) =>
-        frame.Format == FrameFormat.Fp16ScRgb
-            ? Color.ToneMapper.MapToSdr(frame, opts)
-            : FromBgra8Passthrough(frame);
+        FromCapturedFrame(frame, opts, reuseOutput: null);
 
-    private static SdrImage FromBgra8Passthrough(CapturedFrame frame)
+    /// <summary>Same, but writes into <paramref name="reuseOutput"/> (must be exactly
+    /// width*4*height) instead of allocating — for recording-cadence callers where a fresh
+    /// canvas-sized (LOH-sized) array per frame is real Gen2 pressure.</summary>
+    public static SdrImage FromCapturedFrame(CapturedFrame frame, Color.ToneMapOptions opts, byte[]? reuseOutput) =>
+        frame.Format == FrameFormat.Fp16ScRgb
+            ? Color.ToneMapper.MapToSdr(frame, opts, reuseOutput)
+            : FromBgra8Passthrough(frame, reuseOutput);
+
+    private static SdrImage FromBgra8Passthrough(CapturedFrame frame, byte[]? reuseOutput = null)
     {
         int width = frame.Width;
         int height = frame.Height;
-        var output = new byte[width * 4 * height];
+        var output = reuseOutput ?? new byte[width * 4 * height];
         for (int y = 0; y < height; y++)
         {
             var row = frame.Row(y);

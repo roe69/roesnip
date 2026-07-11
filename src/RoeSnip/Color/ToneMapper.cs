@@ -39,14 +39,25 @@ public readonly record struct ToneMapOptions(
 /// </list></summary>
 public static class ToneMapper
 {
-    public static SdrImage MapToSdr(CapturedFrame frame, ToneMapOptions opts)
+    public static SdrImage MapToSdr(CapturedFrame frame, ToneMapOptions opts) => MapToSdr(frame, opts, reuseOutput: null);
+
+    /// <summary><paramref name="reuseOutput"/>: recording-cadence call sites (up to 50fps) pass a
+    /// persistent exactly-sized buffer so the tone-map allocates nothing per frame (canvas-sized
+    /// arrays are LOH-sized; per-frame LOH churn = Gen2 pauses = frozen UI hit-testing, the
+    /// f7aa9a3 lesson). Those calls also skip the per-call timing log — 50 synchronous stderr
+    /// writes a second is its own overhead; one-shot captures (null) keep it.</summary>
+    public static SdrImage MapToSdr(CapturedFrame frame, ToneMapOptions opts, byte[]? reuseOutput)
     {
         EnsureFp16(frame);
+        if (reuseOutput is not null)
+        {
+            return MapToSdrOptimized(frame, opts, reuseOutput);
+        }
         // Timing log (r5-latency instrumentation): per-frame tonemap cost is measurable from the
         // CLI (--capture) without launching the tray app; RunCaptureFlowAsync's aggregate
         // "capture-to-overlay" line remains the interactive-flow number.
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        var image = MapToSdrOptimized(frame, opts);
+        var image = MapToSdrOptimized(frame, opts, null);
         Console.Error.WriteLine($"RoeSnip: tonemap {frame.Width}x{frame.Height} {watch.ElapsedMilliseconds} ms");
         return image;
     }
@@ -194,7 +205,7 @@ public static class ToneMapper
 
     // ================= Optimized path (r5-latency) =================
 
-    private static SdrImage MapToSdrOptimized(CapturedFrame frame, ToneMapOptions opts)
+    private static SdrImage MapToSdrOptimized(CapturedFrame frame, ToneMapOptions opts, byte[]? reuseOutput)
     {
         int width = frame.Width;
         int height = frame.Height;
@@ -204,7 +215,7 @@ public static class ToneMapper
         float globalMax = ComputeGlobalMax(frame, scale, lut.Linear);
         var (knee, peak, passThroughWholeFrame) = ComputeCurveParams(globalMax, opts, frame.Monitor);
 
-        var output = new byte[width * 4 * height];
+        var output = reuseOutput ?? new byte[width * 4 * height];
 
         Parallel.For(0, height, y =>
         {

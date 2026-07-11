@@ -26,8 +26,19 @@ public sealed class CapturedFrame : IDisposable
     public int BytesPerPixel => Format == FrameFormat.Fp16ScRgb ? 8 : 4;
 
     private byte[]? _pixels; // null after Dispose()
+    private readonly bool _pooledBuffer;
 
     public CapturedFrame(FrameFormat format, int width, int height, int stride, byte[] pixels, MonitorInfo monitor)
+        : this(format, width, height, stride, pixels, monitor, pooledBuffer: false)
+    {
+    }
+
+    /// <summary><paramref name="pooledBuffer"/>: the pixel buffer was rented from
+    /// ArrayPool&lt;byte&gt;.Shared (it may be LONGER than stride*height — always index via
+    /// <see cref="Row"/>, never the array length) and Dispose returns it to the pool. Recording
+    /// rents at up to 50 frames/s; fresh region-sized arrays at that cadence are pure LOH churn
+    /// (Gen2 pauses freeze UI hit-testing — the f7aa9a3 class of bug).</summary>
+    public CapturedFrame(FrameFormat format, int width, int height, int stride, byte[] pixels, MonitorInfo monitor, bool pooledBuffer)
     {
         Format = format;
         Width = width;
@@ -35,6 +46,7 @@ public sealed class CapturedFrame : IDisposable
         Stride = stride;
         Monitor = monitor;
         _pixels = pixels;
+        _pooledBuffer = pooledBuffer;
     }
 
     public ReadOnlySpan<byte> Row(int y)
@@ -78,5 +90,13 @@ public sealed class CapturedFrame : IDisposable
         return Math.Max(v.X, Math.Max(v.Y, v.Z)) * 80.0;
     }
 
-    public void Dispose() => _pixels = null;
+    public void Dispose()
+    {
+        var pixels = _pixels;
+        _pixels = null;
+        if (_pooledBuffer && pixels is not null)
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(pixels);
+        }
+    }
 }

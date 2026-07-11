@@ -678,14 +678,15 @@
                          visibly narrower than the action row and the two rows read as different
                          widths. -->
                     <Button x:Name="RecordButton" Style="{StaticResource QuietActionButtonStyle}"
+                            AutomationProperties.AutomationId="RecordButton"
                             Margin="1,2" ToolTip="Record as MP4 or GIF" Click="OnRecordClick">
                         <Button.ContextMenu>
                             <!-- Placement/PlacementTarget set in the code-behind constructor (a
                                  ContextMenu isn't part of the Button's visual tree, so a XAML-time
                                  RelativeSource binding can't reach it) — see ToolbarControl(). -->
                             <ContextMenu x:Name="RecordContextMenu" Style="{StaticResource DarkContextMenuStyle}">
-                                <MenuItem x:Name="RecordMp4MenuItem" Header="Record MP4" Style="{StaticResource DarkMenuItemStyle}" Click="OnRecordMp4Click"/>
-                                <MenuItem x:Name="RecordGifMenuItem" Header="Record GIF" Style="{StaticResource DarkMenuItemStyle}" Click="OnRecordGifClick"/>
+                                <MenuItem x:Name="RecordMp4MenuItem" AutomationProperties.AutomationId="RecordMp4MenuItem" Header="Record MP4" Style="{StaticResource DarkMenuItemStyle}" Click="OnRecordMp4Click"/>
+                                <MenuItem x:Name="RecordGifMenuItem" AutomationProperties.AutomationId="RecordGifMenuItem" Header="Record GIF" Style="{StaticResource DarkMenuItemStyle}" Click="OnRecordGifClick"/>
                             </ContextMenu>
                         </Button.ContextMenu>
                         <!-- Record icon, restyled to sit with its stroked siblings: the same cream

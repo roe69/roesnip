@@ -38,7 +38,9 @@ internal sealed class RegionRecorder : IDisposable
 {
     private readonly WgcCapturer.MonitorResources _resources; // via WgcCapturer.CreateResources — never the s_slots cache
     private readonly MonitorInfo _monitor;
-    private RectPhysical _selectionPx;                          // even-WxH enforced by the caller; POSITION slides via SetOrigin, size fixed
+    private readonly int _regionWidth;                          // even-WxH enforced by the caller; SIZE is fixed for the whole take
+    private readonly int _regionHeight;
+    private long _originPacked;                                 // (left << 32) | (uint)top — Volatile-accessed, see SetOrigin
     private readonly int _targetFps;
     private readonly long _minIntervalTicks;
     private readonly object _gpuLock = new();                  // serializes THIS recorder's own ImmediateContext use only
@@ -47,7 +49,7 @@ internal sealed class RegionRecorder : IDisposable
     private Direct3D11CaptureFramePool? _framePool;
     private GraphicsCaptureSession? _session;
     private ID3D11Texture2D? _regionStaging;                   // sized to the SELECTION, not the monitor — reused every frame
-    private long _lastForwardedTimestamp;                      // Stopwatch ticks — throttle gate, Volatile-accessed
+    private long _nextDueTimestamp;                            // Stopwatch ticks — schedule-based throttle, see OnFrameArrived
     private int _disposed;
 
     /// <summary>Set/cleared by RecordingSession.Pause()/Resume() on the UI thread. While true,
@@ -66,7 +68,9 @@ internal sealed class RegionRecorder : IDisposable
     {
         _resources = WgcCapturer.CreateResources(monitor); // fresh device/item, never cached
         _monitor = monitor;
-        _selectionPx = selectionPx;
+        _regionWidth = selectionPx.Width;
+        _regionHeight = selectionPx.Height;
+        _originPacked = Pack(selectionPx.Left, selectionPx.Top);
         _targetFps = targetFps;
         _minIntervalTicks = System.Diagnostics.Stopwatch.Frequency / targetFps;
         _queue = Channel.CreateBounded<QueuedFrame>(new BoundedChannelOptions(3)
@@ -74,25 +78,25 @@ internal sealed class RegionRecorder : IDisposable
             FullMode = BoundedChannelFullMode.DropOldest, // never block the WGC callback thread
             SingleReader = true,
             SingleWriter = true,
-        });
+        }, static dropped => dropped.Frame.Dispose()); // DropOldest discards silently otherwise — pooled buffers must go back
     }
+
+    private static long Pack(int left, int top) => ((long)left << 32) | (uint)top;
 
     public ChannelReader<QueuedFrame> Frames => _queue.Reader;
 
     /// <summary>Slides the crop origin while recording (the user dragged the region). Only the
     /// position changes - the width/height, staging texture, and encoder dimensions stay fixed - so
-    /// no pipeline rebuild is needed. Taken under <see cref="_gpuLock"/>, the SAME lock OnFrameArrived
-    /// reads _selectionPx under, so the crop box is never torn mid-frame. Clamped to the monitor so
-    /// the CopySubresourceRegion box can never exceed the captured surface.</summary>
+    /// no pipeline rebuild is needed. LOCK-FREE on purpose: this runs on the UI thread inside the
+    /// drag's WM_MOUSEMOVE, and taking _gpuLock here parked the UI thread behind a whole in-flight
+    /// CopySubresourceRegion+Map+copy readback (several ms per frame, up to 50x/s while dragging).
+    /// A single packed volatile write can't tear and needs no lock. Clamped to the monitor so the
+    /// CopySubresourceRegion box can never exceed the captured surface.</summary>
     public void SetOrigin(int left, int top)
     {
-        lock (_gpuLock)
-        {
-            int w = _selectionPx.Width, h = _selectionPx.Height;
-            int maxL = Math.Max(0, _monitor.BoundsPx.Width - w);
-            int maxT = Math.Max(0, _monitor.BoundsPx.Height - h);
-            _selectionPx = RectPhysical.FromSize(Math.Clamp(left, 0, maxL), Math.Clamp(top, 0, maxT), w, h);
-        }
+        int maxL = Math.Max(0, _monitor.BoundsPx.Width - _regionWidth);
+        int maxT = Math.Max(0, _monitor.BoundsPx.Height - _regionHeight);
+        Volatile.Write(ref _originPacked, Pack(Math.Clamp(left, 0, maxL), Math.Clamp(top, 0, maxT)));
     }
 
     /// <summary>Starts the persistent capture session. Unlike WgcCapturer.CaptureCore's session,
@@ -142,12 +146,19 @@ internal sealed class RegionRecorder : IDisposable
                 return;
             }
 
+            // Schedule-based throttle, NOT a since-last-forward gate: WGC delivers on the monitor's
+            // refresh cadence (16.7ms at 60Hz), and requiring a full _minIntervalTicks since the
+            // LAST forwarded frame beats against that cadence — a 50fps target then skips every
+            // other 60Hz frame and records 30fps. Advancing a due-time by the interval per forward
+            // (clamped so a quiet stretch can't bank an unbounded burst) hits the target rate on
+            // average regardless of the source cadence.
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (now - Volatile.Read(ref _lastForwardedTimestamp) < _minIntervalTicks)
+            long due = _nextDueTimestamp;
+            if (now < due)
             {
                 return; // throttled — frame.Dispose() via the using above, no GPU work done
             }
-            Volatile.Write(ref _lastForwardedTimestamp, now);
+            _nextDueTimestamp = Math.Max(due + _minIntervalTicks, now - _minIntervalTicks);
 
             try
             {
@@ -156,20 +167,26 @@ internal sealed class RegionRecorder : IDisposable
 
                 _regionStaging ??= CreateRegionStagingTexture(srcDesc.Format);
 
+                long packed = Volatile.Read(ref _originPacked);
+                int originLeft = (int)(packed >> 32), originTop = (int)(uint)packed;
                 var box = new Box(
-                    _selectionPx.Left, _selectionPx.Top, 0,
-                    _selectionPx.Right, _selectionPx.Bottom, 1);
+                    originLeft, originTop, 0,
+                    originLeft + _regionWidth, originTop + _regionHeight, 1);
                 _resources.D3dDevice.ImmediateContext.CopySubresourceRegion(
                     _regionStaging, 0, 0, 0, 0, surfaceTexture, 0, box);
 
                 var mapped = _resources.D3dDevice.ImmediateContext.Map(_regionStaging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
                 try
                 {
-                    int w = _selectionPx.Width;
-                    int h = _selectionPx.Height;
+                    int w = _regionWidth;
+                    int h = _regionHeight;
                     int stride = (int)mapped.RowPitch;
-                    var pixels = new byte[stride * h];
-                    Marshal.Copy(mapped.DataPointer, pixels, 0, pixels.Length);
+                    // Pooled: a region-sized array is LOH-sized, and a fresh one per accepted frame
+                    // at up to 50/s is exactly the Gen2-pause churn f7aa9a3 was about. The rented
+                    // array may be longer than byteCount — CapturedFrame consumers index via Row().
+                    int byteCount = stride * h;
+                    var pixels = System.Buffers.ArrayPool<byte>.Shared.Rent(byteCount);
+                    Marshal.Copy(mapped.DataPointer, pixels, 0, byteCount);
 
                     FrameFormat format = srcDesc.Format == Format.R16G16B16A16_Float
                         ? FrameFormat.Fp16ScRgb
@@ -179,7 +196,7 @@ internal sealed class RegionRecorder : IDisposable
                     // own Width/Height/Stride below are authoritative for indexing this cropped
                     // buffer; Monitor is only ever consulted for its photometric fields
                     // (SdrWhiteNits/MaxLuminanceNits) by the tone-mapper.
-                    var cropped = new CapturedFrame(format, w, h, stride, pixels, _monitor);
+                    var cropped = new CapturedFrame(format, w, h, stride, pixels, _monitor, pooledBuffer: true);
                     if (!_queue.Writer.TryWrite(new QueuedFrame(cropped, now)))
                     {
                         cropped.Dispose(); // writer already completed (Stop() raced us) — drop it
@@ -204,8 +221,8 @@ internal sealed class RegionRecorder : IDisposable
     {
         var desc = new Texture2DDescription
         {
-            Width = (uint)_selectionPx.Width,
-            Height = (uint)_selectionPx.Height,
+            Width = (uint)_regionWidth,
+            Height = (uint)_regionHeight,
             MipLevels = 1,
             ArraySize = 1,
             Format = format,

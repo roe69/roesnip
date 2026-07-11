@@ -159,10 +159,13 @@ internal sealed class RecordingSession
         try
         {
             _uiDispatcher = Dispatcher.CurrentDispatcher;
-            // GIF delays are whole centiseconds, so 33fps (3cs) is the format's smooth sweet spot
-            // (2cs/50fps exists but roughly doubles motion bytes for marginal gain); size is kept
-            // down by GifEncoder's skip-identical + changed-region delta encoding, not by a low fps.
-            _targetFps = _format == RecordingFormat.Gif ? 33 : 30;
+            // 50fps is GIF's format ceiling: delays are whole centiseconds and browsers clamp
+            // 0-1cs to 10cs, so 2cs is the smallest honest frame time (60fps is unrepresentable).
+            // Size is kept down by GifEncoder's skip-identical + changed-region delta encoding,
+            // not by a low fps - static pixels cost nothing at any capture rate, and if the
+            // encoder can't keep up with heavy motion the bounded DropOldest queue sheds frames
+            // while the patch-behind timestamps keep playback speed exact.
+            _targetFps = _format == RecordingFormat.Gif ? 50 : 30;
 
             // Fixed tone-map options, computed ONCE here from monitor metadata — never re-derived
             // per frame or per take (a Restart reuses these). Per-frame auto-derived peak
@@ -844,6 +847,13 @@ internal sealed class RecordingSession
         // the recorded crop is untouched — comparing raw bytes here skips those before paying the
         // (much more expensive) tone-map. GifEncoder's own SDR diff stays as the exact gate.
         CapturedFrame? prevGifRaw = null;
+        // GIF only: two persistent exactly-canvas-sized tone-map targets so the 50fps path never
+        // allocates a fresh (LOH-sized) output array per frame. GifEncoder retains at most ONE
+        // buffer as its diff baseline, and AddFrame returns true exactly when it takes the current
+        // one — so rotating on true (and reusing the same buffer on a skip) can never overwrite
+        // the retained baseline.
+        byte[]? gifTonemapA = null, gifTonemapB = null;
+        bool gifUseA = true;
 
         try
         {
@@ -884,20 +894,28 @@ internal sealed class RecordingSession
                         }
 
                         epochTicks ??= effectiveTicks;
-                        var sdr = SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts);
                         framesWritten++;
 
                         if (_format == RecordingFormat.Mp4)
                         {
+                            var sdr = SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts);
                             long timestamp100ns = (long)((effectiveTicks - epochTicks.Value) / freq * 10_000_000.0);
                             _mp4Encoder!.WriteFrame(sdr, timestamp100ns);
                         }
                         else
                         {
+                            byte[] target = gifUseA
+                                ? (gifTonemapA ??= new byte[frame.Width * 4 * frame.Height])
+                                : (gifTonemapB ??= new byte[frame.Width * 4 * frame.Height]);
+                            var sdr = SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts, target);
+
                             // GifEncoder owns the timing: it diffs against the last emitted frame,
                             // skips no-change frames, crops to the changed region, and patches each
                             // frame's delay to its real display duration once the next frame lands.
-                            _gifEncoder!.AddFrame(sdr, effectiveTicks);
+                            if (_gifEncoder!.AddFrame(sdr, effectiveTicks))
+                            {
+                                gifUseA = !gifUseA; // the encoder retained this buffer as its baseline
+                            }
                             prevGifRaw?.Dispose();
                             prevGifRaw = frame; // becomes the raw-skip baseline for the next frame
                             frameKeptAsGifBaseline = true;

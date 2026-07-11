@@ -103,8 +103,13 @@ public sealed class GifEncoder : IDisposable
     /// (their display time folds into the previous frame's patched delay), changed frames are
     /// cropped to the changed bounding box and appended as a sub-rect frame. See the class doc for
     /// the delay patch-behind scheme. <paramref name="timestampTicks"/> is the frame's capture
-    /// timestamp in <see cref="_timestampTicksPerSecond"/> units, monotonic across the take.</summary>
-    public void AddFrame(SdrImage frame, long timestampTicks)
+    /// timestamp in <see cref="_timestampTicksPerSecond"/> units, monotonic across the take.
+    ///
+    /// Returns true when the frame was EMITTED — i.e. this instance now holds a reference to
+    /// <paramref name="frame"/>.Pixels as its diff baseline. A double-buffering caller must only
+    /// rotate to its other buffer on true; on false (skipped) the buffer it just filled is free to
+    /// overwrite, and the retained baseline is still the older one.</summary>
+    public bool AddFrame(SdrImage frame, long timestampTicks)
     {
         if (frame.Width != _width || frame.Height != _height)
         {
@@ -117,18 +122,19 @@ public sealed class GifEncoder : IDisposable
             EmitFrame(frame, RectPhysical.FromSize(0, 0, _width, _height));
             _prevPixels = frame.Pixels;
             _lastEmitTimestampTicks = timestampTicks;
-            return;
+            return true;
         }
 
         if (!TryGetChangedBounds(_prevPixels, frame.Pixels, _width, _height, out var box))
         {
-            return; // nothing changed — the previous frame just keeps displaying
+            return false; // nothing changed — the previous frame just keeps displaying
         }
 
         PatchLastDelay(timestampTicks);
         EmitFrame(frame, box);
         _prevPixels = frame.Pixels; // full canvas, so future diffs see the true composite
         _lastEmitTimestampTicks = timestampTicks;
+        return true;
     }
 
     /// <summary>Raw primitive: appends <paramref name="frame"/> (must be full-canvas) verbatim with
@@ -275,26 +281,42 @@ public sealed class GifEncoder : IDisposable
             }
         }
 
+        // Column bounds: chunked SequenceEqual (vectorized) over the still-unproven prefix/suffix,
+        // with a scalar pinpoint only inside the one differing chunk — a change hugging one edge of
+        // a wide region would otherwise degrade the opposite side's scan to scalar width-per-row.
+        const int ChunkPx = 64;
         int left = width, right = -1;
         for (int y = top; y <= bottom; y++)
         {
             var pr = p.Slice(y * width, width);
             var cr = c.Slice(y * width, width);
-            for (int x = 0; x < left; x++)
+
+            int x = 0;
+            while (x < left)
             {
-                if (pr[x] != cr[x])
+                int len = Math.Min(ChunkPx, left - x);
+                if (!pr.Slice(x, len).SequenceEqual(cr.Slice(x, len)))
                 {
+                    while (pr[x] == cr[x]) { x++; }
                     left = x;
                     break;
                 }
+                x += len;
             }
-            for (int x = width - 1; x > right; x--)
+
+            int hi = width; // exclusive; scan down toward right+1
+            while (hi > right + 1)
             {
-                if (pr[x] != cr[x])
+                int len = Math.Min(ChunkPx, hi - (right + 1));
+                int start = hi - len;
+                if (!pr.Slice(start, len).SequenceEqual(cr.Slice(start, len)))
                 {
-                    right = x;
+                    int i = hi - 1;
+                    while (pr[i] == cr[i]) { i--; }
+                    right = i;
                     break;
                 }
+                hi = start;
             }
         }
 
