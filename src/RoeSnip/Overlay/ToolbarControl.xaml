@@ -552,7 +552,16 @@
          why the opacity is pushed well past the site's own 50% glass. -->
     <Border Background="{StaticResource RlPanelBackgroundBrush}" CornerRadius="12" BorderBrush="{StaticResource RlBorderStrongBrush}" BorderThickness="1">
         <StackPanel Margin="6,5">
-            <StackPanel Orientation="Horizontal">
+            <!-- Row 1 mirrors Row 2's Auto|*|Auto layout so both rows span the same width and the
+                 panel reads symmetrically: the tools+size group pins left, undo/redo pin right, the
+                 star column absorbs the slack between them. -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
             <!-- Tools -->
             <ToggleButton x:Name="SelectToolButton" Style="{StaticResource ToolButtonStyle}"
                           ToolTip="Select / move (default)" IsChecked="True" Click="OnSelectToolClick">
@@ -605,7 +614,9 @@
                       ToolTip="Size: type a value or pick a preset (scroll wheel over the image also resizes)"
                       KeyDown="OnSizeComboKeyDown"
                       SelectionChanged="OnSizeComboSelectionChanged"/>
+            </StackPanel>
 
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
             <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
             <!-- Undo/Redo sit at a FIXED spot (before the collapsible text-style group), so
@@ -622,8 +633,8 @@
                 <!-- Mirrored undo arrow -->
                 <Path Style="{StaticResource IconStyle}" Data="M14,6 L10,2 M14,6 L10,10 M14,6 H6 A4.5,4.5 0 0 0 6,15 H10"/>
             </Button>
-
             </StackPanel>
+            </Grid>
 
             <Border Height="1" Margin="1,4" Background="{StaticResource RlBorderStrongBrush}"/>
 
@@ -702,17 +713,10 @@
                               Data="M8,9 V1 M4.5,4.5 L8,1 L11.5,4.5 M1.5,11 V14.5 H14.5 V11"/>
                     </Button>
 
-                    <Button x:Name="CopyButton" Style="{StaticResource ActionButtonStyle}"
-                            ToolTip="Copy (Ctrl+C)" Click="OnCopyClick">
-                        <!-- Two overlapping squares. Stroke overridden to the on-primary dark ink —
-                             this button's fill is bright gold, so the shared cream IconStyle default
-                             would read poorly here. -->
-                        <Path Style="{StaticResource IconStyle}" Stroke="{StaticResource RlTextOnPrimaryBrush}"
-                              Data="M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5"/>
-                    </Button>
-                    <!-- HDR export moved off the toolbar (item 4, UX round 5): 99% of saves are plain PNGs,
-                         so left-click Save = PNG exactly as before and the old dedicated Save-HDR button is
-                         now a right-click menu item here, raising the same SaveHdr command path unchanged. -->
+                    <!-- Save sits before Copy (user request). HDR export moved off the toolbar (item 4,
+                         UX round 5): 99% of saves are plain PNGs, so left-click Save = PNG exactly as
+                         before and the old dedicated Save-HDR button is now a right-click menu item
+                         here, raising the same SaveHdr command path unchanged. -->
                     <Button x:Name="SaveButton" Style="{StaticResource SecondaryActionButtonStyle}"
                             ToolTip="Save (Ctrl+S), right-click for HDR" Click="OnSaveClick">
                         <Button.ContextMenu>
@@ -726,6 +730,14 @@
                              matches this button's gold text/border (v_secondary recipe). -->
                         <Path Style="{StaticResource IconStyle}" Stroke="{StaticResource RlPrimaryGoldBrush}"
                               Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
+                    </Button>
+                    <Button x:Name="CopyButton" Style="{StaticResource ActionButtonStyle}"
+                            ToolTip="Copy (Ctrl+C)" Click="OnCopyClick">
+                        <!-- Two overlapping squares. Stroke overridden to the on-primary dark ink —
+                             this button's fill is bright gold, so the shared cream IconStyle default
+                             would read poorly here. -->
+                        <Path Style="{StaticResource IconStyle}" Stroke="{StaticResource RlTextOnPrimaryBrush}"
+                              Data="M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5"/>
                     </Button>
 
                     <Button x:Name="CancelButton" Style="{StaticResource CancelButtonStyle}"
