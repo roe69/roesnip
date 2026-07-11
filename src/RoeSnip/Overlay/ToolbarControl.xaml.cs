@@ -154,8 +154,19 @@ public partial class ToolbarControl : UserControl
         RecordContextMenu.Placement = PlacementMode.Bottom;
     }
 
+    private AnnotationTool _activeTool = AnnotationTool.None;
+
     private void SelectTool(ToggleButton selected, AnnotationTool tool)
     {
+        // Clicking the tool that is ALREADY active toggles back to the Select tool - a quick
+        // "put the tool away" gesture. The Select tool itself does not toggle to anything.
+        if (tool != AnnotationTool.None && tool == _activeTool)
+        {
+            selected = SelectToolButton;
+            tool = AnnotationTool.None;
+        }
+        _activeTool = tool;
+
         foreach (var button in _toolButtons)
         {
             button.IsChecked = ReferenceEquals(button, selected);
@@ -278,6 +289,7 @@ public partial class ToolbarControl : UserControl
     /// own current tool to None; this keeps the visible checked state from lying on re-show.</summary>
     public void ResetToolSelection()
     {
+        _activeTool = AnnotationTool.None;
         foreach (var button in _toolButtons)
         {
             button.IsChecked = ReferenceEquals(button, SelectToolButton);

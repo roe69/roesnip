@@ -172,6 +172,7 @@ public sealed class TrayApp : ITrayNotifier
 
         _hotkeyManager = new HotkeyManager(() => TriggerCapture());
         _hotkeyManager.Register(_settings);
+        WarnIfPrintScreenConflict();
 
         // Bridge WinForms' message pump into WPF's keyboard stack — without this every WPF window
         // on this thread (overlay, settings, color picker) is keyboard-deaf even with real OS
@@ -492,6 +493,87 @@ public sealed class TrayApp : ITrayNotifier
             _notifyIcon.BalloonTipClicked -= _activeBalloonClickHandler;
         }
         _activeBalloonClickHandler = null;
+    }
+
+    // Well-known screenshot tools that grab the PrintScreen key (process name -> friendly name).
+    private static readonly (string Process, string Name)[] KnownPrintScreenApps =
+    {
+        ("ShareX", "ShareX"),
+        ("Greenshot", "Greenshot"),
+        ("Lightshot", "Lightshot"),
+        ("Snagit32", "Snagit"),
+        ("SnagitEditor", "Snagit"),
+        ("PicPick", "PicPick"),
+        ("flameshot", "Flameshot"),
+        ("Gyazo", "Gyazo"),
+        ("ScreenToGif", "ScreenToGif"),
+    };
+
+    /// <summary>Startup heads-up if RoeSnip's PrintScreen hotkey is likely being stolen by another
+    /// screenshot tool (ShareX etc.). Only fires for a BARE PrintScreen hotkey - Ctrl+PrintScreen and
+    /// other combos do not collide with the usual PrtScr grabs. Two signals: RegisterHotKey failed
+    /// (another app already owns the exact combo via RegisterHotKey), or a known screenshot app is
+    /// running (those usually grab PrtScr with a low-level keyboard hook that RegisterHotKey cannot
+    /// see, so they can steal the key even though our RegisterHotKey succeeded). A non-blocking tray
+    /// balloon, never a modal, so it can never gate startup.</summary>
+    private void WarnIfPrintScreenConflict()
+    {
+        bool barePrintScreen = _settings.HotkeyModifiers == 0
+            && _settings.HotkeyVirtualKey == NativeMethods.VK_SNAPSHOT;
+        if (!barePrintScreen)
+        {
+            return;
+        }
+
+        string? app = DetectRunningScreenshotApp();
+        bool registerFailed = _hotkeyManager?.IsRegistered == false;
+        if (app is null && !registerFailed)
+        {
+            return;
+        }
+
+        string who = app ?? "Another program";
+        ShowWarning(
+            $"{who} may be using the PrintScreen key, which can stop RoeSnip's screenshot hotkey from " +
+            "working. Close it, or pick a different hotkey in RoeSnip's Settings.");
+    }
+
+    private static string? DetectRunningScreenshotApp()
+    {
+        foreach (var (processName, displayName) in KnownPrintScreenApps)
+        {
+            try
+            {
+                var procs = Process.GetProcessesByName(processName);
+                foreach (var p in procs)
+                {
+                    p.Dispose();
+                }
+                if (procs.Length > 0)
+                {
+                    return displayName;
+                }
+            }
+            catch
+            {
+                // Best-effort detection - never let it break startup.
+            }
+        }
+        return null;
+    }
+
+    private void ShowWarning(string message)
+    {
+        if (_notifyIcon is null)
+        {
+            Console.Error.WriteLine($"RoeSnip: {message}");
+            return;
+        }
+        DetachActiveBalloonHandler();
+        _notifyIcon.BalloonTipTitle = "RoeSnip";
+        _notifyIcon.BalloonTipText = message;
+        _notifyIcon.BalloonTipIcon = ToolTipIcon.Warning;
+        _notifyIcon.ShowBalloonTip(8000);
     }
 
     // ---------------- Cold-start warmup (item 6b, UX round 3; extended for r5-latency) ----------------
