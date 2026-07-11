@@ -13,6 +13,10 @@
       <Button x:Name="ChangeHotkeyButton" Grid.Column="1" Content="Change..." Click="ChangeHotkeyButton_Click"/>
     </Grid>
 
+    <TextBlock x:Name="WaylandHotkeyCaption" Foreground="#FFFF6B6B" TextWrapping="Wrap"
+               IsVisible="False" Margin="0,0,0,8"
+               Text="Global hotkeys aren't available on Wayland. Bind a keyboard shortcut to `RoeSnip capture` in your desktop settings instead."/>
+
     <TextBlock Text="Save directory" Foreground="#FF9A9A9A"/>
     <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
       <TextBox x:Name="SaveDirectoryBox" Grid.Column="0" Margin="0,0,8,0"/>

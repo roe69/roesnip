@@ -128,7 +128,10 @@ public sealed class X11Capturer : IScreenCapturer
                 // EnsureNotWaylandSession's doc comment for the full failure chain this guards
                 // against. A real, all-zero desktop frame is never legitimate (DESIGN.md's DD
                 // black-frame precedent), so this mirrors DesktopDuplicationCapturer's own check.
-                if (FrameSanity.IsAllZero(pixels))
+                // Alpha is excluded from the check: ConvertZPixmapToBgra above unconditionally
+                // forces every alpha byte to 255 (root windows have no alpha), so IsAllZero would
+                // never fire here — IsAllZeroColor ignores those forced bytes and checks B/G/R only.
+                if (FrameSanity.IsAllZeroColor(pixels))
                 {
                     throw new CaptureException(
                         $"XGetImage delivered an all-zero (black) frame for monitor {monitor.Index} " +

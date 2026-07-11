@@ -48,4 +48,54 @@ public class FrameSanityTests
         Assert.True(FrameSanity.IsAllZero(new byte[] { 0 }));
         Assert.False(FrameSanity.IsAllZero(new byte[] { 1 }));
     }
+
+    [Fact]
+    public void IsAllZeroColor_EmptyBuffer_IsTrue()
+    {
+        Assert.True(FrameSanity.IsAllZeroColor(ReadOnlySpan<byte>.Empty));
+    }
+
+    [Fact]
+    public void IsAllZeroColor_AllZeroColorWithForcedAlpha_IsTrue()
+    {
+        var buffer = new byte[4 * 1024];
+        for (int i = 3; i < buffer.Length; i += 4)
+        {
+            buffer[i] = 255; // alpha forced opaque, as ConvertZPixmapToBgra does
+        }
+        Assert.True(FrameSanity.IsAllZeroColor(buffer));
+    }
+
+    [Fact]
+    public void IsAllZeroColor_NonZeroBlue_IsFalse()
+    {
+        var buffer = new byte[] { 1, 0, 0, 255 };
+        Assert.False(FrameSanity.IsAllZeroColor(buffer));
+    }
+
+    [Fact]
+    public void IsAllZeroColor_NonZeroGreen_IsFalse()
+    {
+        var buffer = new byte[] { 0, 1, 0, 255 };
+        Assert.False(FrameSanity.IsAllZeroColor(buffer));
+    }
+
+    [Fact]
+    public void IsAllZeroColor_NonZeroRed_IsFalse()
+    {
+        var buffer = new byte[] { 0, 0, 1, 255 };
+        Assert.False(FrameSanity.IsAllZeroColor(buffer));
+    }
+
+    [Fact]
+    public void IsAllZeroColor_NonZeroColorDeepInBuffer_IsFalse()
+    {
+        var buffer = new byte[4 * 1024];
+        for (int i = 3; i < buffer.Length; i += 4)
+        {
+            buffer[i] = 255;
+        }
+        buffer[2000] = 7; // a B/G/R byte somewhere in the middle
+        Assert.False(FrameSanity.IsAllZeroColor(buffer));
+    }
 }

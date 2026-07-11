@@ -115,6 +115,7 @@ public sealed class TrayApp : ITrayNotifier
 
             _hotkeyManager = new HotkeyManager(() => Dispatcher.UIThread.Post(TriggerCapture));
             _hotkeyManager.Register(_settings);
+            MaybeShowWaylandHotkeyNotice();
 
             switch (s_initialAction)
             {
@@ -130,6 +131,36 @@ public sealed class TrayApp : ITrayNotifier
         {
             Console.Error.WriteLine($"RoeSnip: startup did not fully complete: {ex.Message}");
         }
+    }
+
+    /// <summary>The one-time Wayland no-global-hotkey notice: fires only when HotkeyManager
+    /// determined the hook can never start on this session (libuiohook is X11-only) and the flag
+    /// hasn't already been shown. The flag is persisted immediately after the toast is raised, so
+    /// a crash-loop during startup can never show it more than once ever.</summary>
+    private void MaybeShowWaylandHotkeyNotice()
+    {
+        if (_hotkeyManager is null || !_hotkeyManager.IsUnavailableOnWayland || _settings.WaylandHotkeyNoticeShown)
+        {
+            return;
+        }
+
+        ShowToast(
+            "Global hotkeys aren't available on Wayland — bind a keyboard shortcut to `RoeSnip capture` " +
+            "in your desktop settings",
+            isError: false,
+            durationMs: 8000,
+            onClick: null);
+
+        var updated = _settings with { WaylandHotkeyNoticeShown = true };
+        try
+        {
+            SettingsStore.Save(updated);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: failed to persist the Wayland hotkey notice flag: {ex.Message}");
+        }
+        _settings = updated;
     }
 
     private void OnInstanceSignal(InstanceSignal signal)
@@ -176,7 +207,8 @@ public sealed class TrayApp : ITrayNotifier
             return;
         }
 
-        var window = new SettingsWindow(_settings, updated => _ = ApplyUpdatedSettingsAsync(updated));
+        bool hotkeyUnavailableOnWayland = _hotkeyManager?.IsUnavailableOnWayland == true;
+        var window = new SettingsWindow(_settings, hotkeyUnavailableOnWayland, updated => _ = ApplyUpdatedSettingsAsync(updated));
         window.Closed += (_, _) => _openSettingsWindow = null;
         _openSettingsWindow = window;
         window.Show();

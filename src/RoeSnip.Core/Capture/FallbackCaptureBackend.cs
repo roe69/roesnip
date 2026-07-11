@@ -22,6 +22,15 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
     public string Name { get; }
     public bool SupportsHdrExport { get; }
 
+    /// <summary>The last capturer's <see cref="CaptureException.Message"/> for each monitor that was
+    /// omitted by the most recent <see cref="CaptureAll"/> call (rebuilt from scratch every call, not
+    /// accumulated) — this is the most specific reason available (e.g. the portal's "permission
+    /// denied or dialog dismissed" text) for a caller that wants to surface something more useful
+    /// than "capture failed on every monitor" to the user. Populated after the Parallel.For in
+    /// CaptureAll completes, from a pre-sized per-monitor slot array (no lock needed: each slot is
+    /// written by exactly one worker, same discipline as the frame slots array above it).</summary>
+    public IReadOnlyList<string> LastCaptureFailureMessages { get; private set; } = Array.Empty<string>();
+
     public FallbackCaptureBackend(
         string name, bool supportsHdrExport,
         Func<IReadOnlyList<MonitorInfo>> enumerate,
@@ -49,16 +58,25 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
         }
 
         var slots = new CapturedFrame?[selected.Count];
-        Parallel.For(0, selected.Count, i => slots[i] = CaptureOneOrNull(selected[i]));
+        var failureSlots = new string?[selected.Count];
+        Parallel.For(0, selected.Count, i => slots[i] = CaptureOneOrNull(selected[i], out failureSlots[i]));
 
         var results = new List<CapturedFrame>(selected.Count);
         foreach (var frame in slots) if (frame is not null) results.Add(frame);
+
+        var lastFailureMessages = new List<string>(selected.Count);
+        for (int i = 0; i < selected.Count; i++)
+        {
+            if (slots[i] is null && failureSlots[i] is string message) lastFailureMessages.Add(message);
+        }
+        LastCaptureFailureMessages = lastFailureMessages;
+
         return results;
     }
 
-    private CapturedFrame? CaptureOneOrNull(MonitorInfo monitor)
+    private CapturedFrame? CaptureOneOrNull(MonitorInfo monitor, out string? lastCapturerFailureMessage)
     {
-        var frame = CaptureOneAttempt(monitor, out bool skippedAnyByMemo);
+        var frame = CaptureOneAttempt(monitor, out bool skippedAnyByMemo, out lastCapturerFailureMessage);
         if (frame is null && skippedAnyByMemo)
         {
             // Everything failed while memoized capturers were skipped — the memo may be stale
@@ -72,14 +90,16 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
             {
                 _cache.Unmark($"{monitor.DeviceName}::{i}");
             }
-            frame = CaptureOneAttempt(monitor, out _);
+            frame = CaptureOneAttempt(monitor, out _, out lastCapturerFailureMessage);
         }
         return frame;
     }
 
-    private CapturedFrame? CaptureOneAttempt(MonitorInfo monitor, out bool skippedAnyByMemo)
+    private CapturedFrame? CaptureOneAttempt(
+        MonitorInfo monitor, out bool skippedAnyByMemo, out string? lastCapturerFailureMessage)
     {
         skippedAnyByMemo = false;
+        lastCapturerFailureMessage = null;
         var failedSlots = new List<int>();
         for (int i = 0; i < _capturersInPriorityOrder.Count; i++)
         {
@@ -110,6 +130,7 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
             catch (CaptureException ex)
             {
                 failedSlots.Add(i);
+                if (isLastCapturer) lastCapturerFailureMessage = ex.Message;
                 Console.Error.WriteLine(
                     $"RoeSnip: capturer #{i} failed for monitor {monitor.Index} ({monitor.DeviceName}): " +
                     $"{ex.Message}.{(isLastCapturer ? " Omitting this monitor." : " Falling back to the next capturer.")}");

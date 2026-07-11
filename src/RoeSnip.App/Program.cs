@@ -402,7 +402,7 @@ public static class AppComposition
             long captureMs = totalWatch.ElapsedMilliseconds;
             if (frames.Count == 0)
             {
-                notifier?.ShowError("Capture failed on every monitor.");
+                notifier?.ShowError(BuildCaptureFailedMessage(captureService));
                 return;
             }
 
@@ -492,6 +492,22 @@ public static class AppComposition
         }
     }
 
+    /// <summary>Turns CaptureService.LastCaptureFailureMessages (populated by FallbackCaptureBackend
+    /// — see its doc comment) into toast text when every monitor failed. Falls back to the old
+    /// generic string when nothing was collected (macOS's MacCaptureBackend, or a genuinely empty
+    /// monitor list). Truncated to fit the toast's 3-line wrap (ShowToast, TrayApp.cs).</summary>
+    private static string BuildCaptureFailedMessage(CaptureService captureService)
+    {
+        const string Generic = "Capture failed on every monitor.";
+        const int MaxLength = 200;
+
+        var reasons = captureService.LastCaptureFailureMessages;
+        if (reasons.Count == 0) return Generic;
+
+        string message = $"Capture failed: {reasons[0]}";
+        return message.Length > MaxLength ? message[..MaxLength] : message;
+    }
+
     private static string ResolveCaptureOutPath(string? explicitOut, int monitorIndex, int frameCount)
     {
         if (explicitOut is null)
@@ -571,7 +587,9 @@ public static class AppComposition
         Console.Error.WriteLine("    --out path     Output PNG path (default: roesnip_capture_monitorN.png).");
         Console.Error.WriteLine("    --jxr          Also save the untouched HDR original as .jxr (Windows only).");
         Console.Error.WriteLine("  capture          Trigger the interactive capture flow in the running instance");
-        Console.Error.WriteLine("                   (or start a resident instance and capture).");
+        Console.Error.WriteLine("                   (or start a resident instance and capture). On Wayland this is");
+        Console.Error.WriteLine("                   the primary activation path — global hotkeys aren't available,");
+        Console.Error.WriteLine("                   so bind a desktop-environment keyboard shortcut to it.");
         Console.Error.WriteLine("  settings         Open the settings window in the running/new instance.");
         Console.Error.WriteLine("  (no arguments)   Launch the tray app.");
     }

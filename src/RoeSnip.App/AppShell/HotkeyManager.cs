@@ -33,6 +33,7 @@ public sealed class HotkeyManager : IDisposable
     private TaskPoolGlobalHook? _hook;
     private bool? _hookRunning; // null = not attempted yet; false = unavailable on this session
     private volatile bool _armed;
+    private volatile bool _unavailableOnWayland;
     private KeyCode _keyCode;
     private uint _modifiers;
 
@@ -44,6 +45,12 @@ public sealed class HotkeyManager : IDisposable
     /// <summary>Best-effort "the hook is up and a combination is armed". Same caveat as the WPF
     /// version's IsRegistered, but weaker still — see the class doc comment.</summary>
     public bool IsRegistered => _armed && _hookRunning == true;
+
+    /// <summary>True once EnsureHookRunning has determined the hook can never start because this
+    /// is a Wayland session (libuiohook is X11-only). Sticky for the process lifetime — mirrors
+    /// the stderr line logged alongside it. TrayApp reads this to decide whether to show the
+    /// one-time Wayland notice and SettingsWindow reads it to decide whether to show its caption.</summary>
+    public bool IsUnavailableOnWayland => _unavailableOnWayland;
 
     /// <summary>(Re)arms the hotkey from the given (already consent-resolved) settings. Called
     /// once at startup and again after SettingsWindow saves a hotkey change.</summary>
@@ -97,6 +104,7 @@ public sealed class HotkeyManager : IDisposable
             Console.Error.WriteLine(
                 "RoeSnip: global hotkeys are not available on Wayland. Bind a desktop-environment " +
                 "keyboard shortcut to `RoeSnip capture` instead (the primary activation path on Wayland).");
+            _unavailableOnWayland = true;
             _hookRunning = false;
             return false;
         }

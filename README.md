@@ -77,6 +77,29 @@ RoeSnip.exe --capture [--monitor N] [--out shot.png] [--jxr]
   min/max/avg captured nits, and with `--jxr` also writes the untouched HDR
   original next to each PNG.
 
+## Linux
+
+The cross-platform build (`src/RoeSnip.App`) publishes a self-contained
+`linux-x64` binary or AppImage. Run it with no arguments to start the tray
+app, or `./RoeSnip capture` / `./RoeSnip settings` to trigger the capture
+flow or open the settings window (starting a resident instance on first run,
+signaling the existing one afterward).
+
+**Global hotkeys do not work on Wayland.** RoeSnip's hotkey hook
+(SharpHook/libuiohook) is X11-only, so on a stock GNOME or KDE Wayland
+session pressing PrintScreen does nothing — RoeSnip detects this at startup
+and never even tries to start the hook. The app shows a one-time notice
+about it and stays fully operable; the fix is to bind a desktop-environment
+keyboard shortcut to the `RoeSnip capture` CLI verb:
+
+- **GNOME:** Settings → Keyboard → View and Customize Shortcuts → Custom
+  Shortcuts → add one with command `/path/to/RoeSnip capture`.
+- **KDE:** System Settings → Shortcuts → Custom Shortcuts → add a new
+  global shortcut that runs `/path/to/RoeSnip capture`.
+
+X11 sessions are unaffected — the hook starts normally there and the
+PrintScreen hotkey works as on Windows.
+
 ## Docs
 
 - [DESIGN.md](DESIGN.md): behavioral spec covering capture paths, tone

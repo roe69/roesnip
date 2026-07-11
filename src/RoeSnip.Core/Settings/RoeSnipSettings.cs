@@ -16,6 +16,7 @@ public sealed record RoeSnipSettings
     public bool RunAtStartup { get; init; } = false;
     public bool CopyOnSelect { get; init; } = false;
     public bool PrintScreenPromptAnswered { get; init; } = false; // Windows-only meaning; harmless elsewhere
+    public bool WaylandHotkeyNoticeShown { get; init; } = false; // Wayland-only meaning; harmless elsewhere
 
     public static RoeSnipSettings Default { get; } = new();
 

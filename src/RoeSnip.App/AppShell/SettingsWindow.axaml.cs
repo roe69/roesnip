@@ -20,19 +20,21 @@ public partial class SettingsWindow : Avalonia.Controls.Window
 {
     private readonly RoeSnipSettings _original;
     private readonly Action<RoeSnipSettings> _onSaved;
+    private readonly bool _hotkeyUnavailableOnWayland;
 
     private bool _capturingHotkey;
     private uint _pendingModifiers;
     private uint _pendingVirtualKey;
 
     // Parameterless ctor for the XAML loader/previewer only.
-    public SettingsWindow() : this(RoeSnipSettings.Default, _ => { }) { }
+    public SettingsWindow() : this(RoeSnipSettings.Default, hotkeyUnavailableOnWayland: false, _ => { }) { }
 
-    public SettingsWindow(RoeSnipSettings settings, Action<RoeSnipSettings> onSaved)
+    public SettingsWindow(RoeSnipSettings settings, bool hotkeyUnavailableOnWayland, Action<RoeSnipSettings> onSaved)
     {
         InitializeComponent();
 
         _original = settings;
+        _hotkeyUnavailableOnWayland = hotkeyUnavailableOnWayland;
         _onSaved = onSaved;
         _pendingModifiers = settings.HotkeyModifiers;
         _pendingVirtualKey = settings.HotkeyVirtualKey;
@@ -43,6 +45,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     private void LoadFromSettings()
     {
         HotkeyDisplay.Text = DescribeHotkey(_pendingModifiers, _pendingVirtualKey);
+        WaylandHotkeyCaption.IsVisible = _hotkeyUnavailableOnWayland;
         SaveDirectoryBox.Text = _original.SaveDirectory;
         AutoSaveHdrCheckBox.IsChecked = _original.AutoSaveHdrCopy;
         CopyOnSelectCheckBox.IsChecked = _original.CopyOnSelect;
