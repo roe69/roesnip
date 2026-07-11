@@ -111,7 +111,7 @@ internal sealed class RecordingSession
     private RegionOutline? _outline;
     private AudioCaptureEngine? _audio;
     private Thread? _encoderThread;
-    private DispatcherTimer? _uiTimer;
+    private System.Threading.Timer? _elapsedTimer;
     private Dispatcher? _uiDispatcher;
     private EventHandler? _displayChangedHandler;
     private System.Diagnostics.Stopwatch? _stopwatch;
@@ -125,6 +125,15 @@ internal sealed class RecordingSession
     private bool _mic;
     private bool _systemAudio;
     private RoeSnipSettings _liveSettings = null!; // set in Start(); tracks audio-toggle edits for persistence
+
+    // Pause/resume of a live take (CHANGE 2): a single accumulator drives both the excluded-time
+    // media clock (EncoderLoop/DrainAudio) and the pause-aware elapsed HUD. _paused/_pausedTicks are
+    // read from the encoder thread (Volatile.Read for the latter) and written only from the UI
+    // thread (Pause/Resume, both only reachable from chrome button clicks) — never written from the
+    // encoder thread, so no lock is needed for the read side.
+    private volatile bool _paused;
+    private long _pausedTicks; // total paused Stopwatch ticks accumulated across all pauses this take
+    private long _pauseStartTicks; // Stopwatch.GetTimestamp() when the current pause began (valid only while _paused)
 
     private bool _hasGifPrevTimestamp;
     private long _lastGifTimestampTicks;
@@ -179,6 +188,8 @@ internal sealed class RecordingSession
             _chrome = new RecordingChrome(_monitor, _selectionPx, _format, _mic, _systemAudio);
             _chrome.StartRequested += BeginCapture;
             _chrome.StopRequested += StopCaptureToReview;
+            _chrome.PauseRequested += Pause;
+            _chrome.ResumeRequested += Resume;
             _chrome.RestartConfirmed += RestartTake;
             _chrome.SaveRequested += SaveAndFinish;
             _chrome.CancelRequested += CancelAndDiscard;
@@ -315,9 +326,13 @@ internal sealed class RecordingSession
             _recorder.Start();
 
             _stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            _uiTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromSeconds(1) };
-            _uiTimer.Tick += OnTimerTick;
-            _uiTimer.Start();
+            _paused = false;
+            _pausedTicks = 0;
+            // Threadpool timer, NOT a DispatcherTimer: a WM_TIMER-driven tick is starved by the
+            // recording's own CPU/message-queue load, producing multi-second jumps in the HUD (the
+            // bug this fixes). This timer's own tick is independent of the UI thread's message
+            // queue; only the resulting text update is marshalled onto it, via BeginInvoke below.
+            _elapsedTimer = new System.Threading.Timer(OnElapsedTimerTick, null, TimeSpan.FromMilliseconds(250), TimeSpan.FromMilliseconds(250));
 
             _displayChangedHandler = (_, _) => RequestForceStopAndSave();
             SystemEvents.DisplaySettingsChanged += _displayChangedHandler;
@@ -335,6 +350,8 @@ internal sealed class RecordingSession
             Console.Error.WriteLine($"RoeSnip: failed to start recording capture: {ex.Message}");
             _notifier?.ShowError($"Failed to start recording: {ex.Message}");
 
+            try { _elapsedTimer?.Dispose(); } catch { /* best-effort */ }
+            _elapsedTimer = null;
             try { _recorder?.Dispose(); } catch { /* best-effort */ }
             try { _audio?.Dispose(); } catch { /* best-effort */ }
             try { _mp4Encoder?.Dispose(); } catch { /* best-effort */ }
@@ -352,11 +369,68 @@ internal sealed class RecordingSession
         }
     }
 
-    private void OnTimerTick(object? sender, EventArgs e)
+    /// <summary>Threadpool timer thread (never the UI thread) — ticks every ~250ms regardless of
+    /// what the UI thread's message queue is doing. Computes the pause-aware media elapsed here and
+    /// marshals only the resulting text update onto the UI thread. Guards against a tick landing
+    /// after Stop()/teardown already disposed the timer (Timer.Dispose does not block for an
+    /// in-flight callback) by re-checking phase/chrome once the BeginInvoke actually runs.</summary>
+    private void OnElapsedTimerTick(object? state)
     {
-        // No duration cap for either format: GIF frames stream to a temp file now (see
-        // GifEncoder), so the old 60-second in-memory-buffering cap has no reason to exist.
-        _chrome!.SetElapsed(_stopwatch!.Elapsed, cap: null);
+        var dispatcher = _uiDispatcher;
+        var stopwatch = _stopwatch;
+        if (dispatcher is null || stopwatch is null)
+        {
+            return;
+        }
+
+        dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_phase != Phase.Capturing || _chrome is null)
+            {
+                return; // stopped/torn down between the tick firing and this running on the UI thread
+            }
+
+            // Pause-aware media clock: exclude all accumulated paused time, plus the in-progress
+            // pause (if any is currently open), from the stopwatch's raw elapsed. Frozen while
+            // paused (both terms grow at the same rate), continuous across a pause (CHANGE 4).
+            long paused = _pausedTicks + (_paused ? System.Diagnostics.Stopwatch.GetTimestamp() - _pauseStartTicks : 0);
+            var elapsed = TimeSpan.FromSeconds((double)(stopwatch.ElapsedTicks - paused) / System.Diagnostics.Stopwatch.Frequency);
+
+            // No duration cap for either format: GIF frames stream to a temp file now (see
+            // GifEncoder), so the old 60-second in-memory-buffering cap has no reason to exist.
+            _chrome!.SetElapsed(elapsed, cap: null);
+        }));
+    }
+
+    /// <summary>Chrome's Pause button — UI thread only. Valid only mid-take (Capturing) and not
+    /// already paused. Marks the pause start; frames stop entering the queue immediately
+    /// (RegionRecorder.Paused) and DrainAudio starts dropping queued chunks on the encoder thread.</summary>
+    private void Pause()
+    {
+        if (_phase != Phase.Capturing || _paused)
+        {
+            return;
+        }
+        _pauseStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        _paused = true;
+        _recorder!.Paused = true;
+        _chrome!.SetPaused(true);
+    }
+
+    /// <summary>Chrome's Resume button — UI thread only. Folds the just-ended pause into the
+    /// running total BEFORE flipping _paused/_recorder.Paused back off, so the very next frame the
+    /// encoder thread sees already has the enlarged _pausedTicks available (see the EncoderLoop/
+    /// DrainAudio doc comments for why a per-frame Volatile.Read of it is safe here).</summary>
+    private void Resume()
+    {
+        if (_phase != Phase.Capturing || !_paused)
+        {
+            return;
+        }
+        _pausedTicks += System.Diagnostics.Stopwatch.GetTimestamp() - _pauseStartTicks;
+        _paused = false;
+        _recorder!.Paused = false;
+        _chrome!.SetPaused(false);
     }
 
     private void OnRecorderFaulted(Exception ex)
@@ -426,8 +500,8 @@ internal sealed class RecordingSession
             SystemEvents.DisplaySettingsChanged -= _displayChangedHandler;
             _displayChangedHandler = null;
         }
-        _uiTimer?.Stop();
-        _uiTimer = null;
+        _elapsedTimer?.Dispose();
+        _elapsedTimer = null;
 
         _audio?.Dispose();
         _audio = null;
@@ -701,18 +775,26 @@ internal sealed class RecordingSession
                 while (reader.TryRead(out var queued))
                 {
                     using var frame = queued.Frame;
-                    epochTicks ??= queued.TimestampTicks;
+                    // Subtract the accumulated paused time so the media clock is continuous across
+                    // a pause — frames captured DURING a pause never reach this queue at all
+                    // (RegionRecorder.Paused drops them before GPU readback), so the only thing left
+                    // to correct for is the gap the pause left behind in the raw QPC timestamps.
+                    // _pausedTicks only ever grows and Resume() updates it before any post-resume
+                    // frame is produced, so a per-frame Volatile.Read is safe here.
+                    long paused = Volatile.Read(ref _pausedTicks);
+                    long effectiveTicks = queued.TimestampTicks - paused;
+                    epochTicks ??= effectiveTicks;
                     var sdr = SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts);
                     framesWritten++;
 
                     if (_format == RecordingFormat.Mp4)
                     {
-                        long timestamp100ns = (long)((queued.TimestampTicks - epochTicks.Value) / freq * 10_000_000.0);
+                        long timestamp100ns = (long)((effectiveTicks - epochTicks.Value) / freq * 10_000_000.0);
                         _mp4Encoder!.WriteFrame(sdr, timestamp100ns);
                     }
                     else
                     {
-                        ushort delayCs = ComputeGifDelayCentiseconds(queued.TimestampTicks, freq);
+                        ushort delayCs = ComputeGifDelayCentiseconds(effectiveTicks, freq);
                         _gifEncoder!.AddFrame(sdr, delayCs);
                     }
                 }
@@ -751,7 +833,9 @@ internal sealed class RecordingSession
 
     /// <summary>Encoder thread only. Moves every queued audio chunk into the MP4 writer, mapping
     /// each chunk's QPC timestamp onto the video timeline (same epoch: the first dequeued video
-    /// frame). Chunks captured before that epoch are dropped — the track starts with the video.</summary>
+    /// frame, itself paused-time-adjusted). Chunks captured before that epoch are dropped — the
+    /// track starts with the video. Chunks captured while paused are dropped outright (not written)
+    /// so the audio track stays silent-free across the cut rather than baking in dead air.</summary>
     private void DrainAudio(double freq, long? epochTicks)
     {
         var audio = _audio;
@@ -763,11 +847,17 @@ internal sealed class RecordingSession
 
         while (audio.TryDequeue(out var chunk))
         {
-            if (epochTicks is null || chunk.QpcTicks < epochTicks.Value)
+            if (_paused)
+            {
+                continue; // dropped while paused — never written
+            }
+            long paused = Volatile.Read(ref _pausedTicks);
+            long effectiveTicks = chunk.QpcTicks - paused;
+            if (epochTicks is null || effectiveTicks < epochTicks.Value)
             {
                 continue; // pre-roll audio from before the first video frame
             }
-            long timestamp100ns = (long)((chunk.QpcTicks - epochTicks.Value) / freq * 10_000_000.0);
+            long timestamp100ns = (long)((effectiveTicks - epochTicks.Value) / freq * 10_000_000.0);
             encoder.WriteAudioSamples(chunk.Pcm, chunk.Pcm.Length, timestamp100ns);
         }
     }

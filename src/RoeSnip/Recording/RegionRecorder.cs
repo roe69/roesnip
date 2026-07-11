@@ -50,6 +50,11 @@ internal sealed class RegionRecorder : IDisposable
     private long _lastForwardedTimestamp;                      // Stopwatch ticks — throttle gate, Volatile-accessed
     private int _disposed;
 
+    /// <summary>Set/cleared by RecordingSession.Pause()/Resume() on the UI thread. While true,
+    /// OnFrameArrived drops every incoming frame before any GPU readback — no CopySubresourceRegion/
+    /// Map/memcpy work, and nothing enters <see cref="Frames"/> during a pause.</summary>
+    public volatile bool Paused;
+
     /// <summary>Raised (at most once) if the GPU readback throws mid-recording (TDR, monitor
     /// unplug) — WGC's FrameArrived runs on a COM/threadpool thread, so an unhandled exception
     /// there could crash the process outright; the recorder catches it instead and hands the
@@ -124,6 +129,11 @@ internal sealed class RegionRecorder : IDisposable
             if (Volatile.Read(ref _disposed) != 0)
             {
                 return; // Stop() already disposed the pool/session under this same lock
+            }
+
+            if (Paused)
+            {
+                return; // paused take — no GPU readback, no frame enters the queue
             }
 
             using var frame = sender.TryGetNextFrame();

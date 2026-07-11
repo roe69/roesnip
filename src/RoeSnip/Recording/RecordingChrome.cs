@@ -60,7 +60,6 @@ internal sealed class RecordingChrome : Window
     private static readonly Color PrimaryOrangeLight = Color.FromRgb(0xFF, 0x8A, 0x5C);
     private static readonly Color PrimaryOrangeBorder = Color.FromRgb(0xE5, 0x56, 0x1F);
     private static readonly Color TextOnPrimary = Color.FromRgb(0x18, 0x0D, 0x07);
-    private static readonly Color ActiveTint = Color.FromArgb(0x33, 0xFF, 0x6B, 0x35); // rgba(primary,.20) - a checked audio toggle
     private static readonly Color GhostFill = Color.FromArgb(0x0F, 0xFF, 0xFF, 0xFF); // rgba(white,.06)
     private static readonly Color BorderStrong = Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF); // rgba(white,.14)
     private static readonly Color DangerFill = Color.FromArgb(0x26, 0xDC, 0x26, 0x26);
@@ -75,6 +74,8 @@ internal sealed class RecordingChrome : Window
     private readonly Ellipse _redDot;
     private readonly TextBlock _elapsedText;
     private readonly Button _startStopButton;
+    private readonly Button _pauseResumeButton;
+    private bool _paused; // mirrors RecordingSession's own _paused, set via SetPaused - drives the button label + dot
     private readonly ToggleButton _micToggle;
     private readonly ToggleButton _systemAudioToggle;
     private readonly StackPanel _audioRow;
@@ -89,6 +90,10 @@ internal sealed class RecordingChrome : Window
     public event Action? StartRequested;
     /// <summary>Recording state's Stop button - ends capture, moves to Reviewing (does NOT save).</summary>
     public event Action? StopRequested;
+    /// <summary>Recording state's Pause/Resume button, while not paused.</summary>
+    public event Action? PauseRequested;
+    /// <summary>Recording state's Pause/Resume button, while paused.</summary>
+    public event Action? ResumeRequested;
     /// <summary>Raised only after the user confirms the inline "discard and start over?" prompt.</summary>
     public event Action? RestartConfirmed;
     /// <summary>Reviewing state's Save button.</summary>
@@ -150,13 +155,33 @@ internal sealed class RecordingChrome : Window
         };
         AutomationProperties.SetAutomationId(_startStopButton, "RecordingStartStopButton");
 
-        _micToggle = BuildAudioToggle("Mic");
-        _micToggle.IsChecked = initialMic;
-        _micToggle.Click += (_, _) => MicToggled?.Invoke(_micToggle.IsChecked == true);
+        // Pause/Resume is its own button (not folded into Start/Stop) - Stop must remain reachable
+        // while paused (it ends the take into review), so the two need independent labels/events.
+        _pauseResumeButton = BuildButton("Pause", isDanger: false);
+        _pauseResumeButton.Click += (_, _) =>
+        {
+            if (_paused) ResumeRequested?.Invoke();
+            else PauseRequested?.Invoke();
+        };
+        AutomationProperties.SetAutomationId(_pauseResumeButton, "RecordingPauseResumeButton");
 
-        _systemAudioToggle = BuildAudioToggle("System audio");
+        _micToggle = BuildAudioToggle("Mic", initialMic);
+        _micToggle.IsChecked = initialMic;
+        _micToggle.Click += (_, _) =>
+        {
+            bool on = _micToggle.IsChecked == true;
+            SetAudioToggleLabel(_micToggle, "Mic", on);
+            MicToggled?.Invoke(on);
+        };
+
+        _systemAudioToggle = BuildAudioToggle("System audio", initialSystemAudio);
         _systemAudioToggle.IsChecked = initialSystemAudio;
-        _systemAudioToggle.Click += (_, _) => SystemAudioToggled?.Invoke(_systemAudioToggle.IsChecked == true);
+        _systemAudioToggle.Click += (_, _) =>
+        {
+            bool on = _systemAudioToggle.IsChecked == true;
+            SetAudioToggleLabel(_systemAudioToggle, "System audio", on);
+            SystemAudioToggled?.Invoke(on);
+        };
 
         _audioRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
         _audioRow.Children.Add(_micToggle);
@@ -178,6 +203,7 @@ internal sealed class RecordingChrome : Window
 
         var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
         actionRow.Children.Add(_startStopButton);
+        actionRow.Children.Add(_pauseResumeButton);
         actionRow.Children.Add(_restartButton);
         actionRow.Children.Add(_saveButton);
         actionRow.Children.Add(_cancelButton);
@@ -301,19 +327,24 @@ internal sealed class RecordingChrome : Window
         return button;
     }
 
-    /// <summary>Small pill-shaped checkable chip for the Mic / System audio toggles: flat neutral
-    /// at rest, an orange tint when checked (the same "flat tint, no glow" active-item recipe
-    /// ToolbarControl's ToolButtonStyle uses).</summary>
-    private static ToggleButton BuildAudioToggle(string label)
+    /// <summary>Small pill-shaped checkable chip for the Mic / System audio toggles. The state must
+    /// read at a glance, not just on close inspection: ON is a SOLID orange fill with dark
+    /// on-primary text (the same recipe BuildPrimaryButton uses for Start/Save), OFF is a dim ghost
+    /// pill with muted text. The label itself also carries the state ("Mic on"/"Mic off") via
+    /// SetAudioToggleLabel, kept in sync from the Click handlers and the initial state below.</summary>
+    private static ToggleButton BuildAudioToggle(string baseLabel, bool initiallyOn)
     {
         var toggle = new ToggleButton
         {
-            Content = label,
+            Content = AudioToggleLabel(baseLabel, initiallyOn),
             Padding = new Thickness(10, 3, 10, 3),
             Margin = new Thickness(0, 0, 6, 0),
             Cursor = Cursors.Hand,
             Focusable = false,
-            Foreground = new SolidColorBrush(TextPrimary),
+            // Foreground is a LOCAL value (dark on-primary when on, muted when off), kept in sync by
+            // SetAudioToggleLabel. It must NOT be a checked-trigger setter: a local value outranks a
+            // template trigger in WPF, so a trigger would never apply and the on-text would stay gray.
+            Foreground = new SolidColorBrush(initiallyOn ? TextOnPrimary : TextMuted),
         };
         var template = new ControlTemplate(typeof(ToggleButton));
         var borderFactory = new FrameworkElementFactory(typeof(Border));
@@ -329,9 +360,12 @@ internal sealed class RecordingChrome : Window
         borderFactory.AppendChild(contentFactory);
         template.VisualTree = borderFactory;
 
+        // Checked (ON): solid orange fill + orange border, unmistakably "active" - matches
+        // BuildPrimaryButton's Start/Save recipe instead of the old faint tint. (The dark on-primary
+        // text is applied as a local Foreground value, not here - see the ctor note above.)
         var checkedTrigger = new Trigger { Property = ToggleButton.IsCheckedProperty, Value = true };
-        checkedTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(ActiveTint), "Bg"));
-        checkedTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, new SolidColorBrush(PrimaryOrange), "Bg"));
+        checkedTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(PrimaryOrange), "Bg"));
+        checkedTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, new SolidColorBrush(PrimaryOrangeBorder), "Bg"));
         var disabledTrigger = new Trigger { Property = ToggleButton.IsEnabledProperty, Value = false };
         disabledTrigger.Setters.Add(new Setter(ToggleButton.OpacityProperty, 0.5));
         template.Triggers.Add(checkedTrigger);
@@ -339,6 +373,16 @@ internal sealed class RecordingChrome : Window
 
         toggle.Template = template;
         return toggle;
+    }
+
+    private static string AudioToggleLabel(string baseLabel, bool on) => $"{baseLabel} {(on ? "on" : "off")}";
+
+    /// <summary>Keeps a toggle's text in sync with its checked state after the user clicks it (the
+    /// initial label is set once by BuildAudioToggle at construction).</summary>
+    private static void SetAudioToggleLabel(ToggleButton toggle, string baseLabel, bool on)
+    {
+        toggle.Content = AudioToggleLabel(baseLabel, on);
+        toggle.Foreground = new SolidColorBrush(on ? TextOnPrimary : TextMuted);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -449,6 +493,7 @@ internal sealed class RecordingChrome : Window
     {
         _state = ChromeState.Recording;
         _showingRestartConfirm = false;
+        SetPaused(false); // fresh take (first Start, or after a Restart) never begins already-paused
         ApplyState();
     }
 
@@ -484,6 +529,12 @@ internal sealed class RecordingChrome : Window
         _startStopButton.Content = _state == ChromeState.Recording ? "Stop" : "Start";
         _startStopButton.IsEnabled = _state != ChromeState.Reviewing;
 
+        // Pause/Resume only makes sense mid-take - hidden in Setup/Reviewing, folded in here
+        // alongside Start/Stop per the same single-owner rule. Stop stays reachable in Recording
+        // regardless of _paused (the enable line above only checks _state), so Stop still works
+        // while paused.
+        _pauseResumeButton.Visibility = _state == ChromeState.Recording ? Visibility.Visible : Visibility.Collapsed;
+
         // Audio config is fixed per take (baked into the encoder at Start) - only editable before
         // the first Start of the current take, i.e. in Setup. Disabled (not hidden) once running so
         // the panel doesn't resize; GIF hides the whole row regardless (see the ctor).
@@ -497,6 +548,20 @@ internal sealed class RecordingChrome : Window
         _saveButton.IsEnabled = _state == ChromeState.Reviewing;
 
         RequestReposition();
+    }
+
+    /// <summary>RecordingSession.Pause()/Resume() call this to flip the visible paused state: the
+    /// button swaps Pause&lt;-&gt;Resume, and the red dot goes hollow (fill cleared, red outline
+    /// instead) so a paused take reads as obviously paused rather than stopped - the elapsed text
+    /// itself already freezes on its own (the controller's media clock stops advancing it), no
+    /// action needed here for that part.</summary>
+    public void SetPaused(bool paused)
+    {
+        _paused = paused;
+        _pauseResumeButton.Content = paused ? "Resume" : "Pause";
+        _redDot.Fill = paused ? Brushes.Transparent : new SolidColorBrush(DangerSolid);
+        _redDot.Stroke = paused ? new SolidColorBrush(DangerSolid) : null;
+        _redDot.StrokeThickness = paused ? 1.5 : 0;
     }
 
     public void SetElapsed(TimeSpan elapsed, TimeSpan? cap)

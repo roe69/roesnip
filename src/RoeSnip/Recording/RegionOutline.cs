@@ -29,11 +29,15 @@ using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 /// window is WS_EX_LAYERED, and the OS routes the mouse by the per-pixel ALPHA - fully transparent
 /// (alpha 0) pixels are click-through and never even raise WM_NCHITTEST. So the interactive areas
 /// must be painted with alpha >= 1: the band always carries a faint fill, and in Setup the inner
-/// gets a faint tint too (which doubles as a "this is your region" highlight). WM_NCHITTEST then
-/// refines it - an un-modified click inside returns HTTRANSPARENT so it still falls through to the
-/// app being recorded. Recording-safety: the band is outside the captured rect, and the inner tint
-/// is present only in Setup (no capture running), so nothing this window paints ever lands in a
-/// recorded frame - no capture-exclusion needed.</summary>
+/// gets a faint tint too (which doubles as a "this is your region" highlight); once capturing, the
+/// inner keeps a near-invisible (alpha 0x01, ~0.4%) fill instead of going fully transparent, so it
+/// stays hit-testable and Shift/Ctrl can still grab it to move the region mid-recording - a fully
+/// transparent inner would be click-through and WM_NCHITTEST would never even fire there.
+/// WM_NCHITTEST then refines it - an un-modified click inside returns HTTRANSPARENT so it still
+/// falls through to the app being recorded. The band sits outside the captured rect so it never
+/// lands in a recorded frame; the alpha-0x01 inner fill sits exactly over the captured rect and is
+/// deliberately kept imperceptible rather than capture-excluded (this window is not
+/// WDA_EXCLUDEFROMCAPTURE - only RecordingChrome is).</summary>
 internal sealed class RegionOutline : Window
 {
     /// <summary>Physical pixels of grab band around the region (also the resize/move hit zone).</summary>
@@ -288,6 +292,10 @@ internal sealed class RegionOutline : Window
         // window hit-tests these pixels - see the class doc).
         private static readonly Brush s_bandFill = Frozen(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
         private static readonly Brush s_innerTint = Frozen(Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF));
+        // Near-zero alpha (~0.4%) inner fill used while capturing/reviewing: imperceptible in the
+        // recording, but still > 0 so the layered window keeps hit-testing the inner and Shift/Ctrl
+        // can grab it to move the region while recording (see class doc).
+        private static readonly Brush s_innerGhostFill = Frozen(Color.FromArgb(0x01, 0xFF, 0xFF, 0xFF));
 
         public RectPhysical Selection { get => _selection; set => _selection = value; }
         public bool ShowInnerTint { get => _showInnerTint; set => _showInnerTint = value; }
@@ -319,10 +327,10 @@ internal sealed class RegionOutline : Window
             var hole = new RectangleGeometry(new Rect(innerX, innerY, innerW, innerH));
             dc.DrawGeometry(s_bandFill, null, new CombinedGeometry(GeometryCombineMode.Exclude, full, hole));
 
-            if (_showInnerTint)
-            {
-                dc.DrawRectangle(s_innerTint, null, new Rect(innerX, innerY, innerW, innerH));
-            }
+            // Inner fill is always present so the inner stays hit-testable (layered-window alpha-0
+            // pixels are click-through, which would swallow the Shift/Ctrl move while capturing):
+            // the visible setup tint in Setup, a near-invisible ghost fill in Capturing/Reviewing.
+            dc.DrawRectangle(_showInnerTint ? s_innerTint : s_innerGhostFill, null, new Rect(innerX, innerY, innerW, innerH));
 
             // Dashed frame, FrameInsetPx outside the region.
             double fx = FrameInsetPx / scaleX, fy = FrameInsetPx / scaleY;
