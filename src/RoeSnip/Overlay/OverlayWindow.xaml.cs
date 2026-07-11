@@ -1972,9 +1972,9 @@ public partial class OverlayWindow : Window
                 Annotations.BeginDragSelected(); // no-op if a gesture from an earlier notch is still open
                 double newBlock = Math.Clamp(selectedShape.StrokeWidthPx + notches * 2.0, 3.0, SizeInput.MaxStrokePx);
                 Annotations.SetSelectedPixelateBlock(newBlock);
-                // No size indicator for the blur block - the "Npx" circle is meaningless for a mosaic
-                // coarseness and the user does not want it popping while scrolling a selected blur.
-                SetStrokeWidth(newBlock, cursorDip, showIndicator: false);
+                // Resize ONLY the selected blur's mosaic block - do NOT sync it to the current tool
+                // size (no toolbar size-box change, no "Npx" indicator). A blur's coarseness is a
+                // per-shape edit, not the tool default.
                 e.Handled = true;
                 return;
             }
@@ -2071,15 +2071,12 @@ public partial class OverlayWindow : Window
         }
     }
 
-    private void SetStrokeWidth(double width, Point cursorDip, bool showIndicator = true)
+    private void SetStrokeWidth(double width, Point cursorDip)
     {
         _currentStrokeWidth = width;
         _toolbar?.SetStrokeWidth(width);
         UpdateToolCursor();
-        if (showIndicator)
-        {
-            ShowSizeIndicator(cursorDip, string.Create(CultureInfo.InvariantCulture, $"{width:0}px"), circleDiameterDip: width);
-        }
+        ShowSizeIndicator(cursorDip, string.Create(CultureInfo.InvariantCulture, $"{width:0}px"), circleDiameterDip: width);
     }
 
     /// <summary>A single reusable indicator element, re-triggered (not stacked) on each wheel tick:
