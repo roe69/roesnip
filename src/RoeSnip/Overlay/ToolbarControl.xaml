@@ -354,46 +354,6 @@
             </Setter>
         </Style>
 
-        <!-- Checkable variant of DarkMenuItemStyle for the record menu's audio toggles:
-             DarkMenuItemStyle's template never looks at IsChecked, so a checkable item styled with
-             it would toggle invisibly. This adds a fixed-width leading box that fills gold when
-             checked - flat, no glyph font dependency. StaysOpenOnClick is set per item in the
-             XAML so both toggles can be flipped without reopening the menu. -->
-        <Style x:Key="DarkCheckMenuItemStyle" TargetType="MenuItem">
-            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
-            <Setter Property="Cursor" Value="Arrow"/>
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="MenuItem">
-                        <Border x:Name="Bg" Background="Transparent" Padding="10,6" SnapsToDevicePixels="True">
-                            <StackPanel Orientation="Horizontal">
-                                <Border Width="12" Height="12" Margin="0,0,8,0" VerticalAlignment="Center"
-                                        CornerRadius="2" BorderThickness="1"
-                                        BorderBrush="{StaticResource RlBorderStrongBrush}">
-                                    <Border x:Name="CheckFill" Margin="2" CornerRadius="1"
-                                            Background="Transparent"/>
-                                </Border>
-                                <ContentPresenter ContentSource="Header" RecognizesAccessKey="True"
-                                                  VerticalAlignment="Center"
-                                                  TextElement.Foreground="{TemplateBinding Foreground}"/>
-                            </StackPanel>
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="CheckFill" Property="Background" Value="{StaticResource RlPrimaryGoldBrush}"/>
-                            </Trigger>
-                            <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="{StaticResource RlTextDimBrush}"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
-
         <!-- Explicit dark styling for every dropdown row. DEFINED BEFORE both ComboBox styles that
              reference it: a StaticResource forward-reference inside a compiled ResourceDictionary
              hands ItemContainerStyle a deferred reference instead of a Style, which detonates as
@@ -696,9 +656,18 @@
                     <Border Width="1" Margin="8,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
                     <!-- Record: left-click opens the format menu (unlike Save's right-click-only HDR
-                         menu — Record has no single default format to pick for a plain click). -->
+                         menu — Record has no single default format to pick for a plain click). The
+                         menu now offers ONLY the format choice (feature 10 redesign) — picking one
+                         no longer starts capturing immediately, it opens RecordingChrome's Setup
+                         panel (Start/Stop, the MP4-only audio toggles, Restart, Save/Cancel) next to
+                         the recorded region; see Recording/RecordingController.cs. -->
+                    <!-- Margin tightened to 1,2 (was the style's default 2,2,2,2 — feature 9): the
+                         palette/action row's natural width must not exceed the tool row's width, or
+                         the tool row (a plain StackPanel that doesn't stretch to fill) ends up
+                         visibly narrower than the action row and the two rows read as different
+                         widths. -->
                     <Button x:Name="RecordButton" Style="{StaticResource QuietActionButtonStyle}"
-                            ToolTip="Record as MP4 or GIF" Click="OnRecordClick">
+                            Margin="1,2" ToolTip="Record as MP4 or GIF" Click="OnRecordClick">
                         <Button.ContextMenu>
                             <!-- Placement/PlacementTarget set in the code-behind constructor (a
                                  ContextMenu isn't part of the Button's visual tree, so a XAML-time
@@ -706,20 +675,6 @@
                             <ContextMenu x:Name="RecordContextMenu" Style="{StaticResource DarkContextMenuStyle}">
                                 <MenuItem x:Name="RecordMp4MenuItem" Header="Record MP4" Style="{StaticResource DarkMenuItemStyle}" Click="OnRecordMp4Click"/>
                                 <MenuItem x:Name="RecordGifMenuItem" Header="Record GIF" Style="{StaticResource DarkMenuItemStyle}" Click="OnRecordGifClick"/>
-                                <Separator Background="{StaticResource RlBorderStrongBrush}" Margin="6,3" Height="1"/>
-                                <!-- MP4 audio sources, persisted via OverlayWindow (GIF has no audio,
-                                     so these only matter to the MP4 item above). StaysOpenOnClick so
-                                     both can be flipped in one visit. -->
-                                <MenuItem x:Name="RecordMicMenuItem" Header="Microphone"
-                                          Style="{StaticResource DarkCheckMenuItemStyle}"
-                                          IsCheckable="True" StaysOpenOnClick="True"
-                                          ToolTip="Include microphone audio in MP4 recordings"
-                                          Checked="OnAudioToggleChanged" Unchecked="OnAudioToggleChanged"/>
-                                <MenuItem x:Name="RecordSystemAudioMenuItem" Header="System audio"
-                                          Style="{StaticResource DarkCheckMenuItemStyle}"
-                                          IsCheckable="True" StaysOpenOnClick="True"
-                                          ToolTip="Include what you hear (system playback) in MP4 recordings"
-                                          Checked="OnAudioToggleChanged" Unchecked="OnAudioToggleChanged"/>
                             </ContextMenu>
                         </Button.ContextMenu>
                         <!-- Record icon, restyled to sit with its stroked siblings: the same cream
@@ -736,9 +691,10 @@
                          image API integrations). Disabled until the first integration ships, but
                          already visible so the action group's final shape is established.
                          ShowOnDisabled so the tooltip still explains what it is. Icon is the
-                         inverse of Save's down-arrow-into-tray: an up-arrow out of the tray. -->
+                         inverse of Save's down-arrow-into-tray: an up-arrow out of the tray.
+                         Margin tightened to 1,2 — see RecordButton's comment (feature 9). -->
                     <Button x:Name="UploadButton" Style="{StaticResource QuietActionButtonStyle}"
-                            IsEnabled="False" ToolTip="Upload (integrations coming soon)"
+                            Margin="1,2" IsEnabled="False" ToolTip="Upload (integrations coming soon)"
                             ToolTipService.ShowOnDisabled="True">
                         <!-- No extra opacity here: QuietActionButtonStyle's own IsEnabled=False
                              trigger already dims the whole button, same as undo/redo. -->

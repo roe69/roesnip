@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using RoeSnip.App;
 using RoeSnip.Capture;
 using RoeSnip.Imaging;
 
@@ -13,14 +14,16 @@ namespace RoeSnip.Recording;
 /// OverlayController.IsSessionActive/s_activeSession's shape exactly. Wired into
 /// AppComposition.StartRecording from Program.cs's RunCaptureFlowAsync (see that hook's doc
 /// comment for the CaptureGate ownership-transfer contract this class must honor) and into
-/// App/TrayApp.cs's TriggerCapture (PrtScr while recording stops+saves instead of starting a new
-/// capture).</summary>
+/// App/TrayApp.cs's TriggerCapture (PrtScr while recording advances the setup/preview state
+/// machine instead of starting a new capture — see RecordingSession.RequestPrtScrAction).</summary>
 internal static class RecordingController
 {
     private static RecordingSession? s_active; // set/cleared on the UI thread only
 
-    /// <summary>True while a recording is actually running (chrome up, capture loop live) —
-    /// TrayApp.TriggerCapture checks this BEFORE MarkTriggerTimestamp/flash/anything else.</summary>
+    /// <summary>True for the WHOLE recording flow — Setup (chrome shown, nothing captured yet),
+    /// Recording, and Reviewing (stopped, take not yet saved) — not just while frames are actually
+    /// being captured. TrayApp.TriggerCapture checks this BEFORE MarkTriggerTimestamp/flash/
+    /// anything else, and CaptureGate is held by RecordingController across all three phases.</summary>
     public static bool IsActive => s_active is not null;
 
     /// <summary>Called via the AppComposition.StartRecording hook from RunCaptureFlowAsync, on the
@@ -35,7 +38,8 @@ internal static class RecordingController
         if (s_active is not null)
         {
             // Shouldn't happen — CaptureGate already prevents a second overlay/capture stack while
-            // one is live, and a recording holds the gate for its whole lifetime.
+            // one is live, and a recording holds the gate for its whole lifetime (Setup through
+            // Reviewing).
             throw new InvalidOperationException("A recording is already active.");
         }
 
@@ -43,7 +47,7 @@ internal static class RecordingController
         var session = new RecordingSession(monitor, evenSelection, format, settings, notifier);
         try
         {
-            session.Start(); // synchronous WGC/MF/chrome setup — throws on failure, RecordingSession.Start cleans up partial state itself
+            session.Start(); // synchronous chrome/outline setup — throws on failure, cleans up partial state itself
         }
         catch
         {
@@ -54,9 +58,11 @@ internal static class RecordingController
         return Task.CompletedTask;
     }
 
-    /// <summary>TrayApp calls this when PrtScr is pressed while a recording is active. Stop+save,
-    /// never a new capture flow.</summary>
-    public static void RequestStopAndSave() => s_active?.RequestStop(save: true);
+    /// <summary>TrayApp calls this when PrtScr is pressed while a recording is active. Name kept
+    /// for compatibility with TrayApp.cs's existing call site (outside this workstream); behavior
+    /// now advances the setup/preview state machine one step instead of always stop+save — see
+    /// RecordingSession.RequestPrtScrAction for the exact per-phase mapping.</summary>
+    public static void RequestStopAndSave() => s_active?.RequestPrtScrAction();
 
     internal static void OnSessionEnded(RecordingSession session)
     {
@@ -75,13 +81,23 @@ internal static class RecordingController
     }
 }
 
-/// <summary>One in-progress recording: owns the <see cref="RegionRecorder"/> (capture), the chosen
-/// encoder (<see cref="Mp4Encoder"/>/<see cref="GifEncoder"/>), the on-screen
-/// <see cref="RecordingChrome"/>, and the dedicated encoder thread that drains frames from the
-/// recorder and feeds the encoder. <see cref="Stop"/> is the single terminal path — mirrors
-/// OverlayController.OverlaySession.Finish's "single terminal point" pattern.</summary>
+/// <summary>One in-progress recording flow — a three-phase state machine (feature 10 redesign):
+///   Setup     - RegionOutline + RecordingChrome are up, nothing is being captured. The user can
+///               flip the MP4-only audio toggles and either Start or Cancel.
+///   Capturing - BeginCapture() built the <see cref="RegionRecorder"/> (capture), the chosen
+///               encoder (<see cref="Mp4Encoder"/>/<see cref="GifEncoder"/>) and started the
+///               dedicated encoder thread that drains frames from the recorder and feeds the
+///               encoder. Stop or Restart end this phase.
+///   Reviewing - the take is fully encoded to its temp file. Save finalizes it (SaveFileDialog +
+///               File.Move); Restart discards it and returns to Setup; Cancel discards it and
+///               closes the whole session.
+/// <see cref="TeardownSession"/> is the single terminal path (mirrors OverlayController.
+/// OverlaySession.Finish's "single terminal point" pattern) — reached from SaveAndFinish,
+/// CancelAndDiscard, or an unrecoverable failure partway through Setup/Capturing.</summary>
 internal sealed class RecordingSession
 {
+    private enum Phase { Setup, Capturing, Reviewing }
+
     private readonly MonitorInfo _monitor;
     private readonly RectPhysical _selectionPx;
     private readonly RecordingFormat _format;
@@ -103,7 +119,12 @@ internal sealed class RecordingSession
     private int _targetFps;
     private string? _mp4TempPath;
     private string? _gifTempPath;
-    private int _stopped; // Interlocked guard — Stop() must run its body exactly once
+    private int _ended; // Interlocked guard — TeardownSession must run its body exactly once
+
+    private Phase _phase = Phase.Setup;
+    private bool _mic;
+    private bool _systemAudio;
+    private RoeSnipSettings _liveSettings = null!; // set in Start(); tracks audio-toggle edits for persistence
 
     private bool _hasGifPrevTimestamp;
     private long _lastGifTimestampTicks;
@@ -119,10 +140,12 @@ internal sealed class RecordingSession
         _notifier = notifier;
     }
 
-    /// <summary>UI thread only. Synchronous end to end (WGC device/item creation, MF SinkWriter
-    /// setup, chrome window creation) — throws on any failure, having cleaned up whatever it
-    /// already constructed, so RecordingController never records a partially-started session as
-    /// active.</summary>
+    /// <summary>UI thread only. Opens the Setup phase: computes the fixed tone-map options (used by
+    /// whichever take eventually gets captured), shows the region outline + chrome, and wires the
+    /// chrome's events. Synchronous and throws on failure (cleaning up whatever it already
+    /// constructed) so RecordingController never records a partially-started session as active. No
+    /// capture pipeline exists yet — that is <see cref="BeginCapture"/>'s job, run only once the
+    /// user presses Start in the chrome.</summary>
     public void Start()
     {
         try
@@ -131,16 +154,121 @@ internal sealed class RecordingSession
             _targetFps = _format == RecordingFormat.Gif ? 12 : 30;
 
             // Fixed tone-map options, computed ONCE here from monitor metadata — never re-derived
-            // per frame. Per-frame auto-derived peak (ToneMapper's normal path also folds in the
-            // CURRENT frame's own max) would visibly pump exposure on fluctuating HDR content, an
-            // auto-exposure-style flicker; pinning PeakOverride up front is the fix. Mirrors
-            // ToneMapper.ComputeCurveParams's own derivation formula but computed from monitor
-            // photometrics alone, never from a frame's content.
+            // per frame or per take (a Restart reuses these). Per-frame auto-derived peak
+            // (ToneMapper's normal path also folds in the CURRENT frame's own max) would visibly
+            // pump exposure on fluctuating HDR content, an auto-exposure-style flicker; pinning
+            // PeakOverride up front is the fix. Mirrors ToneMapper.ComputeCurveParams's own
+            // derivation formula but computed from monitor photometrics alone, never from a frame's
+            // content.
             double peak = _settings.ToneMapPeakOverride
                 ?? Math.Clamp(_monitor.MaxLuminanceNits / _monitor.SdrWhiteNits, 2.0, double.MaxValue);
             double knee = _settings.ToneMapKneeOverride ?? 0.90;
             _fixedToneMapOpts = new RoeSnip.Color.ToneMapOptions(Knee: knee, PeakOverride: peak);
 
+            _liveSettings = _settings;
+            _mic = _settings.RecordMicrophone;
+            _systemAudio = _settings.RecordSystemAudio;
+
+            // The visible "this area will be recorded" frame (both formats): dashed outline just
+            // OUTSIDE the region, capture-excluded, click-through — see RegionOutline's doc. Shown
+            // for the whole session (Setup through Reviewing), not just while actually capturing.
+            _outline = new RegionOutline(_monitor, _selectionPx);
+            _outline.Show();
+
+            _chrome = new RecordingChrome(_monitor, _selectionPx, _format, _mic, _systemAudio);
+            _chrome.StartRequested += BeginCapture;
+            _chrome.StopRequested += StopCaptureToReview;
+            _chrome.RestartConfirmed += RestartTake;
+            _chrome.SaveRequested += SaveAndFinish;
+            _chrome.CancelRequested += CancelAndDiscard;
+            _chrome.MicToggled += v => SetAudioToggle(mic: v, systemAudio: null);
+            _chrome.SystemAudioToggled += v => SetAudioToggle(mic: null, systemAudio: v);
+            _chrome.Show();
+
+            Console.Error.WriteLine($"RoeSnip: recording setup opened ({_format}, {_selectionPx.Width}x{_selectionPx.Height})");
+        }
+        catch
+        {
+            try { _chrome?.Close(); } catch { /* best-effort */ }
+            try { _outline?.CloseOutline(); } catch { /* best-effort */ }
+            throw;
+        }
+    }
+
+    /// <summary>PrtScr while a recording flow is active: advances the state machine by one logical
+    /// step rather than the old unconditional "stop and save" — Setup begins capturing (that is the
+    /// one pending action while the setup panel is up), Capturing stops into review (matching the
+    /// old PrtScr-stops-a-recording expectation), Reviewing saves and finishes (the one pending
+    /// action left once a take is done). Marshals to the UI thread since TrayApp's hotkey path can
+    /// call this from off-thread.</summary>
+    internal void RequestPrtScrAction()
+    {
+        var dispatcher = _uiDispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            AdvanceOnPrtScr();
+        }
+        else
+        {
+            dispatcher.BeginInvoke(new Action(AdvanceOnPrtScr));
+        }
+    }
+
+    /// <summary>RecordingChrome's Setup-panel audio toggles changed (feature 10 redesign moved
+    /// these off the toolbar's record menu). Persists immediately via SettingsStore, the same
+    /// split every other settings-editing flow in the app uses (see OverlayWindow.
+    /// TrySaveLiveSettings) — best-effort; a disk hiccup here must not interrupt the recording.</summary>
+    private void SetAudioToggle(bool? mic, bool? systemAudio)
+    {
+        if (mic is { } m)
+        {
+            _mic = m;
+        }
+        if (systemAudio is { } s)
+        {
+            _systemAudio = s;
+        }
+
+        _liveSettings = _liveSettings with { RecordMicrophone = _mic, RecordSystemAudio = _systemAudio };
+        try
+        {
+            SettingsStore.Save(_liveSettings);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: failed to persist recording audio toggle: {ex.Message}");
+        }
+    }
+
+    private void AdvanceOnPrtScr()
+    {
+        switch (_phase)
+        {
+            case Phase.Setup:
+                BeginCapture();
+                break;
+            case Phase.Capturing:
+                StopCaptureToReview();
+                break;
+            case Phase.Reviewing:
+                SaveAndFinish();
+                break;
+        }
+    }
+
+    /// <summary>UI thread only (chrome's Start button, or PrtScr in Setup). Builds the actual WGC
+    /// capture + encoder pipeline and starts it — everything the old single-shot Start() used to do
+    /// immediately. On failure, tears the whole session down (nothing was capturing yet, so there
+    /// is nothing to save).</summary>
+    private void BeginCapture()
+    {
+        if (_phase != Phase.Setup)
+        {
+            return; // stray double-invoke (e.g. Start clicked twice before the first click applied)
+        }
+
+        try
+        {
             _recorder = new RegionRecorder(_monitor, _selectionPx, _targetFps);
             _recorder.Faulted += OnRecorderFaulted;
 
@@ -149,9 +277,9 @@ internal sealed class RecordingSession
                 // Audio first: the encoder only gets an AAC track if a capture source genuinely
                 // came up, so a device failure can never leave a sample-less audio stream for
                 // Finalize to choke on. Engine failure is non-fatal (video-only recording).
-                if (_settings.RecordMicrophone || _settings.RecordSystemAudio)
+                if (_mic || _systemAudio)
                 {
-                    _audio = AudioCaptureEngine.TryStart(_settings.RecordMicrophone, _settings.RecordSystemAudio);
+                    _audio = AudioCaptureEngine.TryStart(_mic, _systemAudio);
                     if (_audio is null)
                     {
                         _notifier?.ShowError("Audio capture unavailable; recording video only.");
@@ -167,47 +295,46 @@ internal sealed class RecordingSession
                 _gifEncoder = GifEncoder.Create(_gifTempPath, _selectionPx.Width, _selectionPx.Height);
             }
 
-            // The visible "this area is being recorded" frame (both formats): dashed outline just
-            // OUTSIDE the region, capture-excluded, click-through — see RegionOutline's doc.
-            _outline = new RegionOutline(_monitor, _selectionPx);
-            _outline.Show();
-
-            _chrome = new RecordingChrome(_monitor, _selectionPx);
-            _chrome.StopRequested += () => RequestStop(save: true);
-            _chrome.CancelRequested += () => RequestStop(save: false);
-            _chrome.Show();
+            _hasGifPrevTimestamp = false; // fresh delay-timestamp sequence for this take
 
             // Started last (after the encoder is ready to receive frames) so no captured frame is
             // ever silently dropped for lack of a sink.
             _recorder.Start();
 
             _stopwatch = System.Diagnostics.Stopwatch.StartNew();
-            // The 1-arg ctor binds to Dispatcher.CurrentDispatcher implicitly — safe here since
-            // Start() itself only ever runs on the UI thread (see this method's own doc comment).
             _uiTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromSeconds(1) };
             _uiTimer.Tick += OnTimerTick;
             _uiTimer.Start();
 
-            _displayChangedHandler = (_, _) => RequestStop(save: true);
+            _displayChangedHandler = (_, _) => RequestForceStopAndSave();
             SystemEvents.DisplaySettingsChanged += _displayChangedHandler;
 
             _encoderThread = new Thread(EncoderLoop) { IsBackground = true, Name = "RoeSnip-Recording-Encoder" };
             _encoderThread.Start();
-            Console.Error.WriteLine($"RoeSnip: recording started ({_format}, {_selectionPx.Width}x{_selectionPx.Height}, {_targetFps}fps)");
+
+            _phase = Phase.Capturing;
+            _chrome!.EnterRecording();
+            Console.Error.WriteLine($"RoeSnip: recording capture started ({_format}, {_selectionPx.Width}x{_selectionPx.Height}, {_targetFps}fps)");
         }
-        catch
+        catch (Exception ex)
         {
-            // Whatever partially came up must be torn down — otherwise a failed Start() leaks a WGC
-            // device or leaves a chrome window stranded topmost with nothing to close it.
+            Console.Error.WriteLine($"RoeSnip: failed to start recording capture: {ex.Message}");
+            _notifier?.ShowError($"Failed to start recording: {ex.Message}");
+
             try { _recorder?.Dispose(); } catch { /* best-effort */ }
-            try { _chrome?.Close(); } catch { /* best-effort */ }
-            try { _outline?.CloseOutline(); } catch { /* best-effort */ }
             try { _audio?.Dispose(); } catch { /* best-effort */ }
             try { _mp4Encoder?.Dispose(); } catch { /* best-effort */ }
             try { _gifEncoder?.Dispose(); } catch { /* best-effort */ }
             try { if (_mp4TempPath is not null && File.Exists(_mp4TempPath)) File.Delete(_mp4TempPath); } catch { /* best-effort */ }
             try { if (_gifTempPath is not null && File.Exists(_gifTempPath)) File.Delete(_gifTempPath); } catch { /* best-effort */ }
-            throw;
+            _recorder = null;
+            _audio = null;
+            _mp4Encoder = null;
+            _gifEncoder = null;
+
+            // The specific error was already surfaced above — TeardownSession's own messaging stays
+            // silent for this path.
+            TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: false);
         }
     }
 
@@ -221,36 +348,64 @@ internal sealed class RecordingSession
     private void OnRecorderFaulted(Exception ex)
     {
         Console.Error.WriteLine($"RoeSnip: recording capture failed mid-session (non-fatal, stopping with what was captured): {ex.Message}");
-        RequestStop(save: true);
+        RequestForceStopAndSave();
     }
 
-    /// <summary>Marshals onto the UI thread if called from elsewhere (the encoder thread's own
-    /// GIF-cap check, RegionRecorder.Faulted, which can fire on the WGC callback thread) before
-    /// running <see cref="Stop"/> — Stop touches the WPF chrome window and must only ever run on
-    /// the thread that created it.</summary>
-    internal void RequestStop(bool save)
+    /// <summary>Safety-net path for triggers that have no user present to click through Setup ->
+    /// Reviewing -> Save themselves (a mid-recording capture fault, or a display-settings change
+    /// while capturing — e.g. a monitor was unplugged). Marshals onto the UI thread first (both
+    /// triggers can fire off-thread) then stops the current take into review and immediately saves
+    /// it, matching the old single-step "stop and save" behavior for these automatic cases.</summary>
+    private void RequestForceStopAndSave()
     {
         var dispatcher = _uiDispatcher;
         if (dispatcher is null || dispatcher.CheckAccess())
         {
-            Stop(save);
+            ForceStopAndSave();
         }
         else
         {
-            dispatcher.BeginInvoke(new Action(() => Stop(save)));
+            dispatcher.BeginInvoke(new Action(ForceStopAndSave));
         }
     }
 
-    /// <summary>The single terminal path every end-of-recording route funnels through (Stop button,
-    /// Cancel button, PrtScr-while-recording, GIF cap, display change, a mid-recording fault). Runs
-    /// on the UI thread (see <see cref="RequestStop"/>). Idempotent via <see cref="_stopped"/>.</summary>
-    private void Stop(bool save)
+    private void ForceStopAndSave()
     {
-        if (Interlocked.Exchange(ref _stopped, 1) != 0)
+        if (_phase == Phase.Setup)
         {
+            // Nothing was ever captured — there is nothing to save, just close quietly.
+            CancelAndDiscard();
             return;
         }
-        Console.Error.WriteLine($"RoeSnip: recording stopping (save={save}, elapsed={_stopwatch?.Elapsed})");
+        if (_phase == Phase.Capturing)
+        {
+            StopCaptureToReview(); // may itself tear the session down if the encoder thread had to be abandoned
+        }
+        if (_phase == Phase.Reviewing)
+        {
+            SaveAndFinish();
+        }
+    }
+
+    /// <summary>Ends the active capture pass if one is running: unsubscribes the display-change
+    /// safety net, stops the UI timer, shuts audio down, stops the recorder, and joins the encoder
+    /// thread. Audio shuts down FULLY (flag + bounded thread join, which is what Dispose does)
+    /// before the video channel completes: the encoder thread's terminal DrainAudio runs almost
+    /// immediately after _recorder.Stop(), so a fire-and-forget audio stop would race the capture
+    /// thread's final flush and silently drop the take's last ~10ms of audio. Bounded join: a
+    /// wedged encoder (stuck MF call, disk stall) must never hang the UI thread forever — if it
+    /// doesn't finish in time we must NOT touch _mp4Encoder/_gifEncoder or the temp file from here
+    /// on (the abandoned thread can still be inside IMFSinkWriter.WriteSample/Finalize, and that COM
+    /// interface is not safe to call concurrently from two threads), so this deliberately leaks the
+    /// temp file/writer rather than race it. Disposes the encoder + recorder only once actually
+    /// joined. A no-op (returns true) when nothing is capturing. Returns false only when the
+    /// encoder thread had to be abandoned.</summary>
+    private bool HardStopCaptureIfNeeded()
+    {
+        if (_phase != Phase.Capturing)
+        {
+            return true;
+        }
 
         if (_displayChangedHandler is not null)
         {
@@ -258,84 +413,156 @@ internal sealed class RecordingSession
             _displayChangedHandler = null;
         }
         _uiTimer?.Stop();
-        try { _outline?.CloseOutline(); }
-        catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: closing the recording outline failed (non-fatal): {ex.Message}"); }
+        _uiTimer = null;
 
-        // Audio shuts down FULLY (flag + bounded thread join, which is what Dispose does) before
-        // the video channel completes: the encoder thread's terminal DrainAudio runs almost
-        // immediately after _recorder.Stop(), so a fire-and-forget audio stop would race the
-        // capture thread's final flush and silently drop the recording's last ~10ms of audio.
         _audio?.Dispose();
+        _audio = null;
         _recorder!.Stop(); // stops feeding the queue and completes it
 
-        // Bounded join: a wedged encoder (stuck MF call, disk stall) must never hang the UI thread
-        // forever. If it doesn't finish in time, we must NOT touch _mp4Encoder or the temp file from
-        // here on — the abandoned thread can still be inside IMFSinkWriter.WriteSample/Finalize (its
-        // own EncoderLoop finally block), and that COM interface is not safe to call concurrently
-        // from two threads. A File.Move/Dispose racing it could crash the process or corrupt output
-        // while telling the user the recording "saved" successfully. Deliberately leak the temp
-        // file/writer in that case rather than race it.
         bool joined = _encoderThread!.Join(TimeSpan.FromSeconds(5));
         if (!joined)
         {
             Console.Error.WriteLine("RoeSnip: recording encoder thread did not finish within 5s; abandoning it without touching its output.");
+            return false;
+        }
+
+        _mp4Encoder?.Dispose(); // only safe once the encoder thread — the only other owner — has actually finished
+        _mp4Encoder = null;
+        _gifEncoder?.Dispose(); // same ownership rule for the GIF temp-file stream
+        _gifEncoder = null;
+        // The recorder's own device/item are never shared with the encoder thread (which only reads
+        // from RegionRecorder.Frames), so disposing it is safe regardless.
+        _recorder.Dispose();
+        _recorder = null;
+        return true;
+    }
+
+    /// <summary>Chrome's Stop button (or PrtScr while Capturing). Ends the take and moves to
+    /// Reviewing — does NOT save. If the encoder thread had to be abandoned there is nothing left
+    /// to review, so the session tears down instead (message already shown here).</summary>
+    private void StopCaptureToReview()
+    {
+        if (_phase != Phase.Capturing)
+        {
+            return;
+        }
+        Console.Error.WriteLine($"RoeSnip: recording capture stopping for review (elapsed={_stopwatch?.Elapsed})");
+
+        bool joined = HardStopCaptureIfNeeded();
+        if (!joined)
+        {
+            _notifier?.ShowError("Recording could not be saved: the encoder did not stop in time.");
+            TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: false); // already messaged above
+            return;
+        }
+
+        _phase = Phase.Reviewing;
+        _chrome!.EnterReviewing();
+    }
+
+    /// <summary>Chrome's confirmed Restart (the confirmation prompt itself lives in
+    /// RecordingChrome). Discards whatever the current take is — mid-capture or already stopped and
+    /// under review — and re-arms for a fresh <see cref="BeginCapture"/> with new temp file paths.
+    /// Reuses the session's fixed tone-map options and target fps; everything else about the
+    /// capture pipeline is rebuilt from scratch on the next Start.</summary>
+    private void RestartTake()
+    {
+        bool joined = HardStopCaptureIfNeeded();
+        if (!joined)
+        {
+            _notifier?.ShowError("Could not restart: the recording did not stop in time.");
+            TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: false); // already messaged above
+            return;
+        }
+
+        CleanupTempFile();
+        _mp4TempPath = null;
+        _gifTempPath = null;
+        _hasGifPrevTimestamp = false;
+
+        _phase = Phase.Setup;
+        _chrome!.EnterSetup();
+    }
+
+    /// <summary>Available in every phase — aborts the whole recording without saving. Discards any
+    /// in-progress or already-stopped take, then tears the session down.</summary>
+    private void CancelAndDiscard()
+    {
+        bool joined = HardStopCaptureIfNeeded();
+        if (joined)
+        {
+            CleanupTempFile();
+        }
+        // else: encoder thread abandoned — deliberately leak rather than race it, same rule as
+        // HardStopCaptureIfNeeded's own doc comment.
+        TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: !joined);
+    }
+
+    /// <summary>Chrome's Save button (or PrtScr while Reviewing) — only valid once a take has
+    /// actually been stopped into review. Finalizes/moves the temp file to a real path, then tears
+    /// the session down.</summary>
+    private void SaveAndFinish()
+    {
+        if (_phase != Phase.Reviewing)
+        {
+            return;
         }
 
         string? finalPath = null;
-        bool cancelled = false;
-        if (joined)
+        bool dialogCancelled = false;
+        try
         {
-            try
+            // The chrome is Hidden (not yet Closed) so it can still own the SaveFileDialog — a WPF
+            // window needs to exist as a valid HWND for Dialog.ShowDialog(owner) to parent correctly;
+            // closing it first would leave the dialog unowned (it could appear behind other windows
+            // on a multi-monitor setup).
+            _chrome!.Hide();
+            finalPath = SaveOutput();
+            dialogCancelled = finalPath is null; // SaveOutput returns null only when the user cancelled the dialog
+        }
+        catch (Exception ex)
+        {
+            _notifier?.ShowError($"Failed to save recording: {ex.Message}");
+        }
+        finally
+        {
+            if (dialogCancelled)
             {
-                if (save)
-                {
-                    // The chrome is Hidden (not yet Closed) so it can still own the SaveFileDialog —
-                    // a WPF window needs to exist as a valid HWND for Dialog.ShowDialog(owner) to
-                    // parent correctly; closing it first would leave the dialog unowned (it could
-                    // appear behind other windows on a multi-monitor setup).
-                    _chrome!.Hide();
-                    finalPath = SaveOutput();
-                    cancelled = finalPath is null; // SaveOutput returns null only when the user cancelled the dialog
-                }
-            }
-            catch (Exception ex)
-            {
-                _notifier?.ShowError($"Failed to save recording: {ex.Message}");
-            }
-            finally
-            {
-                // Also clean up on a cancelled dialog, not just !save — otherwise a cancelled save
-                // leaves the temp mp4 orphaned under %TEMP% with no file ever produced and no
-                // indication anything was lost.
-                if (!save || cancelled)
-                {
-                    CleanupTempFile();
-                }
+                CleanupTempFile();
             }
         }
-        _chrome!.CloseChrome();
+
+        TeardownSession(finalPath, dialogCancelled, encoderAbandoned: false);
+    }
+
+    /// <summary>The single terminal path every end-of-recording route funnels through (Save,
+    /// Cancel, an unrecoverable failure). Idempotent via <see cref="_ended"/>.</summary>
+    private void TeardownSession(string? finalPath, bool dialogCancelled, bool encoderAbandoned)
+    {
+        if (Interlocked.Exchange(ref _ended, 1) != 0)
+        {
+            return;
+        }
+        Console.Error.WriteLine($"RoeSnip: recording session ending (saved={finalPath is not null})");
+
+        try { _outline?.CloseOutline(); }
+        catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: closing the recording outline failed (non-fatal): {ex.Message}"); }
+        _chrome?.CloseChrome();
 
         if (finalPath is not null)
         {
             _notifier?.ShowSavedBalloon(finalPath);
         }
-        else if (joined && cancelled)
+        else if (dialogCancelled)
         {
             _notifier?.ShowError("Recording discarded: the save was cancelled.");
         }
-        else if (!joined)
+        else if (encoderAbandoned)
         {
             _notifier?.ShowError("Recording could not be saved: the encoder did not stop in time.");
         }
-
-        // The recorder's own device/item are never shared with the encoder thread (which only reads
-        // from RegionRecorder.Frames), so disposing it is safe regardless of the join outcome above.
-        _recorder.Dispose();
-        if (joined)
-        {
-            _mp4Encoder?.Dispose(); // only safe once the encoder thread — the only other owner — has actually finished
-            _gifEncoder?.Dispose(); // same ownership rule for the GIF temp-file stream
-        }
+        // else: a plain user Cancel — silent, matching the toolbar Cancel button's own "close
+        // without capturing" semantics elsewhere.
 
         RoeSnip.CaptureGate.Exit(); // exactly once, last — see AppComposition.StartRecording's doc comment
         RecordingController.OnSessionEnded(this);
@@ -347,7 +574,7 @@ internal sealed class RecordingSession
         RoeSnip.IdleMemoryTrimmer.Schedule(Dispatcher.CurrentDispatcher);
     }
 
-    /// <summary>UI thread (called from <see cref="Stop"/>). Test hook: when
+    /// <summary>UI thread (called from <see cref="SaveAndFinish"/>). Test hook: when
     /// ROESNIP_RECORD_AUTOSAVE is set, saves straight there instead of showing the SaveFileDialog —
     /// this is how the automated smoke/verify harness drives Record without needing UIA against a
     /// native Win32 file-picker. Returns null if the user cancelled the dialog (temp file already
@@ -422,7 +649,8 @@ internal sealed class RecordingSession
     /// <summary>Encoder thread only (never the WGC callback thread, never the UI thread): drains
     /// RegionRecorder.Frames, tone-maps each raw CapturedFrame with the FIXED options computed once
     /// in Start(), and feeds the chosen encoder. Exits when the channel completes (RegionRecorder.
-    /// Stop() was called) or on an unrecoverable encoder exception.</summary>
+    /// Stop() was called) or on an unrecoverable encoder exception. Runs once per take — a Restart
+    /// spins up a brand-new thread via the next BeginCapture.</summary>
     private void EncoderLoop()
     {
         double freq = System.Diagnostics.Stopwatch.Frequency;
@@ -483,7 +711,7 @@ internal sealed class RecordingSession
             Console.Error.WriteLine($"RoeSnip: recording encoder failed mid-session after {framesWritten} frame(s): {ex}");
             // Best-effort: keep whatever encoded cleanly so far rather than losing the whole
             // recording to one bad frame/disk hiccup.
-            RequestStop(save: true);
+            RequestForceStopAndSave();
         }
         finally
         {
