@@ -1,10 +1,23 @@
 name: release
 
-# Builds RoeSnip.exe (win-x64, single-file) versioned to the release tag and publishes a GitHub
-# Release with it attached as an asset named exactly "RoeSnip.exe". This is what RoeSnip's in-app
-# self-updater (UpdateManager.cs) polls via GET /repos/roe69/roesnip/releases/latest — see
-# build-windows.yml for the underlying publish profile (win-x64.pubxml: self-contained,
-# PublishSingleFile, PublishReadyToRun).
+# ONE action: bump -> build (win-x64 / linux-x64 / osx-arm64) -> publish a single GitHub Release.
+# Modelled on installer-src's build-all.yml shape (a preflight/version job -> parallel per-platform
+# builds -> one all-or-nothing publish job), collapsed into a single workflow so cutting a release is
+# a single dispatch. RoeSnip's in-app self-updater (App/UpdateManager.cs) polls
+# GET /repos/roe69/roesnip/releases/latest and downloads the asset named EXACTLY "RoeSnip.exe" -
+# that Windows asset name is load-bearing and must never change.
+#
+# LOOP SAFETY (why this cannot re-trigger itself):
+#   * There is NO `push: branches` trigger, so the version-bump commit prep pushes to the branch
+#     starts no run (ci.yml is likewise skipped - see below).
+#   * The v<version> tag is created by softprops/action-gh-release using the built-in GITHUB_TOKEN,
+#     and GitHub deliberately does NOT start new workflow runs from events made with GITHUB_TOKEN, so
+#     our own tag never fires the `push: tags: v*` trigger. This is the load-bearing guard.
+#   * The bump/commit step is gated to workflow_dispatch, so the "push a v* tag" entry path builds an
+#     already-tagged commit unchanged and can never commit -> can never loop.
+#   * concurrency serialises runs so two releases can't race.
+#   NEVER replace GITHUB_TOKEN with a PAT/App token in checkout or action-gh-release - every guard
+#   above assumes GITHUB_TOKEN; a PAT would make the bump commit / release tag fire workflows.
 
 on:
   push:
@@ -13,47 +26,305 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version e.g. 1.0.1"
+        description: "Version e.g. 1.0.2"
         required: true
 
+# Default to read; only prep (pushes the bump) and release (creates the release) get write.
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build and publish release (win-x64)
-    runs-on: windows-latest
+  # ---------------------------------------------------------------------------
+  # 1. Resolve the version, bump the shipping csproj, commit + push the bump.
+  #    Outputs the exact commit SHA so every build leg + the release tag point at
+  #    the bumped commit.
+  # ---------------------------------------------------------------------------
+  prep:
+    name: Resolve version and bump
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      sha: ${{ steps.v.outputs.sha }}
     steps:
       - name: Check out
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and bump
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Dispatch must come from a branch (the bump commit is pushed to it), never a tag ref.
+            if [ "${{ github.ref_type }}" != "branch" ]; then
+              echo "::error::Dispatch this workflow from a branch, not a tag."; exit 1
+            fi
+            VERSION="${INPUT_VERSION#v}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Version '$VERSION' is not in x.y.z form"; exit 1
+          fi
+          TAG="v$VERSION"
+
+          # Refuse to clobber an already-PUBLISHED release (a leftover draft is fine to reuse).
+          if gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q '^false$'; then
+            echo "::error::A published release $TAG already exists - refusing to overwrite."; exit 1
+          fi
+          # Deleting a release does NOT delete its tag; a stale tag would make action-gh-release
+          # attach new binaries to a tag pointing at the OLD commit. Fail the dispatch path if the
+          # tag already exists (on the tag-push path the tag IS the build ref, so allow it).
+          git fetch --tags --quiet || true
+          if git rev-parse -q --verify "refs/tags/${TAG}^{commit}" >/dev/null; then
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              echo "::error::Tag $TAG already exists (stale from an earlier run?). Delete it or pick a new version."; exit 1
+            fi
+          fi
+
+          # Bump only on manual dispatch. A tag-push builds the already-tagged commit unchanged.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # RoeSnip.csproj (the shipping WPF app) carries <Version>, compared against the release
+            # tag by App/UpdateManager.cs - always bump it.
+            sed -i -E "s#<Version>[^<]*</Version>#<Version>${VERSION}</Version>#" src/RoeSnip/RoeSnip.csproj
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add src/RoeSnip/RoeSnip.csproj
+            if git diff --cached --quiet; then
+              echo "Version already $VERSION - nothing to commit."
+            else
+              git commit -m "Release $TAG"
+              git push origin "HEAD:${GITHUB_REF_NAME}"
+            fi
+          fi
+
+          SHA="$(git rev-parse HEAD)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # 2a. Windows: the WPF app -> single-file self-contained RoeSnip.exe (the exact
+  #     asset the self-updater downloads). Also build + test the whole solution
+  #     here - the only host that can compile the WPF XAML (PresentationBuildTasks
+  #     is Windows-only) - so a broken release fails before anything is published.
+  # ---------------------------------------------------------------------------
+  build-windows:
+    name: Build Windows (win-x64)
+    needs: prep
+    runs-on: windows-latest
+    steps:
+      - name: Check out (bumped commit)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prep.outputs.sha }}
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
 
-      - name: Determine version
-        id: version
-        shell: pwsh
-        run: |
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $version = "${{ inputs.version }}"
-          } else {
-            $version = "${{ github.ref_name }}" -replace "^v", ""
-          }
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Build solution (Release)
+        run: dotnet build RoeSnip.sln -c Release
 
-      # win-x64.pubxml pins RuntimeIdentifier/SelfContained/PublishSingleFile/PublishReadyToRun.
-      # Output lands at src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe.
+      - name: Test
+        run: dotnet test RoeSnip.sln -c Release --no-build
+
+      # win-x64.pubxml pins RuntimeIdentifier/SelfContained/PublishSingleFile (ReadyToRun and
+      # single-file compression are deliberately OFF - see the pubxml's comments before changing).
+      # Output: src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe.
       - name: Publish WPF app (win-x64)
-        run: dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64 -p:Version=${{ steps.version.outputs.version }}
+        run: dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64 -p:Version=${{ needs.prep.outputs.version }}
 
-      - name: Create GitHub Release
+      - name: Upload RoeSnip.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: win
+          path: src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 2b. Cross-platform (RoeSnip.App, net8.0): one matrix leg per shippable arch.
+  #     Adding a future arch is ONE uncommented row - the steps branch on
+  #     runner.os. .AppImage on Linux, unsigned .dmg on macOS.
+  # ---------------------------------------------------------------------------
+  build-xplat:
+    name: Build ${{ matrix.rid }}
+    needs: prep
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            runner: ubuntu-latest
+            asset: RoeSnip-linux-x64.AppImage
+          - rid: osx-arm64
+            runner: macos-15
+            asset: RoeSnip-osx-arm64.dmg
+          # --- Future archs: uncomment one row to ship it (steps already branch on runner.os) ---
+          # - rid: osx-x64
+          #   runner: macos-13          # GitHub's Intel macOS runner
+          #   asset: RoeSnip-osx-x64.dmg
+          # - rid: linux-arm64
+          #   runner: ubuntu-24.04-arm
+          #   asset: RoeSnip-linux-arm64.AppImage
+          # --- .rpm / .deb Linux packages are deliberately future - NOT built now. ---
+    steps:
+      - name: Check out (bumped commit)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prep.outputs.sha }}
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # -f net8.0 is required: RoeSnip.App multi-targets net8.0 / net8.0-windows*, and the windows
+      # TFM's Platform.Windows reference can't restore off Windows. AssemblyName is RoeSnip, so the
+      # published binary is <publish>/RoeSnip.
+      - name: Publish RoeSnip.App (${{ matrix.rid }})
+        run: dotnet publish src/RoeSnip.App -c Release -f net8.0 -r ${{ matrix.rid }} --self-contained -p:Version=${{ needs.prep.outputs.version }}
+
+      # ---- Linux: AppImage via the official static appimagetool -------------------------------
+      - name: Package .AppImage
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          # ImageMagick is not preinstalled on ubuntu-24.04 (ubuntu-latest) - install it for the
+          # .ico -> .png icon conversion.
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends imagemagick
+          PUBLISH="src/RoeSnip.App/bin/Release/net8.0/${{ matrix.rid }}/publish"
+          APPDIR="$PWD/AppDir"
+          rm -rf "$APPDIR"; mkdir -p "$APPDIR/usr/bin"
+          cp -a "$PUBLISH/." "$APPDIR/usr/bin/"
+          chmod +x "$APPDIR/usr/bin/RoeSnip"
+          convert "src/RoeSnip/Assets/roesnip.ico[0]" -resize 256x256 "$APPDIR/roesnip.png"
+          cat > "$APPDIR/RoeSnip.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=RoeSnip
+          Exec=RoeSnip
+          Icon=roesnip
+          Categories=Graphics;Utility;
+          Terminal=false
+          EOF
+          cat > "$APPDIR/AppRun" <<'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/RoeSnip" "$@"
+          EOF
+          chmod +x "$APPDIR/AppRun"
+          # Static appimagetool; --appimage-extract-and-run avoids needing FUSE on the runner.
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          chmod +x appimagetool
+          mkdir -p dist
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run "$APPDIR" "dist/${{ matrix.asset }}"
+
+      # ---- macOS: build the capture helper, wrap in a .app, produce an UNSIGNED .dmg ----------
+      # No Developer ID / notarization secrets exist, so the .app is only ad-hoc signed and the .dmg
+      # is unsigned - Gatekeeper will warn; testers right-click > Open once. Real signing is future.
+      - name: Build scksnap capture helper
+        if: runner.os == 'macOS'
+        working-directory: helpers/scksnap
+        run: |
+          set -euo pipefail
+          swiftc -parse-as-library -O -target arm64-apple-macos13.0 -o scksnap Sources/Scksnap.swift
+          codesign --force --sign - --identifier net.roelite.roesnip.scksnap scksnap
+
+      - name: Package unsigned .dmg
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          PUBLISH="src/RoeSnip.App/bin/Release/net8.0/${{ matrix.rid }}/publish"
+          APP="RoeSnip.app"
+          rm -rf "$APP" dmgroot; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp -a "$PUBLISH/." "$APP/Contents/MacOS/"
+          chmod +x "$APP/Contents/MacOS/RoeSnip"
+          # scksnap ships as a flat sibling of the RoeSnip executable (ROESNIP_SCKSNAP_PATH default).
+          cp helpers/scksnap/scksnap "$APP/Contents/MacOS/scksnap"
+          # Icon (cosmetic - never fail the build on it).
+          mkdir -p RoeSnip.iconset
+          sips -s format png "src/RoeSnip/Assets/roesnip.ico" --out RoeSnip.iconset/icon_256x256.png >/dev/null 2>&1 || true
+          iconutil -c icns RoeSnip.iconset -o "$APP/Contents/Resources/RoeSnip.icns" >/dev/null 2>&1 || true
+          cat > "$APP/Contents/Info.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>RoeSnip</string>
+            <key>CFBundleDisplayName</key><string>RoeSnip</string>
+            <key>CFBundleExecutable</key><string>RoeSnip</string>
+            <key>CFBundleIdentifier</key><string>net.roelite.roesnip</string>
+            <key>CFBundleVersion</key><string>__VERSION__</string>
+            <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleIconFile</key><string>RoeSnip</string>
+            <key>LSMinimumSystemVersion</key><string>13.0</string>
+          </dict>
+          </plist>
+          EOF
+          sed -i '' "s#__VERSION__#${{ needs.prep.outputs.version }}#g" "$APP/Contents/Info.plist"
+          # Ad-hoc sign (no secrets); unsigned/un-notarized on purpose.
+          codesign --force --deep --sign - "$APP" || true
+          mkdir -p dmgroot dist
+          cp -R "$APP" dmgroot/
+          ln -s /Applications dmgroot/Applications
+          hdiutil create -volname "RoeSnip" -srcfolder dmgroot -ov -format UDZO "dist/${{ matrix.asset }}"
+
+      - name: Upload ${{ matrix.rid }} artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xplat-${{ matrix.rid }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 3. Collect every platform's asset and cut ONE Release. It is created as a
+  #    DRAFT first and only flipped live once every asset has attached, so a
+  #    flaky upload never leaves a live "latest" release missing RoeSnip.exe (the
+  #    self-updater would find no asset) and never deadlocks the prep guard.
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    needs: [prep, build-windows, build-xplat]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: List collected assets
+        run: find dist -type f -printf '%p  (%s bytes)\n'
+
+      - name: Create draft release with all assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: RoeSnip ${{ steps.version.outputs.version }}
-          draft: false
+          tag_name: ${{ needs.prep.outputs.tag }}
+          target_commitish: ${{ needs.prep.outputs.sha }}
+          name: RoeSnip ${{ needs.prep.outputs.version }}
+          draft: true
           prerelease: false
-          files: src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe
+          fail_on_unmatched_files: true
+          files: dist/**/*
+
+      - name: Publish (undraft) once all assets attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${{ needs.prep.outputs.tag }}" --repo "$GITHUB_REPOSITORY" --draft=false --latest

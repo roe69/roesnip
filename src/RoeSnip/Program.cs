@@ -368,7 +368,12 @@ public static class AppComposition
     /// (App/* not built yet), prints an error and returns 1.</summary>
     public static int RunTray(string[] args)
     {
-        if (args.Length > 0)
+        // Hidden tray-level flags handled inside TrayApp.Run itself (not part of the --diag/--capture
+        // CLI grammar in CliOptions, so they land here as Mode=None): --signal-capture pokes a running
+        // instance to snip, --self-update-now force-updates the installed copy. Pass those through;
+        // only a genuinely unrecognized argument is a usage error.
+        bool allTrayFlags = args.Length > 0 && args.All(a => a is "--signal-capture" or "--self-update-now");
+        if (args.Length > 0 && !allTrayFlags)
         {
             PrintUsage();
             return 1;
