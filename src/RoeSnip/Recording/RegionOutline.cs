@@ -28,16 +28,19 @@ using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 /// Layered-window input note (this is what a first version got wrong): a WPF AllowsTransparency
 /// window is WS_EX_LAYERED, and the OS routes the mouse by the per-pixel ALPHA - fully transparent
 /// (alpha 0) pixels are click-through and never even raise WM_NCHITTEST. So the interactive areas
-/// must be painted with alpha >= 1: the band always carries a faint fill, and in Setup the inner
-/// gets a faint tint too (which doubles as a "this is your region" highlight); once capturing, the
-/// inner keeps a near-invisible (alpha 0x01, ~0.4%) fill instead of going fully transparent, so it
-/// stays hit-testable and Shift/Ctrl can still grab it to move the region mid-recording - a fully
-/// transparent inner would be click-through and WM_NCHITTEST would never even fire there.
-/// WM_NCHITTEST then refines it - an un-modified click inside returns HTTRANSPARENT so it still
-/// falls through to the app being recorded. The band sits outside the captured rect so it never
-/// lands in a recorded frame; the alpha-0x01 inner fill sits exactly over the captured rect and is
-/// deliberately kept imperceptible rather than capture-excluded (this window is not
-/// WDA_EXCLUDEFROMCAPTURE - only RecordingChrome is).</summary>
+/// must be painted with alpha >= 1: the band always carries a faint fill. The INNER is the
+/// opposite case: it sits exactly over the app being recorded, and returning HTTRANSPARENT from
+/// WM_NCHITTEST only forwards the hit to windows of THIS THREAD - over another process's window it
+/// silently swallows the click (that shipped as "clicks don't reach the recorded app" twice). The
+/// only cross-process click-through is real alpha 0, so the inner is normally NOT painted at all,
+/// in every state; a 20 ms poll (backstopped by a WM_NCHITTEST re-check) paints it (the Setup
+/// tint, or a near-invisible alpha-0x01 fill while capturing) only while Shift/Ctrl is held, which
+/// is exactly when it must hit-test for the modifier-move - an active drag needs no fill because
+/// SetCapture delivers its mouse messages regardless of alpha.
+/// The band sits outside the captured rect so it never lands in a
+/// recorded frame; the modifier-held ghost fill sits over the captured rect and is kept
+/// imperceptible rather than capture-excluded (this window is not WDA_EXCLUDEFROMCAPTURE - only
+/// RecordingChrome is).</summary>
 internal sealed class RegionOutline : Window
 {
     /// <summary>Physical pixels of grab band around the region (also the resize/move hit zone).</summary>
@@ -55,6 +58,7 @@ internal sealed class RegionOutline : Window
     private DragKind _drag = DragKind.None;
     private Native.POINT _dragStartCursor;
     private RectPhysical _dragStartSel;
+    private System.Windows.Threading.DispatcherTimer? _modifierPoll;
 
     /// <summary>Raised on the UI thread whenever a drag changes the region (move or resize), with the
     /// new monitor-relative selection.</summary>
@@ -78,9 +82,9 @@ internal sealed class RegionOutline : Window
         Content = _element;
     }
 
-    /// <summary>Setup vs capturing. In Setup the band resizes and the inner is a tinted move-target;
-    /// once capturing (size locked) the band moves and the inner reverts to click-through so the
-    /// recorded app stays interactive.</summary>
+    /// <summary>Setup vs capturing. In Setup the band resizes and a Shift/Ctrl-held inner shows the
+    /// visible move tint; once capturing (size locked) the band moves and a held inner paints only
+    /// the imperceptible ghost fill. Either way an un-held inner is unpainted = click-through.</summary>
     public void SetInteractionMode(bool allowResize)
     {
         _allowResize = allowResize;
@@ -99,6 +103,42 @@ internal sealed class RegionOutline : Window
 
         HwndSource.FromHwnd(hwnd)?.AddHook(WndProc);
         MoveWindowToSelection(hwnd);
+
+        // Paints/unpaints the inner as Shift/Ctrl goes down/up (see the class doc). Polled because
+        // this WS_EX_NOACTIVATE window never receives keyboard messages of its own; GetAsyncKeyState
+        // is the physical key state, no focus needed. The poll is the only path that can paint the
+        // fill ON (an unpainted inner raises no messages at all), so it runs every 20 ms at Normal
+        // priority - Input priority can starve under encoder load (the f7aa9a3 lesson) and a stale
+        // fill swallows clicks. State-change-only invalidation keeps the tick free of renders.
+        _modifierPoll = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Normal)
+        {
+            Interval = TimeSpan.FromMilliseconds(20),
+        };
+        _modifierPoll.Tick += (_, _) => UpdateInnerHitFill();
+        _modifierPoll.Start();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _modifierPoll?.Stop();
+        _modifierPoll = null;
+        base.OnClosed(e);
+    }
+
+    /// <summary>The inner is painted exactly while Shift/Ctrl is held - never for a drag: once a
+    /// drag owns the mouse via SetCapture, its messages arrive regardless of pixel alpha, so a
+    /// modifier released mid-drag can unpaint without dropping the drag, and a plain band resize
+    /// never tints the region.</summary>
+    private void UpdateInnerHitFill()
+    {
+        bool wanted =
+            (Native.GetAsyncKeyState(Native.VK_SHIFT) & 0x8000) != 0
+            || (Native.GetAsyncKeyState(Native.VK_CONTROL) & 0x8000) != 0;
+        if (_element.InnerHitTestable != wanted)
+        {
+            _element.InnerHitTestable = wanted;
+            _element.InvalidateVisual();
+        }
     }
 
     private void MoveWindowToSelection(IntPtr hwnd)
@@ -118,6 +158,11 @@ internal sealed class RegionOutline : Window
         {
             case Native.WM_NCHITTEST:
             {
+                // A hit against a stale still-painted inner (modifier just released, poll hasn't
+                // ticked) would return HTTRANSPARENT and swallow the click cross-process; re-checking
+                // here makes the very first mouse move over the region queue the alpha-0 repaint, so
+                // the swallow window shrinks from a poll tick to about one render frame.
+                UpdateInnerHitFill();
                 int sx = (short)(lParam.ToInt64() & 0xFFFF);
                 int sy = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
                 var kind = ZoneAt(sx, sy);
@@ -298,12 +343,17 @@ internal sealed class RegionOutline : Window
         private static readonly Brush s_bandFill = Frozen(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
         private static readonly Brush s_innerTint = Frozen(Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF));
         // Near-zero alpha (~0.4%) inner fill used while capturing/reviewing: imperceptible in the
-        // recording, but still > 0 so the layered window keeps hit-testing the inner and Shift/Ctrl
-        // can grab it to move the region while recording (see class doc).
+        // recording, but still > 0 so the layered window hit-tests the inner and Shift/Ctrl can
+        // grab it to move the region while recording (see class doc).
         private static readonly Brush s_innerGhostFill = Frozen(Color.FromArgb(0x01, 0xFF, 0xFF, 0xFF));
+
+        private bool _innerHitTestable;
 
         public RectPhysical Selection { get => _selection; set => _selection = value; }
         public bool ShowInnerTint { get => _showInnerTint; set => _showInnerTint = value; }
+        /// <summary>Paint the inner at all (Shift/Ctrl held or a drag live). Off = alpha 0 = the OS
+        /// routes inner clicks straight through to the app being recorded (see class doc).</summary>
+        public bool InnerHitTestable { get => _innerHitTestable; set => _innerHitTestable = value; }
 
         protected override void OnRender(DrawingContext dc)
         {
@@ -332,10 +382,14 @@ internal sealed class RegionOutline : Window
             var hole = new RectangleGeometry(new Rect(innerX, innerY, innerW, innerH));
             dc.DrawGeometry(s_bandFill, null, new CombinedGeometry(GeometryCombineMode.Exclude, full, hole));
 
-            // Inner fill is always present so the inner stays hit-testable (layered-window alpha-0
-            // pixels are click-through, which would swallow the Shift/Ctrl move while capturing):
-            // the visible setup tint in Setup, a near-invisible ghost fill in Capturing/Reviewing.
-            dc.DrawRectangle(_showInnerTint ? s_innerTint : s_innerGhostFill, null, new Rect(innerX, innerY, innerW, innerH));
+            // Inner fill only while Shift/Ctrl is held (or a drag is live): painted, it hit-tests so
+            // the modifier-move works and doubles as "move mode" feedback (setup tint) or stays
+            // imperceptible (capturing ghost fill); unpainted, its alpha-0 pixels are OS-level
+            // click-through so the recorded app stays fully interactive - see the class doc.
+            if (_innerHitTestable)
+            {
+                dc.DrawRectangle(_showInnerTint ? s_innerTint : s_innerGhostFill, null, new Rect(innerX, innerY, innerW, innerH));
+            }
 
             // Dashed frame, FrameInsetPx outside the region.
             double fx = FrameInsetPx / scaleX, fy = FrameInsetPx / scaleY;
@@ -371,5 +425,6 @@ internal sealed class RegionOutline : Window
         [DllImport("user32.dll")] public static extern IntPtr SetCapture(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool ReleaseCapture();
         [DllImport("user32.dll")] public static extern short GetKeyState(int vKey);
+        [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);
     }
 }
