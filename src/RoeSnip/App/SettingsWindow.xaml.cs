@@ -419,15 +419,18 @@ public partial class SettingsWindow : Window
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                // Bug 1 had TWO layers, both verified and both fixed here:
+                // (1) Use a RAW Arguments string, NOT ArgumentList. A single ArgumentList entry
+                //     holding this compound command (it contains & and >) gets wrapped in quotes,
+                //     and cmd.exe's /c quote handling then mis-parses it so the chained command after
+                //     "&" never runs at all. A raw string lets cmd see the operators directly.
+                // (2) Use ping for the ~1s settle delay (lets this exiting instance release its
+                //     single-instance mutex/pipe before the elevated one starts), NOT timeout:
+                //     timeout reads the console and aborts with "Input redirection is not supported"
+                //     under CreateNoWindow (no console), which short-circuited "&&". "&" runs
+                //     schtasks regardless of ping's exit code.
+                Arguments = $"/c ping -n 2 127.0.0.1 >nul & schtasks /run /tn \"{ElevationManager.TaskName}\"",
             };
-            psi.ArgumentList.Add("/c");
-            // The ~1s delay lets this (exiting) instance release its single-instance mutex/pipe
-            // before the elevated one starts, so the new instance does not just signal this one and
-            // exit. Use ping, NOT timeout: timeout reads the console and aborts with "Input
-            // redirection is not supported" under CreateNoWindow (no console), which made the "&&"
-            // short-circuit so schtasks /run never ran and RoeSnip never relaunched (bug 1). ping
-            // needs no console, and "&" runs schtasks regardless of ping's exit code.
-            psi.ArgumentList.Add($"ping -n 2 127.0.0.1 >nul & schtasks /run /tn \"{ElevationManager.TaskName}\"");
             System.Diagnostics.Process.Start(psi);
         }
         catch (Exception ex)
