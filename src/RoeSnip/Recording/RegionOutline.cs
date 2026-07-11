@@ -11,42 +11,50 @@ namespace RoeSnip.Recording;
 // Same WPF/WinForms name-collision aliases as the sibling Overlay/* files.
 using Color = System.Windows.Media.Color;
 using Pen = System.Windows.Media.Pen;
+using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
+using WCursors = System.Windows.Input.Cursors;
+using WCursor = System.Windows.Input.Cursor;
+using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 
-/// <summary>The "this is being recorded" frame AND the handle for repositioning the recorded region.
-/// A thin, topmost window whose dashed two-tone border (the SelectionAdorner marching-ants recipe)
-/// hugs the recorded region from the OUTSIDE, and which the user can drag to move the region during
-/// any phase (Setup / Capturing / Reviewing).
+/// <summary>The "this is being recorded" frame AND the handle for resizing / moving the recorded
+/// region. A thin topmost window whose dashed two-tone border hugs the region from the OUTSIDE and
+/// whose grab band lets the user reshape or reposition it:
+///   - Setup (before Start): drag an EDGE or CORNER of the band to RESIZE; hold Shift or Ctrl and
+///     drag anywhere inside to MOVE. A plain click inside does nothing (passes through).
+///   - Capturing / Reviewing (a take exists, so the size is locked to the encoder): dragging any
+///     edge/corner MOVES the region, no modifier needed; a drag slides the recorder's crop live.
 ///
-/// Interaction (per user request): the outer BAND is always a move handle - hovering it shows the
-/// 4-way move cursor and dragging moves the whole region. INSIDE the recorded rect, a plain click
-/// falls THROUGH to whatever app is being recorded (so recorded interactions still work); holding
-/// Shift or Ctrl turns an inside click into a move-grab too. Every move raises <see cref="RegionMoved"/>
-/// so RecordingSession can re-anchor the chrome and (while capturing) slide the recorder's crop.
-///
-/// Recording-safety: unlike the old click-through version this window is NOT WDA_EXCLUDEFROMCAPTURE
-/// and has no SetWindowRgn hole (it must cover the inner rect to hit-test clicks there). It stays
-/// invisible in the recording anyway because it paints nothing over the recorded rect - the dashed
-/// stroke lives entirely in the BAND, which is outside the captured region, and the inner area is
-/// fully transparent (alpha 0), which contributes nothing to the DWM composition WGC captures.
-/// SelectionPx is monitor-relative (Program.cs's OverlayResult contract); SetWindowPos wants
-/// virtual-desktop coordinates, so the monitor's BoundsPx origin is added.</summary>
+/// Layered-window input note (this is what a first version got wrong): a WPF AllowsTransparency
+/// window is WS_EX_LAYERED, and the OS routes the mouse by the per-pixel ALPHA - fully transparent
+/// (alpha 0) pixels are click-through and never even raise WM_NCHITTEST. So the interactive areas
+/// must be painted with alpha >= 1: the band always carries a faint fill, and in Setup the inner
+/// gets a faint tint too (which doubles as a "this is your region" highlight). WM_NCHITTEST then
+/// refines it - an un-modified click inside returns HTTRANSPARENT so it still falls through to the
+/// app being recorded. Recording-safety: the band is outside the captured rect, and the inner tint
+/// is present only in Setup (no capture running), so nothing this window paints ever lands in a
+/// recorded frame - no capture-exclusion needed.</summary>
 internal sealed class RegionOutline : Window
 {
-    /// <summary>Physical pixels between the recorded rect and the window's outer edge; the stroke is
-    /// centered in this band and it doubles as the always-grabbable move handle.</summary>
-    private const int BandPx = 4;
+    /// <summary>Physical pixels of grab band around the region (also the resize/move hit zone).</summary>
+    private const int BandPx = 8;
+    private const int FrameInsetPx = 4; // dashed frame sits this far outside the region
+    private const int MinSizePx = 32;
+
+    private enum DragKind { None, Move, Left, Right, Top, Bottom, TopLeft, TopRight, BottomLeft, BottomRight }
 
     private readonly MonitorInfo _monitor;
-    private RectPhysical _selectionPx; // position mutable (drag); size fixed
+    private RectPhysical _selectionPx; // slides/reshapes on drag
+    private readonly OutlineElement _element;
 
-    private bool _dragging;
+    private bool _allowResize = true; // true in Setup; false once capturing (size locked)
+    private DragKind _drag = DragKind.None;
     private Native.POINT _dragStartCursor;
     private RectPhysical _dragStartSel;
 
-    /// <summary>Raised on the UI thread each time a drag moves the region, with the new
-    /// monitor-relative selection. RecordingSession re-anchors the chrome and updates the live crop.</summary>
-    public event Action<RectPhysical>? RegionMoved;
+    /// <summary>Raised on the UI thread whenever a drag changes the region (move or resize), with the
+    /// new monitor-relative selection.</summary>
+    public event Action<RectPhysical>? RegionChanged;
 
     public RegionOutline(MonitorInfo monitor, RectPhysical selectionPx)
     {
@@ -62,7 +70,18 @@ internal sealed class RegionOutline : Window
         ResizeMode = ResizeMode.NoResize;
         Focusable = false;
 
-        Content = new OutlineElement(selectionPx);
+        _element = new OutlineElement { Selection = selectionPx, ShowInnerTint = true };
+        Content = _element;
+    }
+
+    /// <summary>Setup vs capturing. In Setup the band resizes and the inner is a tinted move-target;
+    /// once capturing (size locked) the band moves and the inner reverts to click-through so the
+    /// recorded app stays interactive.</summary>
+    public void SetInteractionMode(bool allowResize)
+    {
+        _allowResize = allowResize;
+        _element.ShowInnerTint = allowResize;
+        _element.InvalidateVisual();
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -70,16 +89,11 @@ internal sealed class RegionOutline : Window
         base.OnSourceInitialized(e);
         var hwnd = new WindowInteropHelper(this).Handle;
 
-        // No Alt+Tab entry, never activated (dragging must not steal focus from the app being
-        // recorded). NOT WS_EX_TRANSPARENT: this window needs the mouse. Per-point pass-through is
-        // decided in WM_NCHITTEST instead, so an un-modified click inside the region still reaches
-        // the app underneath.
         long exStyle = NativeMethods.GetWindowLongPtr(hwnd, NativeMethods.GWL_EXSTYLE).ToInt64();
         NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GWL_EXSTYLE, new IntPtr(
             exStyle | NativeMethods.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE));
 
         HwndSource.FromHwnd(hwnd)?.AddHook(WndProc);
-
         MoveWindowToSelection(hwnd);
     }
 
@@ -87,12 +101,11 @@ internal sealed class RegionOutline : Window
     {
         int outerW = _selectionPx.Width + BandPx * 2;
         int outerH = _selectionPx.Height + BandPx * 2;
-        var bounds = _monitor.BoundsPx;
+        var b = _monitor.BoundsPx;
         NativeMethods.SetWindowPos(
             hwnd, NativeMethods.HWND_TOPMOST,
-            bounds.Left + _selectionPx.Left - BandPx, bounds.Top + _selectionPx.Top - BandPx,
-            outerW, outerH,
-            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
+            b.Left + _selectionPx.Left - BandPx, b.Top + _selectionPx.Top - BandPx,
+            outerW, outerH, NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -103,64 +116,46 @@ internal sealed class RegionOutline : Window
             {
                 int sx = (short)(lParam.ToInt64() & 0xFFFF);
                 int sy = (short)((lParam.ToInt64() >> 16) & 0xFFFF);
+                var kind = ZoneAt(sx, sy);
                 handled = true;
-                return new IntPtr(HitTest(sx, sy));
+                return new IntPtr(kind == DragKind.None ? Native.HTTRANSPARENT : Native.HTCLIENT);
             }
-
-            case Native.WM_SETCURSOR:
-            {
-                // LOWORD(lParam) is the hit-test result we returned above. Only OUR movable hits are
-                // HTCLIENT here (pass-through inner returned HTTRANSPARENT and never gets this), so a
-                // HTCLIENT means "show the move cursor".
-                int hit = (int)(lParam.ToInt64() & 0xFFFF);
-                if (hit == Native.HTCLIENT)
-                {
-                    Native.SetCursor(Native.LoadCursor(IntPtr.Zero, Native.IDC_SIZEALL));
-                    handled = true;
-                    return new IntPtr(1);
-                }
-                break;
-            }
-
             case Native.WM_LBUTTONDOWN:
             {
-                // Only delivered when the hit test above allowed it (band, or inner + Shift/Ctrl).
                 Native.GetCursorPos(out _dragStartCursor);
-                _dragStartSel = _selectionPx;
-                _dragging = true;
-                Native.SetCapture(hwnd);
+                _drag = ZoneAt(_dragStartCursor.X, _dragStartCursor.Y);
+                if (_drag != DragKind.None)
+                {
+                    _dragStartSel = _selectionPx;
+                    _element.Cursor = WpfCursorFor(_drag);
+                    Native.SetCapture(hwnd);
+                }
                 handled = true;
                 break;
             }
-
             case Native.WM_MOUSEMOVE:
             {
-                if (_dragging)
+                if (_drag != DragKind.None)
                 {
                     Native.GetCursorPos(out var cur);
-                    int dx = cur.X - _dragStartCursor.X;
-                    int dy = cur.Y - _dragStartCursor.Y;
-                    int w = _selectionPx.Width, h = _selectionPx.Height;
-                    int maxL = Math.Max(0, _monitor.BoundsPx.Width - w);
-                    int maxT = Math.Max(0, _monitor.BoundsPx.Height - h);
-                    int newL = Math.Clamp(_dragStartSel.Left + dx, 0, maxL);
-                    int newT = Math.Clamp(_dragStartSel.Top + dy, 0, maxT);
-                    if (newL != _selectionPx.Left || newT != _selectionPx.Top)
+                    var next = ApplyDrag(_drag, _dragStartSel, cur.X - _dragStartCursor.X, cur.Y - _dragStartCursor.Y);
+                    if (next != _selectionPx)
                     {
-                        _selectionPx = RectPhysical.FromSize(newL, newT, w, h);
+                        _selectionPx = next;
+                        _element.Selection = next;
+                        _element.InvalidateVisual();
                         MoveWindowToSelection(hwnd);
-                        RegionMoved?.Invoke(_selectionPx);
+                        RegionChanged?.Invoke(next);
                     }
                     handled = true;
                 }
                 break;
             }
-
             case Native.WM_LBUTTONUP:
             {
-                if (_dragging)
+                if (_drag != DragKind.None)
                 {
-                    _dragging = false;
+                    _drag = DragKind.None;
                     Native.ReleaseCapture();
                     handled = true;
                 }
@@ -170,53 +165,132 @@ internal sealed class RegionOutline : Window
         return IntPtr.Zero;
     }
 
-    /// <summary>Returns HTCLIENT for a point that should be a move-grab (the band, or the inner rect
-    /// while Shift/Ctrl is held) and HTTRANSPARENT for an inner point with no modifier (so the click
-    /// falls through to the app being recorded).</summary>
-    private int HitTest(int screenX, int screenY)
+    /// <summary>Classifies a screen point into a drag zone given the current mode. Band edges/corners
+    /// resize (Setup) or move (Capturing); the inner is a modifier-gated move (Setup) or nothing.</summary>
+    private DragKind ZoneAt(int screenX, int screenY)
     {
-        var bounds = _monitor.BoundsPx;
-        int originX = bounds.Left + _selectionPx.Left - BandPx;
-        int originY = bounds.Top + _selectionPx.Top - BandPx;
-        int rx = screenX - originX;
-        int ry = screenY - originY;
-
-        bool inInner =
-            rx >= BandPx && rx < BandPx + _selectionPx.Width &&
-            ry >= BandPx && ry < BandPx + _selectionPx.Height;
-
-        if (inInner)
+        var b = _monitor.BoundsPx;
+        int rx = screenX - (b.Left + _selectionPx.Left - BandPx);
+        int ry = screenY - (b.Top + _selectionPx.Top - BandPx);
+        int outerW = _selectionPx.Width + BandPx * 2;
+        int outerH = _selectionPx.Height + BandPx * 2;
+        if (rx < 0 || ry < 0 || rx >= outerW || ry >= outerH)
         {
-            bool modifier =
-                (Native.GetKeyState(Native.VK_SHIFT) & 0x8000) != 0 ||
-                (Native.GetKeyState(Native.VK_CONTROL) & 0x8000) != 0;
-            return modifier ? Native.HTCLIENT : Native.HTTRANSPARENT;
+            return DragKind.None;
         }
 
-        // The band ring (the window covers only region + band, so any non-inner point is the band).
-        return Native.HTCLIENT;
+        bool nearLeft = rx < BandPx;
+        bool nearRight = rx >= BandPx + _selectionPx.Width;
+        bool nearTop = ry < BandPx;
+        bool nearBottom = ry >= BandPx + _selectionPx.Height;
+        bool onBand = nearLeft || nearRight || nearTop || nearBottom;
+
+        if (onBand)
+        {
+            if (!_allowResize)
+            {
+                return DragKind.Move; // size locked while capturing - edges move
+            }
+            if (nearTop && nearLeft) return DragKind.TopLeft;
+            if (nearTop && nearRight) return DragKind.TopRight;
+            if (nearBottom && nearLeft) return DragKind.BottomLeft;
+            if (nearBottom && nearRight) return DragKind.BottomRight;
+            if (nearLeft) return DragKind.Left;
+            if (nearRight) return DragKind.Right;
+            if (nearTop) return DragKind.Top;
+            return DragKind.Bottom;
+        }
+
+        // Inside the region: a move only while Shift/Ctrl is held, else fall through to the app.
+        bool modifier =
+            (Native.GetKeyState(Native.VK_SHIFT) & 0x8000) != 0 ||
+            (Native.GetKeyState(Native.VK_CONTROL) & 0x8000) != 0;
+        return modifier ? DragKind.Move : DragKind.None;
+    }
+
+    // Cursor feedback goes through WPF (set on the element), NOT Win32 WM_SETCURSOR: WPF re-applies
+    // the element's own cursor while processing each WM_MOUSEMOVE, which would immediately clobber a
+    // cursor set from a WM_SETCURSOR hook (that was the "cursor only changes once I start dragging"
+    // bug). Setting the element's Cursor makes WPF itself show the right one on hover. During a drag
+    // this handler bails, so the grab cursor set at drag start persists.
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (_drag != DragKind.None)
+        {
+            return;
+        }
+        Native.GetCursorPos(out var c);
+        _element.Cursor = WpfCursorFor(ZoneAt(c.X, c.Y));
+    }
+
+    private static WCursor WpfCursorFor(DragKind kind) => kind switch
+    {
+        DragKind.Left or DragKind.Right => WCursors.SizeWE,
+        DragKind.Top or DragKind.Bottom => WCursors.SizeNS,
+        DragKind.TopLeft or DragKind.BottomRight => WCursors.SizeNWSE,
+        DragKind.TopRight or DragKind.BottomLeft => WCursors.SizeNESW,
+        DragKind.Move => WCursors.SizeAll,
+        _ => WCursors.Arrow,
+    };
+
+    /// <summary>Computes the new selection for a drag of <paramref name="kind"/> by (dx,dy) from the
+    /// selection captured at drag start. Moves translate; resizes move the grabbed edge(s) while the
+    /// opposite edge stays put. Clamped to the monitor, kept at/above the minimum, and forced to even
+    /// width/height (the H.264/GIF encoders need even dimensions).</summary>
+    private RectPhysical ApplyDrag(DragKind kind, RectPhysical s, int dx, int dy)
+    {
+        int monW = _monitor.BoundsPx.Width, monH = _monitor.BoundsPx.Height;
+
+        if (kind == DragKind.Move)
+        {
+            int nl = Math.Clamp(s.Left + dx, 0, Math.Max(0, monW - s.Width));
+            int nt = Math.Clamp(s.Top + dy, 0, Math.Max(0, monH - s.Height));
+            return RectPhysical.FromSize(nl, nt, s.Width, s.Height);
+        }
+
+        int left = s.Left, top = s.Top, right = s.Right, bottom = s.Bottom;
+
+        if (kind is DragKind.Left or DragKind.TopLeft or DragKind.BottomLeft)
+            left = Math.Clamp(s.Left + dx, 0, right - MinSizePx);
+        if (kind is DragKind.Right or DragKind.TopRight or DragKind.BottomRight)
+            right = Math.Clamp(s.Right + dx, left + MinSizePx, monW);
+        if (kind is DragKind.Top or DragKind.TopLeft or DragKind.TopRight)
+            top = Math.Clamp(s.Top + dy, 0, bottom - MinSizePx);
+        if (kind is DragKind.Bottom or DragKind.BottomLeft or DragKind.BottomRight)
+            bottom = Math.Clamp(s.Bottom + dy, top + MinSizePx, monH);
+
+        int w = (right - left) & ~1; // even
+        int h = (bottom - top) & ~1;
+        // If a left/top edge is the one moving, keep the fixed (right/bottom) edge anchored after the
+        // even-rounding by recomputing the moving edge from the fixed one.
+        if (kind is DragKind.Left or DragKind.TopLeft or DragKind.BottomLeft) left = right - w;
+        if (kind is DragKind.Top or DragKind.TopLeft or DragKind.TopRight) top = bottom - h;
+        return RectPhysical.FromSize(left, top, Math.Max(MinSizePx, w), Math.Max(MinSizePx, h));
     }
 
     /// <summary>Close, from RecordingSession (UI thread).</summary>
     public void CloseOutline() => Close();
 
-    /// <summary>Draws the dashed frame: SelectionAdorner's two-tone recipe (dark under-stroke with
-    /// light 3-3 dashes riding on it), sized in physical pixels so the stroke width stays fixed at
-    /// high display scaling and never widens across the region boundary.</summary>
+    /// <summary>Draws the dashed frame (two-tone marching-ants recipe) plus the faint fills that make
+    /// the band - and, in Setup, the inner - hit-testable on this layered window.</summary>
     private sealed class OutlineElement : FrameworkElement
     {
         private const double StrokePhysicalPx = 1.5;
 
-        private readonly RectPhysical _selectionPx;
+        private RectPhysical _selection;
+        private bool _showInnerTint;
         private double _pensScale = -1;
         private Pen? _underPen;
         private Pen? _dashPen;
 
-        public OutlineElement(RectPhysical selectionPx)
-        {
-            _selectionPx = selectionPx;
-            IsHitTestVisible = false; // hit-testing is decided in the window's WM_NCHITTEST hook
-        }
+        // Faint fills (alpha kept low so they read as a subtle highlight, but > 0 so the layered
+        // window hit-tests these pixels - see the class doc).
+        private static readonly Brush s_bandFill = Frozen(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+        private static readonly Brush s_innerTint = Frozen(Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF));
+
+        public RectPhysical Selection { get => _selection; set => _selection = value; }
+        public bool ShowInnerTint { get => _showInnerTint; set => _showInnerTint = value; }
 
         protected override void OnRender(DrawingContext dc)
         {
@@ -226,7 +300,6 @@ internal sealed class RegionOutline : Window
                 scaleX = target.TransformToDevice.M11;
                 scaleY = target.TransformToDevice.M22;
             }
-
             double scale = Math.Max(scaleX, scaleY);
             if (Math.Abs(scale - _pensScale) > 0.001 || _underPen is null || _dashPen is null)
             {
@@ -236,28 +309,34 @@ internal sealed class RegionOutline : Window
                     Color.FromArgb(0xFF, 0xDC, 0xDC, 0xE0), StrokePhysicalPx / scale, new DashStyle(new double[] { 3, 3 }, 0));
             }
 
-            double insetX = BandPx / 2.0 / scaleX;
-            double insetY = BandPx / 2.0 / scaleY;
-            double width = (_selectionPx.Width + BandPx * 2) / scaleX;
-            double height = (_selectionPx.Height + BandPx * 2) / scaleY;
-            var frame = new Rect(insetX, insetY, Math.Max(0, width - insetX * 2), Math.Max(0, height - insetY * 2));
+            double band = BandPx / scaleX;
+            double innerX = band, innerY = BandPx / scaleY;
+            double innerW = _selection.Width / scaleX, innerH = _selection.Height / scaleY;
+            double outerW = (_selection.Width + BandPx * 2) / scaleX, outerH = (_selection.Height + BandPx * 2) / scaleY;
 
+            // Band ring fill (outer rect minus inner rect), always present so the band hit-tests.
+            var full = new RectangleGeometry(new Rect(0, 0, outerW, outerH));
+            var hole = new RectangleGeometry(new Rect(innerX, innerY, innerW, innerH));
+            dc.DrawGeometry(s_bandFill, null, new CombinedGeometry(GeometryCombineMode.Exclude, full, hole));
+
+            if (_showInnerTint)
+            {
+                dc.DrawRectangle(s_innerTint, null, new Rect(innerX, innerY, innerW, innerH));
+            }
+
+            // Dashed frame, FrameInsetPx outside the region.
+            double fx = FrameInsetPx / scaleX, fy = FrameInsetPx / scaleY;
+            var frame = new Rect(fx, fy, Math.Max(0, outerW - fx * 2), Math.Max(0, outerH - fy * 2));
             dc.DrawRectangle(null, _underPen, frame);
             dc.DrawRectangle(null, _dashPen, frame);
         }
 
+        private static Brush Frozen(Color c) { var b = new SolidColorBrush(c); b.Freeze(); return b; }
+
         private static Pen CreateFrozenPen(Color color, double thickness, DashStyle? dash)
         {
-            var pen = new Pen(new SolidColorBrush(color), thickness)
-            {
-                StartLineCap = PenLineCap.Flat,
-                EndLineCap = PenLineCap.Flat,
-            };
-            if (dash is not null)
-            {
-                pen.DashStyle = dash;
-                pen.DashCap = PenLineCap.Flat;
-            }
+            var pen = new Pen(new SolidColorBrush(color), thickness) { StartLineCap = PenLineCap.Flat, EndLineCap = PenLineCap.Flat };
+            if (dash is not null) { pen.DashStyle = dash; pen.DashCap = PenLineCap.Flat; }
             pen.Freeze();
             return pen;
         }
@@ -266,21 +345,11 @@ internal sealed class RegionOutline : Window
     /// <summary>Win32 bits used only for the drag/hit-test interaction, kept local to this window.</summary>
     private static class Native
     {
-        public const int WM_NCHITTEST = 0x0084;
-        public const int WM_SETCURSOR = 0x0020;
-        public const int WM_LBUTTONDOWN = 0x0201;
-        public const int WM_MOUSEMOVE = 0x0200;
-        public const int WM_LBUTTONUP = 0x0202;
-
-        public const int HTTRANSPARENT = -1;
-        public const int HTCLIENT = 1;
-
+        public const int WM_NCHITTEST = 0x0084, WM_SETCURSOR = 0x0020,
+            WM_LBUTTONDOWN = 0x0201, WM_MOUSEMOVE = 0x0200, WM_LBUTTONUP = 0x0202;
+        public const int HTTRANSPARENT = -1, HTCLIENT = 1;
         public const int WS_EX_NOACTIVATE = 0x08000000;
-
-        public const int VK_SHIFT = 0x10;
-        public const int VK_CONTROL = 0x11;
-
-        public static readonly IntPtr IDC_SIZEALL = new(32646);
+        public const int VK_SHIFT = 0x10, VK_CONTROL = 0x11;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT { public int X; public int Y; }
@@ -289,7 +358,5 @@ internal sealed class RegionOutline : Window
         [DllImport("user32.dll")] public static extern IntPtr SetCapture(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool ReleaseCapture();
         [DllImport("user32.dll")] public static extern short GetKeyState(int vKey);
-        [DllImport("user32.dll")] public static extern IntPtr SetCursor(IntPtr hCursor);
-        [DllImport("user32.dll")] public static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
     }
 }

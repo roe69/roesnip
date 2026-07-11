@@ -173,8 +173,8 @@ internal sealed class RecordingSession
             // OUTSIDE the region, capture-excluded, click-through — see RegionOutline's doc. Shown
             // for the whole session (Setup through Reviewing), not just while actually capturing.
             _outline = new RegionOutline(_monitor, _selectionPx);
-            _outline.RegionMoved += OnRegionMoved;
-            _outline.Show();
+            _outline.RegionChanged += OnRegionMoved;
+            _outline.Show(); // Setup mode by default: band resizes, Shift/Ctrl inside moves
 
             _chrome = new RecordingChrome(_monitor, _selectionPx, _format, _mic, _systemAudio);
             _chrome.StartRequested += BeginCapture;
@@ -241,10 +241,11 @@ internal sealed class RecordingSession
         }
     }
 
-    /// <summary>The user dragged the recorded region (RegionOutline). UI thread. Re-anchor the HUD to
-    /// the region's new spot and, if a take is actively capturing, slide the recorder's crop origin so
-    /// the recording follows too (the encoder dimensions are unchanged, only the captured position).
-    /// The outline repositions itself; this only propagates to the other two moving parts.</summary>
+    /// <summary>The user moved or resized the recorded region (RegionOutline). UI thread. Re-anchor
+    /// the HUD to the region's new spot and, if a take is actively capturing, slide the recorder's
+    /// crop origin so the recording follows (only a MOVE reaches here while capturing - resize is
+    /// Setup-only, before the recorder exists, so SetOrigin is a no-op then). The outline repositions
+    /// itself; this only propagates to the other two moving parts.</summary>
     private void OnRegionMoved(RectPhysical selectionPx)
     {
         _selectionPx = selectionPx;
@@ -326,6 +327,7 @@ internal sealed class RecordingSession
 
             _phase = Phase.Capturing;
             _chrome!.EnterRecording();
+            _outline?.SetInteractionMode(allowResize: false); // size is locked to the encoder now - band moves, not resizes
             Console.Error.WriteLine($"RoeSnip: recording capture started ({_format}, {_selectionPx.Width}x{_selectionPx.Height}, {_targetFps}fps)");
         }
         catch (Exception ex)
@@ -494,6 +496,7 @@ internal sealed class RecordingSession
 
         _phase = Phase.Setup;
         _chrome!.EnterSetup();
+        _outline?.SetInteractionMode(allowResize: true); // back to setup - the region can be reshaped again
     }
 
     /// <summary>Available in every phase — aborts the whole recording without saving. Discards any
