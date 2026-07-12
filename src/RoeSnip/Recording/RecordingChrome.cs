@@ -10,6 +10,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using RoeSnip.Capture;
 using RoeSnip.Interop;
+using RoeSnip.Recording.Gif;
 
 namespace RoeSnip.Recording;
 
@@ -32,7 +33,9 @@ using VAlign = System.Windows.VerticalAlignment;
 /// anchored just outside the recorded selection that walks the user through THREE states instead
 /// of starting capture the instant the format is chosen:
 ///   Setup     - nothing is being captured yet. Shows Start, the MP4-only audio toggles (Mic /
-///               System audio - hidden entirely for GIF, which has no audio track), and Cancel.
+///               System audio - hidden entirely for GIF, which has no audio track), the GIF-only
+///               size preset row (Quality/Balanced/Compact pills - hidden entirely for MP4, which
+///               has no size preset), and Cancel.
 ///   Recording - Start was pressed; the real WGC/encoder pipeline (RecordingController) is live.
 ///               Shows the red dot + ticking elapsed time and Stop. Audio toggles are disabled
 ///               here (the encoder already baked in whatever they were set to at Start - see
@@ -79,6 +82,11 @@ internal sealed class RecordingChrome : Window
     private readonly ToggleButton _micToggle;
     private readonly ToggleButton _systemAudioToggle;
     private readonly StackPanel _audioRow;
+    private readonly ToggleButton _gifQualityChip;
+    private readonly ToggleButton _gifBalancedChip;
+    private readonly ToggleButton _gifCompactChip;
+    private readonly StackPanel _gifSizeRow;
+    private GifSizePreset _gifSizePreset; // mirrors whichever chip is currently checked
     private readonly Button _restartButton;
     private readonly Button _saveButton;
     private readonly Button _cancelButton;
@@ -102,8 +110,14 @@ internal sealed class RecordingChrome : Window
     public event Action? CancelRequested;
     public event Action<bool>? MicToggled;
     public event Action<bool>? SystemAudioToggled;
+    /// <summary>Setup state's GIF size row - fires once per actual selection change (clicking the
+    /// already-checked chip is a no-op, see SelectGifSizePreset). Never fires for MP4 (the row is
+    /// collapsed and disabled outside GIF takes).</summary>
+    public event Action<GifSizePreset>? GifSizePresetChanged;
 
-    public RecordingChrome(MonitorInfo monitor, RectPhysical selectionPx, RecordingFormat format, bool initialMic, bool initialSystemAudio)
+    public RecordingChrome(
+        MonitorInfo monitor, RectPhysical selectionPx, RecordingFormat format,
+        bool initialMic, bool initialSystemAudio, GifSizePreset initialGifSizePreset)
     {
         _monitor = monitor;
         _selectionPx = selectionPx;
@@ -189,6 +203,28 @@ internal sealed class RecordingChrome : Window
         // GIF has no audio track at all - the row is gone, not just grayed, since it never applies.
         _audioRow.Visibility = _format == RecordingFormat.Mp4 ? Visibility.Visible : Visibility.Collapsed;
 
+        // GIF-only size preset row - the audio row's mirror image (MP4 has no size preset, GIF has
+        // no audio track, so exactly one of the two rows is ever visible for a given take). Radio
+        // behavior across the three chips, not three independent booleans: exactly one is checked
+        // at all times, enforced by SelectGifSizePreset explicitly setting all three IsChecked
+        // values on every click (including a re-click of the already-checked chip, which
+        // ToggleButton's own built-in click-toggles-IsChecked behavior would otherwise uncheck).
+        _gifSizePreset = initialGifSizePreset;
+        _gifQualityChip = BuildSizePresetChip("Quality", initialGifSizePreset == GifSizePreset.Quality);
+        _gifQualityChip.Click += (_, _) => SelectGifSizePreset(GifSizePreset.Quality);
+        _gifBalancedChip = BuildSizePresetChip("Balanced", initialGifSizePreset == GifSizePreset.Balanced);
+        _gifBalancedChip.Click += (_, _) => SelectGifSizePreset(GifSizePreset.Balanced);
+        _gifCompactChip = BuildSizePresetChip("Compact", initialGifSizePreset == GifSizePreset.Compact);
+        _gifCompactChip.Click += (_, _) => SelectGifSizePreset(GifSizePreset.Compact);
+
+        _gifSizeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+        _gifSizeRow.Children.Add(_gifQualityChip);
+        _gifSizeRow.Children.Add(_gifBalancedChip);
+        _gifSizeRow.Children.Add(_gifCompactChip);
+        // MP4 has no size preset at all - inverted visibility from _audioRow, same "gone, not just
+        // grayed" reasoning (it never applies to that format).
+        _gifSizeRow.Visibility = _format == RecordingFormat.Gif ? Visibility.Visible : Visibility.Collapsed;
+
         _restartButton = BuildButton("Restart", isDanger: false);
         _restartButton.Click += (_, _) => ShowRestartConfirm();
         AutomationProperties.SetAutomationId(_restartButton, "RecordingRestartButton");
@@ -211,6 +247,7 @@ internal sealed class RecordingChrome : Window
         _normalPanel = new StackPanel { Margin = new Thickness(12, 8, 12, 8) };
         _normalPanel.Children.Add(indicatorRow);
         _normalPanel.Children.Add(_audioRow);
+        _normalPanel.Children.Add(_gifSizeRow);
         _normalPanel.Children.Add(actionRow);
 
         // Inline restart confirmation (item: "guarded by a confirmation prompt"). Built in the SAME
@@ -373,6 +410,77 @@ internal sealed class RecordingChrome : Window
 
         toggle.Template = template;
         return toggle;
+    }
+
+    /// <summary>One chip of the GIF size preset row - visually IDENTICAL recipe to
+    /// <see cref="BuildAudioToggle"/> (checked = solid orange fill + dark on-primary text, unchecked
+    /// = dim ghost pill + muted text), but the label is just the preset name with no on/off suffix:
+    /// unlike a standalone boolean toggle, this chip's meaning ("Balanced") is stated by its own
+    /// text regardless of which one is checked, and the checked/unchecked pair across all three
+    /// chips is what conveys the selection - reading any one chip's label already tells you what
+    /// selecting it would do.</summary>
+    private static ToggleButton BuildSizePresetChip(string label, bool initiallyChecked)
+    {
+        var chip = new ToggleButton
+        {
+            Content = label,
+            IsChecked = initiallyChecked,
+            Padding = new Thickness(10, 3, 10, 3),
+            Margin = new Thickness(0, 0, 6, 0),
+            Cursor = Cursors.Hand,
+            Focusable = false,
+            // Local value, not a checked-trigger setter - same reasoning as BuildAudioToggle's own
+            // Foreground: a template trigger would never win over this local value in WPF.
+            Foreground = new SolidColorBrush(initiallyChecked ? TextOnPrimary : TextMuted),
+        };
+        var template = new ControlTemplate(typeof(ToggleButton));
+        var borderFactory = new FrameworkElementFactory(typeof(Border));
+        borderFactory.Name = "Bg";
+        borderFactory.SetValue(Border.BackgroundProperty, new SolidColorBrush(GhostFill));
+        borderFactory.SetValue(Border.BorderBrushProperty, new SolidColorBrush(BorderStrong));
+        borderFactory.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+        borderFactory.SetValue(Border.CornerRadiusProperty, new CornerRadius(12));
+        borderFactory.SetValue(Border.PaddingProperty, new TemplateBindingExtension(ToggleButton.PaddingProperty));
+        var contentFactory = new FrameworkElementFactory(typeof(ContentPresenter));
+        contentFactory.SetValue(ContentPresenter.HorizontalAlignmentProperty, HAlign.Center);
+        contentFactory.SetValue(ContentPresenter.VerticalAlignmentProperty, VAlign.Center);
+        borderFactory.AppendChild(contentFactory);
+        template.VisualTree = borderFactory;
+
+        var checkedTrigger = new Trigger { Property = ToggleButton.IsCheckedProperty, Value = true };
+        checkedTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(PrimaryOrange), "Bg"));
+        checkedTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, new SolidColorBrush(PrimaryOrangeBorder), "Bg"));
+        var disabledTrigger = new Trigger { Property = ToggleButton.IsEnabledProperty, Value = false };
+        disabledTrigger.Setters.Add(new Setter(ToggleButton.OpacityProperty, 0.5));
+        template.Triggers.Add(checkedTrigger);
+        template.Triggers.Add(disabledTrigger);
+
+        chip.Template = template;
+        return chip;
+    }
+
+    /// <summary>One of the three GIF size chips was clicked. Enforces the radio invariant (exactly
+    /// one checked) by setting all three chips' IsChecked explicitly rather than trusting whichever
+    /// one ToggleButton itself already flipped - this both un-checks the other two on a real switch
+    /// AND re-checks the clicked chip when it was already the selected one (ToggleButton's built-in
+    /// click behavior would otherwise leave a no-op click showing NOTHING selected). Only raises
+    /// <see cref="GifSizePresetChanged"/> when the selection actually changed.</summary>
+    private void SelectGifSizePreset(GifSizePreset preset)
+    {
+        bool changed = preset != _gifSizePreset;
+        _gifSizePreset = preset;
+
+        _gifQualityChip.IsChecked = preset == GifSizePreset.Quality;
+        _gifQualityChip.Foreground = new SolidColorBrush(preset == GifSizePreset.Quality ? TextOnPrimary : TextMuted);
+        _gifBalancedChip.IsChecked = preset == GifSizePreset.Balanced;
+        _gifBalancedChip.Foreground = new SolidColorBrush(preset == GifSizePreset.Balanced ? TextOnPrimary : TextMuted);
+        _gifCompactChip.IsChecked = preset == GifSizePreset.Compact;
+        _gifCompactChip.Foreground = new SolidColorBrush(preset == GifSizePreset.Compact ? TextOnPrimary : TextMuted);
+
+        if (changed)
+        {
+            GifSizePresetChanged?.Invoke(preset);
+        }
     }
 
     private static string AudioToggleLabel(string baseLabel, bool on) => $"{baseLabel} {(on ? "on" : "off")}";
@@ -546,6 +654,11 @@ internal sealed class RecordingChrome : Window
         // the panel doesn't resize; GIF hides the whole row regardless (see the ctor).
         _micToggle.IsEnabled = _state == ChromeState.Setup;
         _systemAudioToggle.IsEnabled = _state == ChromeState.Setup;
+
+        // GIF size preset is likewise fixed per take (baked into GifEncoder.Create at Start) - only
+        // editable in Setup. Disabled on the whole row (not hidden) once running, mirroring the
+        // audio toggles above rather than the row's own Visibility (that stays GIF-vs-MP4 only).
+        _gifSizeRow.IsEnabled = _state == ChromeState.Setup;
 
         // Restart only makes sense once something has actually been captured.
         _restartButton.IsEnabled = _state != ChromeState.Setup;

@@ -7,6 +7,7 @@ using Microsoft.Win32;
 using RoeSnip.App;
 using RoeSnip.Capture;
 using RoeSnip.Imaging;
+using RoeSnip.Recording.Gif;
 
 namespace RoeSnip.Recording;
 
@@ -124,7 +125,8 @@ internal sealed class RecordingSession
     private Phase _phase = Phase.Setup;
     private bool _mic;
     private bool _systemAudio;
-    private RoeSnipSettings _liveSettings = null!; // set in Start(); tracks audio-toggle edits for persistence
+    private GifSizePreset _gifSizePreset; // GIF only; read fresh into GifEncoder.Create at the NEXT BeginCapture after a Setup-phase change
+    private RoeSnipSettings _liveSettings = null!; // set in Start(); tracks audio-toggle/preset edits for persistence
 
     // Pause/resume of a live take (CHANGE 2): a single accumulator drives both the excluded-time
     // media clock (EncoderLoop/DrainAudio) and the pause-aware elapsed HUD. _paused/_pausedTicks are
@@ -182,6 +184,7 @@ internal sealed class RecordingSession
             _liveSettings = _settings;
             _mic = _settings.RecordMicrophone;
             _systemAudio = _settings.RecordSystemAudio;
+            _gifSizePreset = GifSizePresets.Parse(_settings.GifSizePreset);
 
             // The visible "this area will be recorded" frame (both formats): dashed outline just
             // OUTSIDE the region; the inner is unpainted (true click-through) except while Shift/
@@ -191,7 +194,7 @@ internal sealed class RecordingSession
             _outline.RegionChanged += OnRegionMoved;
             _outline.Show(); // Setup mode by default: band resizes, Shift/Ctrl inside moves
 
-            _chrome = new RecordingChrome(_monitor, _selectionPx, _format, _mic, _systemAudio);
+            _chrome = new RecordingChrome(_monitor, _selectionPx, _format, _mic, _systemAudio, _gifSizePreset);
             _chrome.StartRequested += BeginCapture;
             _chrome.StopRequested += StopCaptureToReview;
             _chrome.PauseRequested += Pause;
@@ -201,6 +204,7 @@ internal sealed class RecordingSession
             _chrome.CancelRequested += CancelAndDiscard;
             _chrome.MicToggled += v => SetAudioToggle(mic: v, systemAudio: null);
             _chrome.SystemAudioToggled += v => SetAudioToggle(mic: null, systemAudio: v);
+            _chrome.GifSizePresetChanged += SetGifSizePreset;
             _chrome.Show();
 
             Console.Error.WriteLine($"RoeSnip: recording setup opened ({_format}, {_selectionPx.Width}x{_selectionPx.Height})");
@@ -255,6 +259,26 @@ internal sealed class RecordingSession
         catch (Exception ex)
         {
             Console.Error.WriteLine($"RoeSnip: failed to persist recording audio toggle: {ex.Message}");
+        }
+    }
+
+    /// <summary>RecordingChrome's Setup-panel GIF size row changed (GIF-only; the row itself is
+    /// collapsed for MP4 so this never fires for that format). Persists immediately, same
+    /// best-effort split as <see cref="SetAudioToggle"/>, AND updates <see cref="_gifSizePreset"/>
+    /// so the field a Setup-phase edit changes is exactly the one <see cref="BeginCapture"/> reads
+    /// from at the NEXT Start — the row is disabled outside Setup (see RecordingChrome.ApplyState),
+    /// so there is no live take whose already-built GifEncoder this could retroactively affect.</summary>
+    private void SetGifSizePreset(GifSizePreset preset)
+    {
+        _gifSizePreset = preset;
+        _liveSettings = _liveSettings with { GifSizePreset = preset.ToString() };
+        try
+        {
+            SettingsStore.Save(_liveSettings);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: failed to persist recording GIF size preset: {ex.Message}");
         }
     }
 
@@ -326,7 +350,12 @@ internal sealed class RecordingSession
             else
             {
                 _gifTempPath = Path.Combine(Path.GetTempPath(), $"roesnip_rec_{Guid.NewGuid():N}.gif");
-                _gifEncoder = GifEncoder.Create(_gifTempPath, _selectionPx.Width, _selectionPx.Height);
+                // The preset is whatever the Setup-phase GIF row last selected (or the persisted
+                // settings default, if it was never touched this session) — see SetGifSizePreset's
+                // doc comment for why reading the field here is the correct "next take" contract.
+                _gifEncoder = GifEncoder.Create(
+                    _gifTempPath, _selectionPx.Width, _selectionPx.Height,
+                    options: GifSizePresets.ForPreset(_gifSizePreset));
             }
 
             // Started last (after the encoder is ready to receive frames) so no captured frame is
@@ -848,10 +877,12 @@ internal sealed class RecordingSession
         // (much more expensive) tone-map. GifEncoder's own SDR diff stays as the exact gate.
         CapturedFrame? prevGifRaw = null;
         // GIF only: two persistent exactly-canvas-sized tone-map targets so the 50fps path never
-        // allocates a fresh (LOH-sized) output array per frame. GifEncoder retains at most ONE
-        // buffer as its diff baseline, and AddFrame returns true exactly when it takes the current
-        // one — so rotating on true (and reusing the same buffer on a skip) can never overwrite
-        // the retained baseline.
+        // allocates a fresh (LOH-sized) output array per frame. GifEncoder.AddFrame(SdrImage, long)
+        // never retains a reference to the buffer it's handed, on EITHER outcome — it copies
+        // whatever it paints into its own internal diff baseline synchronously before returning
+        // (see that method's doc comment) — so there is no aliasing hazard for this rotation to
+        // protect against in the first place. The alternation below is kept anyway as cheap,
+        // harmless housekeeping, not because it's required for correctness.
         byte[]? gifTonemapA = null, gifTonemapB = null;
         bool gifUseA = true;
 
@@ -914,7 +945,7 @@ internal sealed class RecordingSession
                             // frame's delay to its real display duration once the next frame lands.
                             if (_gifEncoder!.AddFrame(sdr, effectiveTicks))
                             {
-                                gifUseA = !gifUseA; // the encoder retained this buffer as its baseline
+                                gifUseA = !gifUseA; // harmless housekeeping only — see the comment above
                             }
                             prevGifRaw?.Dispose();
                             prevGifRaw = frame; // becomes the raw-skip baseline for the next frame

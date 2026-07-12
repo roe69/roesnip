@@ -117,6 +117,15 @@ public sealed record RoeSnipSettings
     public bool RecordMicrophone { get; init; } = false;
     public bool RecordSystemAudio { get; init; } = false;
 
+    /// <summary>GIF recording size/quality tier, chosen from the recording chrome's Setup-only GIF
+    /// row and persisted immediately (same SettingsStore.Save best-effort pattern as the audio
+    /// toggles above). A plain string, not the <see cref="Recording.Gif.GifSizePreset"/> enum
+    /// itself — this record's JSON persistence style keeps every field JSON-primitive so the file
+    /// stays human-editable and forward/backward compatible across builds that add or reorder enum
+    /// members. Parsed via <see cref="Recording.Gif.GifSizePresets.Parse"/>, which fails safe to
+    /// "Quality" (this default) for any unknown or corrupt value rather than throwing.</summary>
+    public string GifSizePreset { get; init; } = "Quality";
+
     public static RoeSnipSettings Default { get; } = new();
 
     private static string DefaultSaveDirectory() =>

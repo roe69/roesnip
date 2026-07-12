@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using RoeSnip.App;
+using RoeSnip.Recording.Gif;
 using Xunit;
 
 namespace RoeSnip.Tests;
@@ -243,5 +244,46 @@ public class SettingsTests : IDisposable
         SettingsStore.Save(RoeSnipSettings.Default, nestedPath);
 
         Assert.True(File.Exists(nestedPath));
+    }
+
+    [Fact]
+    public void SaveThenLoad_RoundTripsGifSizePreset()
+    {
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+
+        var original = new RoeSnipSettings { GifSizePreset = "Compact" };
+        SettingsStore.Save(original, settingsPath);
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Equal("Compact", loaded.GifSizePreset);
+        Assert.Equal(GifSizePreset.Compact, GifSizePresets.Parse(loaded.GifSizePreset));
+    }
+
+    [Fact]
+    public void Load_JsonWithInvalidGifSizePreset_ParsesToQuality()
+    {
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+        File.WriteAllText(settingsPath, """
+            {
+              "SchemaVersion": 1,
+              "GifSizePreset": "NotARealPreset"
+            }
+            """);
+
+        var loaded = SettingsStore.Load(settingsPath);
+
+        // The raw string persists as-written (JSON round-trip doesn't validate it) — it's
+        // GifSizePresets.Parse, consumed at recording time, that fails safe to Quality.
+        Assert.Equal("NotARealPreset", loaded.GifSizePreset);
+        Assert.Equal(GifSizePreset.Quality, GifSizePresets.Parse(loaded.GifSizePreset));
+    }
+
+    [Fact]
+    public void Default_GifSizePreset_IsQuality()
+    {
+        Assert.Equal("Quality", RoeSnipSettings.Default.GifSizePreset);
+        Assert.Equal(GifSizePreset.Quality, GifSizePresets.Parse(RoeSnipSettings.Default.GifSizePreset));
     }
 }
