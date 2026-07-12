@@ -806,13 +806,38 @@ public static class AutomationClient
             return 1;
         }
 
+        // Root cause of the old "prints the right JSON, then exits 1 with 'Cannot access a closed
+        // pipe'" cosmetic bug, and why the fix has two parts:
+        //
+        // 1. `leaveOpen: true` on both wrappers below (the SERVER side of this same pipe — see
+        //    AutomationServer's own read loop a few hundred lines up — already does this). Without
+        //    it, StreamReader/StreamWriter each close the shared `client` stream themselves on
+        //    Dispose. That made the bug deterministic, not a rare race: with `using var` in
+        //    declaration order client/writer/reader, disposal ran in REVERSE order — reader first,
+        //    which silently closed `client` out from under the still-undisposed writer — then
+        //    writer.Dispose() tried to flush an already-closed pipe and threw. `leaveOpen: true`
+        //    means only the explicit `client.Dispose()` below ever actually closes the pipe, so
+        //    the two wrappers disposing in either order can never race each other.
+        // 2. Even with that fixed, the SERVER can still tear its own end down the instant after
+        //    flushing the response (a fast request/response cycle) — a genuine remote race this
+        //    process cannot prevent. `using var` would let a throw from that land inside this
+        //    method's try block, get swallowed by the generic `catch (Exception)` below, and stomp
+        //    the already-computed, already-printed, genuinely correct exit code with a spurious 1
+        //    plus a misleading "--auto failed: Cannot access a closed pipe" — the response on
+        //    STDOUT was right, only the exit code (and stderr noise) was wrong. So cleanup here is
+        //    explicit and best-effort in `finally` instead, never allowed to change `exitCode` once
+        //    it has been set from the parsed `ok` field.
+        NamedPipeClientStream? client = null;
+        StreamWriter? writer = null;
+        StreamReader? reader = null;
+        int exitCode;
         try
         {
-            using var client = new NamedPipeClientStream(".", AutomationProtocol.PipeName, PipeDirection.InOut);
+            client = new NamedPipeClientStream(".", AutomationProtocol.PipeName, PipeDirection.InOut);
             client.Connect(2000);
 
-            using var writer = new StreamWriter(client, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)) { AutoFlush = true, NewLine = "\n" };
-            using var reader = new StreamReader(client, Encoding.UTF8);
+            writer = new StreamWriter(client, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true) { AutoFlush = true, NewLine = "\n" };
+            reader = new StreamReader(client, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
             writer.WriteLine(json);
 
             string? response = reader.ReadLine();
@@ -825,7 +850,7 @@ public static class AutomationClient
             Console.WriteLine(response);
             using var doc = JsonDocument.Parse(response);
             bool ok = doc.RootElement.TryGetProperty("ok", out var okProp) && okProp.ValueKind == JsonValueKind.True;
-            return ok ? 0 : 1;
+            exitCode = ok ? 0 : 1;
         }
         catch (TimeoutException)
         {
@@ -838,5 +863,16 @@ public static class AutomationClient
             Console.Error.WriteLine($"RoeSnip: --auto failed: {ex.Message}");
             return 1;
         }
+        finally
+        {
+            // Reverse acquisition order, each swallowed independently — a failure disposing the
+            // reader must not skip disposing the writer/client, and none of these are allowed to
+            // throw out of a finally (that would still replace exitCode's already-decided value
+            // with an unhandled-exception exit, the exact bug this rewrite fixes).
+            try { reader?.Dispose(); } catch { /* quiet: best-effort cleanup only, see comment above */ }
+            try { writer?.Dispose(); } catch { /* quiet: best-effort cleanup only, see comment above */ }
+            try { client?.Dispose(); } catch { /* quiet: best-effort cleanup only, see comment above */ }
+        }
+        return exitCode;
     }
 }
