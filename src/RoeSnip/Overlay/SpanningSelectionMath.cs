@@ -76,6 +76,26 @@ public static class SpanningSelectionMath
         Math.Clamp(r.Right, virtualDesktopBounds.Left, virtualDesktopBounds.Right),
         Math.Clamp(r.Bottom, virtualDesktopBounds.Top, virtualDesktopBounds.Bottom));
 
+    /// <summary>Same shape as OverlayWindow's own ClampToFrame (the single-monitor Move drag's
+    /// clamp): slides <paramref name="r"/> back inside <paramref name="bounds"/> by moving its
+    /// ORIGIN only, preserving width/height, rather than clamping each of its 4 edges independently
+    /// the way <see cref="ClampToVirtualDesktop"/> (used by Resize/NewSelection, where only one or
+    /// two edges move per gesture and stopping just that edge at the boundary is the correct,
+    /// expected behavior) does. A SpanningMove candidate needs THIS instead: independently clamping
+    /// opposite edges that are both out of bounds by different amounts shrinks the rect, which reads
+    /// as the selection silently losing size mid-drag instead of sliding to a stop at the edge, like
+    /// every other drag in this app already does. Only shrinks the rect (down to `bounds`' own size)
+    /// in the degenerate case where it doesn't even fit — never grows it.</summary>
+    public static RectPhysical SlideToBounds(RectPhysical r, RectPhysical bounds)
+    {
+        var n = r.Normalized();
+        int w = Math.Min(n.Width, bounds.Width);
+        int h = Math.Min(n.Height, bounds.Height);
+        int left = Math.Clamp(n.Left, bounds.Left, bounds.Left + Math.Max(0, bounds.Width - w));
+        int top = Math.Clamp(n.Top, bounds.Top, bounds.Top + Math.Max(0, bounds.Height - h));
+        return RectPhysical.FromSize(left, top, w, h);
+    }
+
     private static RectPhysical IntersectRects(RectPhysical a, RectPhysical b) => new(
         Math.Max(a.Left, b.Left), Math.Max(a.Top, b.Top),
         Math.Min(a.Right, b.Right), Math.Min(a.Bottom, b.Bottom));

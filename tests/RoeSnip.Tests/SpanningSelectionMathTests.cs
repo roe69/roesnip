@@ -64,6 +64,58 @@ public class SpanningSelectionMathTests
         Assert.Equal(vdb, SpanningSelectionMath.ClampToVirtualDesktop(r, vdb));
     }
 
+    // ---------- SlideToBounds ----------
+    // The Move-drag clamp: preserves width/height by sliding the ORIGIN back inside bounds, unlike
+    // ClampToVirtualDesktop's independent-per-edge clamp (correct for Resize/NewSelection, wrong for
+    // Move — see SlideToBounds's own doc comment).
+
+    [Fact]
+    public void SlideToBounds_RectEntirelyInside_IsUnchanged()
+    {
+        var vdb = new RectPhysical(0, 0, 3840, 1080);
+        var r = new RectPhysical(100, 100, 900, 700);
+        Assert.Equal(r, SpanningSelectionMath.SlideToBounds(r, vdb));
+    }
+
+    [Fact]
+    public void SlideToBounds_OverhangingLeftEdge_SlidesWithoutShrinking()
+    {
+        // An 800-wide rect whose Left would be -200 (Right = 600) — sliding it to Left=0 keeps the
+        // full 800 width (Right becomes 800), unlike ClampToVirtualDesktop which would independently
+        // pull Left to 0 and leave Right at 600, shrinking the rect to 600 wide.
+        var vdb = new RectPhysical(0, 0, 3840, 1080);
+        var r = new RectPhysical(-200, 100, 600, 500);
+        var result = SpanningSelectionMath.SlideToBounds(r, vdb);
+        Assert.Equal(new RectPhysical(0, 100, 800, 500), result);
+    }
+
+    [Fact]
+    public void SlideToBounds_OverhangingRightAndBottomEdges_SlidesWithoutShrinking()
+    {
+        var vdb = new RectPhysical(0, 0, 3840, 1080);
+        var r = new RectPhysical(3700, 1000, 4200, 1300); // 500 wide, 300 tall
+        var result = SpanningSelectionMath.SlideToBounds(r, vdb);
+        Assert.Equal(new RectPhysical(3340, 780, 3840, 1080), result);
+    }
+
+    [Fact]
+    public void SlideToBounds_LargerThanBounds_ShrinksToBoundsSizeAsALastResort()
+    {
+        var vdb = new RectPhysical(0, 0, 1920, 1080);
+        var r = new RectPhysical(-500, -500, 5000, 5000);
+        var result = SpanningSelectionMath.SlideToBounds(r, vdb);
+        Assert.Equal(vdb, result);
+    }
+
+    [Fact]
+    public void SlideToBounds_NormalizesAnInvertedRectFirst()
+    {
+        var vdb = new RectPhysical(0, 0, 3840, 1080);
+        var inverted = new RectPhysical(600, 500, -200, 100); // Right < Left, Bottom < Top
+        var result = SpanningSelectionMath.SlideToBounds(inverted, vdb);
+        Assert.Equal(new RectPhysical(0, 100, 800, 500), result);
+    }
+
     // ---------- Distribute: single-monitor degenerate case ----------
 
     [Fact]

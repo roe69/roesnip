@@ -74,8 +74,13 @@ public partial class OverlayWindow : Window
     // SpanningResize/SpanningMove (resize-after-place) now do too, for exactly the same reason —
     // see docs/DESIGN-MULTIMON-SELECTION.md. The plain single-monitor Move/Resize/annotation drag
     // modes are untouched and still call SetSelection locally; they never run while
-    // IsSpanningSelection is true (see OnPreviewMouseLeftButtonDown's spanning branch).
-    private Action<OverlayWindow, RectPhysical> _onSpanningCandidate;
+    // IsSpanningSelection is true (see OnPreviewMouseLeftButtonDown's spanning branch). The trailing
+    // bool is preserveSize: true only for a SpanningMove candidate, so OnSpanningCandidate can slide
+    // the rect back into the virtual desktop's bounds instead of clamping each edge independently
+    // (which would shrink it) — see SpanningSelectionMath.SlideToBounds's own doc comment. NewSelection
+    // and SpanningResize both pass false: only one or two edges move per gesture there, so stopping
+    // just that edge at the boundary (the existing per-edge clamp) is the correct, expected result.
+    private Action<OverlayWindow, RectPhysical, bool> _onSpanningCandidate;
     private Action<OverlayWindow> _onFinalizeNewSelection;
     private Action<OverlayCommand> _onCommand;
     private Action<PickedColorInfo> _onColorPicked;
@@ -191,6 +196,18 @@ public partial class OverlayWindow : Window
     private bool _isSpanningSelection;
     private bool _isSpanningPrimary;
 
+    // A SpanningResize/SpanningMove (or NewSelection) drag redistributes its candidate to EVERY
+    // window on EVERY mouse-move (see OverlaySession.OnSpanningCandidate) — including windows that
+    // are not the drag owner and so have _dragMode == None throughout. UpdateToolbarPlacement's
+    // mid-drag suppression was keyed only on the local _dragMode, which correctly hides the toolbar
+    // on the owner but does nothing for a non-owner window whose candidate slice just appeared (or
+    // changed) via SetSpanningLocalSelection — that window would call ShowToolbar() on every
+    // mouse-move and the toolbar would visibly slide around under the live drag. This flag is set
+    // whenever SetSpanningLocalSelection runs as part of an in-progress drag (regardless of which
+    // window owns it) and cleared only by NotifySpanningDragEnded, which OverlaySession calls on
+    // every window once FinalizeNewSelectionDrag has settled the drag for good.
+    private bool _suppressToolbarForSpanningDrag;
+
     /// <summary>Cross-monitor selection (resize-after-place): the shared virtual-desktop rect from
     /// the most recent SetSpanningLocalSelection call, or null when not spanning. Every window gets
     /// the SAME value (OverlaySession.OnSpanningCandidate passes it to every window, not just the
@@ -269,7 +286,7 @@ public partial class OverlayWindow : Window
         RoeSnipSettings settings,
         Action<OverlayWindow> onActivatedByMouse,
         Action<OverlayWindow> onSelectionStarted,
-        Action<OverlayWindow, RectPhysical> onSpanningCandidate,
+        Action<OverlayWindow, RectPhysical, bool> onSpanningCandidate,
         Action<OverlayWindow> onFinalizeNewSelection,
         Action<OverlayCommand> onCommand,
         Action<PickedColorInfo> onColorPicked,
@@ -303,7 +320,7 @@ public partial class OverlayWindow : Window
 
         AssignSessionFields(
             placeholderFrame, placeholderPreview, RoeSnipSettings.Default,
-            static _ => { }, static _ => { }, static (_, _) => { }, static _ => { }, static _ => { },
+            static _ => { }, static _ => { }, static (_, _, _) => { }, static _ => { }, static _ => { },
             static _ => { }, pickOnlyMode: false);
         WireInputHandlers();
         // _initialized deliberately stays false — armed by Initialize() once a real session claims
@@ -330,7 +347,7 @@ public partial class OverlayWindow : Window
         RoeSnipSettings settings,
         Action<OverlayWindow> onActivatedByMouse,
         Action<OverlayWindow> onSelectionStarted,
-        Action<OverlayWindow, RectPhysical> onSpanningCandidate,
+        Action<OverlayWindow, RectPhysical, bool> onSpanningCandidate,
         Action<OverlayWindow> onFinalizeNewSelection,
         Action<OverlayCommand> onCommand,
         Action<PickedColorInfo> onColorPicked,
@@ -419,7 +436,7 @@ public partial class OverlayWindow : Window
         RoeSnipSettings settings,
         Action<OverlayWindow> onActivatedByMouse,
         Action<OverlayWindow> onSelectionStarted,
-        Action<OverlayWindow, RectPhysical> onSpanningCandidate,
+        Action<OverlayWindow, RectPhysical, bool> onSpanningCandidate,
         Action<OverlayWindow> onFinalizeNewSelection,
         Action<OverlayCommand> onCommand,
         Action<PickedColorInfo> onColorPicked,
@@ -1056,9 +1073,12 @@ public partial class OverlayWindow : Window
                     (int)Math.Abs(px.X - _dragAnchorPx.X),
                     (int)Math.Abs(px.Y - _dragAnchorPx.Y));
                 var monitorOrigin = Monitor.BoundsPx;
+                // false: the anchor is fixed; only the far corner moves, like a resize (see
+                // _onSpanningCandidate's own doc comment for what this bool means).
                 _onSpanningCandidate(this, new RectPhysical(
                     monitorOrigin.Left + localCandidate.Left, monitorOrigin.Top + localCandidate.Top,
-                    monitorOrigin.Left + localCandidate.Right, monitorOrigin.Top + localCandidate.Bottom));
+                    monitorOrigin.Left + localCandidate.Right, monitorOrigin.Top + localCandidate.Bottom),
+                    false);
                 break;
 
             case DragMode.Move:
@@ -1086,7 +1106,9 @@ public partial class OverlayWindow : Window
                 // NewSelection drag uses — never this window's own local rect.
                 var spanningMonitorOrigin = Monitor.BoundsPx;
                 var virtualPx = new Point(spanningMonitorOrigin.Left + px.X, spanningMonitorOrigin.Top + px.Y);
-                _onSpanningCandidate(this, SpanningSelectionMath.ApplyResize(_dragStartVirtualRect, _activeHandle, virtualPx));
+                // false: only the dragged handle's edge(s) move; stopping at the boundary is correct.
+                _onSpanningCandidate(
+                    this, SpanningSelectionMath.ApplyResize(_dragStartVirtualRect, _activeHandle, virtualPx), false);
                 break;
             }
 
@@ -1101,7 +1123,11 @@ public partial class OverlayWindow : Window
                 var movedVirtual = new RectPhysical(
                     (int)(_dragStartVirtualRect.Left + delta.X), (int)(_dragStartVirtualRect.Top + delta.Y),
                     (int)(_dragStartVirtualRect.Right + delta.X), (int)(_dragStartVirtualRect.Bottom + delta.Y));
-                _onSpanningCandidate(this, movedVirtual);
+                // true — both edges moved by the same delta, so if the result needs to be pulled back
+                // into the virtual desktop's bounds, it must SLIDE (keep its size), not get clamped
+                // edge-by-edge (which would shrink it) — see OnSpanningCandidate /
+                // SpanningSelectionMath.SlideToBounds.
+                _onSpanningCandidate(this, movedVirtual, true);
                 break;
             }
 
@@ -1483,14 +1509,18 @@ public partial class OverlayWindow : Window
     /// interaction — the window whose drag produced the current candidate). Reuses the existing
     /// SetSelection pipeline verbatim (dim mask, adorner, toolbar placement) — a spanning selection's
     /// per-window rendering is the SAME code path as an ordinary one, just fed a different rect; see
-    /// docs/DESIGN-MULTIMON-SELECTION.md.</summary>
+    /// docs/DESIGN-MULTIMON-SELECTION.md. <paramref name="dragInProgress"/> is true only when this
+    /// call came from OnSpanningCandidate mid-drag (every other call site is a "drag has ended /
+    /// selection cleared" moment) — see _suppressToolbarForSpanningDrag's own doc comment for why a
+    /// non-owner window needs this to suppress its toolbar too.</summary>
     internal void SetSpanningLocalSelection(
         RectPhysical? monitorRelativeRect, bool isSpanning, bool isPrimary, RectPhysical? virtualRectForLabel,
-        SelectionEdges realEdges = SelectionEdges.All)
+        SelectionEdges realEdges = SelectionEdges.All, bool dragInProgress = false)
     {
         _isSpanningSelection = isSpanning;
         _isSpanningPrimary = isPrimary;
         _spanningVirtualRectPx = virtualRectForLabel;
+        _suppressToolbarForSpanningDrag = dragInProgress;
         Adorner.RealEdges = isSpanning ? realEdges : SelectionEdges.All;
         Adorner.SuppressBadge = isSpanning && !isPrimary;
         Adorner.OverrideSizeLabel = isSpanning && isPrimary && virtualRectForLabel is { } v
@@ -1505,6 +1535,24 @@ public partial class OverlayWindow : Window
             Annotations.Deselect();
         }
         SetSelection(monitorRelativeRect);
+    }
+
+    /// <summary>Cross-monitor selection: called by OverlaySession on EVERY window once
+    /// FinalizeNewSelectionDrag has settled a NewSelection/SpanningResize/SpanningMove drag for
+    /// good (mouse-up, or the `select` automation command) — the counterpart to the
+    /// dragInProgress:true SetSpanningLocalSelection calls that ran on every mouse-move of that
+    /// drag. Only the drag-owning window gets its own belt-and-braces re-placement from
+    /// OnPreviewMouseLeftButtonUp once _dragMode settles back to None; every OTHER window that took
+    /// part in the distribute step (see _suppressToolbarForSpanningDrag) has no such hook of its
+    /// own, so this is what lets a non-owner monitor's toolbar re-appear (or correctly stay hidden)
+    /// once the drag is truly over instead of staying suppressed forever.</summary>
+    internal void NotifySpanningDragEnded()
+    {
+        if (_suppressToolbarForSpanningDrag)
+        {
+            _suppressToolbarForSpanningDrag = false;
+            UpdateToolbarPlacement();
+        }
     }
 
 
@@ -1551,9 +1599,14 @@ public partial class OverlayWindow : Window
         // _currentTool must survive untouched, just visually collapsed until the drag ends (see the
         // extra UpdateToolbarPlacement() call in OnPreviewMouseLeftButtonUp once _dragMode settles
         // back to None). Annotation drags are deliberately excluded: they draw inside the selection
-        // rather than changing it, so the toolbar should stay put.
+        // rather than changing it, so the toolbar should stay put. _dragMode alone only catches the
+        // window that OWNS the drag (has mouse capture) — a SpanningResize/SpanningMove candidate is
+        // redistributed to every OTHER window too (see OnSpanningCandidate), and one of those can
+        // pick up a non-null local slice while its own _dragMode is still None; that window needs
+        // _suppressToolbarForSpanningDrag (see its own doc comment) to stay suppressed too.
         if (_dragMode is DragMode.NewSelection or DragMode.Move or DragMode.Resize
-            or DragMode.SpanningResize or DragMode.SpanningMove)
+            or DragMode.SpanningResize or DragMode.SpanningMove
+            || _suppressToolbarForSpanningDrag)
         {
             if (_toolbar is not null)
             {

@@ -868,8 +868,13 @@ public static class OverlayController
         /// to exactly the old per-window behavior whenever the candidate only ever touches one
         /// monitor (the common case): <see cref="_spanningVirtual"/> stays null, and that one
         /// window's own SetSpanningLocalSelection call is functionally identical to the old direct
-        /// SetSelection call it replaced.</summary>
-        private void OnSpanningCandidate(OverlayWindow owner, RectPhysical candidateVirtual)
+        /// SetSelection call it replaced. <paramref name="preserveSize"/> is true only for a
+        /// SpanningMove candidate (see OverlayWindow's own call sites) — a move drag shifts every
+        /// edge by the same delta, so a candidate that needs pulling back inside the virtual desktop
+        /// must SLIDE (keep its width/height), never get clamped edge-by-edge the way a resize
+        /// correctly does (see SpanningSelectionMath.SlideToBounds's own doc comment for why the two
+        /// gestures need different clamp strategies).</summary>
+        private void OnSpanningCandidate(OverlayWindow owner, RectPhysical candidateVirtual, bool preserveSize)
         {
             var monitorBounds = new List<RectPhysical>(_windows.Count);
             foreach (var w in _windows)
@@ -877,7 +882,42 @@ public static class OverlayController
                 monitorBounds.Add(w.Monitor.BoundsPx);
             }
 
-            var distribution = SpanningSelectionMath.Distribute(candidateVirtual, _virtualDesktopBounds, monitorBounds);
+            var clampInput = preserveSize
+                ? SpanningSelectionMath.SlideToBounds(candidateVirtual.Normalized(), _virtualDesktopBounds)
+                : candidateVirtual;
+            var distribution = SpanningSelectionMath.Distribute(clampInput, _virtualDesktopBounds, monitorBounds);
+
+            // A Move drag must never delete an already-placed spanning selection out from under the
+            // user with no way to undo it via the very gesture that caused it. SlideToBounds only
+            // guarantees the candidate stays inside the virtual desktop's own bounding BOX — with
+            // non-adjacent monitors (a gap between them), a same-size rect can still land entirely in
+            // that gap and intersect nothing, which would otherwise zero out every window's slice mid
+            // -drag. When that happens during a preserveSize (Move) candidate and a spanning selection
+            // was already in place, ignore this candidate outright and keep the drag's last valid
+            // state instead of collapsing it.
+            if (preserveSize && distribution.Hits.Count == 0 && _spanningVirtual is not null)
+            {
+                return;
+            }
+
+            // The owner's own monitor can stop intersecting the candidate entirely while the
+            // selection still spans ≥2 OTHER monitors (drag the left edge of a 3-monitor span
+            // rightward past the leftmost monitor's own boundary, for instance) — the owner is who
+            // most recently drove the drag, but it is no longer guaranteed to hold a slice. Falling
+            // back to "no window is primary" in that case would hide the toolbar and the true-size
+            // badge on EVERY window (see SetSpanningLocalSelection's SuppressBadge/isPrimary doc
+            // comments), even though the selection is perfectly valid and just as reachable as any
+            // other spanning selection — so fall back to the lowest-indexed monitor that still holds
+            // a slice, a deterministic choice that's stable across repeated calls with the same
+            // distribution (Hits is built in monitor-index order, so Hits[0] is always that monitor).
+            int ownerIndex = _windows.IndexOf(owner);
+            int primaryIndex = -1;
+            if (distribution.IsSpanning)
+            {
+                primaryIndex = distribution.Hits.Any(h => h.MonitorIndex == ownerIndex)
+                    ? ownerIndex
+                    : distribution.Hits[0].MonitorIndex;
+            }
 
             for (int i = 0; i < _windows.Count; i++)
             {
@@ -893,14 +933,26 @@ public static class OverlayController
                         break;
                     }
                 }
-                bool isPrimary = localRect is not null && ReferenceEquals(w, owner);
+                bool isPrimary = i == primaryIndex;
+                // dragInProgress: true — this call only ever runs while a NewSelection/SpanningResize/
+                // SpanningMove drag's mouse-move is live (see OnSpanningCandidate's own doc comment),
+                // including for every non-owner window; see OverlayWindow's
+                // _suppressToolbarForSpanningDrag doc comment for why that matters.
                 w.SetSpanningLocalSelection(
                     localRect, distribution.IsSpanning, isPrimary,
-                    distribution.IsSpanning ? distribution.ClampedVirtual : null, realEdges);
+                    distribution.IsSpanning ? distribution.ClampedVirtual : null, realEdges,
+                    dragInProgress: true);
+                if (isPrimary)
+                {
+                    _spanningPrimaryWindow = w;
+                }
             }
 
             _spanningVirtual = distribution.IsSpanning ? distribution.ClampedVirtual : null;
-            _spanningPrimaryWindow = distribution.IsSpanning ? owner : null;
+            if (!distribution.IsSpanning)
+            {
+                _spanningPrimaryWindow = null;
+            }
         }
 
         /// <summary>Mouse-up (or the `select` automation command) finalizing a NewSelection drag —
@@ -923,12 +975,22 @@ public static class OverlayController
                 {
                     ClearSpanningSelection();
                 }
-                return;
             }
-
-            if (owner.SelectionPx is { } sel && (sel.Width < 2 || sel.Height < 2))
+            else if (owner.SelectionPx is { } sel && (sel.Width < 2 || sel.Height < 2))
             {
                 owner.SetSpanningLocalSelection(null, isSpanning: false, isPrimary: false, virtualRectForLabel: null);
+            }
+
+            // Every window took part in the drag's distribute step (see OnSpanningCandidate), not
+            // just the owner or, while spanning, just the primary — each one picked up
+            // dragInProgress:true on every mouse-move and needs it cleared now that the drag has
+            // genuinely ended, or a non-owner window's toolbar would stay suppressed forever (see
+            // OverlayWindow._suppressToolbarForSpanningDrag's own doc comment). Harmless/no-op for
+            // any window whose flag ClearSpanningSelection's own SetSpanningLocalSelection calls
+            // (dragInProgress defaults false) already cleared above.
+            foreach (var w in _windows)
+            {
+                w.NotifySpanningDragEnded();
             }
         }
 
@@ -1490,7 +1552,7 @@ public static class OverlayController
                 _activeWindow = window;
                 window.Activate();
             }
-            OnSpanningCandidate(window, virtualDesktopPx.Normalized());
+            OnSpanningCandidate(window, virtualDesktopPx.Normalized(), preserveSize: false);
             FinalizeNewSelectionDrag(window); // applies the same too-small-cancel rule a real mouse-up would
             return null;
         }

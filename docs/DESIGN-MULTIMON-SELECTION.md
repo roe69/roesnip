@@ -259,12 +259,47 @@ selection wholesale exactly as v1 always allowed. Both new modes:
    against the redistributed result — this already worked for any drag that funnels through
    `OnSpanningCandidate`, so no changes were needed there either.
 
-Whichever window the drag started on (mouse-down) becomes primary for the drag's duration and after
-— the same rule a `NewSelection` drag already followed (`isPrimary = ReferenceEquals(w, owner)` in
-`OnSpanningCandidate`), so grabbing a handle from a secondary window naturally promotes it. If a
-resize shrinks the selection back down to a single monitor, `Distribute` naturally reports
-`IsSpanning = false` and the selection transparently becomes an ordinary single-monitor one — no
-special-case code needed for that transition either.
+Whichever window the drag started on (mouse-down) becomes primary for the drag's duration — so
+grabbing a handle from a secondary window naturally promotes it. Unlike a `NewSelection` drag,
+though, this is NOT simply `isPrimary = ReferenceEquals(w, owner)`: a `NewSelection` candidate's
+anchor is always a point on the owner's own monitor, so the owner is guaranteed to hold a slice for
+the whole drag, but `SpanningResize`/`SpanningMove` start from an ALREADY-PLACED selection and can
+move the candidate clean off the owner's monitor while it still spans ≥2 OTHER monitors (drag the
+left edge of a 3-monitor span rightward past the leftmost monitor's own boundary, for instance).
+`OnSpanningCandidate` falls back to the lowest-indexed monitor that still holds a slice whenever the
+owner itself no longer does, so some window is always primary (and therefore some window always
+shows the toolbar/size-badge) for as long as `Distribute` reports `IsSpanning`. If a resize shrinks
+the selection back down to a single monitor, `Distribute` naturally reports `IsSpanning = false` and
+the selection transparently becomes an ordinary single-monitor one — no special-case code needed for
+that transition either.
+
+**`SpanningMove` needs a different clamp strategy than `SpanningResize`/`NewSelection`.** Both edges
+of a Move candidate shift by the same delta, so pulling it back inside the virtual desktop's bounds
+must SLIDE the rect (preserve width/height) — exactly what the single-monitor `Move` drag's
+`ClampToFrame` already does. Naively reusing `Distribute`'s own `ClampToVirtualDesktop` (which clamps
+each of the 4 edges independently — correct for `Resize`/`NewSelection`, where only one or two edges
+move per gesture and stopping just that edge at the boundary is the expected result) would instead
+SHRINK a Move candidate that overhangs an edge, which reads as the selection silently losing size
+mid-drag. `SpanningSelectionMath.SlideToBounds` is the Move-specific equivalent of `ClampToFrame`;
+`OnSpanningCandidate` takes a `preserveSize` bool (true only for `SpanningMove`) and runs the
+candidate through `SlideToBounds` before distributing when it's set. `SlideToBounds` only guarantees
+the candidate stays inside the virtual desktop's own bounding BOX, though — with non-adjacent
+monitors (a real gap between them), a same-size candidate can still land entirely in that gap and
+intersect nothing; `OnSpanningCandidate` treats a zero-hit `preserveSize` candidate against an
+already-placed spanning selection as a no-op (keeps the drag's last valid state) rather than letting
+a Move gesture delete the selection with no way to undo it.
+
+**Toolbar suppression during a live drag is keyed off more than the local `_dragMode`.**
+`OnSpanningCandidate` redistributes the candidate to EVERY window on EVERY mouse-move, not just the
+drag owner (which is the only window whose `_dragMode` is actually set) — so a `SpanningMove`/
+`SpanningResize` drag that lands its candidate on a monitor other than the owner's would otherwise
+have that window's `UpdateToolbarPlacement` see `_dragMode == None` and show/reposition a toolbar
+mid-drag. `SetSpanningLocalSelection` takes a `dragInProgress` bool (true only from
+`OnSpanningCandidate`'s mid-drag calls) that every window latches into
+`_suppressToolbarForSpanningDrag`; `OverlaySession.FinalizeNewSelectionDrag` clears it on every window
+via `OverlayWindow.NotifySpanningDragEnded()` once the drag has genuinely ended, so a non-owner
+window's toolbar visibility gets correctly re-resolved (shown, hidden, or left suppressed) exactly
+once, right after release — never mid-drag.
 
 ### HDR save for a spanning selection
 
