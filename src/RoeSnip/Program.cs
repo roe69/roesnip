@@ -188,6 +188,23 @@ public sealed record RoeSnipSettings
     /// <see cref="Recording.RecordingSizeEstimator.Mp4DefaultFps"/>.</summary>
     public int Mp4Fps { get; init; } = 30;
 
+    // ---------- Sharing/upload subsystem (Sharing/*) ----------
+
+    /// <summary>Configured share-upload provider instances: built-in providers the user has touched
+    /// (credentials/enabled state), plus every "Custom..." one they've added. Never carries a
+    /// not-yet-configured built-in's row - see Sharing/ShareProviderCatalog.EffectiveConfigs, which
+    /// layers a fresh disabled placeholder for every untouched built-in on top of this list at read
+    /// time so this stays empty on a fresh install rather than pre-populating seven rows nobody
+    /// asked for. Stored PLAINTEXT like every other RoeSnipSettings field, INCLUDING each config's
+    /// API keys/tokens (Sharing/ShareProviderConfig.Values) - the settings UI says so explicitly next
+    /// to any secret field.</summary>
+    public List<Sharing.ShareProviderConfig> ShareProviders { get; init; } = new();
+
+    /// <summary>Which configured provider (by Sharing/ShareProviderConfig.Id) a plain Share click
+    /// uploads to. Null, or a stale/disabled id, falls back to the first enabled configured provider
+    /// - see Sharing/ShareManager.ResolveDefault.</summary>
+    public string? DefaultShareProviderId { get; init; } = null;
+
     public static RoeSnipSettings Default { get; } = new();
 
     private static string DefaultSaveDirectory() =>
@@ -220,6 +237,13 @@ public interface ITrayNotifier
 {
     void ShowSavedBalloon(string filePath);
     void ShowError(string message);
+
+    /// <summary>Sharing/upload subsystem: a share upload finished successfully and its URL has
+    /// already been copied to the clipboard by the caller (whichever code ends up driving
+    /// ToolbarControl's Share click / RecordingChrome's Share click - see Sharing/ShareManager's own
+    /// doc comment for the current state of that wiring) - mirrors ShowSavedBalloon's click-to-open
+    /// pattern, except the balloon click opens the URL in the default browser instead of a folder.</summary>
+    void ShowShareUploadedBalloon(string url);
 }
 
 public enum CliMode { None, Diag, Capture }

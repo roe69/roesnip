@@ -19,6 +19,16 @@ public static class SettingsStore
     {
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
+        // Every RoeSnipSettings field is documented to stay JSON-primitive so the file remains
+        // human-editable and forward/backward compatible across builds that add or reorder enum
+        // members (see e.g. GifSizePreset's own doc comment) - but Sharing/ProviderSpec's two raw
+        // enums (ShareUploadKind, ResponseUrlMode), embedded in a custom provider's CustomSpec, were
+        // never routed through that convention's string-parsing pattern and would otherwise persist
+        // as bare ordinals. A JsonStringEnumConverter fixes that for every enum in the settings
+        // graph at once (member NAME survives a reorder; an unknown/hand-typed name throws
+        // JsonException same as any other malformed field, which SettingsStore.Load's fail-closed
+        // catch below already treats as "start from defaults" rather than crashing).
+        Converters = { new JsonStringEnumConverter() },
     };
 
     public static string SettingsDirectory =>
