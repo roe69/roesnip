@@ -414,7 +414,15 @@ internal sealed class AutomationServer
         InvokeOnUi(() => { _triggerCapture(); return true; });
         // TriggerCapture is fire-and-forget internally (RunCaptureFlowAsync starts, then awaits the
         // overlay) — poll for the overlay to actually be up rather than racing it, so the response
-        // reflects the real post-trigger state instead of a stale "idle".
+        // (and thus anything the caller sends right after, e.g. `select`) reflects the real
+        // post-trigger state instead of a stale "idle". The predicate is deliberately "!= idle"
+        // rather than any positive mode check: every non-idle Mode GetStateSnapshot can report is
+        // derived directly from OverlayController.IsSessionActive / RecordingController.IsActive —
+        // the exact flags a follow-up command depends on — so this can never return ok:true before
+        // one of them is actually, observably set. Contrast with HandleRecord's own predicate,
+        // where "idle" is NOT a safe stand-in for "settled" (see that method's doc comment) — this
+        // one has no equivalent gap because a trigger's only possible live end states are "the
+        // overlay came up" or "still idle", never a transient hand-off THROUGH idle.
         return AutomationProtocol.SerializeState(PollUntil(s => s.Mode != "idle"));
     }
 
@@ -432,6 +440,10 @@ internal sealed class AutomationServer
             }
             if (OverlayController.IsSessionActive)
             {
+                // NOTE: OverlayController.SetSelectionForAutomation (Overlay/OverlayController.cs,
+                // out of scope for this fix — see HandleRecord's own doc comment for the full
+                // writeup) has a live-verified null-coalescing bug that reports this as ok:false
+                // even when IsSessionActive is true here and the selection is applied successfully.
                 return OverlayController.SetSelectionForAutomation(rect);
             }
             return "idle: nothing to select (use trigger first)";
@@ -453,10 +465,43 @@ internal sealed class AutomationServer
             return AutomationProtocol.BuildError(error);
         }
 
-        // Same async-handoff reasoning as HandleTrigger: closing the overlay with a
-        // RecordingRequested result hands off to RecordingController via an awaited continuation
-        // that hasn't necessarily run yet by the time InvokeOnUi above returns.
-        return AutomationProtocol.SerializeState(PollUntil(s => s.Mode == "setup" || s.Mode == "idle"));
+        // Belt-and-braces for a genuine (if secondary) timing gap: RecordForAutomation's
+        // OverlaySession.Finish() (called synchronously above, inside the InvokeOnUi that just
+        // returned) clears OverlayController.s_activeSession and completes a TaskCompletionSource
+        // created with RunContinuationsAsynchronously. The continuation that resumes
+        // RunCaptureFlowAsync past `await RunOverlay(...)` — and that eventually calls
+        // RecordingController.StartAsync, which is what assigns RecordingController.s_active — is
+        // POSTED to the UI dispatcher rather than run inline, so it is not guaranteed to have run
+        // yet by the time this method continues. That is a real window where OverlayController.
+        // IsSessionActive is already false and RecordingController.IsActive is not yet true, in
+        // which GetStateSnapshot reports "idle". The OLD code here treated "idle" as an early-exit
+        // success; only "setup" (RecordingController.IsActive, freshly in Setup) is treated as
+        // settled now — a genuine start failure just rides out the full PollTimeout below instead
+        // of being guessed at from an ambiguous "idle" snapshot.
+        //
+        // The DOMINANT bug live verification actually turned up, though, was upstream of this
+        // poll entirely and is NOT fixable here: OverlayController.RecordForAutomation (Overlay/
+        // OverlayController.cs) is `s_activeSession?.RecordForAutomation(format) ?? "no active
+        // overlay session"` — the exact null-coalescing collapse documented on RecordingController
+        // .InvokeChromeAction's own doc comment (that class's four automation wrappers had, and
+        // now no longer have, the identical bug). When RecordForAutomation's underlying instance
+        // method legitimately returns null for SUCCESS, "?." forwards that null indistinguishably
+        // from "s_activeSession was null", so "?? "no active overlay session"" fires anyway —
+        // `error` above comes back non-null and this method returns BuildError before ever
+        // reaching the PollUntil below, even though the record request was accepted and a
+        // recording then genuinely starts a moment later. Live-reproduced: `record` immediately
+        // after a successful `trigger` reports ok:false every time (not just under a race — even
+        // with an explicit multi-second delay first), while a following `state` call shows the
+        // recording actually started. OverlayController.cs is owned by a different, concurrent
+        // workstream (Overlay/* is off-limits here — see this fix's own task boundary) and needs
+        // the same "read the field into a local, branch on IT" fix RecordingController's wrappers
+        // just got; flagged here rather than silently left for the next person to rediscover.
+        //
+        // Pure layer: none of this reasoning is testable in AutomationProtocolTests — it depends
+        // on OverlayController/RecordingController's live static state and the WPF dispatcher's
+        // actual continuation scheduling, exactly the "live half" AutomationProtocolTests' own
+        // class doc comment says is verified end-to-end against a resident process, not there.
+        return AutomationProtocol.SerializeState(PollUntil(s => s.Mode == "setup"));
     }
 
     private string HandlePreset(JsonObject request)

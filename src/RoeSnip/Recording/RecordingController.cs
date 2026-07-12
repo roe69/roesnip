@@ -85,20 +85,49 @@ internal static class RecordingController
     //
     // Thin static wrappers routing to the one active session, mirroring RequestStopAndSave's own
     // "s_active?." pattern above.
+    //
+    // Real bug found via live automation verification (session-assignment race investigation):
+    // these four used to be one-line "s_active?.Method(...) ?? "no active recording session""
+    // expressions — mirroring RequestStopAndSave's own harmless "s_active?." pattern above, which
+    // is safe there ONLY because RequestStopAndSave's return type is void, so there is no return
+    // value for "?." to forward. Every method here returns "null on success, else an error string"
+    // (see e.g. RecordingSession.InvokeChromeAction's own doc comment), and "?." simply FORWARDS
+    // whatever the call returns — including a legitimate null success. "??" then can't tell "the
+    // receiver was null" apart from "the receiver was NOT null and its method returned null to mean
+    // success": both look like a null left-hand side, so "?? "no active recording session""
+    // clobbered every successful mutation into a false error. Live-verified: `chrome`/`preset`/
+    // `fps`/`select` commands against an active recording session reported ok:false on every call
+    // while the state they were supposed to change visibly changed anyway (confirmed via a
+    // following `state` snapshot) — the mutation always landed; only the reported result lied.
+    // Reading s_active into a local once and branching on IT (not on the method's own return
+    // value) is the fix: the fallback string is now used exactly when there is no session, never
+    // as a stand-in for "the session's own answer happened to be null".
 
     internal static RecordingAutomationSnapshot? GetAutomationSnapshot() => s_active?.GetAutomationSnapshot();
 
-    internal static string? InvokeChromeAction(string action) =>
-        s_active?.InvokeChromeAction(action) ?? "no active recording session";
+    internal static string? InvokeChromeAction(string action)
+    {
+        var session = s_active;
+        return session is null ? "no active recording session" : session.InvokeChromeAction(action);
+    }
 
-    internal static string? SetSelectionForAutomation(RectPhysical virtualDesktopPx) =>
-        s_active?.SetSelectionForAutomation(virtualDesktopPx) ?? "no active recording session";
+    internal static string? SetSelectionForAutomation(RectPhysical virtualDesktopPx)
+    {
+        var session = s_active;
+        return session is null ? "no active recording session" : session.SetSelectionForAutomation(virtualDesktopPx);
+    }
 
-    internal static string? SetSizePresetForAutomation(GifSizePreset preset) =>
-        s_active?.SetSizePresetForAutomation(preset) ?? "no active recording session";
+    internal static string? SetSizePresetForAutomation(GifSizePreset preset)
+    {
+        var session = s_active;
+        return session is null ? "no active recording session" : session.SetSizePresetForAutomation(preset);
+    }
 
-    internal static string? SetFpsForAutomation(int fps) =>
-        s_active?.SetFpsForAutomation(fps) ?? "no active recording session";
+    internal static string? SetFpsForAutomation(int fps)
+    {
+        var session = s_active;
+        return session is null ? "no active recording session" : session.SetFpsForAutomation(fps);
+    }
 
     internal static RectPhysical RoundDownToEven(RectPhysical selectionPx)
     {
@@ -474,7 +503,18 @@ internal sealed class RecordingSession
             _displayChangedHandler = (_, _) => RequestForceStopAndSave();
             SystemEvents.DisplaySettingsChanged += _displayChangedHandler;
 
-            _encoderThread = new Thread(EncoderLoop) { IsBackground = true, Name = "RoeSnip-Recording-Encoder" };
+            // BelowNormal, not Normal: this thread's own queue (RegionRecorder.Frames) is bounded
+            // DropOldest (see that channel's own doc comment), so falling behind under contention
+            // sheds load gracefully — a dropped stale frame, not a stall. There is no such graceful
+            // degradation for whatever the user is doing in the FOREGROUND while a recording runs
+            // (a game, a video call); giving this thread lower scheduling priority means the OS
+            // favors those over the encoder on a contended CPU instead of the other way around.
+            _encoderThread = new Thread(EncoderLoop)
+            {
+                IsBackground = true,
+                Name = "RoeSnip-Recording-Encoder",
+                Priority = ThreadPriority.BelowNormal,
+            };
             _encoderThread.Start();
 
             _phase = Phase.Capturing;
@@ -971,11 +1011,19 @@ internal sealed class RecordingSession
         // Media Foundation's sink writer can reject. Deriving the epoch from the first real frame
         // makes timestamp 0 always correspond to an actual frame and every later one strictly larger.
         long? epochTicks = null;
-        // GIF only: the raw pixels of the last frame actually handed to the encoder. WGC's dirty
-        // tracking is monitor-wide, so a change anywhere on the monitor delivers a frame even when
-        // the recorded crop is untouched — comparing raw bytes here skips those before paying the
-        // (much more expensive) tone-map. GifEncoder's own SDR diff stays as the exact gate.
+        // The raw pixels of the last frame actually handed to the encoder, for WHICHEVER format
+        // this take is (only one of the two is ever non-null for the session's whole lifetime).
+        // WGC's dirty tracking is monitor-wide, so a change anywhere on the monitor delivers a
+        // frame even when the recorded crop is untouched — comparing raw bytes here skips those
+        // before paying the (much more expensive) tone-map. Applies to BOTH formats: GIF also has
+        // GifEncoder's own SDR diff as a second, finer-grained gate underneath this one, but MP4
+        // has no such second gate — WriteFrame is a straight encode, so this raw check is the ONLY
+        // thing standing between a static region and paying full tone-map + H.264 encode on every
+        // single WGC callback (this was the "MP4 pays full CPU while the user works elsewhere on
+        // the same monitor" bug). Each starts null, so the FIRST frame of a take is always kept —
+        // there is nothing yet to compare it against.
         CapturedFrame? prevGifRaw = null;
+        CapturedFrame? prevMp4Raw = null;
         // GIF only: two persistent exactly-canvas-sized tone-map targets so the 50fps path never
         // allocates a fresh (LOH-sized) output array per frame. GifEncoder.AddFrame(SdrImage, long)
         // never retains a reference to the buffer it's handed, on EITHER outcome — it copies
@@ -1014,7 +1062,7 @@ internal sealed class RecordingSession
                 while (reader.TryRead(out var queued))
                 {
                     var frame = queued.Frame;
-                    bool frameKeptAsGifBaseline = false;
+                    bool frameKeptAsRawBaseline = false;
                     try
                     {
                         // Subtract the accumulated paused time so the media clock is continuous across
@@ -1026,7 +1074,8 @@ internal sealed class RecordingSession
                         long paused = Volatile.Read(ref _pausedTicks);
                         long effectiveTicks = queued.TimestampTicks - paused;
 
-                        if (_format == RecordingFormat.Gif && prevGifRaw is not null && RawFramesEqual(prevGifRaw, frame))
+                        CapturedFrame? prevRaw = _format == RecordingFormat.Gif ? prevGifRaw : prevMp4Raw;
+                        if (prevRaw is not null && RawFramesEqual(prevRaw, frame))
                         {
                             continue; // crop unchanged (monitor was dirty elsewhere) — skip pre-tone-map
                         }
@@ -1039,6 +1088,17 @@ internal sealed class RecordingSession
                             var sdr = SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts);
                             long timestamp100ns = (long)((effectiveTicks - epochTicks.Value) / freq * 10_000_000.0);
                             _mp4Encoder!.WriteFrame(sdr, timestamp100ns);
+
+                            // Same raw-skip baseline discipline as the GIF branch below: keep THIS
+                            // frame (not a copy) as next iteration's comparison target instead of
+                            // disposing it, and tell the finally block not to dispose it out from
+                            // under that reference. MF's sink writer is fine with sparse/VFR
+                            // samples — each WriteFrame call already carries its own explicit
+                            // timestamp100ns, so a skipped stretch just means fewer, further-apart
+                            // samples rather than any timestamp math changing.
+                            prevMp4Raw?.Dispose();
+                            prevMp4Raw = frame;
+                            frameKeptAsRawBaseline = true;
                         }
                         else
                         {
@@ -1068,12 +1128,12 @@ internal sealed class RecordingSession
                             }
                             prevGifRaw?.Dispose();
                             prevGifRaw = frame; // becomes the raw-skip baseline for the next frame
-                            frameKeptAsGifBaseline = true;
+                            frameKeptAsRawBaseline = true;
                         }
                     }
                     finally
                     {
-                        if (!frameKeptAsGifBaseline)
+                        if (!frameKeptAsRawBaseline)
                         {
                             frame.Dispose();
                         }
@@ -1095,6 +1155,7 @@ internal sealed class RecordingSession
         {
             Console.Error.WriteLine($"RoeSnip: encoder loop exiting, {framesWritten} frame(s) processed");
             prevGifRaw?.Dispose();
+            prevMp4Raw?.Dispose();
             if (_format == RecordingFormat.Mp4)
             {
                 // Whatever audio was still queued when the video channel completed belongs in the

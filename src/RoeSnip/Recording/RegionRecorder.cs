@@ -33,7 +33,21 @@ namespace RoeSnip.Recording;
 /// <see cref="_gpuLock"/> (private to THIS recorder's own device — zero contention with WgcCapturer
 /// or other monitors). It never touches an encoder. A separate thread (owned by RecordingSession)
 /// drains <see cref="Frames"/> and does tone-map + encode. The UI thread never touches this class
-/// after <see cref="Start"/>.</summary>
+/// after <see cref="Start"/>.
+///
+/// GPU readback is a 3-slot RING (<see cref="_stagingRing"/>), not a single reused staging
+/// texture: the original single-texture version did CopySubresourceRegion immediately followed by
+/// Map(MapMode.Read) on that SAME texture, every accepted frame (up to the target fps, e.g. 50/s).
+/// Map on a staging resource blocks the calling thread until the GPU has actually finished
+/// whatever was still in flight against that resource — i.e. that pair was a full CPU/GPU pipeline
+/// SYNC STALL, up to 50 times a second, on the process's own D3D device. That doesn't just cost
+/// this thread time; a stalled ImmediateContext call can hold up the GPU command queue broadly
+/// enough to visibly stutter OTHER apps' rendering (games, video) system-wide while a recording is
+/// running — the "PC feels bad while recording" symptom this ring fixes. The ring breaks the
+/// stall by never mapping the slot it JUST copied into: it copies into slot N and maps slot N-1
+/// (the one copied a full callback ago), which by now has almost certainly finished on the GPU
+/// asynchronously, so the Map call returns immediately instead of blocking. See OnFrameArrived's
+/// own comment for the exact indexing.</summary>
 internal sealed class RegionRecorder : IDisposable
 {
     private readonly WgcCapturer.MonitorResources _resources; // via WgcCapturer.CreateResources — never the s_slots cache
@@ -48,7 +62,21 @@ internal sealed class RegionRecorder : IDisposable
 
     private Direct3D11CaptureFramePool? _framePool;
     private GraphicsCaptureSession? _session;
-    private ID3D11Texture2D? _regionStaging;                   // sized to the SELECTION, not the monitor — reused every frame
+
+    // Staging ring (kills the sync GPU stall — see the class doc comment above). Sized to the
+    // SELECTION, not the monitor; all three textures share the one format decided the first time
+    // any of them is created (WGC's frame format never changes mid-session — DisplaySettingsChanged
+    // stops the recording rather than reconfiguring it, see RecordingSession's own handler).
+    private const int StagingRingSize = 3;
+    private readonly ID3D11Texture2D?[] _stagingRing = new ID3D11Texture2D?[StagingRingSize];
+    // QPC "now" captured at the moment each slot's CopySubresourceRegion was ISSUED (same value
+    // the old single-texture code stamped a QueuedFrame with immediately after its Map) — carried
+    // alongside the slot so the frame this ring eventually emits keeps its true CAPTURE timestamp,
+    // not the (up to one callback later) time it was actually read back.
+    private readonly long[] _stagingTimestamps = new long[StagingRingSize];
+    private Format? _stagingFormat;                             // set once, when the ring textures are first created
+    private int _ringWriteIndex;                                // next slot CopySubresourceRegion writes into
+    private long _copyCount;                                    // total copies issued this session; copy #0 has no prior slot to read (see OnFrameArrived)
     private long _nextDueTimestamp;                            // Stopwatch ticks — schedule-based throttle, see OnFrameArrived
     private int _disposed;
 
@@ -164,48 +192,41 @@ internal sealed class RegionRecorder : IDisposable
             {
                 using var surfaceTexture = WgcCapturer.GetTextureForSurface(frame.Surface);
                 var srcDesc = surfaceTexture.Description;
+                var context = _resources.D3dDevice.ImmediateContext;
 
-                _regionStaging ??= CreateRegionStagingTexture(srcDesc.Format);
+                if (_stagingRing[0] is null)
+                {
+                    _stagingFormat = srcDesc.Format;
+                    for (int i = 0; i < StagingRingSize; i++)
+                    {
+                        _stagingRing[i] = CreateRegionStagingTexture(srcDesc.Format);
+                    }
+                }
 
                 long packed = Volatile.Read(ref _originPacked);
                 int originLeft = (int)(packed >> 32), originTop = (int)(uint)packed;
                 var box = new Box(
                     originLeft, originTop, 0,
                     originLeft + _regionWidth, originTop + _regionHeight, 1);
-                _resources.D3dDevice.ImmediateContext.CopySubresourceRegion(
-                    _regionStaging, 0, 0, 0, 0, surfaceTexture, 0, box);
 
-                var mapped = _resources.D3dDevice.ImmediateContext.Map(_regionStaging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
-                try
+                // Issue THIS frame's copy into the NEXT ring slot — GPU-async, no Map here. The
+                // slot actually read back below (if any) is the PREVIOUS one: it was copied a
+                // whole callback ago, giving the GPU roughly a monitor frame's worth of wall-clock
+                // time to finish that earlier copy, so its Map call doesn't block (see the class
+                // doc comment for why that's the whole point of this ring).
+                int writeSlot = _ringWriteIndex;
+                context.CopySubresourceRegion(_stagingRing[writeSlot], 0, 0, 0, 0, surfaceTexture, 0, box);
+                _stagingTimestamps[writeSlot] = now;
+                long thisCopyIndex = _copyCount++;
+                _ringWriteIndex = (writeSlot + 1) % StagingRingSize;
+
+                if (thisCopyIndex == 0)
                 {
-                    int w = _regionWidth;
-                    int h = _regionHeight;
-                    int stride = (int)mapped.RowPitch;
-                    // Pooled: a region-sized array is LOH-sized, and a fresh one per accepted frame
-                    // at up to 50/s is exactly the Gen2-pause churn f7aa9a3 was about. The rented
-                    // array may be longer than byteCount — CapturedFrame consumers index via Row().
-                    int byteCount = stride * h;
-                    var pixels = System.Buffers.ArrayPool<byte>.Shared.Rent(byteCount);
-                    Marshal.Copy(mapped.DataPointer, pixels, 0, byteCount);
-
-                    FrameFormat format = srcDesc.Format == Format.R16G16B16A16_Float
-                        ? FrameFormat.Fp16ScRgb
-                        : FrameFormat.Bgra8Srgb;
-
-                    // _monitor (not a monitor-sized rect) passed through unchanged — CapturedFrame's
-                    // own Width/Height/Stride below are authoritative for indexing this cropped
-                    // buffer; Monitor is only ever consulted for its photometric fields
-                    // (SdrWhiteNits/MaxLuminanceNits) by the tone-mapper.
-                    var cropped = new CapturedFrame(format, w, h, stride, pixels, _monitor, pooledBuffer: true);
-                    if (!_queue.Writer.TryWrite(new QueuedFrame(cropped, now)))
-                    {
-                        cropped.Dispose(); // writer already completed (Stop() raced us) — drop it
-                    }
+                    return; // very first copy this session — no older slot to read back yet
                 }
-                finally
-                {
-                    _resources.D3dDevice.ImmediateContext.Unmap(_regionStaging, 0);
-                }
+
+                int readSlot = (writeSlot + StagingRingSize - 1) % StagingRingSize;
+                ReadRingSlot(readSlot, srcDesc.Format, context);
             }
             catch (Exception ex)
             {
@@ -214,6 +235,47 @@ internal sealed class RegionRecorder : IDisposable
                 // stops the recording cleanly with whatever was already captured.
                 Faulted?.Invoke(ex);
             }
+        }
+    }
+
+    // Called from OnFrameArrived (WGC callback thread) and from Stop()'s drain (whichever thread
+    // calls Stop) — both callers hold _gpuLock, so this needs no locking of its own. Maps
+    // _stagingRing[slot], copies it into a pooled buffer, and enqueues it with that slot's own
+    // remembered CAPTURE timestamp (not "now" — the copy that filled this slot happened up to one
+    // callback ago, see the class doc comment).
+    private void ReadRingSlot(int slot, Format format, ID3D11DeviceContext context)
+    {
+        var texture = _stagingRing[slot]!;
+        var mapped = context.Map(texture, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+        try
+        {
+            int w = _regionWidth;
+            int h = _regionHeight;
+            int stride = (int)mapped.RowPitch;
+            // Pooled: a region-sized array is LOH-sized, and a fresh one per accepted frame
+            // at up to 50/s is exactly the Gen2-pause churn f7aa9a3 was about. The rented
+            // array may be longer than byteCount — CapturedFrame consumers index via Row().
+            int byteCount = stride * h;
+            var pixels = System.Buffers.ArrayPool<byte>.Shared.Rent(byteCount);
+            Marshal.Copy(mapped.DataPointer, pixels, 0, byteCount);
+
+            FrameFormat frameFormat = format == Format.R16G16B16A16_Float
+                ? FrameFormat.Fp16ScRgb
+                : FrameFormat.Bgra8Srgb;
+
+            // _monitor (not a monitor-sized rect) passed through unchanged — CapturedFrame's
+            // own Width/Height/Stride below are authoritative for indexing this cropped
+            // buffer; Monitor is only ever consulted for its photometric fields
+            // (SdrWhiteNits/MaxLuminanceNits) by the tone-mapper.
+            var cropped = new CapturedFrame(frameFormat, w, h, stride, pixels, _monitor, pooledBuffer: true);
+            if (!_queue.Writer.TryWrite(new QueuedFrame(cropped, _stagingTimestamps[slot])))
+            {
+                cropped.Dispose(); // writer already completed (Stop() raced us) — drop it
+            }
+        }
+        finally
+        {
+            context.Unmap(texture, 0);
         }
     }
 
@@ -252,10 +314,34 @@ internal sealed class RegionRecorder : IDisposable
         // session/frame pool/staging texture it may still be using.
         lock (_gpuLock)
         {
+            // Ring drain: OnFrameArrived deliberately never reads back the slot it JUST copied
+            // into — that slot is only read on the NEXT callback (see the class doc comment). With
+            // no next callback coming, the single most recent copy would otherwise be silently
+            // discarded, dropping the take's very last frame. Read it here instead, under the same
+            // _gpuLock that already serializes this against any in-flight OnFrameArrived, before
+            // the session/pool/textures are torn down below.
+            if (_copyCount > 0 && _stagingFormat is { } format)
+            {
+                int lastSlot = (int)((_copyCount - 1) % StagingRingSize);
+                try
+                {
+                    ReadRingSlot(lastSlot, format, _resources.D3dDevice.ImmediateContext);
+                }
+                catch (Exception ex)
+                {
+                    // Best-effort: losing the take's last frame to a stop-time GPU hiccup is far
+                    // better than throwing out of Stop() and leaving the session half torn-down.
+                    Console.Error.WriteLine($"RoeSnip: recording ring drain on stop failed (non-fatal): {ex.Message}");
+                }
+            }
+
             _session?.Dispose();
             _framePool?.Dispose();
-            _regionStaging?.Dispose();
-            _regionStaging = null;
+            for (int i = 0; i < StagingRingSize; i++)
+            {
+                _stagingRing[i]?.Dispose();
+                _stagingRing[i] = null;
+            }
         }
         _queue.Writer.TryComplete();
     }
