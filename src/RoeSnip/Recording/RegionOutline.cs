@@ -18,8 +18,9 @@ using WCursor = System.Windows.Input.Cursor;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 
 /// <summary>The "this is being recorded" frame AND the handle for resizing / moving the recorded
-/// region. A thin topmost window whose dashed two-tone border hugs the region from the OUTSIDE and
-/// whose grab band lets the user reshape or reposition it:
+/// region. A thin topmost window whose gray dotted line hugs the region boundary EXACTLY from the
+/// OUTSIDE (the stroke is offset outward by half its own thickness so it touches, but never crosses,
+/// the recorded rect's edge) and whose grab band lets the user reshape or reposition it:
 ///   - Setup (before Start): drag an EDGE or CORNER of the band to RESIZE; hold Shift or Ctrl and
 ///     drag anywhere inside to MOVE. A plain click inside does nothing (passes through).
 ///   - Capturing / Reviewing (a take exists, so the size is locked to the encoder): dragging any
@@ -40,12 +41,13 @@ using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 /// The band sits outside the captured rect so it never lands in a
 /// recorded frame; the modifier-held ghost fill sits over the captured rect and is kept
 /// imperceptible rather than capture-excluded (this window is not WDA_EXCLUDEFROMCAPTURE - only
-/// RecordingChrome is).</summary>
+/// RecordingChrome is). The band's own fill is dropped to alpha 0x01 (not 0) so it stays
+/// hit-testable while reading as visually blank; the only thing the user actually sees is the gray
+/// dotted line drawn at the recorded rect's true edge.</summary>
 internal sealed class RegionOutline : Window
 {
     /// <summary>Physical pixels of grab band around the region (also the resize/move hit zone).</summary>
     private const int BandPx = 8;
-    private const int FrameInsetPx = 4; // dashed frame sits this far outside the region
     private const int MinSizePx = 32;
 
     private enum DragKind { None, Move, Left, Right, Top, Bottom, TopLeft, TopRight, BottomLeft, BottomRight }
@@ -323,24 +325,62 @@ internal sealed class RegionOutline : Window
         return RectPhysical.FromSize(left, top, Math.Max(MinSizePx, w), Math.Max(MinSizePx, h));
     }
 
+    /// <summary>AutomationServer hook (dev-gated automation channel — App/AutomationServer.cs):
+    /// applies a new selection exactly like a finished band drag would - the same field updates
+    /// (_selectionPx / _element.Selection / MoveWindowToSelection) and the same RegionChanged
+    /// event as WM_MOUSEMOVE's drag-apply branch above - without needing a live mouse-move stream.
+    /// rect is MONITOR-RELATIVE physical pixels; clamped/evened the same way ApplyDrag does.</summary>
+    internal void SetSelectionForAutomation(RectPhysical monitorRelativeRect)
+    {
+        var r = monitorRelativeRect.Normalized();
+        int monW = _monitor.BoundsPx.Width, monH = _monitor.BoundsPx.Height;
+        int left = Math.Clamp(r.Left, 0, Math.Max(0, monW - MinSizePx));
+        int top = Math.Clamp(r.Top, 0, Math.Max(0, monH - MinSizePx));
+        int right = Math.Clamp(r.Right, left + MinSizePx, monW);
+        int bottom = Math.Clamp(r.Bottom, top + MinSizePx, monH);
+        int w = (right - left) & ~1;
+        int h = (bottom - top) & ~1;
+        var next = RectPhysical.FromSize(left, top, Math.Max(MinSizePx, w), Math.Max(MinSizePx, h));
+
+        _selectionPx = next;
+        _element.Selection = next;
+        _element.InvalidateVisual();
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != IntPtr.Zero)
+        {
+            MoveWindowToSelection(hwnd);
+        }
+        RegionChanged?.Invoke(next);
+    }
+
     /// <summary>Close, from RecordingSession (UI thread).</summary>
     public void CloseOutline() => Close();
 
-    /// <summary>Draws the dashed frame (two-tone marching-ants recipe) plus the faint fills that make
+    /// <summary>Draws the gray dotted region-boundary line plus the near-invisible fills that make
     /// the band - and, in Setup, the inner - hit-testable on this layered window.</summary>
     private sealed class OutlineElement : FrameworkElement
     {
-        private const double StrokePhysicalPx = 1.5;
+        // "1-2px" dotted line, in physical pixels. A darker shadow dot is drawn 1 physical px
+        // further outward underneath the main gray dot so the line stays legible against both light
+        // and dark backgrounds: the light-gray main dot pops on dark backgrounds, the dark shadow
+        // pops on light ones, and together something is always visible regardless of what is being
+        // recorded. Both are read as ONE line, not a two-tone rope, because the shadow is a faint
+        // low-alpha halo rather than an equal-weight alternating color.
+        private const double DotThicknessPhysicalPx = 1.5;
+        private const double DotShadowOffsetPhysicalPx = 1.0;
 
         private RectPhysical _selection;
         private bool _showInnerTint;
         private double _pensScale = -1;
-        private Pen? _underPen;
-        private Pen? _dashPen;
+        private Pen? _dotShadowPen;
+        private Pen? _dotPen;
 
         // Faint fills (alpha kept low so they read as a subtle highlight, but > 0 so the layered
         // window hit-tests these pixels - see the class doc).
-        private static readonly Brush s_bandFill = Frozen(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF));
+        // Alpha 0x01: the fill must stay hit-testable (the layered window's per-pixel-alpha hit
+        // test needs >= 1) but visually imperceptible - the visible boundary marker is the dotted
+        // line below, not this fill (see class doc).
+        private static readonly Brush s_bandFill = Frozen(Color.FromArgb(0x01, 0xFF, 0xFF, 0xFF));
         private static readonly Brush s_innerTint = Frozen(Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF));
         // Near-zero alpha (~0.4%) inner fill used while capturing/reviewing: imperceptible in the
         // recording, but still > 0 so the layered window hit-tests the inner and Shift/Ctrl can
@@ -364,12 +404,14 @@ internal sealed class RegionOutline : Window
                 scaleY = target.TransformToDevice.M22;
             }
             double scale = Math.Max(scaleX, scaleY);
-            if (Math.Abs(scale - _pensScale) > 0.001 || _underPen is null || _dashPen is null)
+            double dotThickness = DotThicknessPhysicalPx / scale;
+            if (Math.Abs(scale - _pensScale) > 0.001 || _dotShadowPen is null || _dotPen is null)
             {
                 _pensScale = scale;
-                _underPen = CreateFrozenPen(Color.FromArgb(0xB0, 0x00, 0x00, 0x00), StrokePhysicalPx / scale, null);
-                _dashPen = CreateFrozenPen(
-                    Color.FromArgb(0xFF, 0xDC, 0xDC, 0xE0), StrokePhysicalPx / scale, new DashStyle(new double[] { 3, 3 }, 0));
+                // #888C90 - the same neutral gray used by the blur-region affordances elsewhere in
+                // the app, kept as a single tone so the line reads as ONE dotted outline.
+                _dotShadowPen = CreateDottedPen(Color.FromArgb(0xA0, 0x00, 0x00, 0x00), dotThickness);
+                _dotPen = CreateDottedPen(Color.FromArgb(0xFF, 0x88, 0x8C, 0x90), dotThickness);
             }
 
             double band = BandPx / scaleX;
@@ -391,19 +433,36 @@ internal sealed class RegionOutline : Window
                 dc.DrawRectangle(_showInnerTint ? s_innerTint : s_innerGhostFill, null, new Rect(innerX, innerY, innerW, innerH));
             }
 
-            // Dashed frame, FrameInsetPx outside the region.
-            double fx = FrameInsetPx / scaleX, fy = FrameInsetPx / scaleY;
-            var frame = new Rect(fx, fy, Math.Max(0, outerW - fx * 2), Math.Max(0, outerH - fy * 2));
-            dc.DrawRectangle(null, _underPen, frame);
-            dc.DrawRectangle(null, _dashPen, frame);
+            // Region boundary line: a gray dotted stroke that hugs the recorded rect EXACTLY from the
+            // OUTSIDE. WPF centers a stroke on its path, so the path is pushed outward by half the
+            // pen thickness first - the stroke then runs from (boundary - thickness) to (boundary),
+            // i.e. it touches the true edge and extends only outward, at inset 0, never crossing into
+            // recorded pixels. The shadow dot is drawn first, on a path pushed out by one more
+            // physical pixel, so it forms a faint offset halo just behind the main line rather than
+            // sitting under it (see field doc for why both tones are needed).
+            double half = dotThickness / 2;
+            var lineRect = new Rect(innerX - half, innerY - half, innerW + dotThickness, innerH + dotThickness);
+            double shadowInset = half + (DotShadowOffsetPhysicalPx / scale);
+            var shadowRect = new Rect(
+                innerX - shadowInset, innerY - shadowInset,
+                innerW + shadowInset * 2, innerH + shadowInset * 2);
+            dc.DrawRectangle(null, _dotShadowPen, shadowRect);
+            dc.DrawRectangle(null, _dotPen, lineRect);
         }
 
         private static Brush Frozen(Color c) { var b = new SolidColorBrush(c); b.Freeze(); return b; }
 
-        private static Pen CreateFrozenPen(Color color, double thickness, DashStyle? dash)
+        // Round caps + a zero-length "dash" draw a filled circle at each dash start, i.e. a row of
+        // round dots rather than a solid or dashed line - the standard WPF dotted-line recipe.
+        private static Pen CreateDottedPen(Color color, double thickness)
         {
-            var pen = new Pen(new SolidColorBrush(color), thickness) { StartLineCap = PenLineCap.Flat, EndLineCap = PenLineCap.Flat };
-            if (dash is not null) { pen.DashStyle = dash; pen.DashCap = PenLineCap.Flat; }
+            var pen = new Pen(new SolidColorBrush(color), thickness)
+            {
+                StartLineCap = PenLineCap.Round,
+                EndLineCap = PenLineCap.Round,
+                DashCap = PenLineCap.Round,
+                DashStyle = new DashStyle(new double[] { 0, 2.2 }, 0),
+            };
             pen.Freeze();
             return pen;
         }
