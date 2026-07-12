@@ -152,6 +152,12 @@ public partial class ToolbarControl : UserControl
         // open, since it has no mouse-position event to place itself against).
         RecordContextMenu.PlacementTarget = RecordButton;
         RecordContextMenu.Placement = PlacementMode.Bottom;
+
+        // Same fix, same reason, for the Share split-button's provider dropdown - without this it
+        // opens at the cursor (ContextMenu's default for a left-click open) instead of anchored under
+        // ShareMenuButton like the Record and Save-HDR dropdowns beside it.
+        ShareProviderMenu.PlacementTarget = ShareMenuButton;
+        ShareProviderMenu.Placement = PlacementMode.Bottom;
     }
 
     private AnnotationTool _activeTool = AnnotationTool.None;
