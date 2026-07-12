@@ -33,11 +33,14 @@ public enum OverlayCommand
     SaveHdr,
     RecordMp4,
     RecordGif,
-    // Sharing/* subsystem: the toolbar's plain Share button (default-provider upload only — the
-    // dropdown's per-provider picker is not wired to this session; see ToolbarControl.
-    // ShareToProviderRequested's own doc comment for that scope note). Unlike every other command
-    // above, handling this does NOT call Finish() — see OverlaySession.ShareCurrentSelection's own
-    // doc comment for why the overlay must stay open for the whole upload.
+    // Sharing/* subsystem: the toolbar's plain Share button (default-provider upload). The
+    // dropdown's per-provider picker is wired separately, through OverlayWindow's own
+    // _onShareToProvider callback rather than through this enum — OverlayCommand is deliberately
+    // payload-free (see e.g. onColorPicked's own analogous callback), and a provider id is a
+    // payload. Unlike every other command above, handling this does NOT call Finish() — see
+    // OverlaySession.ShareCurrentSelection's own doc comment for why the overlay must stay open for
+    // the whole upload (OverlaySession.ShareToSpecificProvider, the dropdown's own handler, follows
+    // the identical stay-open contract).
     Share,
 }
 
@@ -636,7 +639,7 @@ public static class OverlayController
                         window.Initialize(
                             frame, preview, _settings, OnActivatedByMouse, OnSelectionStarted,
                             OnSpanningCandidate, FinalizeNewSelectionDrag, OnCommand,
-                            _onColorPicked, _pickOnlyMode);
+                            _onColorPicked, ShareToSpecificProvider, _pickOnlyMode);
                         window.Dispatcher.Invoke(static () => { }, System.Windows.Threading.DispatcherPriority.Loaded);
                         window.MoveOnScreen();
                         OnOverlayContentRendered(window);
@@ -646,7 +649,7 @@ public static class OverlayController
                         window = new OverlayWindow(
                             frame, preview, _settings, OnActivatedByMouse, OnSelectionStarted,
                             OnSpanningCandidate, FinalizeNewSelectionDrag, OnCommand,
-                            _onColorPicked, _pickOnlyMode);
+                            _onColorPicked, ShareToSpecificProvider, _pickOnlyMode);
                         window.Closed += (_, _) => Finish(null);
                         window.ContentRendered += (_, _) => OnOverlayContentRendered(window);
                         // NOTE (anti-flicker): the overlay window is OPAQUE (Background is the frozen
@@ -1340,7 +1343,68 @@ public static class OverlayController
         /// ordinary WPF app's event handler.</summary>
         private void ShareCurrentSelection()
         {
-            OverlayWindow toolbarWindow;
+            if (!TryPrepareShareUpload(out var toolbarWindow, out var pngBytes))
+            {
+                return;
+            }
+
+            // Sharing/* subsystem (doc-honesty/unify-to-one-source fix): resolved from the SAME
+            // settings snapshot ShowToolbar's own SetShareProviders call populates the dropdown
+            // from (toolbarWindow.LiveSettings), not this session's own separately-snapshotted
+            // _settings field — see OverlayWindow.LiveSettings' own doc comment for why the two used
+            // to be able to disagree.
+            var config = RoeSnip.Sharing.ShareManager.ResolveDefault(toolbarWindow!.LiveSettings);
+            if (config is null)
+            {
+                // ShareButton is only ever enabled once ToolbarControl.SetShareProviders was given at
+                // least one enabled provider (see that method's own doc comment), so this should be
+                // unreachable in practice — kept as a defensive, honestly-surfaced failure rather than
+                // a silent no-op in case settings changed out from under an already-open overlay.
+                _notifier?.ShowError("Share failed: no share provider is configured.");
+                return;
+            }
+
+            StartShareUpload(toolbarWindow, config, pngBytes!);
+        }
+
+        /// <summary>The dropdown's per-provider Share (Sharing/* subsystem, senior-review wiring
+        /// fix — this used to be raised by ToolbarControl and simply discarded, a clickable-but-dead
+        /// menu item). Renders the current selection exactly like <see cref="ShareCurrentSelection"/>
+        /// does; the only difference is which provider config the render gets uploaded to — resolved
+        /// by id against the SAME <see cref="OverlayWindow.LiveSettings"/> source the dropdown itself
+        /// was populated from, so a choice visible in the menu can never fail to resolve here.</summary>
+        private void ShareToSpecificProvider(string providerId)
+        {
+            if (!TryPrepareShareUpload(out var toolbarWindow, out var pngBytes))
+            {
+                return;
+            }
+
+            var config = RoeSnip.Sharing.ShareManager.EffectiveConfigs(toolbarWindow!.LiveSettings)
+                .FirstOrDefault(c => c.Enabled && string.Equals(c.Id, providerId, StringComparison.Ordinal));
+            if (config is null)
+            {
+                // The dropdown (ToolbarControl.SetShareProviders) is only ever populated with
+                // currently-enabled providers, so this should be unreachable in practice — same
+                // defensive-honesty stance ShareCurrentSelection's own no-provider branch takes,
+                // kept in case a provider was disabled/removed out from under an already-open menu.
+                _notifier?.ShowError("Share failed: the selected provider is no longer configured.");
+                return;
+            }
+
+            StartShareUpload(toolbarWindow, config, pngBytes!);
+        }
+
+        /// <summary>Shared render step for both <see cref="ShareCurrentSelection"/> (default
+        /// provider) and <see cref="ShareToSpecificProvider"/> (dropdown pick) — everything the two
+        /// used to duplicate verbatim except which provider config the result gets uploaded to.
+        /// Returns false (both out params default) on any no-op/failure condition, matching
+        /// Confirm/Record's own "nothing selected yet" and render-failure guards.</summary>
+        private bool TryPrepareShareUpload(out OverlayWindow? toolbarWindow, out byte[]? pngBytes)
+        {
+            toolbarWindow = null;
+            pngBytes = null;
+
             SdrImage rendered;
             if (_spanningVirtual is { } spanningRect && _spanningPrimaryWindow is { } primary)
             {
@@ -1352,7 +1416,8 @@ public static class OverlayController
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine($"RoeSnip: spanning-selection share render failed: {ex.Message}");
-                    return;
+                    toolbarWindow = null;
+                    return false;
                 }
             }
             else
@@ -1360,7 +1425,7 @@ public static class OverlayController
                 var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
                 if (window is null)
                 {
-                    return; // nothing selected yet — same no-op guard as Confirm/Record
+                    return false; // nothing selected yet — same no-op guard as Confirm/Record
                 }
                 toolbarWindow = window;
                 try
@@ -1369,22 +1434,11 @@ public static class OverlayController
                 }
                 catch (InvalidOperationException)
                 {
-                    return;
+                    toolbarWindow = null;
+                    return false;
                 }
             }
 
-            var config = RoeSnip.Sharing.ShareManager.ResolveDefault(_settings);
-            if (config is null)
-            {
-                // ShareButton is only ever enabled once ToolbarControl.SetShareProviders was given at
-                // least one enabled provider (see that method's own doc comment), so this should be
-                // unreachable in practice — kept as a defensive, honestly-surfaced failure rather than
-                // a silent no-op in case settings changed out from under an already-open overlay.
-                _notifier?.ShowError("Share failed: no share provider is configured.");
-                return;
-            }
-
-            byte[] pngBytes;
             try
             {
                 pngBytes = PngWriter.Encode(rendered);
@@ -1392,21 +1446,28 @@ public static class OverlayController
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"RoeSnip: share PNG encode failed: {ex.Message}");
-                return;
+                toolbarWindow = null;
+                pngBytes = null;
+                return false;
             }
 
+            return true;
+        }
+
+        private void StartShareUpload(OverlayWindow toolbarWindow, RoeSnip.Sharing.ShareProviderConfig config, byte[] pngBytes)
+        {
             toolbarWindow.SetShareBusy(true);
             string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}.png";
             _ = UploadShareAsync(config, pngBytes, fileName, toolbarWindow, toolbarWindow.Dispatcher, _notifier);
         }
 
-        /// <summary>The async half of <see cref="ShareCurrentSelection"/>, factored out as a static
-        /// method (takes everything it needs as parameters) so it is obviously safe to run detached —
-        /// no accidental capture of session/window mutable state beyond the explicit params. Never
-        /// throws: ShareManager.UploadAsync already contracts to return a Success=false result rather
-        /// than throw for an ordinary failure, and the try/catch here is belt-and-braces for the PNG
-        /// stream/HTTP plumbing around that call, matching every other "fire and forget from a UI
-        /// click" handler's own contract in this codebase.</summary>
+        /// <summary>The async half of <see cref="ShareCurrentSelection"/>/<see cref="ShareToSpecificProvider"/>,
+        /// factored out as a static method (takes everything it needs as parameters) so it is
+        /// obviously safe to run detached — no accidental capture of session/window mutable state
+        /// beyond the explicit params. Never throws: ShareManager.UploadAsync already contracts to
+        /// return a Success=false result rather than throw for an ordinary failure, and the try/catch
+        /// here is belt-and-braces for the PNG stream/HTTP plumbing around that call, matching every
+        /// other "fire and forget from a UI click" handler's own contract in this codebase.</summary>
         private static async Task UploadShareAsync(
             RoeSnip.Sharing.ShareProviderConfig config, byte[] pngBytes, string fileName,
             OverlayWindow toolbarWindow, System.Windows.Threading.Dispatcher dispatcher, ITrayNotifier? notifier)
@@ -1440,9 +1501,17 @@ public static class OverlayController
 
                 if (result.Success && result.Url is not null)
                 {
+                    // Senior-review fix: the balloon used to unconditionally claim "copied the link"
+                    // even when this SetText call below threw — vary its text on a clipboard failure
+                    // instead (ShowShareUploadedBalloon's own second parameter).
+                    bool clipboardCopied = true;
                     try { System.Windows.Clipboard.SetText(result.Url); }
-                    catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: share URL clipboard copy failed (non-fatal): {ex.Message}"); }
-                    notifier?.ShowShareUploadedBalloon(result.Url);
+                    catch (Exception ex)
+                    {
+                        clipboardCopied = false;
+                        Console.Error.WriteLine($"RoeSnip: share URL clipboard copy failed (non-fatal): {ex.Message}");
+                    }
+                    notifier?.ShowShareUploadedBalloon(result.Url, clipboardCopied);
                 }
                 else
                 {

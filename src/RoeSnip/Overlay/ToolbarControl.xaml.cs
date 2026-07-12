@@ -593,9 +593,12 @@ public partial class ToolbarControl : UserControl
     // window is responsible for: resolving the render, calling ShareManager.UploadAsync off the UI
     // thread, copying the result URL to the clipboard, and driving SetShareBusy/tray balloon around
     // the call - exactly the same division of labor CopyClicked/SaveClicked already use (this
-    // control raises, OverlayWindow.xaml.cs acts). That wiring intentionally has NOT been done here
-    // (see Sharing/ShareManager's own doc comment) - Overlay selection internals are out of scope
-    // for whoever added this button.
+    // control raises, OverlayWindow.xaml.cs acts). Doc fix (senior review): ShareClicked and
+    // ShareToProviderRequested are now BOTH wired for real (OverlayWindow.ShowToolbar subscribes
+    // ShareToProviderRequested to OverlaySession.ShareToSpecificProvider, the per-provider sibling
+    // of the plain default-provider upload path). ManageProvidersRequested has no reachable
+    // "open Settings" entry point from inside an overlay session and stays genuinely unwired - see
+    // its own doc comment below for why that is safe rather than a dead click.
 
     /// <summary>ShareButton's own click: upload to the caller's configured DEFAULT provider. No
     /// payload - mirrors CopyClicked/SaveClicked's own zero-arg shape.</summary>
@@ -607,13 +610,25 @@ public partial class ToolbarControl : UserControl
     public event Action<string>? ShareToProviderRequested;
 
     /// <summary>Raised when ShareMenuButton is clicked while no provider is configured at all (the
-    /// menu would otherwise be empty) - the owning window's natural response is to open Settings'
-    /// sharing section. Never raised once at least one provider exists; the dropdown lists real
-    /// choices instead (see SetShareProviders).</summary>
+    /// menu would otherwise be empty) - the owning window's natural response would be to open
+    /// Settings' sharing section, but no such entry point is reachable from inside an overlay
+    /// session today, so nothing subscribes to this event. That is safe rather than a
+    /// clickable-but-dead chevron: <see cref="SetShareProviders"/> now disables ShareMenuButton
+    /// itself in exactly the zero-provider case that would have raised this event, so it can never
+    /// actually fire from a live click - see that method's own doc comment.</summary>
     public event Action? ManageProvidersRequested;
 
     private readonly List<MenuItem> _shareProviderMenuItems = new();
     private bool _shareHasProviders;
+    // Senior-review fix (LOW finding): SetShareProviders is re-run on every toolbar show (see
+    // OverlayWindow.ShowToolbar's own doc comment - pooled-window reuse, not a settings refresh),
+    // which can land WHILE a Share upload is still in flight (the overlay stays open for the whole
+    // upload - see OverlaySession.ShareCurrentSelection's own doc comment - and the user is free to
+    // keep dragging the selection meanwhile). Without this flag, that re-run used to unconditionally
+    // recompute IsEnabled from _shareHasProviders alone, silently re-enabling both buttons mid-
+    // upload and clobbering the busy state SetShareBusy(true) had just set. One flag, checked by
+    // both methods, is enough to keep them from fighting over the same two IsEnabled bits.
+    private bool _shareBusy;
 
     /// <summary>Called by the owning window to (re)populate the provider picker - typically once
     /// when the toolbar is (re)shown, mirroring SetPaletteColors' own "OverlayWindow keeps this in
@@ -621,7 +636,12 @@ public partial class ToolbarControl : UserControl
     /// non-empty (see this control's own class-level doc comment on the split button for why it
     /// never enables itself) - an owner that never calls this at all is exactly today's "nothing is
     /// wired up yet" state, and the buttons correctly stay disabled forever in that case rather than
-    /// presenting as clickable-but-silently-broken.</summary>
+    /// presenting as clickable-but-silently-broken. ShareMenuButton (the chevron) now follows
+    /// _shareHasProviders too, rather than always being clickable: the empty-menu case used to raise
+    /// ManageProvidersRequested for a "open Settings" action nothing subscribes to (a dead click) -
+    /// disabling it here instead is the honest alternative Finding 2 calls for. If a Share upload is
+    /// still in flight (<see cref="_shareBusy"/>) this deliberately does NOT re-enable either button -
+    /// see that field's own doc comment for why (Finding 4).</summary>
     public void SetShareProviders(IReadOnlyList<(string Id, string Name)> providers, string? defaultId)
     {
         ShareProviderMenu.Items.Clear();
@@ -641,11 +661,15 @@ public partial class ToolbarControl : UserControl
         }
 
         _shareHasProviders = providers.Count > 0;
-        ShareButton.IsEnabled = _shareHasProviders;
         ShareButton.ToolTip = _shareHasProviders
             ? "Share: upload to your default provider"
             : "Share: no provider configured yet - set one up in Settings";
-        ShareMenuButton.IsEnabled = true; // always clickable: empty-menu case opens Settings instead (OnShareMenuClick)
+        if (_shareBusy)
+        {
+            return; // an upload is still running - SetShareBusy already disabled both buttons; leave that alone
+        }
+        ShareButton.IsEnabled = _shareHasProviders;
+        ShareMenuButton.IsEnabled = _shareHasProviders;
     }
 
     /// <summary>Upload-in-progress state ("upload progress via balloon or button state" is the
@@ -656,8 +680,9 @@ public partial class ToolbarControl : UserControl
     /// established, so busy=false never re-enables a Share button that has no configured provider.</summary>
     public void SetShareBusy(bool busy)
     {
+        _shareBusy = busy;
         ShareButton.IsEnabled = !busy && _shareHasProviders;
-        ShareMenuButton.IsEnabled = !busy;
+        ShareMenuButton.IsEnabled = !busy && _shareHasProviders;
         ShareButton.ToolTip = busy
             ? "Sharing..."
             : (_shareHasProviders ? "Share: upload to your default provider" : "Share: no provider configured yet - set one up in Settings");

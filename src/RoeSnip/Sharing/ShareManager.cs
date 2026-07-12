@@ -15,10 +15,13 @@ namespace RoeSnip.Sharing;
 /// network call, and runs the upload against one process-wide HttpClient (never one-per-call - same
 /// convention App/UpdateManager.cs already uses for its own GitHub calls).
 ///
-/// Wiring state (integration pass, 2026-07): both live UI callers are now wired. The toolbar's Share
-/// button calls this via OverlaySession.ShareCurrentSelection (Overlay/OverlayController.cs), which
-/// resolves the current selection's rendered bytes through the same render path Copy already uses.
-/// The recording chrome's Reviewing-state Share button calls this via RecordingSession.RequestShare
+/// Wiring state (integration pass, 2026-07; dropdown wiring added in a later senior-review fix
+/// pass): every live UI caller is now wired. The toolbar's plain Share button calls this via
+/// OverlaySession.ShareCurrentSelection (Overlay/OverlayController.cs), which resolves the current
+/// selection's rendered bytes through the same render path Copy already uses; the toolbar's Share
+/// dropdown (a specific provider, not the default) calls this via the sibling
+/// OverlaySession.ShareToSpecificProvider, same render path, different config. The recording
+/// chrome's Reviewing-state Share button calls this via RecordingSession.RequestShare
 /// (Recording/RecordingController.cs), which owns the finished take's temp file path - see that
 /// method's own doc comment for the hard-stop/upload/re-arm design (Share triggers the same hard
 /// stop Save uses, then uploads the temp file WITHOUT moving it). Unit tests (ShareManagerTests)
