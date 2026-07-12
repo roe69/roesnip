@@ -38,6 +38,7 @@ public static class AutomationProtocol
     public static readonly IReadOnlyList<string> KnownCommands = new[]
     {
         "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot",
+        "confirm",
     };
 
     /// <summary>Parses one line of the wire protocol: must be a JSON object with a non-empty string
@@ -102,6 +103,21 @@ public static class AutomationProtocol
                 return TryGetString(request, "format", out string? format) && format is "gif" or "mp4"
                     ? null
                     : "record requires \"format\": \"gif\" or \"mp4\"";
+
+            // Cross-monitor selection (multimon-selection): "save" needs an explicit "path" since
+            // automation must never pop the interactive SaveFileDialog — see
+            // OverlayController.ConfirmForAutomation's own doc comment.
+            case "confirm":
+                if (!TryGetString(request, "action", out string? confirmAction) || confirmAction is not ("copy" or "save"))
+                {
+                    return "confirm requires \"action\": \"copy\" or \"save\"";
+                }
+                if (confirmAction == "save"
+                    && (!TryGetString(request, "path", out string? confirmPath) || string.IsNullOrWhiteSpace(confirmPath)))
+                {
+                    return "confirm \"save\" requires a non-empty \"path\"";
+                }
+                return null;
 
             case "preset":
                 return TryGetString(request, "tier", out string? tier) && tier is "max" or "quality" or "balanced" or "compact" or "minimal"
@@ -396,6 +412,7 @@ internal sealed class AutomationServer
                 "chrome" => HandleChrome(request),
                 "escape" => HandleEscape(),
                 "screenshot" => HandleScreenshot(request),
+                "confirm" => HandleConfirm(request),
                 _ => AutomationProtocol.BuildError($"unknown command \"{cmd}\""), // unreachable, ValidateArgs already rejected it
             };
         }
@@ -524,6 +541,19 @@ internal sealed class AutomationServer
 
         var (width, height) = InvokeOnUi(() => CaptureScreenshot(path, explicitRect, includeExcluded));
         return new JsonObject { ["ok"] = true, ["path"] = path, ["width"] = width, ["height"] = height }.ToJsonString();
+    }
+
+    private string HandleConfirm(JsonObject request)
+    {
+        string action = (string)request["action"]!;
+        string? path = request["path"] is JsonValue pv && pv.TryGetValue(out string? p) ? p : null;
+
+        string? error = InvokeOnUi<string?>(() => OverlayController.IsSessionActive
+            ? OverlayController.ConfirmForAutomation(action, path)
+            : "confirm requires an active overlay session");
+        return error is not null
+            ? AutomationProtocol.BuildError(error)
+            : AutomationProtocol.SerializeState(InvokeOnUi(GetStateSnapshot));
     }
 
     private static GifSizePreset ParsePreset(string tier) => tier switch

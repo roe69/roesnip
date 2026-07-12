@@ -326,6 +326,18 @@ public static class OverlayController
     internal static string? CancelForAutomation() =>
         s_activeSession?.CancelForAutomation() ?? "no active overlay session";
 
+    /// <summary>Cross-monitor selection (multimon-selection): Copy/Save had no automation entry
+    /// point at all before this — the toolbar's Copy button raises OverlayCommand.Copy exactly like
+    /// this does, but Save's real path (TryShowSaveDialog) pops a modal SaveFileDialog, which must
+    /// never happen from a headless automation call (it would hang the pipe waiting for a human).
+    /// "save" therefore REQUIRES an explicit path and writes directly via PngWriter, skipping the
+    /// dialog entirely — same production render/write calls Confirm/ConfirmSpanning already use,
+    /// just without the interactive picker. Added specifically so a spanning selection's Copy/Save
+    /// path — the one place this feature has no other test lever — can be driven and verified
+    /// end-to-end; see docs/DESIGN-MULTIMON-SELECTION.md.</summary>
+    internal static string? ConfirmForAutomation(string action, string? path) =>
+        s_activeSession?.ConfirmForAutomation(action, path) ?? "no active overlay session";
+
     // ---------- Standalone ColorPickerWindow (UX round 2) ----------
 
     private static ColorPickerWindow? s_colorPickerWindow;
@@ -1409,6 +1421,105 @@ public static class OverlayController
         {
             OnCommand(OverlayCommand.Cancel);
             return null;
+        }
+
+        /// <summary>See OverlayController.ConfirmForAutomation's own doc comment for why "save"
+        /// requires an explicit path (never the interactive dialog) and exists at all.</summary>
+        internal string? ConfirmForAutomation(string action, string? path)
+        {
+            switch (action)
+            {
+                case "copy":
+                    if (_windows.All(w => w.SelectionPx is null))
+                    {
+                        return "no selection to copy";
+                    }
+                    Confirm(copy: true, save: false, saveHdr: false);
+                    return null;
+
+                case "save":
+                    if (string.IsNullOrWhiteSpace(path))
+                    {
+                        return "confirm \"save\" requires a non-empty \"path\" (automation never opens the Save dialog)";
+                    }
+                    if (_windows.All(w => w.SelectionPx is null))
+                    {
+                        return "no selection to save";
+                    }
+                    ConfirmSaveForAutomation(path);
+                    return null;
+
+                default:
+                    return "confirm requires \"action\": one of copy|save";
+            }
+        }
+
+        /// <summary>Save's automation path: the same render + PngWriter.WriteFile calls Confirm/
+        /// ConfirmSpanning already make, just writing straight to <paramref name="path"/> instead of
+        /// asking TryShowSaveDialog for one.</summary>
+        private void ConfirmSaveForAutomation(string path)
+        {
+            if (_spanningVirtual is { } spanningRect && _spanningPrimaryWindow is { } primary)
+            {
+                SdrImage rendered;
+                try
+                {
+                    rendered = RenderSpanningSelection(spanningRect);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"RoeSnip: spanning-selection render failed: {ex.Message}");
+                    return;
+                }
+
+                try
+                {
+                    PngWriter.WriteFile(path, rendered);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"RoeSnip: automation save failed: {ex.Message}");
+                    return;
+                }
+
+                var result = new OverlayResult(
+                    primary.Monitor, primary.SelectionPx ?? default, rendered, primary.Frame,
+                    CopyPerformed: false, SavedPngPath: path, SaveHdrRequested: false,
+                    RecordingRequested: null, SpanningVirtualSelectionPx: spanningRect);
+                Finish(result);
+                return;
+            }
+
+            var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
+            if (window is null)
+            {
+                return;
+            }
+
+            SdrImage renderedLocal;
+            try
+            {
+                renderedLocal = window.RenderSelectionWithAnnotations();
+            }
+            catch (InvalidOperationException)
+            {
+                return;
+            }
+
+            try
+            {
+                PngWriter.WriteFile(path, renderedLocal);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: automation save failed: {ex.Message}");
+                return;
+            }
+
+            var localResult = new OverlayResult(
+                window.Monitor, window.SelectionPx!.Value, renderedLocal, window.Frame,
+                CopyPerformed: false, SavedPngPath: path, SaveHdrRequested: false);
+            Finish(localResult);
         }
 
         /// <summary>The MonitorInfo for every monitor this session captured — used only to know
