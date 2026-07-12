@@ -10,7 +10,15 @@ namespace RoeSnip.Recording.Gif;
 /// <see cref="Stopwatch.GetTimestamp"/> pair with a check of this flag first, so a normal recording
 /// take (Enabled never set) pays a single false branch per stage per frame — not a real Stopwatch
 /// call — keeping this at zero measurable cost on the hot path the rest of this file's LOH/Gen2
-/// discipline exists to protect.
+/// discipline exists to protect. That "per frame" framing does NOT extend to the LutFillTicks/
+/// LutLookupCount drill-down guards inside <see cref="GifNearestColorLut.Lookup"/>: those run PER
+/// PIXEL (every ClassifyAndPaint lookup, not once per frame), so a Max@50fps 640x420 frame
+/// evaluates them hundreds of thousands of times rather than once. A/B wall-time measurement with
+/// those two per-pixel checks removed found no measurable Release-build cost (medians 6.85s vs
+/// 6.74s, within noise, since the branch predicts trivially once Enabled settles to false), but
+/// Debug builds pay real overhead from it (median 35.5s with the guards vs roughly 29s without,
+/// about 18%) — profile Debug-configuration numbers with that in mind rather than assuming this
+/// class is free everywhere.
 ///
 /// Buckets deliberately mirror the four named in the workstream's own instrumentation brief (bbox
 /// scan, ClassifyAndPaint, octree/LUT, LZW), plus two more the real per-frame pipeline actually has
