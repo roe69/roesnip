@@ -287,11 +287,16 @@ returned `state` reflects it rather than a stale `idle`.
 
 In `overlay` mode: sets the selection on whichever monitor contains the rect's top-left corner,
 through the same code path Ctrl+A (select-all) uses — selection becomes visible and the annotation
-toolbar shows, exactly as a completed drag would leave it. In `setup` mode (a recording session's
-Setup phase): applies the rect to `RegionOutline` through the exact band-drag code path, so
-`RegionChanged` → `RecordingSession.OnRegionMoved` → the chrome's `UpdateSelection` all fire, same
-as a real drag. Errors if idle, or if a recording is in `capturing`/`reviewing` (the region is
-locked once a take exists).
+toolbar shows, exactly as a completed drag would leave it. In `setup`/`capturing`/`reviewing` mode
+(any phase of a recording session): applies the rect to `RegionOutline` through the exact band-drag
+code path, so `RegionChanged` → `RecordingSession.OnRegionMoved` → the chrome's `UpdateSelection`
+all fire, same as a real drag — including, once a take exists (`capturing`/`reviewing`), the
+size-locked MOVE-ONLY semantics a real drag has then (`w`/`h` in the request are ignored; only
+`x`/`y` — the desired top-left — are honored, and the recorder's own crop follows, same as dragging
+the band with the mouse). Multi-monitor recording (drag handoff): a `select` that moves the region
+so it's no longer fully contained in its current monitor's bounds during `capturing`/`reviewing`
+triggers the same cross-monitor handoff a real drag across that boundary would — see "Cross-monitor
+recording" below. Errors only if idle (nothing to select).
 
 ```json
 {"ok":true,"mode":"overlay","selection":{"x":100,"y":80,"w":800,"h":600}, ...}
@@ -459,6 +464,48 @@ actively-used desktop, not a defect in the spanning-selection feature itself. No
 branch attempts to fix (touching the keyboard hook is explicitly out of scope — see DESIGN.md's own
 "hard-won fixes" warning); flagged here for whoever next drives automation on a similarly busy
 machine.
+
+### Cross-monitor recording (drag a live take across a monitor boundary)
+
+Multi-monitor recording phase 1 (`multimon-recording-p1` branch, PLAN-MULTIMON-RECORDING.md):
+distinct from cross-monitor SELECTION above, which is about the one-shot capture/annotate flow. This
+is about a REGION THAT'S ALREADY RECORDING (`capturing` or `reviewing`) being dragged (or `select`ed
+— see the `select` command's own doc above) across a monitor boundary mid-take.
+
+Phase 1 is "snap, not spanning": the recorded content is never a stitched composite of two
+monitors at once (that's phase 2, not built here). The instant the region's bounding rect would stop
+being fully contained in its current monitor, RoeSnip tears down the `RegionRecorder` on the monitor
+it's leaving and builds a fresh one on the monitor now holding the majority of the region — a brief
+"pop" in the recording (a few dropped frames while the new WGC session spins up; VFR timestamps and
+GIF's own patch-behind carry absorb the gap without any visible time distortion) followed by content
+from the NEW monitor. The encoder's canvas dimensions never change (only the position moves), and the
+tone-map exposure is RECOMPUTED fresh for the destination monitor rather than carried over or
+blended — a visible brightness/color shift across the handoff on two differently-calibrated monitors
+is the expected, photometrically-correct behavior, not a bug.
+
+`select` during `capturing`/`reviewing` is a size-locked MOVE (see that command's own doc above) —
+this is the production path automation drives a handoff through, exactly mirroring what dragging the
+region's band with the mouse does. A single `select` call that jumps straight onto a different
+monitor (rather than a smooth incremental drag) triggers exactly one handoff, landing on whichever
+monitor the FINAL rect mostly overlaps — intermediate monitors the jump would have crossed are never
+visited.
+
+```
+RoeSnip.exe --auto "{\"cmd\":\"select\",\"x\":100,\"y\":100,\"w\":800,\"h\":600}"
+RoeSnip.exe --auto "{\"cmd\":\"record\",\"format\":\"gif\"}"
+RoeSnip.exe --auto "{\"cmd\":\"chrome\",\"action\":\"start\"}"
+:: {"ok":true,"mode":"capturing", ...}
+
+:: Drag the SAME size region onto DISPLAY1 (negative-Y monitor in this rig's layout) mid-take:
+RoeSnip.exe --auto "{\"cmd\":\"select\",\"x\":100,\"y\":-1300,\"w\":800,\"h\":600}"
+:: {"ok":true,"mode":"capturing","selection":{"x":100,"y":-1300,"w":800,"h":600}, ...}
+:: w/h echoed back unchanged (size-locked); stderr logs "recording handed off DISPLAY3 -> DISPLAY1 ..."
+```
+
+Given the same-machine automation reliability caveat documented in the cross-monitor SELECTION
+section above (a synthetic Escape occasionally reaching `SessionKeyboardHook` mid-`InvokeOnUi`), a
+live E2E run on a busy dev box should retry a `select`/`chrome` call that comes back `ok:false`
+unexpectedly rather than treating one failure as conclusive.
 
 ### Worked example: select, record, read the estimate, resize, set preset and fps, screenshot, cancel
 
