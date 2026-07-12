@@ -177,8 +177,21 @@ public partial class ShareProvidersWindow : Window
     private void UpsertAndSave(ShareProviderConfig config)
     {
         var settings = SettingsStore.Load();
-        var list = settings.ShareProviders.Where(c => !string.Equals(c.Id, config.Id, StringComparison.Ordinal)).ToList();
-        list.Add(config);
+        // Replace IN PLACE (not remove-then-append) - ShareManager.ResolveDefault falls back to
+        // "first enabled config in list order" whenever DefaultShareProviderId is null/stale, so
+        // reordering the list here would silently change which provider a plain Share click uploads
+        // to on every routine Enabled-toggle or Configure/Save, not just when the user actually
+        // means to reorder.
+        var list = settings.ShareProviders.ToList();
+        int existingIndex = list.FindIndex(c => string.Equals(c.Id, config.Id, StringComparison.Ordinal));
+        if (existingIndex >= 0)
+        {
+            list[existingIndex] = config;
+        }
+        else
+        {
+            list.Add(config);
+        }
         try
         {
             SettingsStore.Save(settings with { ShareProviders = list });

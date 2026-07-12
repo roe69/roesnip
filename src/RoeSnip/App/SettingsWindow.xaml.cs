@@ -206,9 +206,17 @@ public partial class SettingsWindow : Window
         _current = SettingsStore.Load() with
         {
             // Every OTHER field in this window is still only staged locally until Save is clicked -
-            // only the Sharing fields are meant to have been persisted by the sub-window, so pull
-            // just those two off the freshly-loaded settings and keep everything else as this
-            // window's own in-progress (possibly unsaved) edits.
+            // only ShareProviders is meant to have been persisted by the sub-window (which never
+            // touches DefaultShareProviderId - see ShareProvidersWindow.RemoveAndSave for the one
+            // exception, clearing it when its own current provider is removed, a narrow case
+            // ShareManager.ResolveDefault already tolerates by falling back to the first enabled
+            // provider), so pull just that one field off the freshly-loaded settings and keep
+            // everything else - INCLUDING DefaultShareProviderId - as this window's own in-progress
+            // (possibly unsaved) edits. DefaultShareProviderId is edited by THIS window's own combo
+            // (DefaultShareProviderCombo_SelectionChanged, staged onto _current same as every other
+            // field below); pulling it from disk here would silently discard a combo selection the
+            // user made just before clicking Providers... to double-check something, snapping it back
+            // to the stale on-disk value the instant this dialog closes.
             HotkeyModifiers = _current.HotkeyModifiers,
             HotkeyVirtualKey = _current.HotkeyVirtualKey,
             SaveDirectory = _current.SaveDirectory,
@@ -218,6 +226,7 @@ public partial class SettingsWindow : Window
             ToneMapKneeOverride = _current.ToneMapKneeOverride,
             ToneMapPeakOverride = _current.ToneMapPeakOverride,
             RunAtStartup = _current.RunAtStartup,
+            DefaultShareProviderId = _current.DefaultShareProviderId,
         };
         RefreshShareProvidersUi();
     }
