@@ -2448,6 +2448,14 @@ internal sealed class RecordingSession
                 if (_phase != Phase.Reviewing) return $"cannot save while recording is {_phase}";
                 _chrome!.InvokeSave();
                 return null;
+            case "share":
+                // Same phase/reentrancy guard RequestShare itself enforces (Reviewing, not already
+                // mid hard-stop) - checked here too so a bad automation call gets an explicit error
+                // instead of RequestShare's own silent no-op.
+                if (_phase != Phase.Reviewing) return $"cannot share while recording is {_phase}";
+                if (_saving || _sharing) return "cannot share: a save or share is already in progress";
+                _chrome!.InvokeShare();
+                return null;
             case "cancel":
                 _chrome!.InvokeCancel();
                 return null;

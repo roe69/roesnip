@@ -1823,8 +1823,23 @@ public static class OverlayController
                     ConfirmSaveForAutomation(path);
                     return null;
 
+                case "share":
+                    // Sharing/* subsystem: raises the exact OverlayCommand.Share the toolbar's Share
+                    // button raises — same detached-upload/URL-to-clipboard/balloon flow, same
+                    // stay-open semantics (this response's trailing state snapshot still shows the
+                    // overlay, unlike copy/save which close it; the upload's own result arrives later
+                    // via the tray balloon). ShareCurrentSelection has its own no-provider guard; the
+                    // no-selection case is pre-checked here so automation gets an explicit error
+                    // instead of that method's silent no-op.
+                    if (_spanningVirtual is null && _windows.All(w => w.SelectionPx is null))
+                    {
+                        return "no selection to share";
+                    }
+                    OnCommand(OverlayCommand.Share);
+                    return null;
+
                 default:
-                    return "confirm requires \"action\": one of copy|save";
+                    return "confirm requires \"action\": one of copy|save|share";
             }
         }
 

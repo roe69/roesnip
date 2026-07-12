@@ -356,7 +356,7 @@ the current phase if not in `setup`.
 
 #### `chrome`
 
-`{"cmd":"chrome","action":"start"}` — one of `start`/`stop`/`save`/`cancel`/`pause`/`resume`.
+`{"cmd":"chrome","action":"start"}` — one of `start`/`stop`/`save`/`share`/`cancel`/`pause`/`resume`.
 
 Raises the same button `Click` event a real mouse click on that chrome button would — `start`/
 `stop` share one button exactly like the real UI (`start` valid only in `setup`, `stop` only in
@@ -365,6 +365,14 @@ paused (valid from `capturing` or `reviewing` — a soft-stopped take is a pause
 `RecordingSession.Resume`'s own doc comment); `save` requires `reviewing`; `cancel` is valid in any
 phase. An action invalid for the current phase errors with that phase instead of silently no-op'ing
 the way a disabled button would.
+
+`share` (Sharing/* subsystem, added alongside the toolbar's own Share wiring) requires `reviewing`
+and errors if a save or share is already in progress. It hard-stops the still-alive pipeline (same
+finalize Save uses), uploads the temp file to the configured default share provider WITHOUT moving
+it, then re-arms into `setup` immediately — the upload itself runs detached and its result (URL
+copied to clipboard + tray balloon on success, an honest error balloon otherwise) lands later,
+independent of whatever the session is doing by then. See `RecordingSession.RequestShare`'s own doc
+comment in `Recording/RecordingController.cs` for the full design.
 
 ```
 --auto '{"cmd":"chrome","action":"start"}'
@@ -432,6 +440,14 @@ available for a spanning one; see the cross-monitor selection section below).
 
 Closes the overlay on success, same as a real Copy/Save click — the trailing `state` snapshot
 reflects the post-close (`idle`) state, not the selection that was just confirmed.
+
+`action: "share"` (Sharing/* subsystem, wired in the same integration pass as the chrome `share`
+action above) raises the same `OverlayCommand.Share` the toolbar's Share button raises: renders the
+current selection through the exact path Copy uses (including a spanning stitch), uploads it to the
+configured default share provider, copies the result URL to the clipboard, and shows a tray balloon.
+Unlike `copy`/`save` the overlay STAYS OPEN (the trailing `state` still reports `overlay`) — the
+upload runs detached and its result lands later; drive `escape` afterwards to close the session.
+Requires a selection and at least one enabled share provider (Settings > Sharing).
 
 ### Cross-monitor selection (`select` spanning multiple monitors)
 
@@ -583,8 +599,38 @@ the two integration-point UI stubs (`Overlay/ToolbarControl`'s Share split-butto
   `ShareProviders` `List<T>` field (same reference-equality-quirk neutralization the file already
   applies to `RecentPickedColors`/`PaletteColors`/etc.).
 
-**NOT verified — deliberately out of scope this phase (per the track brief: no live uploads, no
-resident launch):**
+**Verified 2026-07-13 (integration pass — live full-chain E2E on this machine, single-file Release
+publish swapped in as the resident, local RoeShare instance on 127.0.0.1:3399 with a throwaway
+DATA_DIR + fresh API key):**
+
+- **Spanning record → chrome Share:** `trigger` → `select {x:600,y:-200,w:800,h:500}` (spans
+  DISPLAY1 into DISPLAY3, red/blue marker windows on the two monitors) → `record gif` → chrome
+  `start` → ~5 s → chrome `stop` → chrome `share`. stderr logged
+  `recording capture started (Gif, 800x500, 50fps, 2 monitor(s) [spanning])`; the upload landed in
+  the local RoeShare (share id `ArXrhy2oqR`, 11392 bytes, creatorUa `RoeSnip-Sharing`, attributed to
+  the E2E API key), the URL was on the clipboard, the temp gif was deleted after upload, and the
+  session re-armed to `setup`. The downloaded GIF decodes as 800x500 with the DISPLAY1 marker's
+  exact red (220,20,20) in the top band and the DISPLAY3 marker's exact blue (20,60,220) below it —
+  a genuine two-monitor stitch. (1 frame total: static screen, WGC only delivers dirty frames.)
+- **Toolbar Share (plain selection):** `trigger` → `select {x:550,y:50,w:500,h:400}` (fully on
+  DISPLAY3) → `confirm {action:"share"}`. Overlay stayed open (as designed), upload landed (share id
+  `zGNFNmop6b`, 4636 bytes), URL on clipboard, and the downloaded PNG is 500x400 with the blue
+  marker's exact pixels — byte-identical round trip.
+- RoeShare's admin flow was also incidentally exercised for setup: `POST /api/admin/login` +
+  `POST /api/admin/api-keys` (with an Origin header — its CSRF check rejects header-less curl).
+
+**NOT verified — still open after the integration pass:**
+
+- Every non-RoeShare built-in spec (Imgur, catbox, litterbox, 0x0.st, GoFile, file.io) against its
+  real endpoint, and ShareProviderEditWindow's Test button against a real provider.
+- The Share buttons clicked with a real mouse (E2E drove the same Click-raising production paths via
+  the automation pipe; see the synthetic-Escape hook caveat above for why UIA/synthetic input is
+  avoided on this machine).
+- An upload FAILURE surfacing through the tray balloon (only success paths ran live; the error path
+  is unit-tested).
+
+**Previously NOT verified — deliberately out of scope in the original sharing phase (for the
+record; each item above supersedes its counterpart here):**
 
 - Any of the seven built-in `ProviderSpec`s (RoeShare, Imgur, catbox.moe, litterbox, 0x0.st, GoFile,
   file.io) against a REAL live endpoint. Each was checked against the provider's current public docs

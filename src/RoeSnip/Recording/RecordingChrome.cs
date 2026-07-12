@@ -972,6 +972,12 @@ internal sealed class RecordingChrome : Window
     internal void InvokeStartStop() => _startStopButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
     internal void InvokePauseResume() => _pauseResumeButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
     internal void InvokeSave() => _saveButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    // Sharing/* subsystem: added alongside RecordingSession.RequestShare's own wiring so the
+    // Reviewing-state Share button has the same automation lever every other chrome button already
+    // does (AutomationServer's `chrome` command, InvokeChromeAction's own "share" case) - a real
+    // click-driven E2E test needs a way to trigger a hard-stop-then-upload without UIA/synthetic
+    // input, same reasoning as every other Invoke* method here.
+    internal void InvokeShare() => _shareButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
     internal void InvokeCancel() => _cancelButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
 
     internal void InvokeSizePreset(GifSizePreset preset)

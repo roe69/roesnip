@@ -108,9 +108,12 @@ public static class AutomationProtocol
             // automation must never pop the interactive SaveFileDialog — see
             // OverlayController.ConfirmForAutomation's own doc comment.
             case "confirm":
-                if (!TryGetString(request, "action", out string? confirmAction) || confirmAction is not ("copy" or "save"))
+                // "share" (Sharing/* subsystem) needs no path: it uploads the rendered selection to
+                // the configured default provider — see OverlaySession.ConfirmForAutomation's own
+                // "share" case for the stay-open/detached-upload semantics.
+                if (!TryGetString(request, "action", out string? confirmAction) || confirmAction is not ("copy" or "save" or "share"))
                 {
-                    return "confirm requires \"action\": \"copy\" or \"save\"";
+                    return "confirm requires \"action\": one of copy|save|share";
                 }
                 if (confirmAction == "save"
                     && (!TryGetString(request, "path", out string? confirmPath) || string.IsNullOrWhiteSpace(confirmPath)))
@@ -151,9 +154,9 @@ public static class AutomationProtocol
 
             case "chrome":
                 return TryGetString(request, "action", out string? action)
-                       && action is "start" or "stop" or "save" or "cancel" or "pause" or "resume"
+                       && action is "start" or "stop" or "save" or "share" or "cancel" or "pause" or "resume"
                     ? null
-                    : "chrome requires \"action\": one of start|stop|save|cancel|pause|resume";
+                    : "chrome requires \"action\": one of start|stop|save|share|cancel|pause|resume";
 
             case "screenshot":
                 if (!TryGetString(request, "path", out string? path) || string.IsNullOrWhiteSpace(path))
