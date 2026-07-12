@@ -567,7 +567,96 @@ public partial class ToolbarControl : UserControl
         HistoryGroupPanel.Visibility = collapseVisibility;
         PaletteGroupPanel.Visibility = collapseVisibility;
         RecordButton.Visibility = collapseVisibility;
-        UploadButton.Visibility = collapseVisibility;
+        ShareGroupPanel.Visibility = collapseVisibility;
+    }
+
+    // ---------- Share split-button (Sharing/* subsystem) ----------
+    //
+    // This control only ever RAISES these events / exposes these setters - it never touches
+    // Sharing/ShareManager itself and never knows what "the current selection render" even is
+    // (that lives in Overlay/OverlaySession, which this control has no reference to). The owning
+    // window is responsible for: resolving the render, calling ShareManager.UploadAsync off the UI
+    // thread, copying the result URL to the clipboard, and driving SetShareBusy/tray balloon around
+    // the call - exactly the same division of labor CopyClicked/SaveClicked already use (this
+    // control raises, OverlayWindow.xaml.cs acts). That wiring is intentionally NOT part of this
+    // track (see docs/PLAN.md's track split / Sharing/ShareManager's own doc comment) - Overlay
+    // selection internals are out of scope here.
+
+    /// <summary>ShareButton's own click: upload to the caller's configured DEFAULT provider. No
+    /// payload - mirrors CopyClicked/SaveClicked's own zero-arg shape.</summary>
+    public event Action? ShareClicked;
+
+    /// <summary>A specific provider was picked from ShareMenuButton's dropdown. The argument is that
+    /// provider's ShareProviderConfig.Id (opaque to this control - it only ever echoes back an Id it
+    /// was itself given via SetShareProviders).</summary>
+    public event Action<string>? ShareToProviderRequested;
+
+    /// <summary>Raised when ShareMenuButton is clicked while no provider is configured at all (the
+    /// menu would otherwise be empty) - the owning window's natural response is to open Settings'
+    /// sharing section. Never raised once at least one provider exists; the dropdown lists real
+    /// choices instead (see SetShareProviders).</summary>
+    public event Action? ManageProvidersRequested;
+
+    private readonly List<MenuItem> _shareProviderMenuItems = new();
+    private bool _shareHasProviders;
+
+    /// <summary>Called by the owning window to (re)populate the provider picker - typically once
+    /// when the toolbar is (re)shown, mirroring SetPaletteColors' own "OverlayWindow keeps this in
+    /// sync" contract. Enables ShareButton/ShareMenuButton only once <paramref name="providers"/> is
+    /// non-empty (see this control's own class-level doc comment on the split button for why it
+    /// never enables itself) - an owner that never calls this at all is exactly today's "nothing is
+    /// wired up yet" state, and the buttons correctly stay disabled forever in that case rather than
+    /// presenting as clickable-but-silently-broken.</summary>
+    public void SetShareProviders(IReadOnlyList<(string Id, string Name)> providers, string? defaultId)
+    {
+        ShareProviderMenu.Items.Clear();
+        _shareProviderMenuItems.Clear();
+
+        foreach (var (id, name) in providers)
+        {
+            var item = new MenuItem
+            {
+                Header = string.Equals(id, defaultId, StringComparison.Ordinal) ? $"{name} (default)" : name,
+                Style = (Style)Resources["DarkMenuItemStyle"],
+                Tag = id,
+            };
+            item.Click += (_, _) => ShareToProviderRequested?.Invoke((string)item.Tag);
+            ShareProviderMenu.Items.Add(item);
+            _shareProviderMenuItems.Add(item);
+        }
+
+        _shareHasProviders = providers.Count > 0;
+        ShareButton.IsEnabled = _shareHasProviders;
+        ShareButton.ToolTip = _shareHasProviders
+            ? "Share: upload to your default provider"
+            : "Share: no provider configured yet - set one up in Settings";
+        ShareMenuButton.IsEnabled = true; // always clickable: empty-menu case opens Settings instead (OnShareMenuClick)
+    }
+
+    /// <summary>Upload-in-progress state (per the track brief: "upload progress via balloon or
+    /// button state"). Disables both buttons for the duration - the same visible-but-inert pattern
+    /// Undo/Redo already use while inapplicable, rather than a spinner this small icon-only control
+    /// has no room for. Restores (rather than assumes) the enabled state SetShareProviders last
+    /// established, so busy=false never re-enables a Share button that has no configured provider.</summary>
+    public void SetShareBusy(bool busy)
+    {
+        ShareButton.IsEnabled = !busy && _shareHasProviders;
+        ShareMenuButton.IsEnabled = !busy;
+        ShareButton.ToolTip = busy
+            ? "Sharing..."
+            : (_shareHasProviders ? "Share: upload to your default provider" : "Share: no provider configured yet - set one up in Settings");
+    }
+
+    private void OnShareClick(object sender, RoutedEventArgs e) => ShareClicked?.Invoke();
+
+    private void OnShareMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (_shareProviderMenuItems.Count == 0)
+        {
+            ManageProvidersRequested?.Invoke();
+            return;
+        }
+        ShareMenuButton.ContextMenu!.IsOpen = true;
     }
 
     private void OnUndoClick(object sender, RoutedEventArgs e) => UndoClicked?.Invoke();

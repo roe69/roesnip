@@ -51,7 +51,9 @@ using VAlign = System.Windows.VerticalAlignment;
 ///               here (the encoder already baked in whatever they were set to at Start - see
 ///               RecordingSession.BeginCapture) rather than hidden, so the panel doesn't jump.
 ///   Reviewing - Stop was pressed; the take is fully encoded to its temp file but not yet moved to
-///               a real path. Shows Restart and Save (Cancel remains available to discard).
+///               a real path. Shows Restart, Save, and Share (Cancel remains available to discard).
+///               Share raises ShareRequested only - see that event's own doc comment for why this
+///               class stops there instead of driving an upload itself.
 /// Restart (available once anything has been captured) asks for confirmation INLINE - swapping
 /// this same panel's content rather than opening a second top-level window, so there is only ever
 /// one HWND to keep WDA-excluded (see OnSourceInitialized) for the whole recording lifetime.
@@ -123,6 +125,7 @@ internal sealed class RecordingChrome : Window
                        // now user-editable in Setup like the size preset (see ApplyFpsValue)
     private readonly Button _restartButton;
     private readonly Button _saveButton;
+    private readonly Button _shareButton;
     private readonly Button _cancelButton;
     private readonly StackPanel _normalPanel;
     private readonly StackPanel _confirmPanel;
@@ -140,6 +143,15 @@ internal sealed class RecordingChrome : Window
     public event Action? RestartConfirmed;
     /// <summary>Reviewing state's Save button.</summary>
     public event Action? SaveRequested;
+    /// <summary>Reviewing state's Share button (Sharing/* subsystem) - uploads the finished take.
+    /// Zero-arg, same shape as SaveRequested: this chrome only RAISES the request, it never touches
+    /// Sharing/ShareManager itself, because it has no reference to the take's temp file path (that
+    /// lives in RecordingController's own private fields - see RecordingController.cs, which is the
+    /// owner responsible for subscribing to this event, reading its own temp path, and driving the
+    /// actual upload/clipboard/balloon sequence - the same division of labor SaveRequested already
+    /// uses for finalizing the take). That wiring is a Recording-pipeline change and intentionally
+    /// out of scope for whatever track added this button - see this class's own doc comment.</summary>
+    public event Action? ShareRequested;
     /// <summary>Available in every state - aborts the whole recording without saving.</summary>
     public event Action? CancelRequested;
     public event Action<bool>? MicToggled;
@@ -338,6 +350,13 @@ internal sealed class RecordingChrome : Window
         _saveButton.Click += (_, _) => SaveRequested?.Invoke();
         AutomationProperties.SetAutomationId(_saveButton, "RecordingSaveButton");
 
+        // Share sits beside Save (both Reviewing-only) - a quiet (non-primary) button since Save is
+        // still the one action every take needs, Share is an optional extra on top of it. See
+        // ShareRequested's own doc comment for why this button only raises an event.
+        _shareButton = BuildButton("Share", isDanger: false);
+        _shareButton.Click += (_, _) => ShareRequested?.Invoke();
+        AutomationProperties.SetAutomationId(_shareButton, "RecordingShareButton");
+
         _cancelButton = BuildButton("Cancel", isDanger: true);
         _cancelButton.Click += (_, _) => CancelRequested?.Invoke();
         AutomationProperties.SetAutomationId(_cancelButton, "RecordingCancelButton");
@@ -347,6 +366,7 @@ internal sealed class RecordingChrome : Window
         actionRow.Children.Add(_pauseResumeButton);
         actionRow.Children.Add(_restartButton);
         actionRow.Children.Add(_saveButton);
+        actionRow.Children.Add(_shareButton);
         actionRow.Children.Add(_cancelButton);
 
         _normalPanel = new StackPanel { Margin = new Thickness(12, 8, 12, 8) };
@@ -883,6 +903,11 @@ internal sealed class RecordingChrome : Window
 
         // Save only finalizes a take that has already been stopped.
         _saveButton.IsEnabled = _state == ChromeState.Reviewing;
+
+        // Share likewise only makes sense once a take exists to upload (Reviewing) - see
+        // ShareRequested's own doc comment for why enabling it further (once a real provider is
+        // configured) is left to whoever wires this event up.
+        _shareButton.IsEnabled = _state == ChromeState.Reviewing;
 
         RequestReposition();
     }

@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using RoeSnip.Interop;
+using RoeSnip.Sharing;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
 namespace RoeSnip.App;
@@ -16,6 +19,17 @@ public partial class SettingsWindow : Window
 {
     private readonly RoeSnipSettings _original;
     private readonly Action<RoeSnipSettings> _onSaved;
+
+    /// <summary>Sharing/* subsystem: ShareProvidersWindow self-persists (SettingsStore.Save) the
+    /// moment a provider is added/edited/removed - same "writes immediately" precedent this window
+    /// already sets for the elevated-startup toggle above (ToggleElevatedStartup) - rather than
+    /// waiting for THIS window's own Save button. _current tracks that so SaveButton_Click bases its
+    /// own `with` update off the latest on-disk ShareProviders/DefaultShareProviderId instead of the
+    /// possibly-stale _original snapshot captured when this window was opened; every other field
+    /// still only takes effect on Save exactly as before.</summary>
+    private RoeSnipSettings _current;
+
+    private sealed record ShareProviderComboItem(string Id, string Name);
 
     // Bugs 2 & 5: the global hotkey and this window's own key-capture compete for the same
     // keystroke (RegisterHotKey has first claim - a registered combo never reaches a focused
@@ -46,6 +60,7 @@ public partial class SettingsWindow : Window
         InitializeComponent();
 
         _original = settings;
+        _current = settings;
         _onSaved = onSaved;
         _suspendGlobalHotkey = suspendGlobalHotkey;
         _resumeGlobalHotkey = resumeGlobalHotkey;
@@ -117,6 +132,94 @@ public partial class SettingsWindow : Window
         }
 
         RefreshElevationStatusText();
+
+        RefreshShareProvidersUi();
+    }
+
+    // ---------- Sharing/* subsystem ----------
+
+    /// <summary>Guards DefaultShareProviderCombo.SelectedItem assignments below from re-entering
+    /// DefaultShareProviderCombo_SelectionChanged - same guard shape as _loadingElevationState above.</summary>
+    private bool _loadingShareProviders;
+
+    private void RefreshShareProvidersUi()
+    {
+        _loadingShareProviders = true;
+        try
+        {
+            DefaultShareProviderCombo.Items.Clear();
+
+            var enabledProviders = ShareManager.EffectiveConfigs(_current)
+                .Where(c => c.Enabled)
+                .ToList();
+
+            if (enabledProviders.Count == 0)
+            {
+                DefaultShareProviderCombo.Items.Add(new ShareProviderComboItem("", "No provider configured yet"));
+                DefaultShareProviderCombo.SelectedIndex = 0;
+                DefaultShareProviderCombo.IsEnabled = false;
+                return;
+            }
+
+            DefaultShareProviderCombo.IsEnabled = true;
+            ShareProviderComboItem? selected = null;
+            foreach (var config in enabledProviders)
+            {
+                var item = new ShareProviderComboItem(
+                    config.Id,
+                    string.IsNullOrWhiteSpace(config.DisplayName) ? config.Id : config.DisplayName);
+                DefaultShareProviderCombo.Items.Add(item);
+                if (string.Equals(config.Id, _current.DefaultShareProviderId, StringComparison.Ordinal))
+                {
+                    selected = item;
+                }
+            }
+
+            DefaultShareProviderCombo.SelectedItem = selected ?? DefaultShareProviderCombo.Items[0];
+        }
+        finally
+        {
+            _loadingShareProviders = false;
+        }
+    }
+
+    private void DefaultShareProviderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingShareProviders || DefaultShareProviderCombo.SelectedItem is not ShareProviderComboItem item || item.Id.Length == 0)
+        {
+            return;
+        }
+        _current = _current with { DefaultShareProviderId = item.Id };
+    }
+
+    private void ManageProvidersButton_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new ShareProvidersWindow(_current)
+        {
+            Owner = this,
+        };
+        window.ShowDialog();
+
+        // ShareProvidersWindow persists its own edits immediately (see this window's own field-level
+        // doc comment on _current) - reload from disk so this window's combo/eventual Save reflect
+        // whatever the user just changed, rather than the snapshot taken when Settings was opened.
+        _current = SettingsStore.Load() with
+        {
+            // Every OTHER field in this window is still only staged locally until Save is clicked -
+            // only the Sharing fields are meant to have been persisted by the sub-window, so pull
+            // just those two off the freshly-loaded settings and keep everything else as this
+            // window's own in-progress (possibly unsaved) edits.
+            HotkeyModifiers = _current.HotkeyModifiers,
+            HotkeyVirtualKey = _current.HotkeyVirtualKey,
+            SaveDirectory = _current.SaveDirectory,
+            AutoSaveHdrCopy = _current.AutoSaveHdrCopy,
+            CopyOnSelect = _current.CopyOnSelect,
+            ColorPickerEnabled = _current.ColorPickerEnabled,
+            ToneMapKneeOverride = _current.ToneMapKneeOverride,
+            ToneMapPeakOverride = _current.ToneMapPeakOverride,
+            RunAtStartup = _current.RunAtStartup,
+        };
+        RefreshShareProvidersUi();
     }
 
     /// <summary>Bug 6 UX: while the elevated task is installed, "Start with Windows" is CHECKED and
@@ -472,7 +575,11 @@ public partial class SettingsWindow : Window
 
         bool runAtStartup = RunAtStartupCheckBox.IsChecked == true;
 
-        var updated = _original with
+        // Based on _current, not _original: _current already reflects any ShareProviders/
+        // DefaultShareProviderId edits made (and self-persisted) via ManageProvidersButton_Click - see
+        // that field's own doc comment. Every other field below is still this window's own normal
+        // deferred-until-Save behavior, unchanged.
+        var updated = _current with
         {
             HotkeyModifiers = _pendingModifiers,
             HotkeyVirtualKey = _pendingVirtualKey,

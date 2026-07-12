@@ -99,6 +99,18 @@
             </StackPanel>
         </Grid>
 
+        <TextBlock Text="Sharing" FontSize="16" FontWeight="SemiBold" Margin="0,20,0,10"/>
+        <Label Content="Default share provider"/>
+        <Grid Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <ComboBox x:Name="DefaultShareProviderCombo" Grid.Column="0" Margin="0,0,8,0"
+                      DisplayMemberPath="Name" SelectionChanged="DefaultShareProviderCombo_SelectionChanged"/>
+            <Button x:Name="ManageProvidersButton" Grid.Column="1" Content="Providers..." Click="ManageProvidersButton_Click"/>
+        </Grid>
+
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
             <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click" Margin="0,0,8,0"/>
             <Button x:Name="SaveButton" Content="Save" Click="SaveButton_Click" Background="{StaticResource AccentBrush}" Foreground="#FF180D07"/>

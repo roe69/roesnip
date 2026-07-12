@@ -699,20 +699,41 @@
                         </Grid>
                     </Button>
 
-                    <!-- Upload: placeholder for the upcoming upload plugins (imgur-style and custom
-                         image API integrations). Disabled until the first integration ships, but
-                         already visible so the action group's final shape is established.
-                         ShowOnDisabled so the tooltip still explains what it is. Icon is the
-                         inverse of Save's down-arrow-into-tray: an up-arrow out of the tray.
-                         Margin tightened to 1,2 — see RecordButton's comment (feature 9). -->
-                    <Button x:Name="UploadButton" Style="{StaticResource QuietActionButtonStyle}"
-                            Margin="1,2" IsEnabled="False" ToolTip="Upload (integrations coming soon)"
-                            ToolTipService.ShowOnDisabled="True">
-                        <!-- No extra opacity here: QuietActionButtonStyle's own IsEnabled=False
-                             trigger already dims the whole button, same as undo/redo. -->
-                        <Path Style="{StaticResource IconStyle}"
-                              Data="M8,9 V1 M4.5,4.5 L8,1 L11.5,4.5 M1.5,11 V14.5 H14.5 V11"/>
-                    </Button>
+                    <!-- Share: uploads the current selection render to a configured Sharing/*
+                         provider. A real split button (not just RecordButton's single-click-opens-
+                         menu pattern): ShareButton's own click uploads straight to the DEFAULT
+                         provider (one click, mirrors Copy/Save), while ShareMenuButton is a SEPARATE,
+                         always-visible chevron affordance (no-hidden-controls: a control that opens
+                         a menu must show it can, never rely on hover) opening a menu to pick a
+                         specific configured provider instead. Both start disabled - the owning
+                         window enables them via SetShareProviders once at least one provider is
+                         configured (see that method's own doc comment for why this control never
+                         enables itself). Margin tightened to 1,2 on the group — see RecordButton's
+                         comment (feature 9). -->
+                    <StackPanel x:Name="ShareGroupPanel" Orientation="Horizontal" Margin="1,2">
+                        <Button x:Name="ShareButton" Style="{StaticResource QuietActionButtonStyle}"
+                                Width="30" Height="30" Margin="0" IsEnabled="False"
+                                ToolTip="Share: upload to your default provider" ToolTipService.ShowOnDisabled="True"
+                                Click="OnShareClick">
+                            <!-- No extra opacity here: QuietActionButtonStyle's own IsEnabled=False
+                                 trigger already dims the whole button, same as undo/redo. Icon is
+                                 the inverse of Save's down-arrow-into-tray: an up-arrow out of the tray. -->
+                            <Path Style="{StaticResource IconStyle}"
+                                  Data="M8,9 V1 M4.5,4.5 L8,1 L11.5,4.5 M1.5,11 V14.5 H14.5 V11"/>
+                        </Button>
+                        <Button x:Name="ShareMenuButton" Style="{StaticResource QuietActionButtonStyle}"
+                                Width="16" Height="30" Margin="0" IsEnabled="False"
+                                ToolTip="Choose a provider to share to" ToolTipService.ShowOnDisabled="True"
+                                Click="OnShareMenuClick">
+                            <Button.ContextMenu>
+                                <!-- Items are built in code (OnShareMenuClick/SetShareProviders) since
+                                     they mirror whatever is currently configured in Settings. -->
+                                <ContextMenu x:Name="ShareProviderMenu" Style="{StaticResource DarkContextMenuStyle}"/>
+                            </Button.ContextMenu>
+                            <Path Fill="{StaticResource RlDropdownArrowBrush}" Data="M0,0 L4,4 L8,0 Z"
+                                  Width="8" Height="4" Stretch="Uniform" IsHitTestVisible="False"/>
+                        </Button>
+                    </StackPanel>
 
                     <!-- Save sits before Copy (user request). HDR export moved off the toolbar (item 4,
                          UX round 5): 99% of saves are plain PNGs, so left-click Save = PNG exactly as
