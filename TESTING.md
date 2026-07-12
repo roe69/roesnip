@@ -403,6 +403,63 @@ transient animation frames.
 Only the path/width/height are returned — never the image bytes (hard 64k response cap; one file
 write per response).
 
+#### `confirm`
+
+`{"cmd":"confirm","action":"copy"}` or `{"cmd":"confirm","action":"save","path":"C:\\temp\\out.png"}`
+
+Multimon-selection addition: the overlay's Copy/Save had no automation entry point at all before
+this — the toolbar's Copy button raises the same `OverlayCommand.Copy` this does, but Save's real
+path (`TryShowSaveDialog`) pops an interactive `SaveFileDialog`, which must never happen from a
+headless automation call (it would hang the pipe waiting for a human). `action: "save"` therefore
+**requires an explicit `path`** and writes directly via `PngWriter`, skipping the dialog entirely —
+the same production render (`RenderSelectionWithAnnotations`, or `RenderSpanningSelection` for a
+selection spanning multiple monitors) either path already uses. Requires an active overlay session
+with a selection; errors otherwise. HDR export (`SaveHdrRequested`) is not reachable through this
+command — use the toolbar's Save right-click menu for that on a single-monitor selection (never
+available for a spanning one; see the cross-monitor selection section below).
+
+```
+--auto '{"cmd":"confirm","action":"copy"}'
+```
+```json
+{"ok":true,"mode":"idle", ...}
+```
+
+Closes the overlay on success, same as a real Copy/Save click — the trailing `state` snapshot
+reflects the post-close (`idle`) state, not the selection that was just confirmed.
+
+### Cross-monitor selection (`select` spanning multiple monitors)
+
+`select`'s rect can cross a monitor boundary — e.g. on a 3-monitor layout with `DISPLAY3` at
+`(0,0)-(2560,1440)` and `DISPLAY1` at `(0,-1440)-(2560,0)` directly above it,
+`{"cmd":"select","x":600,"y":-200,"w":800,"h":500}` selects a rect that's part `DISPLAY1`, part
+`DISPLAY3`. This routes through the exact same distribute mechanism a real mouse drag crossing that
+same boundary uses (`OverlaySession.OnSpanningCandidate`) — never a separate implementation. `state`'s
+`selection` reports the union rect in the same virtual-desktop physical pixels as always; nothing
+about the wire shape changes for a spanning rect.
+
+Annotations, Record (MP4/GIF), and HDR save are v1 cuts for a spanning selection — see
+`docs/DESIGN-MULTIMON-SELECTION.md` for why. `confirm`'s `copy`/`save` actions both work (rendering
+a byte composite stitched from each intersected monitor's own already-tone-mapped crop; gaps where
+no monitor covers part of the rect are opaque black); `record` and HDR save are refused with a clear
+error if attempted while spanning.
+
+**Verified 2026-07-13** (this machine, real 3-monitor HDR layout): a real synthetic mouse drag from
+DISPLAY3 into DISPLAY1 produced exactly the requested `{x:600,y:-200,w:800,h:500}` selection, and a
+real Ctrl+C produced an 800×500 clipboard image containing correctly stitched content from both
+monitors. The `select`/`confirm` **automation commands** themselves proved unreliable on this specific
+dev machine — `OverlayInputInterop`'s low-level keyboard hook doesn't filter injected input
+(`LLKHF_INJECTED`), and something on this machine intermittently/frequently injects a synthetic
+Escape that reaches it once an `InvokeOnUi`-driven automation call does real UI work (observed via a
+temporary diagnostic stack trace: `SessionKeyboardHook` → `ProcessKeyCommand` → `CancelStage` →
+`Finish(null)`, landing within milliseconds of `select`/`confirm`, while passive `state` polls and
+real mouse/keyboard-driven interaction were unaffected) — reproduced identically against a pristine,
+unmodified build, so this is a pre-existing environmental characteristic of automation on a live,
+actively-used desktop, not a defect in the spanning-selection feature itself. Not something this
+branch attempts to fix (touching the keyboard hook is explicitly out of scope — see DESIGN.md's own
+"hard-won fixes" warning); flagged here for whoever next drives automation on a similarly busy
+machine.
+
 ### Worked example: select, record, read the estimate, resize, set preset and fps, screenshot, cancel
 
 ```

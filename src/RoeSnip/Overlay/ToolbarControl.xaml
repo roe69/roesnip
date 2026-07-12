@@ -561,7 +561,7 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+            <StackPanel x:Name="ToolsGroupPanel" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
             <!-- Tools -->
             <ToggleButton x:Name="SelectToolButton" Style="{StaticResource ToolButtonStyle}"
                           ToolTip="Select / move (default)" IsChecked="True" Click="OnSelectToolClick">
@@ -616,7 +616,7 @@
                       SelectionChanged="OnSizeComboSelectionChanged"/>
             </StackPanel>
 
-            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+            <StackPanel x:Name="HistoryGroupPanel" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
             <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
             <!-- Undo/Redo sit at a FIXED spot (before the collapsible text-style group), so
@@ -657,7 +657,7 @@
                      persisted RoeSnipSettings.PaletteColors list and carries a right-click
                      "Replace..." menu (the only palette edit: the row's slot count never changes,
                      so there is no add or remove). -->
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <StackPanel x:Name="PaletteGroupPanel" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <StackPanel x:Name="ColorSwatchPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
                 </StackPanel>
 

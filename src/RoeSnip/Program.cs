@@ -31,7 +31,17 @@ public sealed record OverlayResult(
     bool CopyPerformed,                      // true if Overlay already wrote PNG+CF_DIBV5 to the clipboard
     string? SavedPngPath,                    // non-null if the user used Save and it succeeded
     bool SaveHdrRequested,                   // true if the user clicked "Save HDR" (independent of settings.AutoSaveHdrCopy)
-    RecordingRequest? RecordingRequested = null // non-null if the user clicked Record MP4/GIF — trailing optional param, non-breaking
+    RecordingRequest? RecordingRequested = null, // non-null if the user clicked Record MP4/GIF — trailing optional param, non-breaking
+    // Cross-monitor selection (multimon-selection): non-null when RenderedImage is a byte composite
+    // stitched from multiple monitors' own already-tone-mapped crops (OverlaySession.
+    // RenderSpanningSelection), in which case Monitor/SelectionPx/SourceFrame above describe only
+    // the PRIMARY monitor (whichever held the drag-end cursor) — they exist purely to satisfy this
+    // record's non-nullable shape and must not be used for anything beyond that when this is set.
+    // SaveHdrRequested is always false on a spanning result (see ConfirmSpanning's own doc comment);
+    // this field is what RunCaptureFlowAsync's HDR-export branch checks to also skip
+    // settings.AutoSaveHdrCopy for a spanning result, since that setting is independent of what the
+    // user clicked this particular capture. Virtual-desktop physical pixels.
+    Capture.RectPhysical? SpanningVirtualSelectionPx = null
 );
 
 /// <summary>Settings data shape (DESIGN.md §6). Persistence (JSON load/save, fail-closed-on-unreadable)
@@ -584,7 +594,20 @@ public static class AppComposition
                     return;
                 }
 
-                if (result.SaveHdrRequested || settings.AutoSaveHdrCopy)
+                if (result.SpanningVirtualSelectionPx is not null)
+                {
+                    // Cross-monitor selection: a spanning result has no single monitor's FP16 crop
+                    // to write as-is (see OverlayResult.SpanningVirtualSelectionPx's own doc comment
+                    // and docs/DESIGN-MULTIMON-SELECTION.md's "What v1 deliberately does not do") —
+                    // skip HDR export entirely, even when settings.AutoSaveHdrCopy is on, since that
+                    // setting has no notion of "except when spanning".
+                    if (settings.AutoSaveHdrCopy)
+                    {
+                        Console.Error.WriteLine(
+                            "RoeSnip: auto-save-HDR-copy skipped for a selection spanning multiple monitors.");
+                    }
+                }
+                else if (result.SaveHdrRequested || settings.AutoSaveHdrCopy)
                 {
                     if (WriteJxr is not null)
                     {

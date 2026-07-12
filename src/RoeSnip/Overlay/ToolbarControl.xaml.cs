@@ -550,6 +550,26 @@ public partial class ToolbarControl : UserControl
         RedoButton.IsEnabled = canRedo;
     }
 
+    /// <summary>Cross-monitor selection (multimon-selection): while the current selection spans
+    /// multiple monitors, annotations are a documented v1 cut (see docs/DESIGN-MULTIMON-SELECTION.md
+    /// — a spanning composite has no single window's coordinate space for shapes to live in) and
+    /// Record has no per-monitor-stitched live-capture implementation. Collapses everything except
+    /// Save/Copy/Cancel — the same three actions the DESIGN.md "acceptable v1" carve-out names.
+    /// Called by OverlayWindow.ShowToolbar/UpdateToolbarPlacement every time the toolbar is shown,
+    /// so it can never go stale across a spanning/non-spanning transition on the same reused
+    /// instance. Upload is also hidden (it's already permanently disabled, but keeping the action
+    /// row down to exactly the three live actions reads cleaner than a disabled placeholder sitting
+    /// next to them).</summary>
+    public void SetSpanningMode(bool spanning)
+    {
+        var collapseVisibility = spanning ? Visibility.Collapsed : Visibility.Visible;
+        ToolsGroupPanel.Visibility = collapseVisibility;
+        HistoryGroupPanel.Visibility = collapseVisibility;
+        PaletteGroupPanel.Visibility = collapseVisibility;
+        RecordButton.Visibility = collapseVisibility;
+        UploadButton.Visibility = collapseVisibility;
+    }
+
     private void OnUndoClick(object sender, RoutedEventArgs e) => UndoClicked?.Invoke();
     private void OnRedoClick(object sender, RoutedEventArgs e) => RedoClicked?.Invoke();
     private void OnCopyClick(object sender, RoutedEventArgs e) => CopyClicked?.Invoke();
