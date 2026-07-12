@@ -9,6 +9,11 @@ implemented. See "v2: resize-after-place and HDR save" near the end of this docu
 the sections below are left as-written (v1) except where marked **[RESOLVED, see v2 section]**, so
 this document still reads as an accurate history of why each cut existed in the first place.
 
+**2026-07-13 integration pass update:** Record (MP4/GIF) for a spanning selection — the third of the
+four v1 cuts — is now also resolved, once the separate `spanning-recording` work track's own
+multi-monitor-aware capture pipeline landed alongside this branch. See that bullet's own
+**[RESOLVED, integration pass 2026-07-13]** marker below. Only mixed-DPI handling remains a v1 cut.
+
 ## Recap: why this was a v1 non-goal
 
 DESIGN.md's overlay section: "Selection lives on one monitor (cross-monitor is a v2 seam); starting
@@ -164,16 +169,23 @@ cheaper than the single-monitor annotated-render path.
   hard technical wall — **v2 threads `_dragStartRect` through virtual coordinates the same way
   `NewSelection` always did, via two new drag modes (`SpanningResize`/`SpanningMove`) that feed
   `OnSpanningCandidate` on every mouse-move exactly like `NewSelection` does** — see the v2 section.
-- **No Record (MP4/GIF) for a spanning selection — still true in v2, deliberately not touched.**
-  Recording is a real-time per-frame WGC capture session against a single monitor's duplication
-  output (`RecordingController`/`RegionOutline`); stitching multiple monitors' live capture streams
-  frame-by-frame is a materially different (and much larger) feature than a one-shot still composite
-  — and, as of the `spanning-selection-complete` branch, a SEPARATE parallel work track is building
-  exactly that multi-monitor-aware recorder. Wiring it here is explicitly out of scope for this
-  branch; integration happens once both land. The toolbar hides Record while spanning;
-  `RecordForAutomation`/the toolbar-driven `Record()` both refuse it defensively even if reached —
-  `OverlaySession.Record`'s own doc comment in OverlayController.cs marks this as the single place
-  that integration needs to touch.
+- **[RESOLVED, integration pass 2026-07-13] No Record (MP4/GIF) for a spanning selection — was still
+  true as of v2, now wired.** Recording is a real-time per-frame WGC capture session against a single
+  monitor's duplication output (`RecordingController`/`RegionOutline`); stitching multiple monitors'
+  live capture streams frame-by-frame is a materially different (and much larger) feature than a
+  one-shot still composite — which is exactly why the parallel `spanning-recording` work track had to
+  build a whole separate capture path for it (`SpanningCanvasCompositor`, `RecordingSession.
+  BeginCapture`'s own intersected-monitor re-derivation, `EncoderLoopSpanning`) rather than reusing
+  the single-monitor `RegionRecorder`/`EncoderLoop` pair unchanged. Once that track landed alongside
+  this one, the integration was a plumbing-only change, exactly as this bullet originally predicted:
+  `OverlaySession.Record` (renamed doc comment, logic moved to the new `RecordSpanning`) packages the
+  anchor (primary) monitor plus the spanning virtual rect — converted to be relative to that anchor's
+  own origin — onto `OverlayResult`, and `RecordingSession.Start()`/`BeginCapture` do the rest exactly
+  as they already did for a single-monitor take; nothing downstream of `OverlayResult` needed to know
+  the selection came from a spanning drag at all. The toolbar no longer hides Record while spanning
+  (`ToolbarControl.SetSpanningMode`); `RecordForAutomation`/the toolbar-driven `Record()` both allow
+  it now, gated only by the same "something is actually selected" check every other shape already
+  gets.
 - **[RESOLVED, see v2 section] No HDR save (`.jxr`) for a spanning selection.** `JxrWriter` encodes
   one monitor's FP16 crop verbatim (untouched HDR original, per DESIGN.md — "no annotations, raw
   crop"). v1's reasoning was: there is no defined operation for "the untouched HDR original of a

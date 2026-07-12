@@ -33,6 +33,12 @@ public enum OverlayCommand
     SaveHdr,
     RecordMp4,
     RecordGif,
+    // Sharing/* subsystem: the toolbar's plain Share button (default-provider upload only — the
+    // dropdown's per-provider picker is not wired to this session; see ToolbarControl.
+    // ShareToProviderRequested's own doc comment for that scope note). Unlike every other command
+    // above, handling this does NOT call Finish() — see OverlaySession.ShareCurrentSelection's own
+    // doc comment for why the overlay must stay open for the whole upload.
+    Share,
 }
 
 public static class OverlayController
@@ -40,10 +46,17 @@ public static class OverlayController
     /// <summary>One OverlayWindow per monitor; runs until the user cancels (Esc) or confirms
     /// (Enter / double-click / toolbar action). Returns null on cancel. On confirm, performs
     /// Copy/Save side effects itself (clipboard + PNG dialog) per DESIGN.md, then returns a
-    /// populated OverlayResult. Matches the AppComposition.RunOverlay hook signature exactly.</summary>
+    /// populated OverlayResult. Matches the AppComposition.RunOverlay hook signature exactly.
+    /// <paramref name="notifier"/> (Sharing/* subsystem addition) is the same ITrayNotifier
+    /// RunCaptureFlowAsync already threads into StartRecording — the toolbar's Share button needs
+    /// it too (clipboard-copy-the-URL balloon / honest error balloon), and this is the earliest
+    /// point that reference is available to an OverlaySession; every OTHER caller of this hook
+    /// (there is only one, Program.cs's RunCaptureFlowAsync) already has a notifier in hand for
+    /// exactly this reason.</summary>
     public static Task<OverlayResult?> RunAsync(
         IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors,
-        RoeSnipSettings settings)
+        RoeSnipSettings settings,
+        ITrayNotifier? notifier = null)
     {
         if (monitors.Count == 0)
         {
@@ -52,7 +65,7 @@ public static class OverlayController
 
         EnsureApplication();
 
-        var session = new OverlaySession(monitors, settings, OnColorPicked, pickOnlyMode: false);
+        var session = new OverlaySession(monitors, settings, OnColorPicked, pickOnlyMode: false, notifier);
         return session.RunAsync();
     }
 
@@ -502,6 +515,12 @@ public static class OverlayController
         private readonly IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> _monitors;
         private readonly Action<PickedColorInfo> _onColorPicked;
         private readonly bool _pickOnlyMode;
+        // Sharing/* subsystem: null for pick-mode (TriggerPickModeCapture never passes one — that
+        // flow has no toolbar/Share button at all) and for any other future direct OverlaySession
+        // caller that doesn't pass one; ShareCurrentSelection treats a null notifier the same way
+        // every other ITrayNotifier consumer in this codebase does ("?." — the upload still runs,
+        // it just can't show a balloon for the result).
+        private readonly ITrayNotifier? _notifier;
         private readonly List<OverlayWindow> _windows = new();
         private readonly TaskCompletionSource<OverlayResult?> _completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -533,11 +552,13 @@ public static class OverlayController
             IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors,
             RoeSnipSettings settings,
             Action<PickedColorInfo> onColorPicked,
-            bool pickOnlyMode)
+            bool pickOnlyMode,
+            ITrayNotifier? notifier = null)
         {
             _settings = settings;
             _onColorPicked = onColorPicked;
             _pickOnlyMode = pickOnlyMode;
+            _notifier = notifier;
             _monitors = OrderCursorMonitorFirst(monitors);
             _virtualDesktopBounds = ComputeVirtualDesktopBounds(_monitors);
 
@@ -1174,6 +1195,13 @@ public static class OverlayController
                 case OverlayCommand.RecordGif:
                     Record(RecordingFormat.Gif);
                     break;
+
+                case OverlayCommand.Share:
+                    // Deliberately does NOT fall through to Finish() the way every command above
+                    // does — see ShareCurrentSelection's own doc comment for why the overlay has to
+                    // stay open for the whole upload.
+                    ShareCurrentSelection();
+                    break;
             }
         }
 
@@ -1184,19 +1212,9 @@ public static class OverlayController
         /// write happens back there via WriteJxr.</summary>
         private void Record(RecordingFormat format)
         {
-            if (_spanningVirtual is not null)
+            if (_spanningVirtual is { } spanningRect && _spanningPrimaryWindow is { } primary)
             {
-                // GATE (spanning-selection-complete, 2026-07): Record for a spanning selection is
-                // NOT wired here on purpose — a separate, parallel work track is building the
-                // multi-monitor-aware recorder (a live per-frame stitch across each monitor's own WGC
-                // duplication output, a materially bigger feature than this one-shot still composite);
-                // integration happens once both land. This is the single obvious place that
-                // integration needs to touch: replace this early return with a call into whatever that
-                // track's spanning-aware RecordingController entry point turns out to be. Until then,
-                // the toolbar already hides Record while spanning (ToolbarControl.SetSpanningMode) —
-                // this `return` is the defensive backstop for any path that reaches here anyway (e.g.
-                // automation). See docs/DESIGN-MULTIMON-SELECTION.md's "What v1 deliberately does not
-                // do" / "Record for spanning selections" section.
+                RecordSpanning(spanningRect, primary, format);
                 return;
             }
 
@@ -1232,6 +1250,205 @@ public static class OverlayController
                 RecordingRequested: new RecordingRequest(format));
 
             Finish(result);
+        }
+
+        /// <summary>Cross-monitor selection's own Record path (spanning-recording integration): the
+        /// GATE that used to sit in the non-spanning Record() above is gone now that a spanning-aware
+        /// recorder actually exists (RecordingSession.BeginCapture re-derives the intersected monitor
+        /// set itself and takes the spanning path — SpanningCanvasCompositor / EncoderLoopSpanning —
+        /// whenever that set has 2+ monitors; see that method's own doc comment). This method's ONLY
+        /// job is producing an OverlayResult whose (Monitor, SelectionPx) round-trips back to the
+        /// correct ABSOLUTE selection rect once it reaches RecordingSession — it does not, and must
+        /// not, know anything about spanning capture itself.
+        ///
+        /// Mirrors ConfirmSpanning's own anchor-monitor convention: <paramref name="primary"/> (the
+        /// window that most recently drove the drag, or the lowest-indexed monitor still holding a
+        /// slice — see OnSpanningCandidate) stands in for OverlayResult.Monitor/SourceFrame, which
+        /// only need to satisfy that record's non-nullable shape here (recording never reads them for
+        /// anything beyond RecordingSession.Start()'s own coordinate conversion below).
+        ///
+        /// RecordingSession.Start() converts its ctor's SelectionPx (documented as MONITOR-RELATIVE,
+        /// same convention every non-spanning OverlayResult.SelectionPx already uses) back to an
+        /// ABSOLUTE rect by adding Monitor.BoundsPx's own origin. So packaging the anchor monitor as
+        /// Monitor and the virtual (already-absolute) spanning rect converted to be relative to THAT
+        /// monitor's own origin as SelectionPx reproduces the exact same absolute rect on the other
+        /// side — plain RectPhysical arithmetic done inline here (not
+        /// Recording.MultiMonitorRecording.ToMonitorRelative, which is the WP-D-internal helper
+        /// RecordingController.cs itself uses for the identical conversion) because Overlay must not
+        /// reference Recording package types directly, per OverlayResult's own doc comment ("Only the
+        /// cross-cutting bits ... are threaded back through AppComposition, because they need WP-C/
+        /// WP-D types that Overlay must not reference directly").</summary>
+        private void RecordSpanning(RectPhysical virtualRect, OverlayWindow primary, RecordingFormat format)
+        {
+            SdrImage rendered;
+            try
+            {
+                // Same "cheap one-time composite, RenderedImage is non-nullable" reasoning as the
+                // non-spanning Record() above — recording never reads this still image once capture
+                // starts, it only exists to keep OverlayResult's shape uniform across every producer.
+                rendered = RenderSpanningSelection(virtualRect);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: spanning-selection record render failed: {ex.Message}");
+                return;
+            }
+
+            var n = virtualRect.Normalized();
+            var anchorBounds = primary.Monitor.BoundsPx;
+            var anchorRelativeSelection = new RectPhysical(
+                n.Left - anchorBounds.Left, n.Top - anchorBounds.Top,
+                n.Right - anchorBounds.Left, n.Bottom - anchorBounds.Top);
+
+            var result = new OverlayResult(
+                primary.Monitor,
+                anchorRelativeSelection,
+                rendered,
+                primary.Frame,
+                CopyPerformed: false,
+                SavedPngPath: null,
+                SaveHdrRequested: false,
+                RecordingRequested: new RecordingRequest(format));
+
+            Finish(result);
+        }
+
+        /// <summary>Toolbar Share button (Sharing/* subsystem, default-provider path only — see
+        /// OverlayCommand.Share's own doc comment for the per-provider-dropdown scope note). Renders
+        /// the CURRENT selection through the exact same path Copy uses — RenderSelectionWithAnnotations
+        /// for a single-monitor selection, RenderSpanningSelection for a spanning one (same
+        /// _spanningVirtual/_spanningPrimaryWindow check every other spanning-aware command here
+        /// uses) — so whatever gets shared is pixel-identical to what Ctrl+C would have put on the
+        /// clipboard.
+        ///
+        /// Unlike Copy/Save/SaveHdr/Record, this never calls Finish(): those are all synchronous, one-
+        /// shot side effects with nothing left to do once they return, but an upload is a network call
+        /// that can legitimately take up to ShareManager's own 10-minute timeout. Closing the overlay
+        /// immediately (the way Copy does) would leave the toolbar's SetShareBusy(true) feedback
+        /// showing on a window that's already gone — so the overlay, and the toolbar-hosting window in
+        /// particular, stays fully open and interactive (the user can still Cancel/Copy/Save/Record
+        /// independently) for the whole upload; only the Share button itself goes busy/disabled
+        /// (ToolbarControl.SetShareBusy) until the result comes back.
+        ///
+        /// The render (a one-time crop/composite) happens synchronously here, same cost the
+        /// non-spanning Record()/Confirm() already pay; only the actual network call is asynchronous,
+        /// and its continuation is explicitly marshalled back via window.Dispatcher.BeginInvoke rather
+        /// than relied on to resume automatically: this whole session runs on the tray app's WinForms
+        /// message-loop thread, which deliberately never calls System.Windows.Application.Run/
+        /// Dispatcher.Run (see EnsureApplication's own doc comment) — so there is no guarantee a bare
+        /// ConfigureAwait(true) `await` would resume back on this exact thread the way it would in an
+        /// ordinary WPF app's event handler.</summary>
+        private void ShareCurrentSelection()
+        {
+            OverlayWindow toolbarWindow;
+            SdrImage rendered;
+            if (_spanningVirtual is { } spanningRect && _spanningPrimaryWindow is { } primary)
+            {
+                toolbarWindow = primary;
+                try
+                {
+                    rendered = RenderSpanningSelection(spanningRect);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"RoeSnip: spanning-selection share render failed: {ex.Message}");
+                    return;
+                }
+            }
+            else
+            {
+                var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
+                if (window is null)
+                {
+                    return; // nothing selected yet — same no-op guard as Confirm/Record
+                }
+                toolbarWindow = window;
+                try
+                {
+                    rendered = window.RenderSelectionWithAnnotations();
+                }
+                catch (InvalidOperationException)
+                {
+                    return;
+                }
+            }
+
+            var config = RoeSnip.Sharing.ShareManager.ResolveDefault(_settings);
+            if (config is null)
+            {
+                // ShareButton is only ever enabled once ToolbarControl.SetShareProviders was given at
+                // least one enabled provider (see that method's own doc comment), so this should be
+                // unreachable in practice — kept as a defensive, honestly-surfaced failure rather than
+                // a silent no-op in case settings changed out from under an already-open overlay.
+                _notifier?.ShowError("Share failed: no share provider is configured.");
+                return;
+            }
+
+            byte[] pngBytes;
+            try
+            {
+                pngBytes = PngWriter.Encode(rendered);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: share PNG encode failed: {ex.Message}");
+                return;
+            }
+
+            toolbarWindow.SetShareBusy(true);
+            string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}.png";
+            _ = UploadShareAsync(config, pngBytes, fileName, toolbarWindow, toolbarWindow.Dispatcher, _notifier);
+        }
+
+        /// <summary>The async half of <see cref="ShareCurrentSelection"/>, factored out as a static
+        /// method (takes everything it needs as parameters) so it is obviously safe to run detached —
+        /// no accidental capture of session/window mutable state beyond the explicit params. Never
+        /// throws: ShareManager.UploadAsync already contracts to return a Success=false result rather
+        /// than throw for an ordinary failure, and the try/catch here is belt-and-braces for the PNG
+        /// stream/HTTP plumbing around that call, matching every other "fire and forget from a UI
+        /// click" handler's own contract in this codebase.</summary>
+        private static async Task UploadShareAsync(
+            RoeSnip.Sharing.ShareProviderConfig config, byte[] pngBytes, string fileName,
+            OverlayWindow toolbarWindow, System.Windows.Threading.Dispatcher dispatcher, ITrayNotifier? notifier)
+        {
+            RoeSnip.Sharing.ShareUploadResult result;
+            try
+            {
+                using var stream = new System.IO.MemoryStream(pngBytes, writable: false);
+                result = await RoeSnip.Sharing.ShareManager
+                    .UploadAsync(config, stream, fileName, "image/png", CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                result = new RoeSnip.Sharing.ShareUploadResult(false, null, $"Upload failed: {ex.Message}");
+            }
+
+            // Discarded: DispatcherOperation is awaitable, but there is nothing further to do once
+            // the UI-thread callback is QUEUED — this method's job ends here, not when that callback
+            // actually runs.
+            _ = dispatcher.BeginInvoke(new Action(() =>
+            {
+                // Best-effort: the overlay may have been cancelled/confirmed out from under a
+                // still-in-flight upload (the user is free to keep interacting — see
+                // ShareCurrentSelection's own doc comment) — SetShareBusy on an already-closed
+                // window is harmless (WPF controls stay alive, just no longer visible), but wrapped
+                // anyway so a teardown race can never turn a share result into an unhandled
+                // dispatcher-thread exception.
+                try { toolbarWindow.SetShareBusy(false); }
+                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: post-share SetShareBusy failed (non-fatal): {ex.Message}"); }
+
+                if (result.Success && result.Url is not null)
+                {
+                    try { System.Windows.Clipboard.SetText(result.Url); }
+                    catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: share URL clipboard copy failed (non-fatal): {ex.Message}"); }
+                    notifier?.ShowShareUploadedBalloon(result.Url);
+                }
+                else
+                {
+                    notifier?.ShowError(result.ErrorMessage ?? "Share upload failed.");
+                }
+            }));
         }
 
         /// <summary>Esc's two-stage behavior, decided here because only the session can see every
@@ -1559,13 +1776,14 @@ public static class OverlayController
 
         internal string? RecordForAutomation(RecordingFormat format)
         {
-            if (_spanningVirtual is not null)
-            {
-                // Same deliberate gate as Record()'s own — see that method's doc comment for the
-                // parallel-track integration note; this is just the automation-facing error string.
-                return "recording is not supported for a selection spanning multiple monitors";
-            }
-            if (_windows.FirstOrDefault(w => w.SelectionPx is not null) is null)
+            // Spanning-recording integration: the old unconditional refusal here ("recording is not
+            // supported for a selection spanning multiple monitors") predates RecordingSession's own
+            // spanning-aware capture path — see Record()/RecordSpanning's own doc comments. A spanning
+            // selection now only needs the same "something is actually selected" guard every other
+            // selection shape already gets below (_spanningVirtual is non-null only once a real
+            // spanning selection exists — see that field's own doc comment — so there is no separate
+            // spanning check left to make here).
+            if (_spanningVirtual is null && _windows.FirstOrDefault(w => w.SelectionPx is not null) is null)
             {
                 return "no selection to record";
             }

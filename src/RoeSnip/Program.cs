@@ -322,10 +322,16 @@ public static class AppComposition
     // Set by App/Settings.cs (WP-C). Null => RoeSnipSettings.Default is used everywhere.
     public static Func<RoeSnipSettings>? LoadSettings { get; set; }
 
-    // Set by Overlay/OverlayController.cs (WP-B).
+    // Set by Overlay/OverlayController.cs (WP-B). The trailing ITrayNotifier? (Sharing/* subsystem
+    // addition) is what OverlaySession.ShareCurrentSelection uses to surface the toolbar Share
+    // button's result (URL-copied balloon / honest error balloon) — added here rather than
+    // threaded through some separate hook because it has to be in hand for the WHOLE overlay
+    // session (Share can be clicked at any point while a selection exists), not just once at the
+    // very end the way StartRecording's own notifier only matters after the overlay already closed.
     public static Func<
         IReadOnlyList<(Capture.CapturedFrame Frame, Imaging.SdrImage Preview)>,
         RoeSnipSettings,
+        ITrayNotifier?,
         Task<OverlayResult?>>? RunOverlay { get; set; }
 
     // Set by Imaging/JxrWriter.cs (WP-C). Writes frame (cropped to cropPx) as .jxr to path.
@@ -608,7 +614,7 @@ public static class AppComposition
                     $"RoeSnip: capture-to-overlay {totalWatch.ElapsedMilliseconds} ms " +
                     $"(capture {captureMs} ms, tonemap {totalWatch.ElapsedMilliseconds - captureMs} ms)");
 
-                OverlayResult? result = await RunOverlay(monitorsWithPreview, settings);
+                OverlayResult? result = await RunOverlay(monitorsWithPreview, settings, notifier);
 
                 if (result is null)
                 {

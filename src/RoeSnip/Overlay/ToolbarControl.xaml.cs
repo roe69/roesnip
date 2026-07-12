@@ -560,25 +560,29 @@ public partial class ToolbarControl : UserControl
     /// annotations stay off (see docs/DESIGN-MULTIMON-SELECTION.md — evaluated alongside the
     /// resize-after-place feature and confirmed this does NOT fall out naturally from it: resize only
     /// shares the selection RECT's own geometry across windows, not an arbitrary annotation shape's
-    /// coordinate space, which would need its own cross-window design) and Record is GATED OFF
-    /// pending a separate, parallel work track building the multi-monitor-aware recorder — see
-    /// OverlaySession.Record's own doc comment in OverlayController.cs for the single obvious place
-    /// that integration needs to touch once that track lands. Save HDR (the SaveButton's right-click
-    /// menu item, never touched by this method) is NOT collapsed here — as of the HDR-stitch feature
-    /// it's genuinely supported while spanning too (JxrWriter.WriteSpanning). Collapses everything
-    /// else down to Save/Copy/Cancel. Called by OverlayWindow.ShowToolbar/UpdateToolbarPlacement
+    /// coordinate space, which would need its own cross-window design). Collapses the annotation-tool
+    /// groups (Tools/History/Palette) down to Save/Copy/Cancel/Record/Share.
+    ///
+    /// Record and Share were BOTH gated off here until their respective spanning integrations landed
+    /// (spanning-recording, sharing-providers) — see the git history of this method for the old
+    /// GATE-style doc comments. Record is no longer gated: RecordingSession.BeginCapture re-derives
+    /// its own intersected-monitor set and takes the spanning capture path automatically once 2+
+    /// monitors are involved (see OverlaySession.RecordSpanning's doc comment in
+    /// OverlayController.cs), so there is nothing left for the TOOLBAR to refuse — the button stays
+    /// visible/enabled exactly like every other action. Share was never actually gated by a real
+    /// constraint (RenderSpanningSelection already produces the byte composite Share uploads, same as
+    /// Copy/Save always could) — it was hidden only because nothing consumed the button yet; now that
+    /// OverlaySession.ShareCurrentSelection is wired, it stays visible too. Save HDR (the SaveButton's
+    /// right-click menu item, never touched by this method) was likewise never collapsed once
+    /// JxrWriter.WriteSpanning shipped. Called by OverlayWindow.ShowToolbar/UpdateToolbarPlacement
     /// every time the toolbar is shown, so it can never go stale across a spanning/non-spanning
-    /// transition on the same reused instance. Upload is also hidden (it's already permanently
-    /// disabled, but keeping the action row down to exactly the live actions reads cleaner than a
-    /// disabled placeholder sitting next to them).</summary>
+    /// transition on the same reused instance.</summary>
     public void SetSpanningMode(bool spanning)
     {
         var collapseVisibility = spanning ? Visibility.Collapsed : Visibility.Visible;
         ToolsGroupPanel.Visibility = collapseVisibility;
         HistoryGroupPanel.Visibility = collapseVisibility;
         PaletteGroupPanel.Visibility = collapseVisibility;
-        RecordButton.Visibility = collapseVisibility;
-        ShareGroupPanel.Visibility = collapseVisibility;
     }
 
     // ---------- Share split-button (Sharing/* subsystem) ----------

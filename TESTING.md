@@ -443,11 +443,16 @@ same boundary uses (`OverlaySession.OnSpanningCandidate`) — never a separate i
 `selection` reports the union rect in the same virtual-desktop physical pixels as always; nothing
 about the wire shape changes for a spanning rect.
 
-Annotations, Record (MP4/GIF), and HDR save are v1 cuts for a spanning selection — see
-`docs/DESIGN-MULTIMON-SELECTION.md` for why. `confirm`'s `copy`/`save` actions both work (rendering
-a byte composite stitched from each intersected monitor's own already-tone-mapped crop; gaps where
-no monitor covers part of the rect are opaque black); `record` and HDR save are refused with a clear
-error if attempted while spanning.
+Annotations are still a v1 cut for a spanning selection — see `docs/DESIGN-MULTIMON-SELECTION.md`
+for why. `confirm`'s `copy`/`save` actions both work (rendering a byte composite stitched from each
+intersected monitor's own already-tone-mapped crop; gaps where no monitor covers part of the rect are
+opaque black). **Record and HDR save are no longer refused while spanning** (integration pass,
+2026-07-13, `spanning-recording`/`spanning-selection-complete` merge): `record` hands the spanning
+virtual rect off to `RecordingSession`, whose own `BeginCapture` re-derives the intersected monitor
+set and takes the spanning capture path (`SpanningCanvasCompositor`/`EncoderLoopSpanning`)
+automatically once that set has 2+ monitors — see `OverlaySession.RecordSpanning`'s doc comment in
+`Overlay/OverlayController.cs`. HDR save was already resolved by the `spanning-selection-complete`
+merge (`JxrWriter.WriteSpanning`); this pass only touched Record.
 
 **Verified 2026-07-13** (this machine, real 3-monitor HDR layout): a real synthetic mouse drag from
 DISPLAY3 into DISPLAY1 produced exactly the requested `{x:600,y:-200,w:800,h:500}` selection, and a

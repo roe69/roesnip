@@ -1698,6 +1698,14 @@ public partial class OverlayWindow : Window
             _toolbar.SaveHdrClicked += () => _onCommand(OverlayCommand.SaveHdr);
             _toolbar.RecordMp4Clicked += () => _onCommand(OverlayCommand.RecordMp4);
             _toolbar.RecordGifClicked += () => _onCommand(OverlayCommand.RecordGif);
+            // Sharing/* subsystem: default-provider upload only (OverlaySession has no way to carry
+            // a specific provider id through the parameterless OverlayCommand enum — see
+            // OverlayCommand.Share's own doc comment). ShareToProviderRequested (the dropdown's
+            // per-provider picker) and ManageProvidersRequested (the empty-menu case) are
+            // deliberately left unwired: the integration brief scoped this button to "upload via
+            // ShareManager with the default provider" only, and wiring the dropdown too would need
+            // a session-level entry point that accepts a provider id, which doesn't exist yet.
+            _toolbar.ShareClicked += () => _onCommand(OverlayCommand.Share);
             // The toolbar's X button always closes the whole overlay outright — deliberately NOT
             // the staged CancelStage semantics Esc has.
             _toolbar.CancelClicked += () => _onCommand(OverlayCommand.Cancel);
@@ -1751,6 +1759,19 @@ public partial class OverlayWindow : Window
         _toolbar.SetStrokeWidth(_currentStrokeWidth);
         _toolbar.SetHistoryState(Annotations.CanUndo, Annotations.CanRedo);
         _toolbar.SetRecordAudioToggles(_liveSettings.RecordMicrophone, _liveSettings.RecordSystemAudio);
+        // Sharing/* subsystem: re-populated on every show (not just once), same reasoning as
+        // SetSpanningMode below — a Settings change made mid-session (the tray's Settings window is
+        // a separate top-level window, reachable while the overlay is up) must be reflected the next
+        // time this toolbar draws rather than sticking with whatever was configured when the overlay
+        // first opened. Only ENABLED configs are offered — a built-in the user has never filled in a
+        // credential for is seeded disabled (ShareProviderCatalog.DefaultConfigFor) and must not
+        // appear as a clickable-but-broken picker entry.
+        _toolbar.SetShareProviders(
+            RoeSnip.Sharing.ShareManager.EffectiveConfigs(_liveSettings)
+                .Where(c => c.Enabled)
+                .Select(c => (c.Id, c.DisplayName))
+                .ToList(),
+            _liveSettings.DefaultShareProviderId);
         // Cross-monitor selection: re-evaluated on every show, not just once, so a reused toolbar
         // instance can never show stale drawing tools/Record after a spanning<->single-monitor
         // transition (a fresh drag replacing a spanning selection with a same-monitor one, or vice
@@ -2578,6 +2599,14 @@ public partial class OverlayWindow : Window
         animation.Completed += (_, _) => OverlayCanvas.Children.Remove(flash);
         flash.BeginAnimation(OpacityProperty, animation);
     }
+
+    /// <summary>Forwards to the toolbar's own busy/disabled state during a Share upload — see
+    /// OverlaySession.ShareCurrentSelection's own doc comment for the full flow. A no-op if this
+    /// window's toolbar was never created (Share cannot be clicked without one already existing,
+    /// but a detached upload's completion callback can in principle race a session teardown that
+    /// never got as far as ShowToolbar — see UploadShareAsync's own try/catch around this call for
+    /// the belt-and-braces half of that same guard).</summary>
+    internal void SetShareBusy(bool busy) => _toolbar?.SetShareBusy(busy);
 
     internal void CloseOverlay() => Close();
 }
