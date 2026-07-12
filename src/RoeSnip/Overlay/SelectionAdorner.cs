@@ -77,6 +77,23 @@ public sealed class SelectionAdorner : FrameworkElement
     public double DeviceScaleX { get; set; } = 1.0;
     public double DeviceScaleY { get; set; } = 1.0;
 
+    /// <summary>Cross-monitor selection (multimon-selection): true on a SECONDARY window's own
+    /// adorner while the current selection spans multiple monitors — that window only ever shows
+    /// its own local INTERSECTION with the true selection, so drawing corner "resizable" brackets at
+    /// what is really just a monitor-boundary cut edge would be a false affordance (there is no
+    /// handle there — see OverlayWindow's spanning-selection mouse-down guard), and a "W x H" badge
+    /// would show that slice's own size rather than the true selection's. The dashed border itself
+    /// still renders (useful visual feedback for where THIS monitor's piece ends), just without
+    /// those two misleading elements.</summary>
+    public bool SuppressHandlesAndBadge { get; set; }
+
+    /// <summary>Cross-monitor selection: on the PRIMARY window's own adorner while spanning, this
+    /// overrides the badge text with the TRUE composite selection's "W x H" (set by
+    /// OverlayWindow.SetSpanningLocalSelection) instead of this window's own local slice size, which
+    /// would otherwise be the only number ever computed here. Null means "use the local rect's own
+    /// size" (every non-spanning selection, on every window).</summary>
+    public string? OverrideSizeLabel { get; set; }
+
     public SelectionAdorner()
     {
         // OverlayWindow does its own hit-testing via HitTestHandle; this element only renders.
@@ -141,9 +158,14 @@ public sealed class SelectionAdorner : FrameworkElement
         dc.DrawRectangle(null, BorderUnderPen, edgeRect);
         dc.DrawRectangle(null, BorderDashPen, edgeRect);
 
+        if (SuppressHandlesAndBadge)
+        {
+            return; // secondary slice of a spanning selection — border only, see the doc comment
+        }
+
         DrawCornerBrackets(dc, edgeRect);
 
-        string label = string.Create(CultureInfo.InvariantCulture, $"{r.Width} x {r.Height}");
+        string label = OverrideSizeLabel ?? string.Create(CultureInfo.InvariantCulture, $"{r.Width} x {r.Height}");
         var typeface = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
         var formatted = new FormattedText(
             label, CultureInfo.InvariantCulture, FlowDir.LeftToRight, typeface, 13.0, Brushes.White, 1.0);

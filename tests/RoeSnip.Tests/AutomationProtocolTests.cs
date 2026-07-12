@@ -226,6 +226,35 @@ public class AutomationProtocolTests
     }
 
     [Fact]
+    public void ValidateArgs_Confirm_CopyNeedsNoPath()
+    {
+        var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"confirm\",\"action\":\"copy\"}", out _)!;
+        Assert.Null(AutomationProtocol.ValidateArgs("confirm", request));
+    }
+
+    [Fact]
+    public void ValidateArgs_Confirm_SaveRequiresNonEmptyPath()
+    {
+        var withPath = AutomationProtocol.TryParseRequest(
+            "{\"cmd\":\"confirm\",\"action\":\"save\",\"path\":\"C:\\\\x.png\"}", out _)!;
+        Assert.Null(AutomationProtocol.ValidateArgs("confirm", withPath));
+
+        var missingPath = AutomationProtocol.TryParseRequest("{\"cmd\":\"confirm\",\"action\":\"save\"}", out _)!;
+        Assert.NotNull(AutomationProtocol.ValidateArgs("confirm", missingPath));
+
+        var emptyPath = AutomationProtocol.TryParseRequest(
+            "{\"cmd\":\"confirm\",\"action\":\"save\",\"path\":\"\"}", out _)!;
+        Assert.NotNull(AutomationProtocol.ValidateArgs("confirm", emptyPath));
+    }
+
+    [Fact]
+    public void ValidateArgs_Confirm_RejectsUnknownAction()
+    {
+        var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"confirm\",\"action\":\"saveHdr\"}", out _)!;
+        Assert.NotNull(AutomationProtocol.ValidateArgs("confirm", request));
+    }
+
+    [Fact]
     public void ValidateArgs_UnknownCommand_IsRejected()
     {
         var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"teleport\"}", out _)!;
@@ -334,10 +363,14 @@ public class AutomationProtocolTests
     // ---------- KnownCommands ----------
 
     [Fact]
-    public void KnownCommands_MatchesTheDocumentedNineCommands()
+    public void KnownCommands_MatchesTheDocumentedTenCommands()
     {
+        // "confirm" added by the multimon-selection branch: Copy/Save on the overlay had no
+        // automation entry point at all before it (Save's real path pops an interactive dialog,
+        // which automation must never do) — see OverlayController.ConfirmForAutomation's own doc
+        // comment.
         Assert.Equal(
-            new[] { "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot" },
+            new[] { "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot", "confirm" },
             AutomationProtocol.KnownCommands);
     }
 }
