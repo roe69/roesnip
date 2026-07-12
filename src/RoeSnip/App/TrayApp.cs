@@ -1174,7 +1174,7 @@ public sealed class TrayApp : ITrayNotifier
 
                     var window = new RoeSnip.Overlay.OverlayWindow(
                         frame, sdr, RoeSnipSettings.Default,
-                        static _ => { }, static _ => { }, static (_, _) => { }, static _ => { },
+                        static _ => { }, static _ => { }, static (_, _, _) => { }, static _ => { },
                         static _ => { }, static _ => { },
                         pickOnlyMode: false);
                     window.Measure(new System.Windows.Size(size, size));

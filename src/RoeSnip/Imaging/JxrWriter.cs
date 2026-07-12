@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using RoeSnip.Capture;
 using Vortice.WIC;
@@ -30,7 +31,42 @@ public static class JxrWriter
     public static void Write(string path, CapturedFrame frame, RectPhysical cropPx)
     {
         byte[] floatPixels = BuildFloatBuffer(frame, cropPx, out int width, out int height, out uint stride);
+        EncodeAndWrite(path, width, height, stride, floatPixels);
+    }
 
+    /// <summary>Cross-monitor selection HDR save: stitches every contributing monitor's own RAW
+    /// crop (<paramref name="crops"/> — one <see cref="RoeSnip.SpanningFrameCrop"/> per monitor the
+    /// selection actually touches) into one canvas sized to <paramref name="virtualRect"/>, then
+    /// writes it through the exact same WIC 128bppRGBAFloat encode path <see cref="Write"/> uses for
+    /// a single monitor.
+    ///
+    /// Well-defined despite different monitors' own SDR-white/peak photometrics — the original v1
+    /// deferral ("no defined operation for combining differently-photometric FP16 crops") was
+    /// overcautious: raw scRGB is ONE absolute linear space (1.0 = 80 nits) for every monitor,
+    /// independent of that monitor's own SDR white level or peak brightness. Per-monitor photometrics
+    /// only ever enter into TONE-MAPPING (Color.ToneMapper / SdrImage.FromCapturedFrame), a
+    /// completely different code path this never touches — every pixel here goes through
+    /// <see cref="CapturedFrame.ReadPixelScRgb"/>, the SAME single well-defined per-pixel decode
+    /// <see cref="BuildFloatBuffer"/> already uses for the single-monitor case (Fp16 pass-through, or
+    /// Bgra8 decoded via the sRGB EOTF and rescaled by that specific monitor's own SdrWhiteNits) —
+    /// so two crops from monitors with different photometrics are already directly comparable in the
+    /// same units (linear scRGB, 1.0 = 80 nits) by the time either one is written to the canvas; there
+    /// is nothing left to reconcile between them.
+    ///
+    /// Gaps (no contributing monitor covers part of the rect) are left at linear (0,0,0) with alpha
+    /// 1 — black, opaque — the same documented choice as the SDR spanning composite
+    /// (OverlaySession.RenderSpanningSelection), just in linear scRGB instead of BGRA8.</summary>
+    public static void WriteSpanning(string path, RectPhysical virtualRect, IReadOnlyList<RoeSnip.SpanningFrameCrop> crops)
+    {
+        var n = virtualRect.Normalized();
+        int width = Math.Max(1, n.Width);
+        int height = Math.Max(1, n.Height);
+        byte[] floatPixels = BuildSpanningFloatBuffer(crops, width, height, out uint stride);
+        EncodeAndWrite(path, width, height, stride, floatPixels);
+    }
+
+    private static void EncodeAndWrite(string path, int width, int height, uint stride, byte[] floatPixels)
+    {
         using var factory = new IWICImagingFactory();
         using var fileStream = new FileStream(path, FileMode.Create, FileAccess.Write);
         using var encoder = factory.CreateEncoder(ContainerFormat.Wmp, fileStream, BitmapEncoderCacheOption.NoCache);
@@ -91,10 +127,84 @@ public static class JxrWriter
 
         return buffer;
     }
+
+    /// <summary>Cross-monitor selection HDR save: same tightly-packed R32G32B32A32Float layout as
+    /// <see cref="BuildFloatBuffer"/>, sized to the spanning selection's own virtual canvas
+    /// (<paramref name="width"/> x <paramref name="height"/>) instead of one frame's crop. Every
+    /// pixel starts as opaque linear black (the documented gap fill — see <see
+    /// cref="WriteSpanning"/>'s own doc comment) and is then overwritten by whichever crop(s) in
+    /// <paramref name="crops"/> cover it, each read through the same <see
+    /// cref="CapturedFrame.ReadPixelScRgb"/> per-pixel decode <see cref="BuildFloatBuffer"/> uses —
+    /// so a pixel's monitor of origin never affects its meaning, only which raw bytes back it.</summary>
+    private static byte[] BuildSpanningFloatBuffer(
+        IReadOnlyList<RoeSnip.SpanningFrameCrop> crops, int width, int height, out uint stride)
+    {
+        const int bytesPerPixel = 16; // 4 x float32
+        stride = (uint)(width * bytesPerPixel);
+        var buffer = new byte[stride * (uint)height];
+
+        // Prefill every pixel's alpha to opaque (RGB already zero-initialized = linear black) —
+        // gaps that no crop below ever touches stay exactly this: opaque black, matching the SDR
+        // spanning composite's own documented gap fill.
+        for (int y = 0; y < height; y++)
+        {
+            int rowOffset = y * (int)stride;
+            for (int x = 0; x < width; x++)
+            {
+                BitConverter.TryWriteBytes(buffer.AsSpan(rowOffset + x * bytesPerPixel + 12, 4), 1f);
+            }
+        }
+
+        foreach (var crop in crops)
+        {
+            var r = crop.LocalCropPx.Normalized();
+            if (r.Left < 0 || r.Top < 0 || r.Right > crop.Frame.Width || r.Bottom > crop.Frame.Height)
+            {
+                // A crop rect out of bounds for its own frame is a caller bug — OverlayController
+                // derives every crop from the same intersected local selection the SDR spanning
+                // composite already validated via SdrImage.Crop's own bounds check. This is a save
+                // path (user explicitly asked to write a file), not a per-frame hot loop, so fail
+                // loud here rather than silently leave that slice black.
+                throw new ArgumentOutOfRangeException(
+                    nameof(crops), $"Crop rect {r} is out of bounds for a {crop.Frame.Width}x{crop.Frame.Height} frame.");
+            }
+
+            for (int y = 0; y < r.Height; y++)
+            {
+                int destY = crop.DestY + y;
+                if (destY < 0 || destY >= height)
+                {
+                    continue; // defensive — geometry from OverlayController should never produce this
+                }
+                int srcY = r.Top + y;
+                int rowOffset = destY * (int)stride;
+                for (int x = 0; x < r.Width; x++)
+                {
+                    int destX = crop.DestX + x;
+                    if (destX < 0 || destX >= width)
+                    {
+                        continue;
+                    }
+                    var v = crop.Frame.ReadPixelScRgb(r.Left + x, srcY);
+                    int o = rowOffset + destX * bytesPerPixel;
+                    BitConverter.TryWriteBytes(buffer.AsSpan(o, 4), v.X);
+                    BitConverter.TryWriteBytes(buffer.AsSpan(o + 4, 4), v.Y);
+                    BitConverter.TryWriteBytes(buffer.AsSpan(o + 8, 4), v.Z);
+                    BitConverter.TryWriteBytes(buffer.AsSpan(o + 12, 4), 1f);
+                }
+            }
+        }
+
+        return buffer;
+    }
 }
 
 file static class ModuleInit
 {
     [System.Runtime.CompilerServices.ModuleInitializer]
-    internal static void Init() => AppComposition.WriteJxr = JxrWriter.Write;
+    internal static void Init()
+    {
+        AppComposition.WriteJxr = JxrWriter.Write;
+        AppComposition.WriteJxrSpanning = JxrWriter.WriteSpanning;
+    }
 }

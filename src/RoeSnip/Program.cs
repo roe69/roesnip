@@ -17,6 +17,18 @@ public enum RecordingFormat { Mp4, Gif }
 /// rather than a bare bool+enum pair (keeps OverlayResult's constructor call sites readable).</summary>
 public sealed record RecordingRequest(RecordingFormat Format);
 
+/// <summary>Cross-monitor selection HDR save: one contributing monitor's own RAW CapturedFrame
+/// (untouched, no tone-mapping) plus the crop-local rect (relative to that frame's own (0,0)) and
+/// the destination offset (relative to the spanning selection's own composite canvas origin) that
+/// place its pixels correctly in the stitched output. A list of these — one per monitor the
+/// selection actually touches — is what <see cref="OverlayResult.SpanningFrameCrops"/> carries, and
+/// what AppComposition.WriteJxrSpanning (Imaging/JxrWriter.cs, WP-C) consumes: see that hook's own
+/// doc comment for why stitching raw scRGB crops from different monitors is well-defined (unlike
+/// stitching already-tone-mapped ones would be) — every field here uses only WP-A leaf types
+/// (Capture.CapturedFrame, Capture.RectPhysical), same discipline as OverlayResult itself, so
+/// Overlay (WP-B, which populates this) never has to reference WP-C's JxrWriter directly.</summary>
+public sealed record SpanningFrameCrop(Capture.CapturedFrame Frame, Capture.RectPhysical LocalCropPx, int DestX, int DestY);
+
 /// <summary>Data-only result of one overlay session. The Overlay package (WP-B) produces this;
 /// it performs Copy (clipboard) and Save (PNG dialog + file write) itself before returning, using
 /// only WP-A leaf APIs (PngWriter) and its own ClipboardService — so those two actions need no
@@ -37,11 +49,19 @@ public sealed record OverlayResult(
     // RenderSpanningSelection), in which case Monitor/SelectionPx/SourceFrame above describe only
     // the PRIMARY monitor (whichever held the drag-end cursor) — they exist purely to satisfy this
     // record's non-nullable shape and must not be used for anything beyond that when this is set.
-    // SaveHdrRequested is always false on a spanning result (see ConfirmSpanning's own doc comment);
-    // this field is what RunCaptureFlowAsync's HDR-export branch checks to also skip
-    // settings.AutoSaveHdrCopy for a spanning result, since that setting is independent of what the
-    // user clicked this particular capture. Virtual-desktop physical pixels.
-    Capture.RectPhysical? SpanningVirtualSelectionPx = null
+    // This is what RunCaptureFlowAsync's HDR-export branch checks to route to WriteJxrSpanning
+    // (using SpanningFrameCrops below) instead of the single-monitor WriteJxr(SourceFrame,
+    // SelectionPx) call. Virtual-desktop physical pixels.
+    Capture.RectPhysical? SpanningVirtualSelectionPx = null,
+    // Cross-monitor selection HDR save: every contributing monitor's own raw-frame crop geometry
+    // (see SpanningFrameCrop's own doc comment), non-null exactly when SpanningVirtualSelectionPx
+    // is — populated unconditionally on a spanning result (not just when SaveHdrRequested is true),
+    // mirroring how SourceFrame/SelectionPx above are always populated regardless of what the user
+    // clicked, so settings.AutoSaveHdrCopy works the same way for a spanning result as for a plain
+    // one. SaveHdrRequested (above) still reflects what the user actually asked for on THIS
+    // capture; this field just makes it possible to honor that (or the settings-driven auto-copy)
+    // when the answer is yes.
+    IReadOnlyList<SpanningFrameCrop>? SpanningFrameCrops = null
 );
 
 /// <summary>Settings data shape (DESIGN.md §6). Persistence (JSON load/save, fail-closed-on-unreadable)
@@ -286,6 +306,13 @@ public static class AppComposition
 
     // Set by Imaging/JxrWriter.cs (WP-C). Writes frame (cropped to cropPx) as .jxr to path.
     public static Action<string, Capture.CapturedFrame, Capture.RectPhysical>? WriteJxr { get; set; }
+
+    // Set by Imaging/JxrWriter.cs (WP-C). Cross-monitor selection HDR save: stitches every
+    // contributing monitor's own raw-frame crop (SpanningFrameCrop) into one canvas sized to the
+    // virtual selection rect and writes it as .jxr to path — see JxrWriter.WriteSpanning's own doc
+    // comment for why this is well-defined (raw scRGB is one absolute linear space regardless of
+    // which monitor a pixel came from) where stitching already-tone-mapped SDR crops would not be.
+    public static Action<string, Capture.RectPhysical, IReadOnlyList<SpanningFrameCrop>>? WriteJxrSpanning { get; set; }
 
     // Set by Recording/RecordingController.cs. Starts a recording session for the given monitor/
     // selection/format. The returned Task completes once the recording has STARTED (chrome shown,
@@ -594,17 +621,35 @@ public static class AppComposition
                     return;
                 }
 
-                if (result.SpanningVirtualSelectionPx is not null)
+                if (result.SpanningVirtualSelectionPx is { } spanningVirtualPx)
                 {
-                    // Cross-monitor selection: a spanning result has no single monitor's FP16 crop
-                    // to write as-is (see OverlayResult.SpanningVirtualSelectionPx's own doc comment
-                    // and docs/DESIGN-MULTIMON-SELECTION.md's "What v1 deliberately does not do") —
-                    // skip HDR export entirely, even when settings.AutoSaveHdrCopy is on, since that
-                    // setting has no notion of "except when spanning".
-                    if (settings.AutoSaveHdrCopy)
+                    // Cross-monitor selection HDR save: stitching raw scRGB crops from multiple
+                    // monitors IS well-defined (see JxrWriter.WriteSpanning's own doc comment) — the
+                    // original "no defined operation" reasoning only ever applied to combining
+                    // already-TONE-MAPPED crops, which is a different, unrelated code path
+                    // (RenderSpanningSelection, used for Copy/Save-PNG) that this never touches.
+                    if (result.SaveHdrRequested || settings.AutoSaveHdrCopy)
                     {
-                        Console.Error.WriteLine(
-                            "RoeSnip: auto-save-HDR-copy skipped for a selection spanning multiple monitors.");
+                        if (WriteJxrSpanning is not null && result.SpanningFrameCrops is { Count: > 0 } crops)
+                        {
+                            try
+                            {
+                                string hdrPath = BuildHdrPath(settings, result.SavedPngPath);
+                                WriteJxrSpanning(hdrPath, spanningVirtualPx, crops);
+                            }
+                            catch (Exception ex)
+                            {
+                                notifier?.ShowError($"Failed to save HDR copy: {ex.Message}");
+                            }
+                        }
+                        else if (result.SaveHdrRequested)
+                        {
+                            // Only surface this when the user explicitly asked for it; a silent
+                            // auto-save setting shouldn't nag on every capture in a WP-A-only build
+                            // (WriteJxrSpanning missing) or on the (should-never-happen) case of a
+                            // spanning result with an empty crop list.
+                            notifier?.ShowError("HDR export unavailable: the App package is not present in this build.");
+                        }
                     }
                 }
                 else if (result.SaveHdrRequested || settings.AutoSaveHdrCopy)

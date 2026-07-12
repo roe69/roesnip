@@ -77,15 +77,28 @@ public sealed class SelectionAdorner : FrameworkElement
     public double DeviceScaleX { get; set; } = 1.0;
     public double DeviceScaleY { get; set; } = 1.0;
 
+    /// <summary>Cross-monitor selection: which of the 4 edges of this window's own local selection
+    /// rect are REAL edges of the true (possibly multi-monitor) selection, versus merely a clip at
+    /// THIS monitor's own screen boundary (see SpanningSelectionMath.Distribute's doc comment for
+    /// exactly how these are computed). Gates both hit-testing (<see cref="HitTestHandle"/> never
+    /// returns a corner/side handle on a non-real edge) and rendering (a clipped edge's corner
+    /// bracket is never drawn — there is nothing there to grab, so drawing the "resizable" affordance
+    /// would be a false promise). Defaults to <see cref="SelectionEdges.All"/>, which is every
+    /// ordinary (non-spanning) selection's answer on every window — this only ever varies while
+    /// spanning, and can now differ between the primary and secondary windows of the SAME spanning
+    /// selection (each has its own real/clipped edges).</summary>
+    public SelectionEdges RealEdges { get; set; } = SelectionEdges.All;
+
     /// <summary>Cross-monitor selection (multimon-selection): true on a SECONDARY window's own
-    /// adorner while the current selection spans multiple monitors — that window only ever shows
-    /// its own local INTERSECTION with the true selection, so drawing corner "resizable" brackets at
-    /// what is really just a monitor-boundary cut edge would be a false affordance (there is no
-    /// handle there — see OverlayWindow's spanning-selection mouse-down guard), and a "W x H" badge
-    /// would show that slice's own size rather than the true selection's. The dashed border itself
-    /// still renders (useful visual feedback for where THIS monitor's piece ends), just without
-    /// those two misleading elements.</summary>
-    public bool SuppressHandlesAndBadge { get; set; }
+    /// adorner while the current selection spans multiple monitors — that window only ever shows its
+    /// own local INTERSECTION with the true selection, so a "W x H" badge here would show that
+    /// slice's own size rather than the true selection's (only the PRIMARY window's adorner gets
+    /// <see cref="OverrideSizeLabel"/> set, showing the true composite size instead). The dashed
+    /// border AND any real-edge corner brackets still render on a secondary window (gated by
+    /// <see cref="RealEdges"/> like every other window) — resize handles work from secondary windows
+    /// too as of the resize-after-place feature; only the badge (and the toolbar — see
+    /// OverlayWindow.UpdateToolbarPlacement) stay primary-only.</summary>
+    public bool SuppressBadge { get; set; }
 
     /// <summary>Cross-monitor selection: on the PRIMARY window's own adorner while spanning, this
     /// overrides the badge text with the TRUE composite selection's "W x H" (set by
@@ -118,14 +131,25 @@ public sealed class SelectionAdorner : FrameworkElement
         bool withinX = physicalPt.X >= r.Left - pad && physicalPt.X <= r.Right + pad;
         bool withinY = physicalPt.Y >= r.Top - pad && physicalPt.Y <= r.Bottom + pad;
 
-        if (nearLeft && nearTop) return SelectionHandle.TopLeft;
-        if (nearRight && nearTop) return SelectionHandle.TopRight;
-        if (nearLeft && nearBottom) return SelectionHandle.BottomLeft;
-        if (nearRight && nearBottom) return SelectionHandle.BottomRight;
-        if (nearTop && withinX) return SelectionHandle.Top;
-        if (nearBottom && withinX) return SelectionHandle.Bottom;
-        if (nearLeft && withinY) return SelectionHandle.Left;
-        if (nearRight && withinY) return SelectionHandle.Right;
+        // Cross-monitor selection: a corner/side only counts as a real handle when RealEdges says
+        // its edge(s) are genuine edges of the true selection, not just where THIS monitor's own
+        // screen boundary cut it off (RealEdges.All for every ordinary, non-spanning selection, so
+        // this is a no-op there). A near-miss on a non-real corner still falls through to the side
+        // checks below it — e.g. a real Top edge with a clipped Right edge still offers "Top" even
+        // though "TopRight" is refused.
+        bool leftReal = (RealEdges & SelectionEdges.Left) != 0;
+        bool topReal = (RealEdges & SelectionEdges.Top) != 0;
+        bool rightReal = (RealEdges & SelectionEdges.Right) != 0;
+        bool bottomReal = (RealEdges & SelectionEdges.Bottom) != 0;
+
+        if (nearLeft && nearTop && leftReal && topReal) return SelectionHandle.TopLeft;
+        if (nearRight && nearTop && rightReal && topReal) return SelectionHandle.TopRight;
+        if (nearLeft && nearBottom && leftReal && bottomReal) return SelectionHandle.BottomLeft;
+        if (nearRight && nearBottom && rightReal && bottomReal) return SelectionHandle.BottomRight;
+        if (nearTop && withinX && topReal) return SelectionHandle.Top;
+        if (nearBottom && withinX && bottomReal) return SelectionHandle.Bottom;
+        if (nearLeft && withinY && leftReal) return SelectionHandle.Left;
+        if (nearRight && withinY && rightReal) return SelectionHandle.Right;
 
         if (physicalPt.X >= r.Left && physicalPt.X <= r.Right && physicalPt.Y >= r.Top && physicalPt.Y <= r.Bottom)
         {
@@ -158,12 +182,12 @@ public sealed class SelectionAdorner : FrameworkElement
         dc.DrawRectangle(null, BorderUnderPen, edgeRect);
         dc.DrawRectangle(null, BorderDashPen, edgeRect);
 
-        if (SuppressHandlesAndBadge)
-        {
-            return; // secondary slice of a spanning selection — border only, see the doc comment
-        }
+        DrawCornerBrackets(dc, edgeRect, RealEdges);
 
-        DrawCornerBrackets(dc, edgeRect);
+        if (SuppressBadge)
+        {
+            return; // secondary window of a spanning selection — no "W x H" badge, see the doc comment
+        }
 
         string label = OverrideSizeLabel ?? string.Create(CultureInfo.InvariantCulture, $"{r.Width} x {r.Height}");
         var typeface = new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
@@ -184,8 +208,12 @@ public sealed class SelectionAdorner : FrameworkElement
 
     /// <summary>Solid white L-brackets at the four corners (dark under-stroke for contrast) — the
     /// affordance that signals "resizable", replacing the old white square dots. The arms shrink
-    /// for tiny selections so they never overrun a small rect.</summary>
-    private static void DrawCornerBrackets(DrawingContext dc, Rect r)
+    /// for tiny selections so they never overrun a small rect. Cross-monitor selection: a corner's
+    /// bracket is only drawn when BOTH of its edges are real (<paramref name="realEdges"/>) — a
+    /// corner sitting on a monitor-boundary clip has no handle to advertise (see RealEdges' own
+    /// doc comment), so drawing the bracket there would be a false "grab here" promise. The dashed
+    /// border itself (drawn by the caller before this) still marks that edge either way.</summary>
+    private static void DrawCornerBrackets(DrawingContext dc, Rect r, SelectionEdges realEdges)
     {
         double arm = Math.Min(CornerArmDip, Math.Min(r.Width, r.Height) / 2);
         if (arm <= 1)
@@ -193,20 +221,33 @@ public sealed class SelectionAdorner : FrameworkElement
             return; // selection too small for brackets; the dashed edge alone is enough
         }
 
+        bool topLeftReal = (realEdges & (SelectionEdges.Left | SelectionEdges.Top)) == (SelectionEdges.Left | SelectionEdges.Top);
+        bool topRightReal = (realEdges & (SelectionEdges.Right | SelectionEdges.Top)) == (SelectionEdges.Right | SelectionEdges.Top);
+        bool bottomRightReal = (realEdges & (SelectionEdges.Right | SelectionEdges.Bottom)) == (SelectionEdges.Right | SelectionEdges.Bottom);
+        bool bottomLeftReal = (realEdges & (SelectionEdges.Left | SelectionEdges.Bottom)) == (SelectionEdges.Left | SelectionEdges.Bottom);
+
         foreach (var pen in new[] { CornerUnderPen, CornerPen })
         {
-            // Top-left
-            dc.DrawLine(pen, new Point(r.Left, r.Top), new Point(r.Left + arm, r.Top));
-            dc.DrawLine(pen, new Point(r.Left, r.Top), new Point(r.Left, r.Top + arm));
-            // Top-right
-            dc.DrawLine(pen, new Point(r.Right, r.Top), new Point(r.Right - arm, r.Top));
-            dc.DrawLine(pen, new Point(r.Right, r.Top), new Point(r.Right, r.Top + arm));
-            // Bottom-right
-            dc.DrawLine(pen, new Point(r.Right, r.Bottom), new Point(r.Right - arm, r.Bottom));
-            dc.DrawLine(pen, new Point(r.Right, r.Bottom), new Point(r.Right, r.Bottom - arm));
-            // Bottom-left
-            dc.DrawLine(pen, new Point(r.Left, r.Bottom), new Point(r.Left + arm, r.Bottom));
-            dc.DrawLine(pen, new Point(r.Left, r.Bottom), new Point(r.Left, r.Bottom - arm));
+            if (topLeftReal)
+            {
+                dc.DrawLine(pen, new Point(r.Left, r.Top), new Point(r.Left + arm, r.Top));
+                dc.DrawLine(pen, new Point(r.Left, r.Top), new Point(r.Left, r.Top + arm));
+            }
+            if (topRightReal)
+            {
+                dc.DrawLine(pen, new Point(r.Right, r.Top), new Point(r.Right - arm, r.Top));
+                dc.DrawLine(pen, new Point(r.Right, r.Top), new Point(r.Right, r.Top + arm));
+            }
+            if (bottomRightReal)
+            {
+                dc.DrawLine(pen, new Point(r.Right, r.Bottom), new Point(r.Right - arm, r.Bottom));
+                dc.DrawLine(pen, new Point(r.Right, r.Bottom), new Point(r.Right, r.Bottom - arm));
+            }
+            if (bottomLeftReal)
+            {
+                dc.DrawLine(pen, new Point(r.Left, r.Bottom), new Point(r.Left + arm, r.Bottom));
+                dc.DrawLine(pen, new Point(r.Left, r.Bottom), new Point(r.Left, r.Bottom - arm));
+            }
         }
     }
 }
