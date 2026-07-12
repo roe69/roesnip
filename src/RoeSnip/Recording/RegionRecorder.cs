@@ -52,7 +52,16 @@ internal sealed class RegionRecorder : IDisposable
 {
     private readonly WgcCapturer.MonitorResources _resources; // via WgcCapturer.CreateResources — never the s_slots cache
     private readonly MonitorInfo _monitor;
-    private readonly int _regionWidth;                          // even-WxH enforced by the caller; SIZE is fixed for the whole take
+    // SIZE is fixed for the whole take (see SetOrigin's own doc for why only position can move).
+    // NOT guaranteed even: RecordingController.RoundDownToEven floors the single-recorder/whole-
+    // selection case, but multi-monitor recording phase 2's spanning callers (StartSpanningRecorders/
+    // RebuildSpanningRecorders, via SpanningCanvasCompositor.BuildSlots) pass a PER-MONITOR crop of
+    // whatever width a seam happens to split an even selection into (e.g. an even 1000px selection
+    // straddling a seam can split 333+667, both odd) — nothing downstream of this field currently
+    // relies on evenness (no SIMD 2-pixel-stride readback, no NV12-adjacent math on the crop), but a
+    // future change that assumes it would work in single-monitor mode and only misbehave on an odd
+    // spanning split.
+    private readonly int _regionWidth;
     private readonly int _regionHeight;
     private long _originPacked;                                 // (left << 32) | (uint)top — Volatile-accessed, see SetOrigin
     private readonly int _targetFps;
@@ -234,6 +243,57 @@ internal sealed class RegionRecorder : IDisposable
                 // process outright. Hand the failure to the owner (RecordingSession) instead, which
                 // stops the recording cleanly with whatever was already captured.
                 Faulted?.Invoke(ex);
+            }
+        }
+    }
+
+    /// <summary>On-demand fallback for a monitor that delivered its very first WGC frame (copy #0)
+    /// and then nothing else. WGC always delivers that first frame quickly even for a fully static
+    /// screen (see WgcCapturer.CaptureCore's own "well under 100 ms, even capturing a completely
+    /// static screen" doc comment), but <see cref="OnFrameArrived"/> deliberately withholds READING
+    /// it back until a SECOND callback arrives (see the class doc's ring-stall rationale) — a second
+    /// callback a genuinely unchanging monitor may never actually deliver. Left alone, that monitor's
+    /// crop would never enter <see cref="Frames"/> at all until <see cref="Stop"/>'s own end-of-take
+    /// ring drain, i.e. it contributes nothing to a live spanning composite for the take's ENTIRE
+    /// duration (RecordingController.EncoderLoopSpanning starts writing encoded frames as soon as ANY
+    /// OTHER monitor composites, onto a canvas this monitor's sub-rect would otherwise never touch).
+    ///
+    /// Callable any time after <see cref="Start"/>; safe to call from the encoder thread (or any
+    /// thread) since it takes <see cref="_gpuLock"/>, the same lock <see cref="OnFrameArrived"/> and
+    /// <see cref="Stop"/> already serialize all GPU-touching work behind, so this can never race a
+    /// real callback's own readback of the same slot. No-op (returns false) once a second callback
+    /// has actually landed (<see cref="_copyCount"/> &gt;= 2 — the normal path already read slot 0
+    /// back at that point) or before the first callback has landed at all (<see cref="_copyCount"/>
+    /// == 0 — nothing captured yet). Copy #0 always lands in ring slot 0 (a fresh recorder's
+    /// <see cref="_ringWriteIndex"/> starts at 0), so there is no ambiguity about which slot to read.
+    ///
+    /// Deliberately NOT self-throttling or repeat-safe beyond the count check above: the CALLER
+    /// (RecordingController.EncoderLoopSpanning) is responsible for invoking this AT MOST ONCE per
+    /// recorder instance — see that loop's own per-slot bookkeeping. Calling it every tick for a
+    /// recorder stuck at one copy forever would re-Map and re-enqueue the same unchanged pixels
+    /// forever, which is exactly the per-frame hot-path work this codebase's own LOH/Gen2 lesson
+    /// forbids; this method itself has no memory of "already tried" because that bookkeeping already
+    /// exists one layer up, index-aligned with the rest of that loop's per-slot state.</summary>
+    public bool TryFlushPendingInitialFrame()
+    {
+        lock (_gpuLock)
+        {
+            if (Volatile.Read(ref _disposed) != 0 || _copyCount != 1 || _stagingFormat is not { } format)
+            {
+                return false; // disposed, nothing captured yet, or the normal path already handled it
+            }
+            try
+            {
+                ReadRingSlot(0, format, _resources.D3dDevice.ImmediateContext);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // Best-effort: worst case this monitor's canvas sub-rect just stays at whatever it
+                // was for a bit longer, same as before this method was ever called — not worth
+                // failing the whole take over a stop-time-style GPU hiccup here either.
+                Console.Error.WriteLine($"RoeSnip: initial-frame flush failed (non-fatal): {ex.Message}");
+                return false;
             }
         }
     }
