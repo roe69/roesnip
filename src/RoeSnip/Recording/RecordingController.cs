@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -12,9 +13,11 @@ using RoeSnip.Recording.Gif;
 namespace RoeSnip.Recording;
 
 /// <summary>Point-in-time automation snapshot of the active recording session — see
-/// RecordingSession.GetAutomationSnapshot. SelectionVirtualDesktopPx has the monitor's own origin
-/// folded in (the virtual-desktop-physical-pixel convention AutomationServer's wire protocol uses
-/// everywhere).</summary>
+/// RecordingSession.GetAutomationSnapshot. SelectionVirtualDesktopPx is virtual-desktop-physical
+/// pixels (the convention AutomationServer's wire protocol uses everywhere) — a straight passthrough
+/// of RecordingSession's own internal selection state as of the multi-monitor recording phase 1
+/// coordinate migration (PLAN-MULTIMON-RECORDING.md §4/§6); it used to require folding a single
+/// monitor's own origin in at this boundary, before that state was natively absolute.</summary>
 internal readonly record struct RecordingAutomationSnapshot(
     string Phase, RecordingFormat Format, RectPhysical SelectionVirtualDesktopPx,
     string EstimateText, GifSizePreset Preset, int Fps);
@@ -155,8 +158,20 @@ internal sealed class RecordingSession
 {
     private enum Phase { Setup, Capturing, Reviewing }
 
-    private readonly MonitorInfo _monitor;
-    private RectPhysical _selectionPx; // position slides when the user drags RegionOutline; size fixed
+    // The monitor the ACTIVE RegionRecorder is currently reading from — not readonly: a cross-
+    // monitor drag handoff (HandoffToMonitor, multi-monitor recording phase 1 — see
+    // PLAN-MULTIMON-RECORDING.md §3) reassigns this when the region leaves its bounds. Every other
+    // consumer (tone-map recompute, RegionRecorder construction/relative-coordinate conversion)
+    // always reads the CURRENT value, never caches its own copy.
+    private MonitorInfo _monitor;
+    // Snapshot of every enumerated monitor, taken once in Start() — the set a handoff/BeginCapture
+    // snap picks a destination from (MultiMonitorRecording.FindOwningMonitor). Deliberately NOT
+    // re-enumerated live: SystemEvents.DisplaySettingsChanged already force-stops the whole take on
+    // ANY topology change once Capturing (see BeginCapture's own subscription), so a stale snapshot
+    // only matters for the narrow Setup-phase window before that handler is even wired up — an
+    // accepted phase-1 gap, not a correctness issue for the take itself.
+    private IReadOnlyList<MonitorInfo> _allMonitors = Array.Empty<MonitorInfo>();
+    private RectPhysical _selectionPx; // position slides when the user drags RegionOutline; size fixed. Virtual-desktop-absolute physical pixels (multi-monitor recording phase 1, PLAN-MULTIMON-RECORDING.md §4) — NOT monitor-relative, despite the ctor parameter of the same name being monitor-relative (converted once, at the top of Start()).
     private readonly RecordingFormat _format;
     private readonly RoeSnipSettings _settings;
     private readonly ITrayNotifier? _notifier;
@@ -209,6 +224,11 @@ internal sealed class RecordingSession
         RoeSnipSettings settings, ITrayNotifier? notifier)
     {
         _monitor = monitor;
+        // selectionPx arrives MONITOR-RELATIVE here (OverlayResult.SelectionPx's own documented
+        // convention — Program.cs/OverlayController are untouched by this workstream, see plan §6's
+        // "recommend deriving inside StartAsync" note, reconciled: the field converts to
+        // virtual-desktop-absolute at the top of Start() instead, one line, no delegate-signature
+        // ripple needed). Stored as given for that one line to convert from.
         _selectionPx = selectionPx;
         _format = format;
         _settings = settings;
@@ -226,6 +246,24 @@ internal sealed class RecordingSession
         try
         {
             _uiDispatcher = Dispatcher.CurrentDispatcher;
+
+            // Multi-monitor recording phase 1 (PLAN-MULTIMON-RECORDING.md §4): from here on,
+            // _selectionPx is virtual-desktop-absolute physical pixels, never monitor-relative — the
+            // ctor's own selectionPx parameter is the one and only monitor-relative value this class
+            // ever sees (OverlayResult.SelectionPx's documented convention), converted exactly once,
+            // right here, before RegionOutline/RecordingChrome/anything else reads it.
+            var homeBounds = _monitor.BoundsPx;
+            _selectionPx = new RectPhysical(
+                homeBounds.Left + _selectionPx.Left, homeBounds.Top + _selectionPx.Top,
+                homeBounds.Left + _selectionPx.Right, homeBounds.Top + _selectionPx.Bottom);
+
+            // Snapshot every monitor once for the whole session's handoff/clamp decisions (see the
+            // field's own doc comment). Never empty even if enumeration genuinely fails — falling
+            // back to just the home monitor keeps FindOwningMonitor/UnionBounds well-defined instead
+            // of degrading to a magic (0,0,0,0) union.
+            var enumerated = MonitorEnumerator.Enumerate();
+            _allMonitors = enumerated.Count > 0 ? enumerated : new[] { _monitor };
+
             // Target fps comes from the format's own persisted setting (GifFps/Mp4Fps), clamped
             // fail-safe into the format's allowed range (RecordingSizeEstimator.ClampFps) so a
             // garbled or future-schema settings value never crashes the recording flow - same
@@ -250,11 +288,12 @@ internal sealed class RecordingSession
             // pump exposure on fluctuating HDR content, an auto-exposure-style flicker; pinning
             // PeakOverride up front is the fix. Mirrors ToneMapper.ComputeCurveParams's own
             // derivation formula but computed from monitor photometrics alone, never from a frame's
-            // content.
-            double peak = _settings.ToneMapPeakOverride
-                ?? Math.Clamp(_monitor.MaxLuminanceNits / _monitor.SdrWhiteNits, 2.0, double.MaxValue);
-            double knee = _settings.ToneMapKneeOverride ?? 0.90;
-            _fixedToneMapOpts = new RoeSnip.Color.ToneMapOptions(Knee: knee, PeakOverride: peak);
+            // content. Factored into ComputeFixedToneMapOpts (multi-monitor recording phase 1) so
+            // BeginCapture's Setup-drag-onto-another-monitor snap and HandoffToMonitor's live
+            // cross-monitor handoff can both re-pin it against a DIFFERENT monitor later without
+            // duplicating this formula — see PLAN-MULTIMON-RECORDING.md §2 ("recomputed per monitor,
+            // never blended").
+            _fixedToneMapOpts = ComputeFixedToneMapOpts(_monitor);
 
             _liveSettings = _settings;
             _mic = _settings.RecordMicrophone;
@@ -266,7 +305,7 @@ internal sealed class RecordingSession
             // OUTSIDE the region; the inner is unpainted (true click-through) except while Shift/
             // Ctrl is held for a region move — see RegionOutline's doc. Shown for the whole session
             // (Setup through Reviewing), not just while actually capturing.
-            _outline = new RegionOutline(_monitor, _selectionPx);
+            _outline = new RegionOutline(_allMonitors, _selectionPx);
             _outline.RegionChanged += OnRegionMoved;
             _outline.Show(); // Setup mode by default: band resizes, Shift/Ctrl inside moves
 
@@ -274,7 +313,7 @@ internal sealed class RecordingSession
             // independent memory (RoeSnipSettings.GifSizePreset / Mp4SizePreset), so a take never
             // inherits the other format's last-picked tier.
             GifSizePreset initialSizePreset = _format == RecordingFormat.Gif ? _gifSizePreset : _mp4SizePreset;
-            _chrome = new RecordingChrome(_monitor, _selectionPx, _format, _mic, _systemAudio, initialSizePreset, _targetFps);
+            _chrome = new RecordingChrome(_monitor, _allMonitors, _selectionPx, _format, _mic, _systemAudio, initialSizePreset, _targetFps);
             _chrome.StartRequested += BeginCapture;
             _chrome.StopRequested += StopCaptureToReview;
             _chrome.PauseRequested += Pause;
@@ -296,6 +335,20 @@ internal sealed class RecordingSession
             try { _outline?.CloseOutline(); } catch { /* best-effort */ }
             throw;
         }
+    }
+
+    /// <summary>The fixed tone-map formula (Start()'s own original comment has the "why fixed, not
+    /// per-frame" reasoning) factored out so it can be re-run against a DIFFERENT monitor's own
+    /// photometrics — multi-monitor recording phase 1's BeginCapture snap and HandoffToMonitor both
+    /// need this, and per PLAN-MULTIMON-RECORDING.md §2 it is always a fresh computation against the
+    /// new monitor alone, never blended with the old one (the resulting exposure "pop" across a
+    /// handoff is documented as correct, not a bug).</summary>
+    private RoeSnip.Color.ToneMapOptions ComputeFixedToneMapOpts(MonitorInfo monitor)
+    {
+        double peak = _settings.ToneMapPeakOverride
+            ?? Math.Clamp(monitor.MaxLuminanceNits / monitor.SdrWhiteNits, 2.0, double.MaxValue);
+        double knee = _settings.ToneMapKneeOverride ?? 0.90;
+        return new RoeSnip.Color.ToneMapOptions(Knee: knee, PeakOverride: peak);
     }
 
     /// <summary>PrtScr while a recording flow is active: advances the state machine by one logical
@@ -399,16 +452,121 @@ internal sealed class RecordingSession
         }
     }
 
-    /// <summary>The user moved or resized the recorded region (RegionOutline). UI thread. Re-anchor
-    /// the HUD to the region's new spot and, if a take is actively capturing, slide the recorder's
-    /// crop origin so the recording follows (only a MOVE reaches here while capturing - resize is
-    /// Setup-only, before the recorder exists, so SetOrigin is a no-op then). The outline repositions
-    /// itself; this only propagates to the other two moving parts.</summary>
+    /// <summary>The user moved or resized the recorded region (RegionOutline), OR (via
+    /// SetSelectionForAutomation) an automation caller drove the same production path. UI thread.
+    /// Re-anchor the HUD to the region's new spot and, if a recorder is live (Capturing OR
+    /// Reviewing — a soft-stopped take is a paused take, its recorder stays alive so Resume can
+    /// continue it, see <see cref="Resume"/>), keep it following: same-monitor moves slide the
+    /// existing recorder's crop origin (lock-free — <see cref="RegionRecorder.SetOrigin"/>'s own
+    /// doc); a region that stops being fully contained in its current monitor's bounds triggers a
+    /// cross-monitor HANDOFF instead (multi-monitor recording phase 1 — snap to the destination
+    /// monitor, not true spanning; see PLAN-MULTIMON-RECORDING.md §3). <paramref name="selectionPx"/>
+    /// is virtual-desktop-absolute (§4) — the outline itself is what already computed/clamped it;
+    /// this only propagates it to the recorder/chrome.</summary>
     private void OnRegionMoved(RectPhysical selectionPx)
     {
         _selectionPx = selectionPx;
         _chrome?.UpdateSelection(selectionPx);
-        _recorder?.SetOrigin(selectionPx.Left, selectionPx.Top);
+
+        var recorder = _recorder;
+        if (recorder is null)
+        {
+            return; // Setup phase — nothing capturing yet; outline/chrome are already in sync above
+        }
+
+        if (MultiMonitorRecording.Contains(_monitor.BoundsPx, selectionPx))
+        {
+            var rel = MultiMonitorRecording.ToMonitorRelative(selectionPx, _monitor);
+            recorder.SetOrigin(rel.Left, rel.Top);
+            return;
+        }
+
+        // The region left its current monitor's bounds. Find whichever monitor now claims the
+        // majority of it — "snap, don't split" (plan §3).
+        var dest = MultiMonitorRecording.FindOwningMonitor(selectionPx, _allMonitors);
+        if (dest is null || dest.DeviceName == _monitor.DeviceName)
+        {
+            // No OTHER monitor claims it (dragged into a dead gap between non-adjacent monitors, or
+            // it's still mostly overlapping the current one at a boundary sliver) — stay on the
+            // current monitor. RegionRecorder.SetOrigin's own internal clamp keeps the crop box
+            // inside the captured surface regardless of how far outside its bounds selectionPx now
+            // reads.
+            var rel = MultiMonitorRecording.ToMonitorRelative(selectionPx, _monitor);
+            recorder.SetOrigin(rel.Left, rel.Top);
+            return;
+        }
+
+        HandoffToMonitor(dest, selectionPx);
+    }
+
+    /// <summary>Tears down the recorder on the monitor the region just left and builds a fresh one
+    /// on the monitor it now mostly overlaps — the phase-1 "snap, not spanning" handoff
+    /// (PLAN-MULTIMON-RECORDING.md §3). UI thread only (called from <see cref="OnRegionMoved"/>,
+    /// itself always UI-thread — RegionOutline's own WM_MOUSEMOVE handler or an automation
+    /// `select`). Synchronous, per the plan's own "measure before committing to async" note:
+    /// <see cref="RegionRecorder.Start"/> does not block waiting for a first frame (see that
+    /// method's own doc comment), so this is bounded by device/session construction cost, not a
+    /// capture wait — if that assumption ever stops holding on real hardware, the plan's documented
+    /// fallback is an async handoff that pauses the recorder for the duration (not implemented here;
+    /// not needed per this workstream's own live-hardware verification, see the E2E notes).</summary>
+    private void HandoffToMonitor(MonitorInfo destMonitor, RectPhysical desiredSelectionAbs)
+    {
+        var clamped = MultiMonitorRecording.ClampToMonitor(desiredSelectionAbs, destMonitor);
+
+        RegionRecorder newRecorder;
+        try
+        {
+            newRecorder = new RegionRecorder(destMonitor, MultiMonitorRecording.ToMonitorRelative(clamped, destMonitor), _targetFps);
+            newRecorder.Faulted += OnRecorderFaulted;
+            // Carry the session's own pause state onto the new recorder BEFORE Start() — a handoff
+            // can happen while Reviewing (the recorder stays alive, paused, so Resume can continue
+            // the same take; see this method's own class-level doc note on OnRegionMoved). Without
+            // this a handoff mid-pause would silently start capturing frames the paused UI promised
+            // it wasn't.
+            newRecorder.Paused = _paused;
+            newRecorder.Start();
+        }
+        catch (Exception ex)
+        {
+            // A failed handoff must not kill an otherwise-healthy recording. The outline/chrome
+            // already reflect the dragged position (OnRegionMoved's caller updated _selectionPx/
+            // chrome before calling in); the recorder itself just keeps recording its OLD monitor's
+            // edge, clamped sane by SetOrigin's own internal clamp, until the user drags back or the
+            // take ends. No user-visible error surfaced for this narrow failure — an accepted phase-1
+            // gap (see the plan's own "measure before committing" flag).
+            Console.Error.WriteLine($"RoeSnip: cross-monitor recording handoff to {destMonitor.DeviceName} failed, staying on {_monitor.DeviceName}: {ex.Message}");
+            return;
+        }
+
+        // Per-monitor fixed tone-map, recomputed fresh for the destination — NOT blended with the
+        // old monitor's (plan §2). The resulting exposure "pop" across the seam is documented as
+        // correct: it matches exactly what a fresh take started here from scratch would show.
+        _fixedToneMapOpts = ComputeFixedToneMapOpts(destMonitor);
+
+        string fromDevice = _monitor.DeviceName;
+        var oldRecorder = _recorder;
+        _monitor = destMonitor;
+        // Published via Volatile.Write BEFORE the old recorder's Stop() below: EncoderLoop's
+        // Volatile.Read(ref _recorder), on the completion of the OLD recorder's channel, is what
+        // lets it notice the swap instead of treating that completion as the end of the take — see
+        // EncoderLoop's own comment for the full happens-before argument (this is the load-bearing
+        // fix PLAN-MULTIMON-RECORDING.md §3 calls out: without it the encoder thread would exit as
+        // if the whole take had ended, mid-drag).
+        Volatile.Write(ref _recorder, newRecorder);
+        _selectionPx = clamped;
+
+        oldRecorder?.Stop();    // completes the OLD channel — EncoderLoop drains whatever was still
+                                // queued on it, then (per its own fix) picks up the new recorder
+                                // instead of breaking out as if Stop() had ended the take for real
+        oldRecorder?.Dispose();
+
+        // Re-sync the outline/chrome to the (possibly re-clamped) destination rect WITHOUT
+        // re-raising RegionChanged — this method IS a RegionChanged handler already (called from
+        // OnRegionMoved); re-raising it here would recurse straight back into that same handler.
+        _outline?.SyncExternalSelection(clamped);
+        _chrome?.UpdateSelection(clamped);
+
+        Console.Error.WriteLine($"RoeSnip: recording handed off {fromDevice} -> {destMonitor.DeviceName} at ({clamped.Left},{clamped.Top}), size {clamped.Width}x{clamped.Height}");
     }
 
     private void AdvanceOnPrtScr()
@@ -440,7 +598,27 @@ internal sealed class RecordingSession
 
         try
         {
-            _recorder = new RegionRecorder(_monitor, _selectionPx, _targetFps);
+            // Setup-phase resize/move can have pushed the selection onto (or across) a different
+            // monitor than the one this session started on — RegionOutline now clamps drags to the
+            // UNION of every monitor's bounds, not just one (plan §4). Re-derive which monitor
+            // actually owns it and re-pin the fixed tone-map options to THAT monitor before building
+            // the recorder, using the exact same "snap to majority overlap, never split" rule the
+            // live cross-monitor drag handoff (HandoffToMonitor) uses once already capturing.
+            var owningMonitor = MultiMonitorRecording.FindOwningMonitor(_selectionPx, _allMonitors) ?? _monitor;
+            if (owningMonitor.DeviceName != _monitor.DeviceName)
+            {
+                _monitor = owningMonitor;
+                _fixedToneMapOpts = ComputeFixedToneMapOpts(_monitor);
+            }
+            var clampedSelection = MultiMonitorRecording.ClampToMonitor(_selectionPx, _monitor);
+            if (clampedSelection != _selectionPx)
+            {
+                _selectionPx = clampedSelection;
+                _outline?.SyncExternalSelection(clampedSelection);
+                _chrome?.UpdateSelection(clampedSelection);
+            }
+
+            _recorder = new RegionRecorder(_monitor, MultiMonitorRecording.ToMonitorRelative(_selectionPx, _monitor), _targetFps);
             _recorder.Faulted += OnRecorderFaulted;
 
             if (_format == RecordingFormat.Mp4)
@@ -995,13 +1173,23 @@ internal sealed class RecordingSession
 
     /// <summary>Encoder thread only (never the WGC callback thread, never the UI thread): drains
     /// RegionRecorder.Frames, tone-maps each raw CapturedFrame with the FIXED options computed once
-    /// in Start(), and feeds the chosen encoder. Exits when the channel completes (RegionRecorder.
-    /// Stop() was called) or on an unrecoverable encoder exception. Runs once per take — a Restart
-    /// spins up a brand-new thread via the next BeginCapture.</summary>
+    /// in Start() (or re-pinned per monitor at a handoff — see <see cref="ComputeFixedToneMapOpts"/>),
+    /// and feeds the chosen encoder. Exits when the LIVE recorder's own channel completes
+    /// (RegionRecorder.Stop() was called on the recorder that is STILL the session's current one) or
+    /// on an unrecoverable encoder exception. A channel completing because a cross-monitor drag
+    /// handoff swapped <see cref="_recorder"/> out from under this loop (multi-monitor recording
+    /// phase 1, PLAN-MULTIMON-RECORDING.md §3 — the section's own "load-bearing" fix) does NOT end
+    /// the take: see the reader-reacquisition branch below. Runs once per take — a Restart spins up
+    /// a brand-new thread via the next BeginCapture.</summary>
     private void EncoderLoop()
     {
         double freq = System.Diagnostics.Stopwatch.Frequency;
-        var reader = _recorder!.Frames;
+        // recorderRef tracks WHICH recorder `reader` currently drains — compared against the live
+        // _recorder (Volatile.Read) whenever the channel completes, so a handoff's swap can be told
+        // apart from a real Stop() without a separate pending-handoff flag (see the completion
+        // branch below for the full reasoning).
+        RegionRecorder recorderRef = _recorder!;
+        var reader = recorderRef.Frames;
         int framesWritten = 0;
         // Epoch is the FIRST frame actually dequeued here, not an independent Stopwatch sample taken
         // on this thread's own first line. RegionRecorder.Start() (and thus frame production) begins
@@ -1056,7 +1244,39 @@ internal sealed class RecordingSession
                 }
                 if (!waitTask.Result)
                 {
-                    break; // channel completed — RegionRecorder.Stop() was called
+                    // The channel we were draining (recorderRef's) completed. Two possible reasons:
+                    //   1. A REAL Stop() (HardStopCaptureIfNeeded) — the take genuinely ended.
+                    //   2. A cross-monitor drag HANDOFF (HandoffToMonitor) — it deliberately calls
+                    //      Stop() on the OLD recorder after already swapping _recorder to the NEW
+                    //      one, so this channel completing is expected and does NOT mean the take
+                    //      is over.
+                    // Distinguish them by comparing the recorder we were draining against the LIVE
+                    // one: HardStopCaptureIfNeeded never reassigns _recorder before calling Stop()
+                    // on it (it nulls _recorder only AFTER Join()ing this very thread, i.e. after
+                    // this loop has already returned) — so a real stop always sees them equal.
+                    // HandoffToMonitor's Volatile.Write(ref _recorder, newRecorder) happens strictly
+                    // BEFORE its oldRecorder.Stop() call (same UI thread, program order), and that
+                    // Stop() is what makes waitTask.Result observably false here — so by the time we
+                    // get here after a handoff, this Volatile.Read is guaranteed to already see the
+                    // new recorder (release/acquire pair), never null and never the old one.
+                    var live = Volatile.Read(ref _recorder);
+                    if (ReferenceEquals(live, recorderRef))
+                    {
+                        break; // real end of take
+                    }
+
+                    recorderRef = live!;
+                    reader = recorderRef.Frames;
+                    // Dispose-and-null the raw-skip baselines at the handoff boundary: avoids
+                    // comparing a stale monitor-A frame against monitor-B's first frame. Harmless
+                    // either way (dimensions can't mismatch — region size is fixed for the whole
+                    // take, plan §3), just cheap correctness housekeeping.
+                    prevGifRaw?.Dispose();
+                    prevGifRaw = null;
+                    prevMp4Raw?.Dispose();
+                    prevMp4Raw = null;
+                    waitTask = reader.WaitToReadAsync().AsTask();
+                    continue;
                 }
 
                 while (reader.TryRead(out var queued))
@@ -1267,28 +1487,27 @@ internal sealed class RecordingSession
 
     internal RecordingAutomationSnapshot GetAutomationSnapshot()
     {
-        var b = _monitor.BoundsPx;
-        var sel = new RectPhysical(
-            b.Left + _selectionPx.Left, b.Top + _selectionPx.Top,
-            b.Left + _selectionPx.Right, b.Top + _selectionPx.Bottom);
-        return new RecordingAutomationSnapshot(_phase.ToString(), _format, sel, _chrome!.EstimateText, _chrome!.CurrentSizePreset, _chrome!.CurrentFps);
+        // _selectionPx is already virtual-desktop-absolute (multi-monitor recording phase 1,
+        // PLAN-MULTIMON-RECORDING.md §4/§6) — a straight passthrough now; this used to fold in
+        // _monitor.BoundsPx's own origin here (a single-monitor-relative _selectionPx needed that
+        // conversion at the wire boundary). Simpler, not more complex, per the plan's own note.
+        return new RecordingAutomationSnapshot(_phase.ToString(), _format, _selectionPx, _chrome!.EstimateText, _chrome!.CurrentSizePreset, _chrome!.CurrentFps);
     }
 
-    /// <summary>AutomationServer's `select` command while a recording is in Setup: applies the rect
-    /// to RegionOutline through the exact band-drag code path (RegionChanged -> OnRegionMoved ->
-    /// chrome UpdateSelection all fire, same as a real drag) — see
-    /// RegionOutline.SetSelectionForAutomation.</summary>
+    /// <summary>AutomationServer's `select` command: applies the rect to RegionOutline through the
+    /// exact band-drag code path (RegionChanged -> OnRegionMoved -> chrome UpdateSelection, and (if
+    /// a recorder is live) the SAME same-monitor-slide/cross-monitor-handoff logic a real drag gets
+    /// — all fire, same as a real drag). No phase gate: RegionOutline shows and accepts a drag in
+    /// every phase this session shows it (Setup through Reviewing — see RegionOutline's own ctor
+    /// doc), so a real mouse drag already isn't restricted to Setup either (a Capturing/Reviewing
+    /// drag just moves the region, per RegionOutline's own size-locked-once-capturing rule); this
+    /// automation hook now matches that instead of rejecting it, which is what lets AutomationServer
+    /// drive the cross-monitor drag-handoff path headlessly during Capturing (see
+    /// RegionOutline.SetSelectionForAutomation's own doc comment for the size-locked-move-only
+    /// semantics it applies once a take exists).</summary>
     internal string? SetSelectionForAutomation(RectPhysical virtualDesktopPx)
     {
-        if (_phase != Phase.Setup)
-        {
-            return $"cannot change the selection while recording is {_phase}";
-        }
-        var b = _monitor.BoundsPx;
-        var monitorRelative = new RectPhysical(
-            virtualDesktopPx.Left - b.Left, virtualDesktopPx.Top - b.Top,
-            virtualDesktopPx.Right - b.Left, virtualDesktopPx.Bottom - b.Top);
-        _outline?.SetSelectionForAutomation(monitorRelative);
+        _outline?.SetSelectionForAutomation(virtualDesktopPx);
         return null;
     }
 
