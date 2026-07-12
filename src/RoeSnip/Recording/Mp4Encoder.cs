@@ -93,12 +93,15 @@ public sealed class Mp4Encoder : IDisposable
         MediaFactory.MFSetAttributeSize(inputType, MediaTypeAttributeKeys.FrameSize, (uint)width, (uint)height).CheckError();
         MediaFactory.MFSetAttributeRatio(inputType, MediaTypeAttributeKeys.FrameRate, (uint)fps, 1).CheckError();
         inputType.Set(MediaTypeAttributeKeys.InterlaceMode, (uint)VideoInterlaceMode.Progressive).CheckError();
-        // CRITICAL, easy to miss: MF's default DIB row order is bottom-up. SdrImage rows are
-        // top-down (see that class's own doc comment). Without this negative-stride attribute the
-        // .mp4 plays upside down — it encodes/plays/seeks fine otherwise, so the bug is invisible
-        // until someone actually looks at a frame.
+        // CRITICAL, easy to get backwards: MF_MT_DEFAULT_STRIDE's SIGN encodes row order —
+        // POSITIVE means top-down, NEGATIVE means bottom-up (the DIB-native default for RGB
+        // formats). SdrImage rows are top-down (see that class's own doc comment), so this must
+        // be +stride. This shipped as -stride once, which declared the buffer bottom-up and made
+        // every .mp4 play upside down — it encodes/plays/seeks fine otherwise, so the bug is
+        // invisible until someone looks at a frame; Mp4EncoderTests' decode-back orientation test
+        // exists so it can never silently regress again.
         int stride = width * 4;
-        inputType.Set(MediaTypeAttributeKeys.DefaultStride, unchecked((uint)(-stride))).CheckError();
+        inputType.Set(MediaTypeAttributeKeys.DefaultStride, (uint)stride).CheckError();
 
         using var attrs = MediaFactory.MFCreateAttributes(2);
         // Frames already arrive throttled by our own capture cadence (RegionRecorder) — don't let
@@ -139,8 +142,8 @@ public sealed class Mp4Encoder : IDisposable
 
     /// <summary>Encoder thread only. SdrImage.Pixels is guaranteed tightly packed
     /// (Stride == Width * 4 — SdrImage's own doc comment), which is exactly the buffer MF's RGB32
-    /// subtype expects — no repacking needed even with DefaultStride's sign flip (that attribute
-    /// only affects row ORDER interpretation, not packing).</summary>
+    /// subtype expects — no repacking or row reversal needed: the input type's positive
+    /// DefaultStride declares the buffer top-down, matching SdrImage's layout verbatim.</summary>
     public void WriteFrame(SdrImage bgra8, long timestamp100ns)
     {
         using var buffer = MediaFactory.MFCreateMemoryBuffer(bgra8.Pixels.Length);
