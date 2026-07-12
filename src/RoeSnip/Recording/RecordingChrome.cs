@@ -149,8 +149,8 @@ internal sealed class RecordingChrome : Window
     /// lives in RecordingController's own private fields - see RecordingController.cs, which is the
     /// owner responsible for subscribing to this event, reading its own temp path, and driving the
     /// actual upload/clipboard/balloon sequence - the same division of labor SaveRequested already
-    /// uses for finalizing the take). That wiring is a Recording-pipeline change and intentionally
-    /// out of scope for whatever track added this button - see this class's own doc comment.</summary>
+    /// uses for finalizing the take). RecordingController.cs does not yet subscribe to this event -
+    /// see this class's own doc comment.</summary>
     public event Action? ShareRequested;
     /// <summary>Available in every state - aborts the whole recording without saving.</summary>
     public event Action? CancelRequested;

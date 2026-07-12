@@ -578,9 +578,9 @@ public partial class ToolbarControl : UserControl
     // window is responsible for: resolving the render, calling ShareManager.UploadAsync off the UI
     // thread, copying the result URL to the clipboard, and driving SetShareBusy/tray balloon around
     // the call - exactly the same division of labor CopyClicked/SaveClicked already use (this
-    // control raises, OverlayWindow.xaml.cs acts). That wiring is intentionally NOT part of this
-    // track (see docs/PLAN.md's track split / Sharing/ShareManager's own doc comment) - Overlay
-    // selection internals are out of scope here.
+    // control raises, OverlayWindow.xaml.cs acts). That wiring intentionally has NOT been done here
+    // (see Sharing/ShareManager's own doc comment) - Overlay selection internals are out of scope
+    // for whoever added this button.
 
     /// <summary>ShareButton's own click: upload to the caller's configured DEFAULT provider. No
     /// payload - mirrors CopyClicked/SaveClicked's own zero-arg shape.</summary>
@@ -633,8 +633,9 @@ public partial class ToolbarControl : UserControl
         ShareMenuButton.IsEnabled = true; // always clickable: empty-menu case opens Settings instead (OnShareMenuClick)
     }
 
-    /// <summary>Upload-in-progress state (per the track brief: "upload progress via balloon or
-    /// button state"). Disables both buttons for the duration - the same visible-but-inert pattern
+    /// <summary>Upload-in-progress state ("upload progress via balloon or button state" is the
+    /// product requirement this satisfies). Disables both buttons for the duration - the same
+    /// visible-but-inert pattern
     /// Undo/Redo already use while inapplicable, rather than a spinner this small icon-only control
     /// has no room for. Restores (rather than assumes) the enabled state SetShareProviders last
     /// established, so busy=false never re-enables a Share button that has no configured provider.</summary>

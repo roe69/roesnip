@@ -14,13 +14,14 @@ namespace RoeSnip.Sharing;
 /// network call, and runs the upload against one process-wide HttpClient (never one-per-call - same
 /// convention App/UpdateManager.cs already uses for its own GitHub calls).
 ///
-/// NOTE on this phase's scope: this facade is fully implemented and unit-tested against a mock
-/// HttpMessageHandler (see ShareManagerTests), but nothing in THIS track calls it against the real
-/// network - the track brief is explicit that live uploads are a later, serialized phase. Wiring an
-/// actual UI click all the way through to a live call belongs to whichever track owns
-/// Overlay/OverlayWindow.xaml.cs (for the toolbar) and Recording/RecordingController.cs (for the
-/// recording chrome) - both are out of scope here (see those two components' own doc comments for
-/// the events/hooks they expose for that wiring).</summary>
+/// NOTE on this codebase's current wiring state: this facade is fully implemented and unit-tested
+/// against a mock HttpMessageHandler (see ShareManagerTests), but nothing calls it against the real
+/// network yet, and no caller currently invokes it from a live UI click - wiring an actual UI click
+/// all the way through to a live call requires changes in Overlay/OverlayWindow.xaml.cs (for the
+/// toolbar's Share button - it needs to resolve the current selection's rendered bytes) and
+/// Recording/RecordingController.cs (for the recording chrome's Share button - it owns the finished
+/// take's temp file path), neither of which this facade or its callers touch (see those two
+/// components' own doc comments for the events/hooks they expose for that future wiring).</summary>
 public static class ShareManager
 {
     private static readonly Lazy<HttpClient> SharedClient = new(CreateHttpClient);

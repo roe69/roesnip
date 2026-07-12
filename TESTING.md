@@ -557,3 +557,48 @@ RoeSnip.exe --auto "{\"cmd\":\"screenshot\",\"path\":\"C:\\temp\\region-outline.
 RoeSnip.exe --auto escape
 :: {"ok":true,"mode":"idle",...}   -- Setup's Cancel discards the take (nothing was ever recorded)
 ```
+
+## Sharing/upload subsystem (`src/RoeSnip/Sharing/*`, added 2026-07-13)
+
+The declarative share-upload feature: `IShareProvider`/`ProviderSpec`/`ShareProviderCatalog`/
+`ShareManager` plus the settings UI (`App/ShareProvidersWindow`, `App/ShareProviderEditWindow`) and
+the two integration-point UI stubs (`Overlay/ToolbarControl`'s Share split-button,
+`Recording/RecordingChrome`'s Reviewing-state Share button).
+
+**Verified this phase (2026-07-13, unit tests only — no live network, no resident launched):**
+
+- `dotnet build RoeSnip.sln` — 0 warnings, 0 errors (all 9 projects, both RoeSnip.App TFMs), same as
+  the existing Phase B matrix above.
+- `dotnet test RoeSnip.sln` — full suite green, RoeSnip.Tests now 5xx/5xx including
+  `tests/RoeSnip.Tests/Sharing/*` (`TemplateExpanderTests`, `ResponseUrlExtractorTests`,
+  `ProviderSpecShareProviderTests`, `ShareProviderCatalogTests`, `ShareManagerTests`,
+  `ShareProviderSettingsPersistenceTests`) — every HTTP call in that suite goes through
+  `StubHttpMessageHandler`, a mock `HttpMessageHandler`; nothing in it opens a real socket.
+  `SettingsTests.cs`'s two whole-record round-trip tests were updated for the new
+  `ShareProviders` `List<T>` field (same reference-equality-quirk neutralization the file already
+  applies to `RecentPickedColors`/`PaletteColors`/etc.).
+
+**NOT verified — deliberately out of scope this phase (per the track brief: no live uploads, no
+resident launch):**
+
+- Any of the seven built-in `ProviderSpec`s (RoeShare, Imgur, catbox.moe, litterbox, 0x0.st, GoFile,
+  file.io) against a REAL live endpoint. Each was checked against the provider's current public docs
+  during implementation (see each `ShareProviderCatalog` entry's own `Notes`); GoFile specifically is
+  marked `Verified = false` ("untested" in the settings UI) because only unofficial/community
+  documentation could be found for its exact response shape and fixed-server assumption.
+- `ShareProviderEditWindow`'s Test button end-to-end against a real provider — the button is fully
+  implemented (drives the same `ShareManager.UploadAsync` the unit tests exercise, against a real
+  generated PNG via `Sharing/ShareTestImage`), just never clicked against the real network by this
+  track.
+- The actual "click Share, see a URL land in the clipboard/balloon" user flow for either integration
+  point. `ToolbarControl`'s Share split-button and `RecordingChrome`'s Reviewing Share button are
+  fully built (events, provider-picker menu, busy/disabled states) but neither is wired to a live
+  caller yet: that wiring needs `Overlay/OverlayWindow.xaml.cs` (resolves the rendered selection) and
+  `Recording/RecordingController.cs` (owns the finished take's temp file path) respectively — both
+  are explicitly out of scope for this track (Overlay selection internals / Recording pipeline
+  files) and are left for whichever track/phase owns those files next. Both new buttons currently sit
+  disabled in a running app until that wiring lands, same as the placeholder Upload button they
+  replaced.
+- Any WPF window in this feature (`SettingsWindow`'s new Sharing section, `ShareProvidersWindow`,
+  `ShareProviderEditWindow`) opened on screen — no resident was launched this phase (single-instance
+  mutex conflict with parallel tracks), so only compiled/reviewed, never clicked through interactively.

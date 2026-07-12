@@ -154,12 +154,17 @@ public class SettingsTests : IDisposable
         // ColorFormatEntry is itself a record, so xUnit's sequence compare checks entry VALUES here
         // (name/format/enabled/custom all round-trip), unlike the string lists above.
         Assert.Equal(original.ColorFormats, loaded.ColorFormats);
+        // Sharing/* additive fields hit the same List<T> reference-equality quirk - see
+        // ShareProviderSettingsPersistenceTests.cs for dedicated value-level round-trip coverage of
+        // ShareProviderConfig's own contents.
+        Assert.Equal(original.ShareProviders, loaded.ShareProviders);
         var originalWithLoadedLists = original with
         {
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
             PaletteColors = loaded.PaletteColors,
             ColorFormats = loaded.ColorFormats,
+            ShareProviders = loaded.ShareProviders,
         };
         Assert.Equal(originalWithLoadedLists, loaded);
     }
@@ -187,12 +192,14 @@ public class SettingsTests : IDisposable
         Assert.Equal(original.CustomColors, loaded.CustomColors);
         Assert.Equal(original.PaletteColors, loaded.PaletteColors);
         Assert.Equal(original.ColorFormats, loaded.ColorFormats);
+        Assert.Equal(original.ShareProviders, loaded.ShareProviders);
         var originalWithLoadedLists = original with
         {
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
             PaletteColors = loaded.PaletteColors,
             ColorFormats = loaded.ColorFormats,
+            ShareProviders = loaded.ShareProviders,
         };
         Assert.Equal(originalWithLoadedLists, loaded);
     }

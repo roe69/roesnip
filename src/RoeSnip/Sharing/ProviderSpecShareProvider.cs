@@ -56,12 +56,12 @@ public sealed class ProviderSpecShareProvider : IShareProvider
 
         foreach (var (headerName, headerTemplate) in _spec.Headers)
         {
-            string expandedValue = TemplateExpander.Expand(headerTemplate, values);
-            if (string.IsNullOrEmpty(expandedValue))
+            // TryExpand (not the plain Expand Endpoint uses above): a credential the user hasn't
+            // filled in yet (e.g. Imgur's Client ID) must omit the WHOLE header, not send
+            // "Authorization: Client-ID " with nothing after it - see TryExpand's own doc comment
+            // for why a plain empty-string check on the final result isn't enough here.
+            if (!TemplateExpander.TryExpand(headerTemplate, values, out string expandedValue))
             {
-                // A credential the user hasn't filled in yet (e.g. Imgur's Client ID) expands to
-                // empty - omit the header entirely rather than sending "Authorization: Client-ID "
-                // and letting the provider's own error message stand in for ours.
                 continue;
             }
 
@@ -122,12 +122,12 @@ public sealed class ProviderSpecShareProvider : IShareProvider
 
         foreach (var (fieldName, fieldTemplate) in _spec.ExtraFields)
         {
-            string expandedValue = TemplateExpander.Expand(fieldTemplate, values);
-            if (string.IsNullOrEmpty(expandedValue))
+            // Same TryExpand omit-if-unresolved rule as headers above - e.g. catbox's optional
+            // userhash ("{ApiKey}"): an unfilled field is how catbox.moe's own docs say "upload
+            // anonymously", so sending the field at all (even empty) would be wrong, not just
+            // superfluous.
+            if (!TemplateExpander.TryExpand(fieldTemplate, values, out string expandedValue))
             {
-                // Same omit-if-empty rule as headers above - e.g. catbox's optional userhash: an
-                // empty field is how catbox.moe's own docs say "upload anonymously", so sending the
-                // field at all (even empty) would be wrong, not just superfluous.
                 continue;
             }
             multipart.Add(new StringContent(expandedValue), fieldName);

@@ -29,9 +29,9 @@ using MessageBox = System.Windows.MessageBox;
 /// The Test button exercises the REAL pipeline (ShareManager.UploadAsync -> ProviderSpecShareProvider
 /// -> the actual HTTP endpoint) against a tiny generated PNG (Sharing/ShareTestImage), using whatever
 /// is currently typed into this form - not yet-saved state - so a user can validate a spec before
-/// committing it. See the class doc comment on ShareManager for why this track never exercises Test
-/// itself over the real network (no live uploads this phase); this button IS the real, working
-/// implementation, just unexercised here.</summary>
+/// committing it. This button is a real, working implementation; it has only been exercised in this
+/// codebase via unit tests against a mock HttpMessageHandler, never against the real network
+/// (see TESTING.md).</summary>
 public partial class ShareProviderEditWindow : Window
 {
     private readonly ShareProviderConfig _originalConfig;

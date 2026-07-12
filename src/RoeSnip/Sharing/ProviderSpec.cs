@@ -111,9 +111,9 @@ public sealed record ProviderSpec
     public bool IsBuiltIn { get; init; }
 
     /// <summary>False means "could not be confirmed against the provider's current public docs
-    /// during this feature's implementation" (per the track brief: never ship a guess as fact) - the
-    /// settings UI shows an explicit "untested" badge rather than silently presenting it as
-    /// equally trustworthy to the verified ones. See each BuiltIns entry's own Notes for specifics.</summary>
+    /// during this feature's implementation" - never ship a guess as a settled fact. The settings UI
+    /// shows an explicit "untested" badge rather than silently presenting it as equally trustworthy
+    /// to the verified ones. See each BuiltIns entry's own Notes for specifics.</summary>
     public bool Verified { get; init; } = true;
 
     /// <summary>Free-text shown in the settings UI under this provider's row - caveats, size limits

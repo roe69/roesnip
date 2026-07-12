@@ -27,4 +27,33 @@ public static class TemplateExpander
         return TokenPattern.Replace(template, match =>
             values.TryGetValue(match.Groups[1].Value, out string? value) ? value : string.Empty);
     }
+
+    /// <summary>Same substitution as <see cref="Expand"/>, but also reports whether EVERY token the
+    /// template referenced actually had a non-empty value - used by ProviderSpecShareProvider to
+    /// decide whether to omit a header/extra-field entirely (e.g. Imgur's
+    /// "Client-ID {ApiKey}": a blank ApiKey must omit the WHOLE header, not send a broken
+    /// "Client-ID " prefix with nothing after it) rather than only catching the narrower case where
+    /// the template is nothing but a bare token (catbox's userhash: "{ApiKey}"). A template with no
+    /// tokens at all (a pure literal, e.g. "fileupload") is always considered fully resolved -
+    /// nothing in it depends on config values, so there is nothing to omit for.</summary>
+    public static bool TryExpand(string template, IReadOnlyDictionary<string, string> values, out string result)
+    {
+        if (string.IsNullOrEmpty(template))
+        {
+            result = string.Empty;
+            return true;
+        }
+
+        bool allTokensResolved = true;
+        result = TokenPattern.Replace(template, match =>
+        {
+            if (values.TryGetValue(match.Groups[1].Value, out string? value) && !string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+            allTokensResolved = false;
+            return string.Empty;
+        });
+        return allTokensResolved;
+    }
 }

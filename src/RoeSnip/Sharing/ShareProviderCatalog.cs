@@ -14,10 +14,9 @@ namespace RoeSnip.Sharing;
 ///
 /// Each spec below was checked against the provider's current public docs/behavior during this
 /// feature's implementation (2026-07); see each entry's own Notes for what was confirmed and what
-/// wasn't. Per the track brief, anything that couldn't be pinned down precisely is marked
-/// Verified=false ("untested" in the settings UI) rather than shipped as if it were equally solid -
-/// this build has never actually exercised any of them over the network (no live uploads this
-/// phase; see TESTING.md).</summary>
+/// wasn't. Anything that couldn't be pinned down precisely is marked Verified=false ("untested" in
+/// the settings UI) rather than shipped as if it were equally solid - none of these specs has yet
+/// been exercised over the real network by this codebase (see TESTING.md).</summary>
 public static class ShareProviderCatalog
 {
     /// <summary>RoeShare (E:\GitHub\RoeLite\roeshare) - the primary, self-hosted target. Uses the
@@ -164,8 +163,8 @@ public static class ShareProviderCatalog
     /// <summary>GoFile - unofficial/community documentation only (no first-party API reference was
     /// found to confirm the exact response JSON shape or whether a fixed "store1" server is always
     /// reachable versus GoFile's own docs recommending a dynamic server-selection call first, which
-    /// this flat one-POST spec does not perform). Marked untested per the track brief rather than
-    /// presented as equally solid as the others.</summary>
+    /// this flat one-POST spec does not perform). Marked untested rather than presented as equally
+    /// solid as the others.</summary>
     public static readonly ProviderSpec GoFile = new()
     {
         Id = "gofile",

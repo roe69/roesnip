@@ -14,7 +14,7 @@ public interface IShareProvider
 
     /// <summary>Never throws for an ordinary failure (network error, non-2xx response, unparseable
     /// response) - those all come back as a Success=false result with ErrorMessage set. May throw
-    /// OperationCanceledException if cancellationToken is signalled (callers cancel on teardown, per
-    /// the track brief - see ShareManager).</summary>
+    /// OperationCanceledException if cancellationToken is signalled (callers should cancel an
+    /// in-flight upload on teardown - see ShareManager).</summary>
     Task<ShareUploadResult> UploadAsync(ShareUploadRequest request, CancellationToken cancellationToken);
 }
