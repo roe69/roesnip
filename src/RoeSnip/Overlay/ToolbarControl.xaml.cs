@@ -550,16 +550,21 @@ public partial class ToolbarControl : UserControl
         RedoButton.IsEnabled = canRedo;
     }
 
-    /// <summary>Cross-monitor selection (multimon-selection): while the current selection spans
-    /// multiple monitors, annotations are a documented v1 cut (see docs/DESIGN-MULTIMON-SELECTION.md
-    /// — a spanning composite has no single window's coordinate space for shapes to live in) and
-    /// Record has no per-monitor-stitched live-capture implementation. Collapses everything except
-    /// Save/Copy/Cancel — the same three actions the DESIGN.md "acceptable v1" carve-out names.
-    /// Called by OverlayWindow.ShowToolbar/UpdateToolbarPlacement every time the toolbar is shown,
-    /// so it can never go stale across a spanning/non-spanning transition on the same reused
-    /// instance. Upload is also hidden (it's already permanently disabled, but keeping the action
-    /// row down to exactly the three live actions reads cleaner than a disabled placeholder sitting
-    /// next to them).</summary>
+    /// <summary>Cross-monitor selection: while the current selection spans multiple monitors,
+    /// annotations stay off (see docs/DESIGN-MULTIMON-SELECTION.md — evaluated alongside the
+    /// resize-after-place feature and confirmed this does NOT fall out naturally from it: resize only
+    /// shares the selection RECT's own geometry across windows, not an arbitrary annotation shape's
+    /// coordinate space, which would need its own cross-window design) and Record is GATED OFF
+    /// pending a separate, parallel work track building the multi-monitor-aware recorder — see
+    /// OverlaySession.Record's own doc comment in OverlayController.cs for the single obvious place
+    /// that integration needs to touch once that track lands. Save HDR (the SaveButton's right-click
+    /// menu item, never touched by this method) is NOT collapsed here — as of the HDR-stitch feature
+    /// it's genuinely supported while spanning too (JxrWriter.WriteSpanning). Collapses everything
+    /// else down to Save/Copy/Cancel. Called by OverlayWindow.ShowToolbar/UpdateToolbarPlacement
+    /// every time the toolbar is shown, so it can never go stale across a spanning/non-spanning
+    /// transition on the same reused instance. Upload is also hidden (it's already permanently
+    /// disabled, but keeping the action row down to exactly the live actions reads cleaner than a
+    /// disabled placeholder sitting next to them).</summary>
     public void SetSpanningMode(bool spanning)
     {
         var collapseVisibility = spanning ? Visibility.Collapsed : Visibility.Visible;
