@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -52,8 +53,15 @@ internal sealed class RegionOutline : Window
 
     private enum DragKind { None, Move, Left, Right, Top, Bottom, TopLeft, TopRight, BottomLeft, BottomRight }
 
-    private readonly MonitorInfo _monitor;
-    private RectPhysical _selectionPx; // slides/reshapes on drag
+    // Union of every enumerated monitor's own bounds (MultiMonitorRecording.UnionBounds), computed
+    // once at construction — the drag-clamp limit for BOTH ApplyDrag and SetSelectionForAutomation.
+    // Multi-monitor recording, phase 1 (PLAN-MULTIMON-RECORDING.md §4): this window's own coordinate
+    // convention is virtual-desktop-absolute physical pixels now, not "relative to one monitor" —
+    // the outline itself can freely span/cross monitor boundaries (DWM composites a WS_EX_LAYERED
+    // window across monitors with no special-casing needed), it's ONLY RecordingSession's recorder
+    // handoff (OnRegionMoved) that still snaps to a single monitor once a take exists.
+    private readonly RectPhysical _unionBounds;
+    private RectPhysical _selectionPx; // slides/reshapes on drag — virtual-desktop-absolute
     private readonly OutlineElement _element;
 
     private bool _allowResize = true; // true in Setup; false once capturing (size locked)
@@ -63,12 +71,12 @@ internal sealed class RegionOutline : Window
     private System.Windows.Threading.DispatcherTimer? _modifierPoll;
 
     /// <summary>Raised on the UI thread whenever a drag changes the region (move or resize), with the
-    /// new monitor-relative selection.</summary>
+    /// new virtual-desktop-absolute selection.</summary>
     public event Action<RectPhysical>? RegionChanged;
 
-    public RegionOutline(MonitorInfo monitor, RectPhysical selectionPx)
+    public RegionOutline(IReadOnlyList<MonitorInfo> monitors, RectPhysical selectionPx)
     {
-        _monitor = monitor;
+        _unionBounds = MultiMonitorRecording.UnionBounds(monitors);
         _selectionPx = selectionPx;
 
         WindowStyle = WindowStyle.None;
@@ -147,10 +155,11 @@ internal sealed class RegionOutline : Window
     {
         int outerW = _selectionPx.Width + BandPx * 2;
         int outerH = _selectionPx.Height + BandPx * 2;
-        var b = _monitor.BoundsPx;
+        // _selectionPx is already virtual-desktop-absolute — no monitor origin to fold in anymore
+        // (used to be "b.Left + _selectionPx.Left"; see the class/ctor doc for the migration).
         NativeMethods.SetWindowPos(
             hwnd, NativeMethods.HWND_TOPMOST,
-            b.Left + _selectionPx.Left - BandPx, b.Top + _selectionPx.Top - BandPx,
+            _selectionPx.Left - BandPx, _selectionPx.Top - BandPx,
             outerW, outerH, NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
     }
 
@@ -225,9 +234,8 @@ internal sealed class RegionOutline : Window
     /// resize (Setup) or move (Capturing); the inner is a modifier-gated move (Setup) or nothing.</summary>
     private DragKind ZoneAt(int screenX, int screenY)
     {
-        var b = _monitor.BoundsPx;
-        int rx = screenX - (b.Left + _selectionPx.Left - BandPx);
-        int ry = screenY - (b.Top + _selectionPx.Top - BandPx);
+        int rx = screenX - (_selectionPx.Left - BandPx);
+        int ry = screenY - (_selectionPx.Top - BandPx);
         int outerW = _selectionPx.Width + BandPx * 2;
         int outerH = _selectionPx.Height + BandPx * 2;
         if (rx < 0 || ry < 0 || rx >= outerW || ry >= outerH)
@@ -292,29 +300,30 @@ internal sealed class RegionOutline : Window
 
     /// <summary>Computes the new selection for a drag of <paramref name="kind"/> by (dx,dy) from the
     /// selection captured at drag start. Moves translate; resizes move the grabbed edge(s) while the
-    /// opposite edge stays put. Clamped to the monitor, kept at/above the minimum, and forced to even
-    /// width/height (the H.264/GIF encoders need even dimensions).</summary>
+    /// opposite edge stays put. Clamped to the UNION of every monitor's bounds (not just one — see
+    /// the ctor/class doc), kept at/above the minimum, and forced to even width/height (the H.264/
+    /// GIF encoders need even dimensions).</summary>
     private RectPhysical ApplyDrag(DragKind kind, RectPhysical s, int dx, int dy)
     {
-        int monW = _monitor.BoundsPx.Width, monH = _monitor.BoundsPx.Height;
+        var u = _unionBounds;
 
         if (kind == DragKind.Move)
         {
-            int nl = Math.Clamp(s.Left + dx, 0, Math.Max(0, monW - s.Width));
-            int nt = Math.Clamp(s.Top + dy, 0, Math.Max(0, monH - s.Height));
+            int nl = Math.Clamp(s.Left + dx, u.Left, Math.Max(u.Left, u.Right - s.Width));
+            int nt = Math.Clamp(s.Top + dy, u.Top, Math.Max(u.Top, u.Bottom - s.Height));
             return RectPhysical.FromSize(nl, nt, s.Width, s.Height);
         }
 
         int left = s.Left, top = s.Top, right = s.Right, bottom = s.Bottom;
 
         if (kind is DragKind.Left or DragKind.TopLeft or DragKind.BottomLeft)
-            left = Math.Clamp(s.Left + dx, 0, right - MinSizePx);
+            left = Math.Clamp(s.Left + dx, u.Left, right - MinSizePx);
         if (kind is DragKind.Right or DragKind.TopRight or DragKind.BottomRight)
-            right = Math.Clamp(s.Right + dx, left + MinSizePx, monW);
+            right = Math.Clamp(s.Right + dx, left + MinSizePx, u.Right);
         if (kind is DragKind.Top or DragKind.TopLeft or DragKind.TopRight)
-            top = Math.Clamp(s.Top + dy, 0, bottom - MinSizePx);
+            top = Math.Clamp(s.Top + dy, u.Top, bottom - MinSizePx);
         if (kind is DragKind.Bottom or DragKind.BottomLeft or DragKind.BottomRight)
-            bottom = Math.Clamp(s.Bottom + dy, top + MinSizePx, monH);
+            bottom = Math.Clamp(s.Bottom + dy, top + MinSizePx, u.Bottom);
 
         int w = (right - left) & ~1; // even
         int h = (bottom - top) & ~1;
@@ -329,18 +338,26 @@ internal sealed class RegionOutline : Window
     /// applies a new selection exactly like a finished band drag would - the same field updates
     /// (_selectionPx / _element.Selection / MoveWindowToSelection) and the same RegionChanged
     /// event as WM_MOUSEMOVE's drag-apply branch above - without needing a live mouse-move stream.
-    /// rect is MONITOR-RELATIVE physical pixels; clamped/evened the same way ApplyDrag does.</summary>
-    internal void SetSelectionForAutomation(RectPhysical monitorRelativeRect)
+    /// rect is virtual-desktop-absolute physical pixels, clamped to the union of every monitor's
+    /// bounds (same limit ApplyDrag uses). Multi-monitor recording, phase 1: while size-locked
+    /// (<see cref="_allowResize"/> false — a take is Capturing/Reviewing, see
+    /// <see cref="SetInteractionMode"/>) this is a MOVE-ONLY call exactly like a real band drag
+    /// would be in that state (<see cref="ZoneAt"/> only ever returns <see cref="DragKind.Move"/>
+    /// then) — the incoming rect's width/height are ignored and the CURRENT selection's own
+    /// width/height are kept, honoring the same "encoder canvas stays fixed for the whole take"
+    /// invariant a real drag already has. This is what lets AutomationServer's `select` command
+    /// drive the cross-monitor drag-handoff path headlessly (RecordingSession.
+    /// SetSelectionForAutomation no longer phase-gates this away — see that method's own doc
+    /// comment for why).</summary>
+    internal void SetSelectionForAutomation(RectPhysical absoluteRect)
     {
-        var r = monitorRelativeRect.Normalized();
-        int monW = _monitor.BoundsPx.Width, monH = _monitor.BoundsPx.Height;
-        int left = Math.Clamp(r.Left, 0, Math.Max(0, monW - MinSizePx));
-        int top = Math.Clamp(r.Top, 0, Math.Max(0, monH - MinSizePx));
-        int right = Math.Clamp(r.Right, left + MinSizePx, monW);
-        int bottom = Math.Clamp(r.Bottom, top + MinSizePx, monH);
-        int w = (right - left) & ~1;
-        int h = (bottom - top) & ~1;
-        var next = RectPhysical.FromSize(left, top, Math.Max(MinSizePx, w), Math.Max(MinSizePx, h));
+        var r = absoluteRect.Normalized();
+        var u = _unionBounds;
+        int w = _allowResize ? Math.Max(MinSizePx, r.Width & ~1) : _selectionPx.Width;
+        int h = _allowResize ? Math.Max(MinSizePx, r.Height & ~1) : _selectionPx.Height;
+        int left = Math.Clamp(r.Left, u.Left, Math.Max(u.Left, u.Right - w));
+        int top = Math.Clamp(r.Top, u.Top, Math.Max(u.Top, u.Bottom - h));
+        var next = RectPhysical.FromSize(left, top, w, h);
 
         _selectionPx = next;
         _element.Selection = next;
@@ -351,6 +368,24 @@ internal sealed class RegionOutline : Window
             MoveWindowToSelection(hwnd);
         }
         RegionChanged?.Invoke(next);
+    }
+
+    /// <summary>RecordingSession-only hook (cross-monitor recording handoff, phase 1): re-syncs the
+    /// outline's displayed/tracked selection to a rect the SESSION itself decided (typically
+    /// HandoffToMonitor's monitor-clamped destination rect) WITHOUT raising
+    /// <see cref="RegionChanged"/>. Unlike <see cref="SetSelectionForAutomation"/>, this is called
+    /// FROM INSIDE a RegionChanged handler (RecordingSession.OnRegionMoved) — re-raising here would
+    /// recurse straight back into that same handler.</summary>
+    internal void SyncExternalSelection(RectPhysical absoluteRect)
+    {
+        _selectionPx = absoluteRect;
+        _element.Selection = absoluteRect;
+        _element.InvalidateVisual();
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != IntPtr.Zero)
+        {
+            MoveWindowToSelection(hwnd);
+        }
     }
 
     /// <summary>Close, from RecordingSession (UI thread).</summary>

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -77,8 +78,16 @@ internal sealed class RecordingChrome : Window
     private static readonly Color DangerFill = Color.FromArgb(0x26, 0xDC, 0x26, 0x26);
     private static readonly Color DangerSolid = Color.FromRgb(0xDC, 0x26, 0x26);
 
-    private readonly MonitorInfo _monitor;
-    private RectPhysical _selectionPx; // re-anchored when the user drags the region (RegionOutline)
+    // Whichever monitor the HUD's anchor corner currently sits on — NOT necessarily the monitor the
+    // recording take is on (that's RecordingSession/RegionRecorder's own concern). Multi-monitor
+    // recording, phase 1 (PLAN-MULTIMON-RECORDING.md §4): the HUD itself never spans monitors (it's
+    // small; no reason to), it just needs "which monitor's DPI/bounds apply to THIS HUD instance
+    // right now" — recomputed in UpdateSelection from the region's current absolute position via
+    // MultiMonitorRecording.FindOwningMonitor, so it tracks a cross-monitor drag automatically
+    // without RecordingSession needing to tell it about a handoff explicitly.
+    private MonitorInfo _monitor;
+    private readonly IReadOnlyList<MonitorInfo> _monitors;
+    private RectPhysical _selectionPx; // re-anchored when the user drags the region (RegionOutline) — virtual-desktop-absolute
     private readonly RecordingFormat _format;
     private ChromeState _state = ChromeState.Setup;
     private bool _showingRestartConfirm;
@@ -147,10 +156,11 @@ internal sealed class RecordingChrome : Window
     public event Action<int>? FpsChanged;
 
     public RecordingChrome(
-        MonitorInfo monitor, RectPhysical selectionPx, RecordingFormat format,
+        MonitorInfo monitor, IReadOnlyList<MonitorInfo> monitors, RectPhysical selectionPx, RecordingFormat format,
         bool initialMic, bool initialSystemAudio, GifSizePreset initialSizePreset, int fps)
     {
         _monitor = monitor;
+        _monitors = monitors;
         _selectionPx = selectionPx;
         _format = format;
         _fps = fps;
@@ -722,11 +732,15 @@ internal sealed class RecordingChrome : Window
         int barWidthPx = Math.Max(1, (int)Math.Ceiling(ActualWidth * scale));
         int barHeightPx = Math.Max(1, (int)Math.Ceiling(ActualHeight * scale));
 
+        // _selectionPx is already virtual-desktop-absolute — no monitor origin to fold in anymore
+        // (used to be "bounds.Left + _selectionPx.Left"; see the class/UpdateSelection doc for the
+        // migration). _monitor itself is still used below purely to decide which monitor's bounds
+        // the HUD is clamped/anchored within.
         var bounds = _monitor.BoundsPx;
-        int selLeft = bounds.Left + _selectionPx.Left;
-        int selRight = bounds.Left + _selectionPx.Right;
-        int selTop = bounds.Top + _selectionPx.Top;
-        int selBottom = bounds.Top + _selectionPx.Bottom;
+        int selLeft = _selectionPx.Left;
+        int selRight = _selectionPx.Right;
+        int selTop = _selectionPx.Top;
+        int selBottom = _selectionPx.Bottom;
 
         const int gap = 8;
         int x = selLeft;
@@ -765,6 +779,12 @@ internal sealed class RecordingChrome : Window
     public void UpdateSelection(RectPhysical selectionPx)
     {
         _selectionPx = selectionPx;
+        // Re-derive which monitor the HUD should anchor/clamp against — a drag (or a cross-monitor
+        // recording handoff) may have moved the region onto a different monitor than the one this
+        // chrome was built for. Keeps the LAST known monitor if the region is momentarily over a
+        // dead gap between non-adjacent monitors (FindOwningMonitor returns null there) rather than
+        // flipping to some arbitrary fallback.
+        _monitor = MultiMonitorRecording.FindOwningMonitor(selectionPx, _monitors) ?? _monitor;
         UpdateEstimate();
         RequestReposition();
     }
