@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading;
@@ -28,7 +29,14 @@ public static class ShareManager
 
     private static HttpClient CreateHttpClient()
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        // 60s was too tight for this catalog's own advertised payload sizes (litterbox alone allows
+        // up to 1 GB) - any upload slower than that deterministically hit the timeout, which
+        // ProviderSpecShareProvider now surfaces as a proper Success=false "upload timed out" result
+        // rather than a misclassified cancellation, but a generous ceiling still means real users
+        // with real bandwidth actually succeed instead of failing on every larger file. 10 minutes
+        // comfortably covers a multi-hundred-MB upload on very ordinary consumer upstream while still
+        // eventually giving up on a truly hung connection.
+        var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("RoeSnip-Sharing");
         return client;
     }
@@ -61,11 +69,13 @@ public static class ShareManager
     /// <summary>Runs one upload. Validates the config resolves to a real spec and (when the spec
     /// declares one) that the content fits under MaxUploadBytes BEFORE touching the network - a
     /// deliberately fast, offline failure for the common "picked the wrong file" case rather than a
-    /// slow doomed request. <paramref name="client"/> is test-only (defaults to the shared instance);
-    /// production callers never pass it.</summary>
+    /// slow doomed request. <paramref name="content"/> is a seekable Stream (MemoryStream for a
+    /// rendered PNG, FileStream for a finished recording's temp file) - see ShareUploadRequest's own
+    /// doc comment for why this is a stream and not a byte array. <paramref name="client"/> is
+    /// test-only (defaults to the shared instance); production callers never pass it.</summary>
     public static async Task<ShareUploadResult> UploadAsync(
         ShareProviderConfig config,
-        byte[] content,
+        Stream content,
         string fileName,
         string contentType,
         CancellationToken cancellationToken,
@@ -78,10 +88,10 @@ public static class ShareManager
                 $"'{config.DisplayName}' is not configured (unknown or missing provider spec).");
         }
 
-        if (spec.MaxUploadBytes is { } maxBytes && content.LongLength > maxBytes)
+        if (spec.MaxUploadBytes is { } maxBytes && content.Length > maxBytes)
         {
             double limitMb = maxBytes / 1024.0 / 1024.0;
-            double actualMb = content.LongLength / 1024.0 / 1024.0;
+            double actualMb = content.Length / 1024.0 / 1024.0;
             return new ShareUploadResult(false, null,
                 $"{spec.Name} allows at most {limitMb:0.#} MB; this file is {actualMb:0.#} MB.");
         }
@@ -92,15 +102,17 @@ public static class ShareManager
             return await provider.UploadAsync(new ShareUploadRequest(content, fileName, contentType), cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
         catch (Exception ex)
         {
-            // Belt-and-braces: ProviderSpecShareProvider already catches network/parse failures into
-            // a Success=false result, but this facade must never let an unexpected exception (e.g. a
-            // future spec shape it doesn't handle yet) become an unobserved-task-exception crash for
+            // Belt-and-braces: ProviderSpecShareProvider already catches network/parse failures
+            // (including its own Timeout-vs-real-cancellation disambiguation) into a Success=false
+            // result, but this facade must never let an unexpected exception (e.g. a future spec
+            // shape it doesn't handle yet, or - before the `when` clause above existed - a timeout
+            // misread as the caller's own cancellation) become an unobserved-task-exception crash for
             // a fire-and-forget UI caller.
             return new ShareUploadResult(false, null, $"Upload failed: {ex.Message}");
         }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Windows;
@@ -332,8 +333,9 @@ public partial class ShareProviderEditWindow : Window
         try
         {
             byte[] png = ShareTestImage.CreatePngBytes();
+            using var pngStream = new MemoryStream(png);
             ShareUploadResult result = await ShareManager.UploadAsync(
-                testConfig, png, "roesnip-test.png", "image/png", token).ConfigureAwait(true);
+                testConfig, pngStream, "roesnip-test.png", "image/png", token).ConfigureAwait(true);
 
             if (token.IsCancellationRequested)
             {

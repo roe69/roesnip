@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
@@ -113,7 +114,7 @@ public class ShareManagerTests
         var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.OK, "unused");
         var config = new ShareProviderConfig { Id = "ghost", SpecId = "does-not-exist" };
 
-        var result = await ShareManager.UploadAsync(config, new byte[] { 1 }, "x.png", "image/png", CancellationToken.None, handler.ToClient());
+        var result = await ShareManager.UploadAsync(config, new MemoryStream(new byte[] { 1 }), "x.png", "image/png", CancellationToken.None, handler.ToClient());
 
         Assert.False(result.Success);
         Assert.NotNull(result.ErrorMessage);
@@ -125,7 +126,7 @@ public class ShareManagerTests
     {
         var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.OK, "unused");
         // Imgur's built-in spec declares a 20 MB ceiling.
-        byte[] tooLarge = new byte[21 * 1024 * 1024];
+        var tooLarge = new MemoryStream(new byte[21 * 1024 * 1024]);
 
         var result = await ShareManager.UploadAsync(ConfiguredImgur, tooLarge, "big.png", "image/png", CancellationToken.None, handler.ToClient());
 
@@ -138,7 +139,7 @@ public class ShareManagerTests
     public async Task UploadAsync_WithinSizeLimit_ProceedsToNetworkCall()
     {
         var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.OK, """{"data":{"link":"https://imgur.com/x"}}""");
-        byte[] small = new byte[1024];
+        var small = new MemoryStream(new byte[1024]);
 
         var result = await ShareManager.UploadAsync(ConfiguredImgur, small, "small.png", "image/png", CancellationToken.None, handler.ToClient());
 
@@ -152,7 +153,7 @@ public class ShareManagerTests
     {
         // RoeShare declares no MaxUploadBytes (server-configured) - any size should reach the network.
         var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.Created, """{"url":"https://share.example.com/x"}""");
-        byte[] content = new byte[5 * 1024 * 1024];
+        var content = new MemoryStream(new byte[5 * 1024 * 1024]);
 
         var result = await ShareManager.UploadAsync(ConfiguredRoeShare, content, "big.png", "image/png", CancellationToken.None, handler.ToClient());
 
@@ -164,7 +165,7 @@ public class ShareManagerTests
     public async Task UploadAsync_UnexpectedException_IsCaughtAndReturnedAsFailure()
     {
         var handler = StubHttpMessageHandler.Throwing(new InvalidOperationException("boom"));
-        var result = await ShareManager.UploadAsync(ConfiguredImgur, new byte[] { 1 }, "x.png", "image/png", CancellationToken.None, handler.ToClient());
+        var result = await ShareManager.UploadAsync(ConfiguredImgur, new MemoryStream(new byte[] { 1 }), "x.png", "image/png", CancellationToken.None, handler.ToClient());
 
         Assert.False(result.Success);
         Assert.NotNull(result.ErrorMessage);

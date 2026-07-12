@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -42,8 +44,12 @@ public sealed class ProviderSpecShareProvider : IShareProvider
         if (!Uri.TryCreate(expandedEndpoint, UriKind.Absolute, out Uri? endpointUri)
             || (endpointUri.Scheme != Uri.UriSchemeHttp && endpointUri.Scheme != Uri.UriSchemeHttps))
         {
+            // Report the UN-expanded template, not expandedEndpoint: a spec whose endpoint carries a
+            // credential (query-param auth like "{BaseUrl}/upload?key={ApiKey}" is a common provider
+            // shape the templating explicitly supports) would otherwise leak that credential verbatim
+            // into ErrorMessage, which callers (tray balloons, TestStatusText) show on screen as-is.
             return new ShareUploadResult(false, null,
-                $"{DisplayName} is not configured correctly: '{expandedEndpoint}' is not a valid http(s) URL.");
+                $"{DisplayName} is not configured correctly: '{_spec.Endpoint}' does not expand to a valid http(s) URL.");
         }
 
         string method = string.IsNullOrWhiteSpace(_spec.Method) ? "POST" : _spec.Method;
@@ -74,12 +80,27 @@ public sealed class ProviderSpecShareProvider : IShareProvider
         HttpResponseMessage response;
         try
         {
-            response = await _client.SendAsync(httpRequest, HttpCompletionOption.ResponseContentRead, cancellationToken)
+            // ResponseHeadersRead (not ResponseContentRead): lets ReadResponseBodyAsync below bound
+            // how much of the body it actually buffers, instead of HttpClient already having read
+            // the whole thing (up to its own 2GB MaxResponseContentBufferSize default) before our
+            // code even gets control - see ReadResponseBodyAsync's own doc comment.
+            response = await _client.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                 .ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw; // teardown/cancel - let the caller see this as a cancellation, not an upload failure
+        }
+        catch (OperationCanceledException ex)
+        {
+            // The token the CALLER gave us was never cancelled - this is HttpClient's own Timeout
+            // (60s, see ShareManager.CreateHttpClient) firing, which .NET surfaces as a
+            // TaskCanceledException (an OperationCanceledException subclass) indistinguishable from a
+            // real cancellation by type alone. Without this branch that timeout would rethrow as if
+            // the caller cancelled - ShareManager's own OCE rethrow would then propagate it further,
+            // defeating the "never let an unexpected exception escape as an unobserved-task-exception
+            // crash for a fire-and-forget UI caller" guarantee that facade documents.
+            return new ShareUploadResult(false, null, $"{DisplayName}: upload timed out: {ex.Message}");
         }
         catch (Exception ex)
         {
@@ -91,7 +112,7 @@ public sealed class ProviderSpecShareProvider : IShareProvider
             string body;
             try
             {
-                body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                body = await ReadResponseBodyAsync(response.Content, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -133,9 +154,17 @@ public sealed class ProviderSpecShareProvider : IShareProvider
             multipart.Add(new StringContent(expandedValue), fieldName);
         }
 
-        var fileContent = new ByteArrayContent(request.Content);
+        var fileContent = new StreamContent(request.Content);
         fileContent.Headers.ContentType = new MediaTypeHeaderValue(
             string.IsNullOrWhiteSpace(request.ContentType) ? "application/octet-stream" : request.ContentType);
+        // StreamContent leaves Content-Length unset (falling back to chunked transfer encoding)
+        // unless told otherwise - set it explicitly from the stream's own Length so a plain
+        // Content-Length upload (what every built-in provider here expects) is what actually goes
+        // out, same as ByteArrayContent always did implicitly.
+        if (request.Content.CanSeek)
+        {
+            fileContent.Headers.ContentLength = request.Content.Length;
+        }
 
         string fieldNameForFile = string.IsNullOrWhiteSpace(_spec.MultipartFieldName) ? "file" : _spec.MultipartFieldName;
         multipart.Add(fileContent, fieldNameForFile, request.FileName);
@@ -144,10 +173,41 @@ public sealed class ProviderSpecShareProvider : IShareProvider
 
     private static HttpContent BuildRawBodyContent(ShareUploadRequest request)
     {
-        var content = new ByteArrayContent(request.Content);
+        var content = new StreamContent(request.Content);
         content.Headers.ContentType = new MediaTypeHeaderValue(
             string.IsNullOrWhiteSpace(request.ContentType) ? "application/octet-stream" : request.ContentType);
+        if (request.Content.CanSeek)
+        {
+            content.Headers.ContentLength = request.Content.Length;
+        }
         return content;
+    }
+
+    // Regex ReDoS protection already bounds ResponseUrlExtractor's regex mode (see its own
+    // RegexTimeout); this is the matching bound for the OTHER half of "don't let a misbehaving or
+    // hostile provider make the resident tray app buffer an unbounded response" - a share-URL
+    // response needs at most a few KB, so this cap is generous, not tight. Reading via
+    // ResponseHeadersRead + a manually bounded stream copy (rather than
+    // HttpContent.ReadAsStringAsync, which would let HttpClient buffer up to its own 2GB
+    // MaxResponseContentBufferSize default before this code ever runs) keeps a hostile multi-GB
+    // response from ever landing fully in memory in the first place.
+    private const int MaxResponseBytes = 1024 * 1024; // 1 MB
+
+    private static async Task<string> ReadResponseBodyAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        await using Stream stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var buffer = new MemoryStream();
+        byte[] chunk = new byte[8192];
+        int read;
+        while ((read = await stream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            buffer.Write(chunk, 0, read);
+            if (buffer.Length > MaxResponseBytes)
+            {
+                throw new InvalidOperationException($"response exceeded the {MaxResponseBytes / 1024} KB cap");
+            }
+        }
+        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
     }
 
     /// <summary>Content-Type (and other content-level headers) live on HttpContent.Headers, not

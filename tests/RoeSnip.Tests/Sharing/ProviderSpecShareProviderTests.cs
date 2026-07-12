@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -17,7 +18,11 @@ namespace RoeSnip.Tests.Sharing;
 /// Client ID).</summary>
 public class ProviderSpecShareProviderTests
 {
-    private static readonly ShareUploadRequest SamplePng = new(new byte[] { 1, 2, 3, 4 }, "shot.png", "image/png");
+    // A fresh MemoryStream per use (not a single shared instance): ShareUploadRequest.Content is a
+    // Stream now (see that record's own doc comment for why), and a Stream is single-read/positional
+    // state - reusing one instance across tests that each read it to completion would silently hand
+    // every test after the first an already-exhausted, zero-length stream.
+    private static ShareUploadRequest SamplePng() => new(new MemoryStream(new byte[] { 1, 2, 3, 4 }), "shot.png", "image/png");
 
     [Fact]
     public async Task Upload_RawBody_SendsFileBytesAsBodyAndTemplatesHeaders()
@@ -31,7 +36,7 @@ public class ProviderSpecShareProviderTests
         };
         var provider = new ProviderSpecShareProvider(ShareProviderCatalog.RoeShare, config, handler.ToClient());
 
-        ShareUploadResult result = await provider.UploadAsync(SamplePng, CancellationToken.None);
+        ShareUploadResult result = await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
         Assert.True(result.Success);
         Assert.Equal("https://share.example.com/abc", result.Url);
@@ -49,7 +54,7 @@ public class ProviderSpecShareProviderTests
         var config = new ShareProviderConfig { Id = "catbox-1", SpecId = "catbox" }; // no userhash - anonymous
 
         var provider = new ProviderSpecShareProvider(ShareProviderCatalog.Catbox, config, handler.ToClient());
-        ShareUploadResult result = await provider.UploadAsync(SamplePng, CancellationToken.None);
+        ShareUploadResult result = await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
         Assert.True(result.Success);
         Assert.Equal("https://catbox.moe/abc.png", result.Url);
@@ -74,7 +79,7 @@ public class ProviderSpecShareProviderTests
         };
 
         var provider = new ProviderSpecShareProvider(ShareProviderCatalog.Catbox, config, handler.ToClient());
-        await provider.UploadAsync(SamplePng, CancellationToken.None);
+        await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
         Assert.Contains("name=userhash", handler.LastRequestBody);
         Assert.Contains("myuserhash", handler.LastRequestBody);
@@ -87,7 +92,7 @@ public class ProviderSpecShareProviderTests
         var config = new ShareProviderConfig { Id = "imgur-1", SpecId = "imgur" }; // no Client ID configured
 
         var provider = new ProviderSpecShareProvider(ShareProviderCatalog.Imgur, config, handler.ToClient());
-        await provider.UploadAsync(SamplePng, CancellationToken.None);
+        await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
         Assert.False(handler.LastRequest!.Headers.Contains("Authorization"));
     }
@@ -104,7 +109,7 @@ public class ProviderSpecShareProviderTests
         };
 
         var provider = new ProviderSpecShareProvider(ShareProviderCatalog.Imgur, config, handler.ToClient());
-        await provider.UploadAsync(SamplePng, CancellationToken.None);
+        await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
         Assert.Equal("Client-ID myclientid", handler.LastRequest!.Headers.GetValues("Authorization").First());
     }
@@ -116,7 +121,7 @@ public class ProviderSpecShareProviderTests
         var config = new ShareProviderConfig { Id = "imgur-1", SpecId = "imgur" };
         var provider = new ProviderSpecShareProvider(ShareProviderCatalog.Imgur, config, handler.ToClient());
 
-        ShareUploadResult result = await provider.UploadAsync(SamplePng, CancellationToken.None);
+        ShareUploadResult result = await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
         Assert.False(result.Success);
         Assert.Null(result.Url);
@@ -132,7 +137,7 @@ public class ProviderSpecShareProviderTests
         var config = new ShareProviderConfig { Id = "imgur-1", SpecId = "imgur" };
         var provider = new ProviderSpecShareProvider(ShareProviderCatalog.Imgur, config, handler.ToClient());
 
-        ShareUploadResult result = await provider.UploadAsync(SamplePng, CancellationToken.None);
+        ShareUploadResult result = await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
         Assert.False(result.Success);
         Assert.Null(result.Url);
@@ -148,7 +153,7 @@ public class ProviderSpecShareProviderTests
         var config = new ShareProviderConfig { Id = "roeshare-1", SpecId = "roeshare" };
         var provider = new ProviderSpecShareProvider(ShareProviderCatalog.RoeShare, config, handler.ToClient());
 
-        ShareUploadResult result = await provider.UploadAsync(SamplePng, CancellationToken.None);
+        ShareUploadResult result = await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
         Assert.False(result.Success);
         Assert.Null(result.Url);
@@ -168,7 +173,7 @@ public class ProviderSpecShareProviderTests
         };
         var provider = new ProviderSpecShareProvider(ShareProviderCatalog.RoeShare, config, handler.ToClient());
 
-        ShareUploadResult result = await provider.UploadAsync(SamplePng, CancellationToken.None);
+        ShareUploadResult result = await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
         Assert.False(result.Success);
         Assert.Contains("connection refused", result.ErrorMessage);
@@ -189,7 +194,7 @@ public class ProviderSpecShareProviderTests
         var provider = new ProviderSpecShareProvider(ShareProviderCatalog.RoeShare, config, handler.ToClient());
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => provider.UploadAsync(SamplePng, cts.Token));
+            () => provider.UploadAsync(SamplePng(), cts.Token));
     }
 
     [Fact]
@@ -199,7 +204,7 @@ public class ProviderSpecShareProviderTests
         var config = new ShareProviderConfig { Id = "0x0st-1", SpecId = "0x0st" };
         var provider = new ProviderSpecShareProvider(ShareProviderCatalog.ZeroXZeroSt, config, handler.ToClient());
 
-        ShareUploadResult result = await provider.UploadAsync(SamplePng, CancellationToken.None);
+        ShareUploadResult result = await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
         Assert.True(result.Success);
         Assert.Equal("https://0x0.st/abcd.png", result.Url);
