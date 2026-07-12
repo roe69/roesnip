@@ -1,0 +1,119 @@
+using System;
+using System.Collections.Generic;
+using RoeSnip.Capture;
+
+namespace RoeSnip.Recording;
+
+/// <summary>Pure, unit-testable geometry helpers for multi-monitor recording, PHASE 1 (drag a live
+/// recording region across a monitor boundary — snap to the destination monitor, not true spanning
+/// capture; see PLAN-MULTIMON-RECORDING.md §3). No live WGC/device/window/thread dependency — same
+/// "make the testable slice a public class instead of an InternalsVisibleTo edit" convention this
+/// codebase already uses for <see cref="RecordingSizeEstimator"/>/<see cref="Mp4Encoder"/>'s pure
+/// math (see either class's own doc comment). Every rect here is virtual-desktop-absolute physical
+/// pixels — the convention <see cref="RecordingSession"/>'s own selection state migrated to (plan
+/// §4) — never monitor-relative, except where a method name says otherwise
+/// (<see cref="ToMonitorRelative"/>, the one conversion point back into <see cref="RegionRecorder"/>'s
+/// own monitor-relative contract, which this workstream deliberately left unchanged).</summary>
+public static class MultiMonitorRecording
+{
+    /// <summary>The bounding box of every enumerated monitor's own bounds — NOT necessarily a
+    /// filled rectangle (monitor layouts can have gaps/notches), just the smallest axis-aligned
+    /// rect that contains all of them. Used as the drag-clamp limit for <see cref="RegionOutline"/>
+    /// so a region can be dragged onto/across any monitor without hitting a false "edge of one
+    /// monitor" clamp (plan §4). Returns a degenerate (0,0,0,0) rect for an empty list — callers
+    /// that can hit this (a total enumeration failure) already treat that defensively elsewhere.</summary>
+    public static RectPhysical UnionBounds(IReadOnlyList<MonitorInfo> monitors)
+    {
+        if (monitors.Count == 0)
+        {
+            return default;
+        }
+
+        int left = int.MaxValue, top = int.MaxValue, right = int.MinValue, bottom = int.MinValue;
+        foreach (var m in monitors)
+        {
+            var b = m.BoundsPx;
+            if (b.Left < left) left = b.Left;
+            if (b.Top < top) top = b.Top;
+            if (b.Right > right) right = b.Right;
+            if (b.Bottom > bottom) bottom = b.Bottom;
+        }
+        return new RectPhysical(left, top, right, bottom);
+    }
+
+    /// <summary>True when <paramref name="inner"/> sits entirely within <paramref name="outer"/>
+    /// (touching the edge is fine; crossing it is not). This is the handoff TRIGGER: the instant a
+    /// recording's live selection stops being fully contained in its current monitor's bounds is
+    /// the moment phase 1 hands off (plan §3 — "snap to the destination monitor at the first moment
+    /// of would-be straddle").</summary>
+    public static bool Contains(RectPhysical outer, RectPhysical inner) =>
+        inner.Left >= outer.Left && inner.Top >= outer.Top &&
+        inner.Right <= outer.Right && inner.Bottom <= outer.Bottom;
+
+    private static long IntersectionArea(RectPhysical a, RectPhysical b)
+    {
+        int left = Math.Max(a.Left, b.Left);
+        int top = Math.Max(a.Top, b.Top);
+        int right = Math.Min(a.Right, b.Right);
+        int bottom = Math.Min(a.Bottom, b.Bottom);
+        if (right <= left || bottom <= top)
+        {
+            return 0;
+        }
+        return (long)(right - left) * (bottom - top);
+    }
+
+    /// <summary>Which monitor should "own" a recording region at its current absolute position: the
+    /// one with the LARGEST overlap against the region — "snap to majority overlap", matching a
+    /// drag's own direction-of-travel intuition (plan §3), never a split. Ties (a region centered
+    /// dead-on a seam) break toward the lower <see cref="MonitorInfo.Index"/> for determinism, not
+    /// because one choice is more correct than the other. Returns null only when the region doesn't
+    /// intersect ANY monitor at all (dragged into a dead gap between non-adjacent monitors) — the
+    /// caller's job to decide what "stay put" means in that case (see
+    /// <see cref="RecordingSession.OnRegionMoved"/>).</summary>
+    public static MonitorInfo? FindOwningMonitor(RectPhysical selectionAbs, IReadOnlyList<MonitorInfo> monitors)
+    {
+        MonitorInfo? best = null;
+        long bestArea = 0;
+        foreach (var m in monitors)
+        {
+            long area = IntersectionArea(selectionAbs, m.BoundsPx);
+            if (area <= 0)
+            {
+                continue;
+            }
+            if (best is null || area > bestArea || (area == bestArea && m.Index < best.Index))
+            {
+                bestArea = area;
+                best = m;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>Slides (NEVER resizes) a region so it fits fully within one monitor's bounds — the
+    /// "clamp the new selection fully onto the destination monitor" step of a handoff (plan §3).
+    /// The encoder canvas is fixed for the whole take (plan §3's own "confirmed, no new work needed
+    /// here" note), so width/height are always preserved verbatim; only Left/Top can move. If the
+    /// region is itself wider/taller than the destination monitor (a single-monitor-sized region
+    /// landing on a smaller monitor — pathological on phase 1's normal hardware, but not
+    /// impossible), it's centered instead of clamped into a negative offset.</summary>
+    public static RectPhysical ClampToMonitor(RectPhysical selectionAbs, MonitorInfo monitor)
+    {
+        var b = monitor.BoundsPx;
+        int w = selectionAbs.Width, h = selectionAbs.Height;
+        int left = w >= b.Width ? b.Left - (w - b.Width) / 2 : Math.Clamp(selectionAbs.Left, b.Left, b.Right - w);
+        int top = h >= b.Height ? b.Top - (h - b.Height) / 2 : Math.Clamp(selectionAbs.Top, b.Top, b.Bottom - h);
+        return RectPhysical.FromSize(left, top, w, h);
+    }
+
+    /// <summary>Converts a virtual-desktop-absolute rect into <paramref name="monitor"/>'s own
+    /// 0-based coordinate space — the one conversion point back into <see cref="RegionRecorder"/>'s
+    /// unchanged, monitor-relative constructor/<c>SetOrigin</c> contract (plan §1's "RegionRecorder
+    /// — unchanged class"). Width/Height pass through unchanged; only the origin shifts.</summary>
+    public static RectPhysical ToMonitorRelative(RectPhysical absolute, MonitorInfo monitor)
+    {
+        var b = monitor.BoundsPx;
+        return new RectPhysical(absolute.Left - b.Left, absolute.Top - b.Top, absolute.Right - b.Left, absolute.Bottom - b.Top);
+    }
+}
