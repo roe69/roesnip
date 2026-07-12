@@ -43,9 +43,7 @@ public static class ResponseUrlExtractor
             return false;
         }
 
-        url = trimmed;
-        error = null;
-        return true;
+        return TryValidateUrl(trimmed, out url, out error);
     }
 
     private static bool TryExtractRegex(string? pattern, string body, out string? url, out string? error)
@@ -76,9 +74,7 @@ public static class ResponseUrlExtractor
             return false;
         }
 
-        url = match.Groups[1].Value;
-        error = null;
-        return true;
+        return TryValidateUrl(match.Groups[1].Value, out url, out error);
     }
 
     private static bool TryExtractJsonPath(string? path, string body, out string? url, out string? error)
@@ -111,10 +107,31 @@ public static class ResponseUrlExtractor
                 return false;
             }
 
-            url = value;
+            return TryValidateUrl(value, out url, out error);
+        }
+    }
+
+    /// <summary>Last-mile check shared by all three ResponseMode branches above: the extracted string
+    /// must be an absolute http(s) URL before it is ever treated as a trusted upload result. Without
+    /// this, a malicious/compromised provider - or a MITM on a custom provider configured over plain
+    /// http, which this engine's own endpoint validation explicitly allows - could return something
+    /// like a UNC path or a "file:"/"ms-appinstaller:" URI as if it were the uploaded file's public
+    /// link; callers report Success=true, copy the value to the clipboard verbatim, and ShellExecute
+    /// it on a balloon click (TrayApp.ShowShareUploadedBalloon), so an unvalidated "URL" here is a
+    /// direct path to running attacker-controlled input.</summary>
+    private static bool TryValidateUrl(string candidate, out string? url, out string? error)
+    {
+        if (Uri.TryCreate(candidate, UriKind.Absolute, out Uri? uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            url = candidate;
             error = null;
             return true;
         }
+
+        url = null;
+        error = "The provider's response did not contain a valid http(s) URL.";
+        return false;
     }
 
     /// <summary>Walks a dotted path ("data.link") through nested JSON objects. Only object-property
