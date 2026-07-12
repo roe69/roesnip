@@ -286,4 +286,115 @@ public class SettingsTests : IDisposable
         Assert.Equal("Quality", RoeSnipSettings.Default.GifSizePreset);
         Assert.Equal(GifSizePreset.Quality, GifSizePresets.Parse(RoeSnipSettings.Default.GifSizePreset));
     }
+
+    [Fact]
+    public void SaveThenLoad_RoundTripsMp4SizePreset()
+    {
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+
+        var original = new RoeSnipSettings { Mp4SizePreset = "Max" };
+        SettingsStore.Save(original, settingsPath);
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Equal("Max", loaded.Mp4SizePreset);
+        Assert.Equal(GifSizePreset.Max, GifSizePresets.Parse(loaded.Mp4SizePreset));
+    }
+
+    [Fact]
+    public void GifSizePreset_And_Mp4SizePreset_PersistIndependently()
+    {
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+
+        var original = new RoeSnipSettings { GifSizePreset = "Compact", Mp4SizePreset = "Max" };
+        SettingsStore.Save(original, settingsPath);
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Equal("Compact", loaded.GifSizePreset);
+        Assert.Equal("Max", loaded.Mp4SizePreset);
+    }
+
+    [Fact]
+    public void Default_Mp4SizePreset_IsQuality()
+    {
+        Assert.Equal("Quality", RoeSnipSettings.Default.Mp4SizePreset);
+        Assert.Equal(GifSizePreset.Quality, GifSizePresets.Parse(RoeSnipSettings.Default.Mp4SizePreset));
+    }
+
+    // ---------- GifFps / Mp4Fps (quality/framerate decoupling workstream, stage 3) ----------
+
+    [Fact]
+    public void Default_GifFps_Is25()
+    {
+        Assert.Equal(25, RoeSnipSettings.Default.GifFps);
+    }
+
+    [Fact]
+    public void Default_Mp4Fps_Is30()
+    {
+        Assert.Equal(30, RoeSnipSettings.Default.Mp4Fps);
+    }
+
+    [Fact]
+    public void SaveThenLoad_RoundTripsGifFps()
+    {
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+
+        var original = new RoeSnipSettings { GifFps = 10 };
+        SettingsStore.Save(original, settingsPath);
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Equal(10, loaded.GifFps);
+    }
+
+    [Fact]
+    public void SaveThenLoad_RoundTripsMp4Fps()
+    {
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+
+        var original = new RoeSnipSettings { Mp4Fps = 15 };
+        SettingsStore.Save(original, settingsPath);
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Equal(15, loaded.Mp4Fps);
+    }
+
+    [Fact]
+    public void GifFps_And_Mp4Fps_PersistIndependently()
+    {
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+
+        var original = new RoeSnipSettings { GifFps = 20, Mp4Fps = 60 };
+        SettingsStore.Save(original, settingsPath);
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Equal(20, loaded.GifFps);
+        Assert.Equal(60, loaded.Mp4Fps);
+    }
+
+    [Fact]
+    public void Load_JsonWithGarbledGifFps_ClampsSafelyAtUseTime()
+    {
+        // Fail-safe-at-USE-time (RecordingSizeEstimator.ClampFps), not at load time: the raw value
+        // persists as-written, same convention GifSizePreset's string already follows (see
+        // Load_JsonWithInvalidGifSizePreset_ParsesToQuality above).
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+        File.WriteAllText(settingsPath, """
+            {
+              "SchemaVersion": 1,
+              "GifFps": 999
+            }
+            """);
+
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Equal(999, loaded.GifFps);
+        Assert.Equal(50, RoeSnip.Recording.RecordingSizeEstimator.ClampFps(
+            loaded.GifFps, RoeSnip.Recording.RecordingSizeEstimator.GifMinFps, RoeSnip.Recording.RecordingSizeEstimator.GifMaxFps));
+    }
 }

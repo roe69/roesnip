@@ -126,6 +126,38 @@ public sealed record RoeSnipSettings
     /// "Quality" (this default) for any unknown or corrupt value rather than throwing.</summary>
     public string GifSizePreset { get; init; } = "Quality";
 
+    /// <summary>MP4 recording size/quality tier — the same recording-chrome size row as
+    /// <see cref="GifSizePreset"/> above, but format's own separate memory: switching between GIF
+    /// and MP4 takes must not clobber the other format's last-picked tier. Same plain-string,
+    /// same <see cref="Recording.Gif.GifSizePresets.Parse"/> fail-safe-to-"Quality" convention,
+    /// and (despite the "Gif"-namespaced parser/enum — see that enum's own doc comment for why it
+    /// wasn't moved) the SAME <see cref="Recording.Gif.GifSizePreset"/> enum, not a parallel
+    /// MP4-only one.</summary>
+    public string Mp4SizePreset { get; init; } = "Quality";
+
+    /// <summary>GIF recording framerate (quality/framerate decoupling workstream, stage 3;
+    /// widened from four fixed choices to a free integer slider by the quality/fps expansion
+    /// workstream — see RecordingChrome's FPS row): the chrome's FPS slider persists here,
+    /// independent of <see cref="GifSizePreset"/> — the two axes are orthogonal user choices now
+    /// (see Recording/RecordingSizeEstimator.cs's own doc comment for why). A plain int, not
+    /// validated at load time: an old build, a hand-edited settings file, or a future build's
+    /// differently-shaped range could all leave a value here that falls outside today's
+    /// <see cref="Recording.RecordingSizeEstimator.GifMinFps"/>..<see cref="Recording.RecordingSizeEstimator.GifMaxFps"/>
+    /// range — rather than throw or silently keep an invalid capture rate, every USE site clamps
+    /// this through <see cref="Recording.RecordingSizeEstimator.ClampFps"/> against those live
+    /// bounds (same fail-safe-at-use-time convention <see cref="GifSizePreset"/>'s own
+    /// <see cref="Recording.Gif.GifSizePresets.Parse"/> already uses). Default matches
+    /// <see cref="Recording.RecordingSizeEstimator.GifDefaultFps"/>.</summary>
+    public int GifFps { get; init; } = 25;
+
+    /// <summary>MP4 recording framerate — same fail-safe-at-use-time contract as
+    /// <see cref="GifFps"/> above, clamped against
+    /// <see cref="Recording.RecordingSizeEstimator.Mp4MinFps"/>..<see cref="Recording.RecordingSizeEstimator.Mp4MaxFps"/>
+    /// instead, and its own independent settings key (format-specific memory, same split as
+    /// <see cref="GifSizePreset"/>/<see cref="Mp4SizePreset"/>). Default matches
+    /// <see cref="Recording.RecordingSizeEstimator.Mp4DefaultFps"/>.</summary>
+    public int Mp4Fps { get; init; } = 30;
+
     public static RoeSnipSettings Default { get; } = new();
 
     private static string DefaultSaveDirectory() =>
@@ -379,9 +411,10 @@ public static class AppComposition
     {
         // Hidden tray-level flags handled inside TrayApp.Run itself (not part of the --diag/--capture
         // CLI grammar in CliOptions, so they land here as Mode=None): --signal-capture pokes a running
-        // instance to snip, --self-update-now force-updates the installed copy. Pass those through;
-        // only a genuinely unrecognized argument is a usage error.
-        bool allTrayFlags = args.Length > 0 && args.All(a => a is "--signal-capture" or "--self-update-now");
+        // instance to snip, --self-update-now force-updates the installed copy, --automation starts
+        // the dev-gated automation pipe (App/AutomationServer.cs) alongside the normal tray/hotkey/
+        // pipe flow. Pass those through; only a genuinely unrecognized argument is a usage error.
+        bool allTrayFlags = args.Length > 0 && args.All(a => a is "--signal-capture" or "--self-update-now" or "--automation");
         if (args.Length > 0 && !allTrayFlags)
         {
             PrintUsage();
@@ -711,6 +744,21 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // `--auto` (dev-gated automation client — App/AutomationServer.cs): handled here, before
+        // ANY of the mutex/single-instance machinery below, so a client invocation can never trigger
+        // the "normal launch replaces the running instance" takeover the way a bare `RoeSnip.exe`
+        // does — it only ever talks to the automation pipe of whatever instance is already running.
+        if (args.Length > 0 && args[0] == "--auto")
+        {
+            if (args.Length != 2)
+            {
+                Console.Error.WriteLine(
+                    "Usage: RoeSnip.exe --auto '<json>'   (or --auto <command> for a zero-arg command, e.g. --auto state)");
+                return 1;
+            }
+            return App.AutomationClient.Run(args[1]);
+        }
+
         // Hidden verbs (deliberately undocumented — not in CliOptions/PrintUsage): the target of the
         // single UAC round-trip SettingsWindow performs when the "Run as administrator" checkbox is
         // toggled from a non-elevated process. Never invoked unattended.

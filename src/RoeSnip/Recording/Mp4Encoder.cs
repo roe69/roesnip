@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using RoeSnip.Imaging;
+using RoeSnip.Recording.Gif;
 using Vortice.MediaFoundation;
 using Vortice.Multimedia;
 
@@ -45,9 +46,44 @@ public sealed class Mp4Encoder : IDisposable
     /// thumb), clamped to a sane [2, 16] Mbps band so a tiny selection doesn't starve the encoder
     /// and a huge one doesn't produce an unreasonably large file. Pulled out as its own static
     /// method (no IMFSinkWriter dependency) so it's unit-testable without a live MF session —
-    /// see Mp4EncoderTests.</summary>
+    /// see Mp4EncoderTests. This is the parameterless-preset overload: its behavior is pinned
+    /// forever by <see cref="ComputeBitrate(int,int,int,GifSizePreset)"/>'s Quality case, which
+    /// must return exactly this value — see that overload's own doc comment.</summary>
     public static long ComputeBitrate(int width, int height, int fps) =>
         Math.Clamp((long)(0.1 * width * height * fps), 2_000_000, 16_000_000);
+
+    /// <summary>Recording-size-tiers overload: applies a per-tier multiplier to the same 0.1bpp
+    /// heuristic <see cref="ComputeBitrate(int,int,int)"/> uses, each with its own clamp band so a
+    /// tiny selection at any tier still gets a usable minimum bitrate and a huge one at any tier
+    /// still has a ceiling. <see cref="GifSizePreset.Quality"/> is handled by delegating straight
+    /// to the three-argument overload rather than recomputing "1.0x [2M,16M]" here a second time —
+    /// that overload's existing tests (and every existing MP4 call site that doesn't pass a preset)
+    /// must see byte-identical output to before this tiers workstream existed. The other tiers'
+    /// factors/clamps (see the switch below) were chosen to bracket Quality symmetrically: Max
+    /// roughly quadruples the target bitrate for near-visually-lossless H.264 at typical recording
+    /// resolutions, Balanced/Compact roughly mirror the GIF-side Balanced/Compact size reduction so
+    /// the two formats' tiers read as the same promise ("smaller, more compressed") even though the
+    /// underlying codecs are unrelated. Minimal (quality/fps expansion workstream) continues that
+    /// same downward slope at 0.15x — MP4/H.264 has no GIF-style palette/lossy-run lever to spend
+    /// this tier's extra shrink on, so it is simply a lower target bitrate with its own, lower
+    /// clamp band.</summary>
+    public static long ComputeBitrate(int width, int height, int fps, GifSizePreset preset)
+    {
+        if (preset == GifSizePreset.Quality)
+        {
+            return ComputeBitrate(width, height, fps);
+        }
+
+        (double factor, long min, long max) = preset switch
+        {
+            GifSizePreset.Max => (4.0, 8_000_000L, 64_000_000L),
+            GifSizePreset.Balanced => (0.6, 1_500_000L, 10_000_000L),
+            GifSizePreset.Compact => (0.35, 1_000_000L, 6_000_000L),
+            GifSizePreset.Minimal => (0.15, 500_000L, 3_000_000L),
+            _ => throw new ArgumentOutOfRangeException(nameof(preset), preset, "Unknown GifSizePreset."),
+        };
+        return Math.Clamp((long)(factor * 0.1 * width * height * fps), min, max);
+    }
 
     /// <summary>The one PCM format every audio path speaks (AudioCaptureEngine converts both
     /// WASAPI sources to it via AUTOCONVERTPCM, this class encodes it to AAC): 48 kHz, stereo,
@@ -56,6 +92,12 @@ public sealed class Mp4Encoder : IDisposable
     public const int AudioChannels = 2;
     public const int AudioBitsPerSample = 16;
     public const int AudioBlockAlign = AudioChannels * AudioBitsPerSample / 8;
+
+    /// <summary>128 kbps AAC, the standard screen-recording choice: 128000 / 8 = 16000 bytes/second
+    /// — named here (rather than left as the inline magic number the Create's AudioAvgBytesPerSecond
+    /// media-type attribute used to be) so RecordingSizeEstimator's MP4 audio-overhead term can
+    /// cite the exact same figure instead of re-deriving/duplicating it.</summary>
+    public const int AudioAacBytesPerSecond = 16_000;
 
     private readonly IMFSinkWriter _writer;
     private readonly int _streamIndex;
@@ -72,10 +114,16 @@ public sealed class Mp4Encoder : IDisposable
         _frameDuration100ns = 10_000_000L / fps;
     }
 
-    public static Mp4Encoder Create(string tempFilePath, int width, int height, int fps, bool withAudio = false)
+    /// <summary><paramref name="preset"/> is additive (defaults to Quality, today's only behavior
+    /// before the recording-size-tiers workstream) — every existing call site that doesn't pass it
+    /// compiles unchanged and gets byte-identical bitrate output, since Quality delegates to the
+    /// original three-argument <see cref="ComputeBitrate(int,int,int)"/>.</summary>
+    public static Mp4Encoder Create(
+        string tempFilePath, int width, int height, int fps, bool withAudio = false,
+        GifSizePreset preset = GifSizePreset.Quality)
     {
         EnsureStarted();
-        long bitrate = ComputeBitrate(width, height, fps);
+        long bitrate = ComputeBitrate(width, height, fps, preset);
 
         using var outputType = MediaFactory.MFCreateMediaType();
         outputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video).CheckError();
@@ -124,8 +172,7 @@ public sealed class Mp4Encoder : IDisposable
             audioOutputType.Set(MediaTypeAttributeKeys.AudioSamplesPerSecond, (uint)AudioSampleRate).CheckError();
             audioOutputType.Set(MediaTypeAttributeKeys.AudioNumChannels, (uint)AudioChannels).CheckError();
             audioOutputType.Set(MediaTypeAttributeKeys.AudioBitsPerSample, (uint)AudioBitsPerSample).CheckError();
-            // 128 kbps AAC, the standard screen-recording choice: 128000 / 8 = 16000 bytes/second.
-            audioOutputType.Set(MediaTypeAttributeKeys.AudioAvgBytesPerSecond, 16_000u).CheckError();
+            audioOutputType.Set(MediaTypeAttributeKeys.AudioAvgBytesPerSecond, (uint)AudioAacBytesPerSecond).CheckError();
             audioStreamIndex = writer.AddStream(audioOutputType);
 
             // PCM input type built straight from a WaveFormat — MFCreateAudioMediaType fills in

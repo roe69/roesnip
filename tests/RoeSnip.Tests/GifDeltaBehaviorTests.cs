@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using RoeSnip.Capture;
 using RoeSnip.Imaging;
 using RoeSnip.Recording;
 using RoeSnip.Recording.Gif;
@@ -10,9 +11,12 @@ using Xunit;
 namespace RoeSnip.Tests;
 
 /// <summary>End-to-end behavioral coverage of the timestamped <c>AddFrame(SdrImage, long)</c> delta
-/// pipeline — transparency-mask correctness, palette reuse, emit-rate shaping, and keyframing — all
-/// verified against the actual on-disk bytes rather than trusting <c>GifBitmapDecoder</c>'s already-
-/// composited output (which can't show per-pixel transparent-index or LCT-byte-identity facts).
+/// pipeline — transparency-mask correctness, palette reuse, and keyframing — all verified against
+/// the actual on-disk bytes rather than trusting <c>GifBitmapDecoder</c>'s already-composited output
+/// (which can't show per-pixel transparent-index or LCT-byte-identity facts). The emit-rate-shaping
+/// coverage this class used to carry (a motion-keyed delay floor test) was deleted along with the
+/// mechanism itself — see GifEncoderOptions' class doc comment on the quality/framerate decoupling
+/// workstream; rate control lives at capture cadence now, not in this encoder.
 ///
 /// Everything here is parsed with a self-contained walker (<see cref="ParseAllFrames"/>) independent
 /// of both <see cref="GifEncoder"/>'s own internals and <see cref="GifEncoderTests"/>'s parser, using
@@ -365,67 +369,7 @@ public class GifDeltaBehaviorTests
         }
     }
 
-    // ---- (4) Emit-rate shaping: full-canvas-motion frames every 20ms must not emit faster than
-    // the >65% tier's 8cs floor. ----
-
-    [Fact]
-    public void AddFrame_Timestamped_FullCanvasMotion_RespectsHugeMotionDelayFloor()
-    {
-        string path = TempGifPath();
-        try
-        {
-            const int w = 12, h = 12;
-            const int intervalMs = 20;
-            const int frameCount = 100; // i = 0..99, t = 0..1980ms — a 2s synthetic take
-            const int floorMs = 80;     // HugeMotionDelayFloorCs(8) at 1 tick == 1ms
-
-            var encoder = GifEncoder.Create(path, w, h, timestampTicksPerSecond: 1000);
-            var emitted = new List<bool>();
-            for (int i = 0; i < frameCount; i++)
-            {
-                // Full-canvas grayscale fill: every candidate differs from whatever was last
-                // painted (adjacent/near steps differ by 50 or 200+ absolute units — see the class's
-                // sibling keyframe test for the same wraparound-safety argument), so every candidate
-                // is a 100%-of-canvas "huge motion" bbox whenever it's even considered.
-                byte val = (byte)((i * 50) % 256);
-                var pixels = SolidCanvas(w, h, val, val, val);
-                bool wasEmitted = encoder.AddFrame(new SdrImage(w, h, pixels), i * (long)intervalMs);
-                emitted.Add(wasEmitted);
-            }
-            encoder.FinalizeAndClose(2000L);
-
-            var frames = ParseAllFrames(File.ReadAllBytes(path));
-
-            // Independent simulation of the documented rule (>=65% area changed => an 8cs/80ms floor
-            // since the last EMITTED frame; an earlier candidate is skipped, its time folding into
-            // whichever frame emits next) — the spec's own timing arithmetic, not a copy of the
-            // production code under test.
-            int expectedCount = 1; // frame 0 always emits unconditionally
-            long lastEmitMs = 0;
-            for (int i = 1; i < frameCount; i++)
-            {
-                long tMs = i * intervalMs;
-                if (tMs - lastEmitMs >= floorMs)
-                {
-                    expectedCount++;
-                    lastEmitMs = tMs;
-                }
-            }
-
-            Assert.Equal(expectedCount, frames.Count);
-            Assert.Equal(expectedCount, emitted.Count(e => e));
-            Assert.All(frames, f => Assert.True(f.Delay >= 8, $"delay {f.Delay}cs violates the 8cs huge-motion floor"));
-
-            // Skipped candidates' time isn't lost: the patched delays still sum to the whole take.
-            Assert.Equal(200, frames.Sum(f => f.Delay)); // 2000ms == 200cs
-        }
-        finally
-        {
-            File.Delete(path);
-        }
-    }
-
-    // ---- (5) Keyframe: full-canvas opaque re-baselines at the configured cadence, everything else
+    // ---- (4) Keyframe: full-canvas opaque re-baselines at the configured cadence, everything else
     // stays sub-rect/transparent. ----
 
     [Fact]
@@ -480,6 +424,254 @@ public class GifDeltaBehaviorTests
         finally
         {
             File.Delete(path);
+        }
+    }
+
+    // ---- (5) Lossy run-extension (quality/fps expansion workstream) — GifDelta.ClassifyAndPaint's
+    // gifsicle-style "reuse the adjacent already-painted palette entry when close enough" lever.
+    // Exercised directly against ClassifyAndPaint (not through a full GifEncoder file) so each test
+    // can inspect exactly which pixels the lossy path touched, rather than inferring it from
+    // already-composited/decoded bytes. GifColorDistance.RedmeanSquared is `internal` (no
+    // InternalsVisibleTo edit for this repo's test-access convention — see e.g.
+    // RecordingSizeEstimator's own doc comment on making the testable slice public instead), so
+    // RedmeanSquared below is the same documented formula, duplicated for verification purposes. ----
+
+    /// <summary>Same formula as (internal) GifColorDistance.RedmeanSquared, duplicated here since
+    /// this test assembly has no InternalsVisibleTo edit into RoeSnip (this repo's convention is to
+    /// make the testable slice public rather than add one — see GifColorDistance's own doc comment
+    /// for why it stays internal: it's an implementation detail of the Gif namespace, not a public
+    /// surface).</summary>
+    private static double RedmeanSquared(byte b1, byte g1, byte r1, byte b2, byte g2, byte r2)
+    {
+        double rmean = (r1 + r2) / 2.0;
+        double dr = r1 - r2;
+        double dg = g1 - g2;
+        double db = b1 - b2;
+        return (2.0 + rmean / 256.0) * dr * dr
+             + 4.0 * dg * dg
+             + (2.0 + (255.0 - rmean) / 256.0) * db * db;
+    }
+
+    /// <summary>An N-entry grayscale palette where palette index i IS exactly gray level i — every
+    /// pixel in a 0..N-1 gradient therefore has an EXACT (distance-0) nearest-color match, so
+    /// without the lossy mechanism a fine gradient produces a fresh, distinct index almost every
+    /// pixel (no accidental merging from palette coarseness muddying what's being measured).</summary>
+    private static byte[] BuildExactGrayscalePalette(int count)
+    {
+        var palette = new byte[count * 3];
+        for (int i = 0; i < count; i++)
+        {
+            palette[i * 3 + 0] = (byte)i;
+            palette[i * 3 + 1] = (byte)i;
+            palette[i * 3 + 2] = (byte)i;
+        }
+        return palette;
+    }
+
+    [Fact]
+    public void ClassifyAndPaint_ZeroThreshold_NeverDivergesFromTheFreshLutLookup()
+    {
+        // threshold 0 = byte-identical output to before this feature existed: with the lossy
+        // mechanism disabled (lossyRunThresholdSq: 0, the default for every pre-existing call site
+        // and Max/Quality), every painted pixel's index must be EXACTLY what a plain LUT.Lookup on
+        // its own source color would produce — the lossy branch must never fire.
+        const int w = 128;
+        byte[] palette = BuildExactGrayscalePalette(128);
+        var lut = new GifNearestColorLut();
+        lut.Rebuild(palette, 128);
+
+        var current = new byte[w * 4];
+        for (int x = 0; x < w; x++)
+        {
+            byte v = (byte)x;
+            current[x * 4] = v; current[x * 4 + 1] = v; current[x * 4 + 2] = v; current[x * 4 + 3] = 255;
+        }
+
+        var lastPainted = new byte[w * 4];
+        var indexScratch = new byte[w];
+        var box = RectPhysical.FromSize(0, 0, w, 1);
+        GifDelta.ClassifyAndPaint(
+            current, lastPainted, indexScratch, w, box, lut, palette,
+            transparentIndex: 128, allowTransparency: false, channelTolerance: 0, ditherErrorFloor: 255,
+            lossyRunThresholdSq: 0);
+
+        for (int x = 0; x < w; x++)
+        {
+            int fresh = lut.Lookup(current[x * 4], current[x * 4 + 1], current[x * 4 + 2]);
+            Assert.Equal(fresh, indexScratch[x]);
+        }
+    }
+
+    [Fact]
+    public void ClassifyAndPaint_GenerousLossyThreshold_ProducesFewerDistinctIndicesThanZeroThreshold()
+    {
+        // A fine 1-unit-step grayscale gradient against an EXACT-per-level palette. Even with the
+        // lossy mechanism OFF (threshold 0), GifNearestColorLut's own 5-5-5 bucket cache (8 units/
+        // channel — see that class's doc comment) already merges SOME neighbors purely from bucket
+        // quantization, so the baseline is not literally "one distinct index per pixel" - this test
+        // only asserts the RELATIVE effect the lossy mechanism adds on top of that baseline, not an
+        // absolute transition count. With a generous threshold on, nearby gray levels reuse the
+        // run's anchor index instead of a fresh (bucket-cached) lookup, producing measurably longer
+        // runs — exactly the size lever this mechanism exists to add (see GifDelta's class doc).
+        const int w = 200;
+        byte[] palette = BuildExactGrayscalePalette(w);
+        var current = new byte[w * 4];
+        for (int x = 0; x < w; x++)
+        {
+            byte v = (byte)x;
+            current[x * 4] = v; current[x * 4 + 1] = v; current[x * 4 + 2] = v; current[x * 4 + 3] = 255;
+        }
+        var box = RectPhysical.FromSize(0, 0, w, 1);
+
+        byte[] EncodeIndices(int lossyThresholdSq)
+        {
+            var lut = new GifNearestColorLut();
+            lut.Rebuild(palette, w);
+            var lastPainted = new byte[w * 4];
+            var indexScratch = new byte[w];
+            GifDelta.ClassifyAndPaint(
+                current, lastPainted, indexScratch, w, box, lut, palette,
+                transparentIndex: w, allowTransparency: false, channelTolerance: 0, ditherErrorFloor: 255,
+                lossyRunThresholdSq: lossyThresholdSq);
+            return indexScratch;
+        }
+
+        byte[] baseline = EncodeIndices(0);
+        byte[] lossy = EncodeIndices(2000); // Δ_max ≈ sqrt(2000/9) ≈ 14.9 gray levels merge per run
+
+        static int Transitions(byte[] indices)
+        {
+            int count = 0;
+            for (int i = 1; i < indices.Length; i++)
+            {
+                if (indices[i] != indices[i - 1])
+                {
+                    count++;
+                }
+            }
+            return count;
+        }
+
+        int baselineTransitions = Transitions(baseline);
+        int lossyTransitions = Transitions(lossy);
+        int baselineDistinct = baseline.Distinct().Count();
+        int lossyDistinct = lossy.Distinct().Count();
+
+        // Sanity: the baseline still has meaningful variation to shrink (not already collapsed to
+        // a handful of runs purely by GifNearestColorLut's own bucket quantization).
+        Assert.True(baselineTransitions > 10, $"baseline transitions ({baselineTransitions}) too low for this test to be meaningful");
+        Assert.True(lossyTransitions < baselineTransitions,
+            $"lossy transitions ({lossyTransitions}) should be far fewer than baseline ({baselineTransitions})");
+        Assert.True(lossyDistinct < baselineDistinct,
+            $"lossy distinct index count ({lossyDistinct}) should be fewer than baseline ({baselineDistinct})");
+    }
+
+    [Fact]
+    public void ClassifyAndPaint_LossyRunExtension_ReusedPixelsStayWithinTheThresholdOfTheirOwnSourceColor()
+    {
+        // Bounded-error guarantee: for every pixel where the lossy mechanism actually fired (its
+        // final index differs from what a fresh, independent LUT lookup on that pixel's own source
+        // color would have produced), the SOURCE color must be within lossyRunThresholdSq (redmean-
+        // squared) of the reused entry's actual palette color — the exact condition the code checks
+        // before taking that branch, verified here against the real output rather than trusted by
+        // inspection alone.
+        const int w = 150;
+        const int lossyThresholdSq = 900; // sqrt(900) = 30 (redmean-squared units, not plain distance)
+        byte[] palette = BuildExactGrayscalePalette(w);
+        var lut = new GifNearestColorLut();
+        lut.Rebuild(palette, w);
+
+        var current = new byte[w * 4];
+        for (int x = 0; x < w; x++)
+        {
+            byte v = (byte)x;
+            current[x * 4] = v; current[x * 4 + 1] = v; current[x * 4 + 2] = v; current[x * 4 + 3] = 255;
+        }
+
+        var lastPainted = new byte[w * 4];
+        var indexScratch = new byte[w];
+        var box = RectPhysical.FromSize(0, 0, w, 1);
+        GifDelta.ClassifyAndPaint(
+            current, lastPainted, indexScratch, w, box, lut, palette,
+            transparentIndex: w, allowTransparency: false, channelTolerance: 0, ditherErrorFloor: 255,
+            lossyRunThresholdSq: lossyThresholdSq);
+
+        int reusedPixelCount = 0;
+        for (int x = 0; x < w; x++)
+        {
+            int actual = indexScratch[x];
+            int fresh = lut.Lookup(current[x * 4], current[x * 4 + 1], current[x * 4 + 2]);
+            if (actual == fresh)
+            {
+                continue; // resolved through the normal LUT path, not the lossy mechanism
+            }
+
+            reusedPixelCount++;
+            int po = actual * 3;
+            double dist = RedmeanSquared(
+                current[x * 4], current[x * 4 + 1], current[x * 4 + 2],
+                palette[po], palette[po + 1], palette[po + 2]);
+            Assert.True(dist <= lossyThresholdSq,
+                $"pixel {x}: reused index {actual}'s color is {dist:F1} redmean-squared from its own source, exceeding the {lossyThresholdSq} threshold");
+        }
+
+        // The gradient/threshold combination above is chosen generously enough that the mechanism
+        // must actually have fired at least once, or this test would trivially pass without
+        // exercising anything.
+        Assert.True(reusedPixelCount > 0, "expected at least one pixel to take the lossy reuse path");
+    }
+
+    [Fact]
+    public void ClassifyAndPaint_LossyRunExtension_NeverProducesTheTransparentIndex()
+    {
+        // A changed pixel must never be classified transparent by the lossy mechanism — that is
+        // tolerance's job, with its own bound (see GifDelta's class doc comment). Mixes genuinely
+        // unchanged pixels (within channelTolerance of the baseline, must map to transparentIndex)
+        // with genuinely changed ones (must never map to transparentIndex, lossy-reused or not),
+        // under an aggressively generous lossy threshold to maximize the chance a bug would leak
+        // transparentIndex through the reuse path.
+        const int w = 40;
+        byte[] palette = BuildExactGrayscalePalette(w);
+        const int transparentIndex = w;
+        var lut = new GifNearestColorLut();
+        lut.Rebuild(palette, w);
+
+        var lastPainted = new byte[w * 4];
+        for (int x = 0; x < w; x++)
+        {
+            lastPainted[x * 4] = 20; lastPainted[x * 4 + 1] = 20; lastPainted[x * 4 + 2] = 20; lastPainted[x * 4 + 3] = 255;
+        }
+
+        var current = new byte[w * 4];
+        for (int x = 0; x < w; x++)
+        {
+            // Even x: within channelTolerance(2) of the baseline(20) — must classify transparent.
+            // Odd x: a FIXED, far-outside-tolerance gray (200) — must be genuinely painted. A
+            // constant (rather than x-derived) value deliberately avoids landing back near 20 for
+            // some odd x, which a naive x%w mapping would (e.g. x=19,21 map to 19,21 - themselves
+            // within tolerance of 20).
+            byte v = (x % 2 == 0) ? (byte)21 : (byte)200;
+            current[x * 4] = v; current[x * 4 + 1] = v; current[x * 4 + 2] = v; current[x * 4 + 3] = 255;
+        }
+
+        var indexScratch = new byte[w];
+        var box = RectPhysical.FromSize(0, 0, w, 1);
+        GifDelta.ClassifyAndPaint(
+            current, lastPainted, indexScratch, w, box, lut, palette,
+            transparentIndex, allowTransparency: true, channelTolerance: 2, ditherErrorFloor: 255,
+            lossyRunThresholdSq: 50_000); // deliberately huge — see class doc above for why
+
+        for (int x = 0; x < w; x++)
+        {
+            bool shouldBeTransparent = x % 2 == 0;
+            if (shouldBeTransparent)
+            {
+                Assert.Equal(transparentIndex, indexScratch[x]);
+            }
+            else
+            {
+                Assert.NotEqual(transparentIndex, indexScratch[x]);
+            }
         }
     }
 }

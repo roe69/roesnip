@@ -11,6 +11,14 @@ using RoeSnip.Recording.Gif;
 
 namespace RoeSnip.Recording;
 
+/// <summary>Point-in-time automation snapshot of the active recording session — see
+/// RecordingSession.GetAutomationSnapshot. SelectionVirtualDesktopPx has the monitor's own origin
+/// folded in (the virtual-desktop-physical-pixel convention AutomationServer's wire protocol uses
+/// everywhere).</summary>
+internal readonly record struct RecordingAutomationSnapshot(
+    string Phase, RecordingFormat Format, RectPhysical SelectionVirtualDesktopPx,
+    string EstimateText, GifSizePreset Preset, int Fps);
+
 /// <summary>Owns the single active recording (if any) for the whole process — mirrors
 /// OverlayController.IsSessionActive/s_activeSession's shape exactly. Wired into
 /// AppComposition.StartRecording from Program.cs's RunCaptureFlowAsync (see that hook's doc
@@ -73,6 +81,25 @@ internal static class RecordingController
         }
     }
 
+    // ---------- Automation hooks (App/AutomationServer.cs) ----------
+    //
+    // Thin static wrappers routing to the one active session, mirroring RequestStopAndSave's own
+    // "s_active?." pattern above.
+
+    internal static RecordingAutomationSnapshot? GetAutomationSnapshot() => s_active?.GetAutomationSnapshot();
+
+    internal static string? InvokeChromeAction(string action) =>
+        s_active?.InvokeChromeAction(action) ?? "no active recording session";
+
+    internal static string? SetSelectionForAutomation(RectPhysical virtualDesktopPx) =>
+        s_active?.SetSelectionForAutomation(virtualDesktopPx) ?? "no active recording session";
+
+    internal static string? SetSizePresetForAutomation(GifSizePreset preset) =>
+        s_active?.SetSizePresetForAutomation(preset) ?? "no active recording session";
+
+    internal static string? SetFpsForAutomation(int fps) =>
+        s_active?.SetFpsForAutomation(fps) ?? "no active recording session";
+
     internal static RectPhysical RoundDownToEven(RectPhysical selectionPx)
     {
         var n = selectionPx.Normalized();
@@ -120,12 +147,21 @@ internal sealed class RecordingSession
     private int _targetFps;
     private string? _mp4TempPath;
     private string? _gifTempPath;
+    // GIF downscaled render (quality/fps expansion workstream; Compact 0.75 / Minimal 0.5 — see
+    // GifEncoderOptions.RenderScale's own doc comment): the SCALED canvas dimensions GifEncoder.Create
+    // was actually opened with, and the scale that produced them. Fixed at BeginCapture, read by
+    // EncoderLoop every frame; 1.0/selection-sized is every other tier's (and MP4's) unchanged
+    // behavior.
+    private int _gifCanvasWidth;
+    private int _gifCanvasHeight;
+    private double _gifRenderScale = 1.0;
     private int _ended; // Interlocked guard — TeardownSession must run its body exactly once
 
     private Phase _phase = Phase.Setup;
     private bool _mic;
     private bool _systemAudio;
-    private GifSizePreset _gifSizePreset; // GIF only; read fresh into GifEncoder.Create at the NEXT BeginCapture after a Setup-phase change
+    private GifSizePreset _gifSizePreset; // GIF takes; read fresh into GifEncoder.Create at the NEXT BeginCapture after a Setup-phase change
+    private GifSizePreset _mp4SizePreset; // MP4 takes; own field, own settings key (Mp4SizePreset) - format-specific memory, see SetSizePreset
     private RoeSnipSettings _liveSettings = null!; // set in Start(); tracks audio-toggle/preset edits for persistence
 
     // Pause/resume of a live take (CHANGE 2): a single accumulator drives both the excluded-time
@@ -161,13 +197,23 @@ internal sealed class RecordingSession
         try
         {
             _uiDispatcher = Dispatcher.CurrentDispatcher;
-            // 50fps is GIF's format ceiling: delays are whole centiseconds and browsers clamp
-            // 0-1cs to 10cs, so 2cs is the smallest honest frame time (60fps is unrepresentable).
-            // Size is kept down by GifEncoder's skip-identical + changed-region delta encoding,
-            // not by a low fps - static pixels cost nothing at any capture rate, and if the
-            // encoder can't keep up with heavy motion the bounded DropOldest queue sheds frames
-            // while the patch-behind timestamps keep playback speed exact.
-            _targetFps = _format == RecordingFormat.Gif ? 50 : 30;
+            // Target fps comes from the format's own persisted setting (GifFps/Mp4Fps), clamped
+            // fail-safe into the format's allowed range (RecordingSizeEstimator.ClampFps) so a
+            // garbled or future-schema settings value never crashes the recording flow - same
+            // fail-closed-at-use-time convention SetSizePreset's Parse call already follows below.
+            // 50fps is still GIF's format ceiling: delays are whole centiseconds and browsers clamp
+            // 0-1cs to 10cs, so 2cs is the smallest honest frame time (60fps is unrepresentable) -
+            // see RecordingSizeEstimator.GifMaxFps's own doc comment for why every OTHER integer fps
+            // up to that ceiling is legal now (the patch-behind carry makes non-divisor rates average
+            // out exactly, not just the four old fixed divisor choices). Size is kept down by
+            // GifEncoder's skip-identical + changed-region delta encoding, not by a low fps -
+            // static pixels cost nothing at any capture rate, and if the encoder can't keep up
+            // with heavy motion the bounded DropOldest queue sheds frames while the patch-behind
+            // timestamps keep playback speed exact.
+            int requestedFps = _format == RecordingFormat.Gif ? _settings.GifFps : _settings.Mp4Fps;
+            _targetFps = _format == RecordingFormat.Gif
+                ? RecordingSizeEstimator.ClampFps(requestedFps, RecordingSizeEstimator.GifMinFps, RecordingSizeEstimator.GifMaxFps)
+                : RecordingSizeEstimator.ClampFps(requestedFps, RecordingSizeEstimator.Mp4MinFps, RecordingSizeEstimator.Mp4MaxFps);
 
             // Fixed tone-map options, computed ONCE here from monitor metadata — never re-derived
             // per frame or per take (a Restart reuses these). Per-frame auto-derived peak
@@ -185,6 +231,7 @@ internal sealed class RecordingSession
             _mic = _settings.RecordMicrophone;
             _systemAudio = _settings.RecordSystemAudio;
             _gifSizePreset = GifSizePresets.Parse(_settings.GifSizePreset);
+            _mp4SizePreset = GifSizePresets.Parse(_settings.Mp4SizePreset);
 
             // The visible "this area will be recorded" frame (both formats): dashed outline just
             // OUTSIDE the region; the inner is unpainted (true click-through) except while Shift/
@@ -194,7 +241,11 @@ internal sealed class RecordingSession
             _outline.RegionChanged += OnRegionMoved;
             _outline.Show(); // Setup mode by default: band resizes, Shift/Ctrl inside moves
 
-            _chrome = new RecordingChrome(_monitor, _selectionPx, _format, _mic, _systemAudio, _gifSizePreset);
+            // Chrome's size row shows the CURRENT FORMAT's own persisted preset - GIF and MP4 keep
+            // independent memory (RoeSnipSettings.GifSizePreset / Mp4SizePreset), so a take never
+            // inherits the other format's last-picked tier.
+            GifSizePreset initialSizePreset = _format == RecordingFormat.Gif ? _gifSizePreset : _mp4SizePreset;
+            _chrome = new RecordingChrome(_monitor, _selectionPx, _format, _mic, _systemAudio, initialSizePreset, _targetFps);
             _chrome.StartRequested += BeginCapture;
             _chrome.StopRequested += StopCaptureToReview;
             _chrome.PauseRequested += Pause;
@@ -204,7 +255,8 @@ internal sealed class RecordingSession
             _chrome.CancelRequested += CancelAndDiscard;
             _chrome.MicToggled += v => SetAudioToggle(mic: v, systemAudio: null);
             _chrome.SystemAudioToggled += v => SetAudioToggle(mic: null, systemAudio: v);
-            _chrome.GifSizePresetChanged += SetGifSizePreset;
+            _chrome.SizePresetChanged += SetSizePreset;
+            _chrome.FpsChanged += SetFps;
             _chrome.Show();
 
             Console.Error.WriteLine($"RoeSnip: recording setup opened ({_format}, {_selectionPx.Width}x{_selectionPx.Height})");
@@ -262,23 +314,59 @@ internal sealed class RecordingSession
         }
     }
 
-    /// <summary>RecordingChrome's Setup-panel GIF size row changed (GIF-only; the row itself is
-    /// collapsed for MP4 so this never fires for that format). Persists immediately, same
-    /// best-effort split as <see cref="SetAudioToggle"/>, AND updates <see cref="_gifSizePreset"/>
-    /// so the field a Setup-phase edit changes is exactly the one <see cref="BeginCapture"/> reads
-    /// from at the NEXT Start — the row is disabled outside Setup (see RecordingChrome.ApplyState),
-    /// so there is no live take whose already-built GifEncoder this could retroactively affect.</summary>
-    private void SetGifSizePreset(GifSizePreset preset)
+    /// <summary>RecordingChrome's Setup-panel size row changed (shown for BOTH formats as of the
+    /// recording-size-tiers workstream). Persists immediately, same best-effort split as
+    /// <see cref="SetAudioToggle"/>, to whichever settings key matches THIS session's own format
+    /// (GifSizePreset for a GIF take, Mp4SizePreset for an MP4 take — the two stay independent, see
+    /// RoeSnipSettings.Mp4SizePreset's own doc comment) AND updates the matching field so it's
+    /// exactly what <see cref="BeginCapture"/> reads from at the NEXT Start — the row is disabled
+    /// outside Setup (see RecordingChrome.ApplyState), so there is no live take whose already-built
+    /// encoder this could retroactively affect.</summary>
+    private void SetSizePreset(GifSizePreset preset)
     {
-        _gifSizePreset = preset;
-        _liveSettings = _liveSettings with { GifSizePreset = preset.ToString() };
+        if (_format == RecordingFormat.Gif)
+        {
+            _gifSizePreset = preset;
+            _liveSettings = _liveSettings with { GifSizePreset = preset.ToString() };
+        }
+        else
+        {
+            _mp4SizePreset = preset;
+            _liveSettings = _liveSettings with { Mp4SizePreset = preset.ToString() };
+        }
+
         try
         {
             SettingsStore.Save(_liveSettings);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to persist recording GIF size preset: {ex.Message}");
+            Console.Error.WriteLine($"RoeSnip: failed to persist recording size preset: {ex.Message}");
+        }
+    }
+
+    /// <summary>RecordingChrome's Setup-panel FPS row changed (quality/framerate decoupling
+    /// workstream, stage 3) — mirrors <see cref="SetSizePreset"/> exactly: persists to whichever
+    /// settings key matches THIS session's own format (GifFps for a GIF take, Mp4Fps for an MP4
+    /// take — see <see cref="RoeSnip.RoeSnipSettings.Mp4Fps"/>'s own doc comment for why the two
+    /// stay independent) and updates <see cref="_targetFps"/> so it's exactly what
+    /// <see cref="BeginCapture"/> reads from at the NEXT Start — the row is disabled outside Setup
+    /// (see RecordingChrome.ApplyState), so there is no live take whose already-built recorder/
+    /// encoder this could retroactively affect.</summary>
+    private void SetFps(int fps)
+    {
+        _targetFps = fps;
+        _liveSettings = _format == RecordingFormat.Gif
+            ? _liveSettings with { GifFps = fps }
+            : _liveSettings with { Mp4Fps = fps };
+
+        try
+        {
+            SettingsStore.Save(_liveSettings);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: failed to persist recording fps: {ex.Message}");
         }
     }
 
@@ -340,8 +428,12 @@ internal sealed class RecordingSession
                     }
                 }
                 _mp4TempPath = Path.Combine(Path.GetTempPath(), $"roesnip_rec_{Guid.NewGuid():N}.mp4");
+                // The preset is whatever the Setup-phase size row last selected for MP4 (or the
+                // persisted Mp4SizePreset default, if it was never touched this session) — same
+                // "next take" contract as the GIF branch's own preset read below.
                 _mp4Encoder = Mp4Encoder.Create(
-                    _mp4TempPath, _selectionPx.Width, _selectionPx.Height, _targetFps, withAudio: _audio is not null);
+                    _mp4TempPath, _selectionPx.Width, _selectionPx.Height, _targetFps,
+                    withAudio: _audio is not null, preset: _mp4SizePreset);
                 // Whether THIS take's MP4 carries an AAC track is fixed here forever — a soft stop
                 // releases the engine for the review span, and resume-from-review consults this to
                 // know whether to bring it back.
@@ -353,9 +445,17 @@ internal sealed class RecordingSession
                 // The preset is whatever the Setup-phase GIF row last selected (or the persisted
                 // settings default, if it was never touched this session) — see SetGifSizePreset's
                 // doc comment for why reading the field here is the correct "next take" contract.
-                _gifEncoder = GifEncoder.Create(
-                    _gifTempPath, _selectionPx.Width, _selectionPx.Height,
-                    options: GifSizePresets.ForPreset(_gifSizePreset));
+                var gifOptions = GifSizePresets.ForPreset(_gifSizePreset);
+                _gifRenderScale = gifOptions.RenderScale;
+                // Compact (0.75) and Minimal (0.5) set RenderScale < 1.0 today; every other tier keeps
+                // the encoder's canvas exactly the selection size (already even — RoundDownToEven
+                // upstream). Below 1.0, floor each dimension to even AFTER scaling (scaling an even
+                // selection can still land on an odd number, e.g. 802 -> 401 at 0.5, or 402 -> 301 at
+                // 0.75) — GifEncoder.Create has no tolerance for odd dimensions any more than the
+                // unscaled path does.
+                _gifCanvasWidth = _gifRenderScale < 1.0 ? ScaledCanvasDimension(_selectionPx.Width, _gifRenderScale) : _selectionPx.Width;
+                _gifCanvasHeight = _gifRenderScale < 1.0 ? ScaledCanvasDimension(_selectionPx.Height, _gifRenderScale) : _selectionPx.Height;
+                _gifEncoder = GifEncoder.Create(_gifTempPath, _gifCanvasWidth, _gifCanvasHeight, options: gifOptions);
             }
 
             // Started last (after the encoder is ready to receive frames) so no captured frame is
@@ -885,6 +985,13 @@ internal sealed class RecordingSession
         // harmless housekeeping, not because it's required for correctness.
         byte[]? gifTonemapA = null, gifTonemapB = null;
         bool gifUseA = true;
+        // GIF downscaled render (Compact/Minimal tiers, _gifRenderScale < 1.0 — see
+        // GifEncoderOptions.RenderScale's own doc comment): a THIRD persistent exactly-scaled-canvas
+        // buffer, allocated once on first use, that the box-filtered downsample writes into before
+        // AddFrame ever sees it. Kept separate from gifTonemapA/B (which stay full selection size,
+        // the tone-mapper's own output shape) rather than tone-mapping directly into a smaller
+        // buffer, since ToneMapper has no notion of a destination size different from its source.
+        byte[]? gifScaledScratch = null;
 
         try
         {
@@ -940,10 +1047,22 @@ internal sealed class RecordingSession
                                 : (gifTonemapB ??= new byte[frame.Width * 4 * frame.Height]);
                             var sdr = SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts, target);
 
+                            // Compact/Minimal tiers: box-filter the full-size tone-mapped frame down
+                            // into the reused scaled buffer BEFORE GifEncoder ever sees it — the
+                            // encoder's own canvas was opened at the scaled size in BeginCapture, so
+                            // every frame handed to AddFrame from here on must already match it.
+                            SdrImage encodeSource = sdr;
+                            if (_gifRenderScale < 1.0)
+                            {
+                                gifScaledScratch ??= new byte[_gifCanvasWidth * 4 * _gifCanvasHeight];
+                                BoxDownsampleGifFrame(sdr.Pixels, sdr.Width, sdr.Height, gifScaledScratch, _gifCanvasWidth, _gifCanvasHeight);
+                                encodeSource = new SdrImage(_gifCanvasWidth, _gifCanvasHeight, gifScaledScratch);
+                            }
+
                             // GifEncoder owns the timing: it diffs against the last emitted frame,
                             // skips no-change frames, crops to the changed region, and patches each
                             // frame's delay to its real display duration once the next frame lands.
-                            if (_gifEncoder!.AddFrame(sdr, effectiveTicks))
+                            if (_gifEncoder!.AddFrame(encodeSource, effectiveTicks))
                             {
                                 gifUseA = !gifUseA; // harmless housekeeping only — see the comment above
                             }
@@ -1003,6 +1122,67 @@ internal sealed class RecordingSession
         }
     }
 
+    /// <summary>UI thread (BeginCapture). Scales <paramref name="fullSize"/> by <paramref name="scale"/>
+    /// and floors the result to the nearest even number, minimum 2 — GifEncoder.Create's canvas
+    /// dimensions must be even for the same reason RecordingController.RoundDownToEven already
+    /// floors the UNSCALED selection (H.264 4:2:0 chroma subsampling on the MP4 path; kept even here
+    /// too purely for symmetry with that convention, GIF itself has no such constraint).</summary>
+    private static int ScaledCanvasDimension(int fullSize, double scale)
+    {
+        int scaled = (int)(fullSize * scale);
+        return Math.Max(2, scaled - (scaled % 2));
+    }
+
+    /// <summary>Encoder thread only. Box-filter downsample of a tone-mapped BGRA8 buffer into a
+    /// smaller, caller-owned destination buffer (GIF downscaled render, Compact 0.75 / Minimal 0.5
+    /// — see GifEncoderOptions.RenderScale's own doc comment). Each destination pixel averages the
+    /// axis-aligned source rect that maps to it under uniform (srcSize/dstSize) scaling — at
+    /// Minimal's 0.5 that rect is always a plain 2x2 block; at Compact's 0.75 (non-integer ratio)
+    /// the integer-floored boundaries produce a repeating 1,1,2-pixel rect pattern per axis, i.e.
+    /// an integer-snapped area average in which every source pixel contributes wholly to exactly
+    /// one destination pixel (no fractional edge weights — a deliberate approximation of the exact
+    /// fractional-coverage box filter, accepted because the per-pixel weight error is at most one
+    /// source pixel's worth and GifSizeBenchmarkTests' scale-aware visual gates measure the whole
+    /// 0.75 path at meanErr 1.26 on scroll text, nowhere near a legibility problem, without the
+    /// per-pixel weight state an exact filter would need in this alloc-free hot loop). The general
+    /// ratio math below works for any RenderScale in the validated 0.25-1.0 range without a
+    /// separate code path. Alloc-free: <paramref name="dst"/> is the caller's reused scratch buffer
+    /// (see EncoderLoop's own LOH/Gen2 discipline note), never allocated here.</summary>
+    private static void BoxDownsampleGifFrame(byte[] src, int srcWidth, int srcHeight, byte[] dst, int dstWidth, int dstHeight)
+    {
+        for (int dy = 0; dy < dstHeight; dy++)
+        {
+            int sy0 = dy * srcHeight / dstHeight;
+            int sy1 = Math.Min(srcHeight, Math.Max(sy0 + 1, (dy + 1) * srcHeight / dstHeight));
+            for (int dx = 0; dx < dstWidth; dx++)
+            {
+                int sx0 = dx * srcWidth / dstWidth;
+                int sx1 = Math.Min(srcWidth, Math.Max(sx0 + 1, (dx + 1) * srcWidth / dstWidth));
+
+                long sumB = 0, sumG = 0, sumR = 0;
+                int count = 0;
+                for (int sy = sy0; sy < sy1; sy++)
+                {
+                    int rowOffset = sy * srcWidth * 4;
+                    for (int sx = sx0; sx < sx1; sx++)
+                    {
+                        int so = rowOffset + sx * 4;
+                        sumB += src[so];
+                        sumG += src[so + 1];
+                        sumR += src[so + 2];
+                        count++;
+                    }
+                }
+
+                int doff = (dy * dstWidth + dx) * 4;
+                dst[doff] = (byte)(sumB / count);
+                dst[doff + 1] = (byte)(sumG / count);
+                dst[doff + 2] = (byte)(sumR / count);
+                dst[doff + 3] = 255;
+            }
+        }
+    }
+
     /// <summary>Encoder thread only. True when two raw captured frames carry identical pixel bytes
     /// (row-wise, padding excluded). Dimension/format mismatches count as changed.</summary>
     private static bool RawFramesEqual(CapturedFrame a, CapturedFrame b)
@@ -1019,6 +1199,108 @@ internal sealed class RecordingSession
             }
         }
         return true;
+    }
+
+    // ---------- Automation hooks (App/AutomationServer.cs) — UI thread only, same as every other
+    // method above driven by a chrome button click. ----------
+
+    internal RecordingAutomationSnapshot GetAutomationSnapshot()
+    {
+        var b = _monitor.BoundsPx;
+        var sel = new RectPhysical(
+            b.Left + _selectionPx.Left, b.Top + _selectionPx.Top,
+            b.Left + _selectionPx.Right, b.Top + _selectionPx.Bottom);
+        return new RecordingAutomationSnapshot(_phase.ToString(), _format, sel, _chrome!.EstimateText, _chrome!.CurrentSizePreset, _chrome!.CurrentFps);
+    }
+
+    /// <summary>AutomationServer's `select` command while a recording is in Setup: applies the rect
+    /// to RegionOutline through the exact band-drag code path (RegionChanged -> OnRegionMoved ->
+    /// chrome UpdateSelection all fire, same as a real drag) — see
+    /// RegionOutline.SetSelectionForAutomation.</summary>
+    internal string? SetSelectionForAutomation(RectPhysical virtualDesktopPx)
+    {
+        if (_phase != Phase.Setup)
+        {
+            return $"cannot change the selection while recording is {_phase}";
+        }
+        var b = _monitor.BoundsPx;
+        var monitorRelative = new RectPhysical(
+            virtualDesktopPx.Left - b.Left, virtualDesktopPx.Top - b.Top,
+            virtualDesktopPx.Right - b.Left, virtualDesktopPx.Bottom - b.Top);
+        _outline?.SetSelectionForAutomation(monitorRelative);
+        return null;
+    }
+
+    /// <summary>AutomationServer's `preset` command — only valid in Setup, same as a real chip
+    /// click (see RecordingChrome.ApplyState's IsEnabled gating on the size row).</summary>
+    internal string? SetSizePresetForAutomation(GifSizePreset preset)
+    {
+        if (_phase != Phase.Setup)
+        {
+            return $"cannot change the size preset while recording is {_phase}";
+        }
+        _chrome!.InvokeSizePreset(preset);
+        return null;
+    }
+
+    /// <summary>AutomationServer's `fps` command — only valid in Setup, same as a real slider drag
+    /// (see RecordingChrome.ApplyState's IsEnabled gating on the FPS row). Unlike
+    /// <see cref="SetSizePresetForAutomation"/>, the value isn't a fixed enum: AutomationProtocol.
+    /// ValidateArgs can only pure-validate up front that it's an integer somewhere in the UNION of
+    /// both formats' ranges (5-60, see that method's own doc comment) — so this live half
+    /// additionally rejects a value outside THIS session's own format's range, e.g. 55 offered
+    /// while recording GIF (whose ceiling is 50), giving the caller a real error instead of
+    /// RecordingChrome.InvokeFps's belt-and-braces exception.</summary>
+    internal string? SetFpsForAutomation(int fps)
+    {
+        if (_phase != Phase.Setup)
+        {
+            return $"cannot change fps while recording is {_phase}";
+        }
+        int min = _format == RecordingFormat.Gif ? RecordingSizeEstimator.GifMinFps : RecordingSizeEstimator.Mp4MinFps;
+        int max = _format == RecordingFormat.Gif ? RecordingSizeEstimator.GifMaxFps : RecordingSizeEstimator.Mp4MaxFps;
+        if (fps < min || fps > max)
+        {
+            return $"fps must be {min}-{max} for {_format}";
+        }
+        _chrome!.InvokeFps(fps);
+        return null;
+    }
+
+    /// <summary>AutomationServer's `chrome`/`escape` commands — raises the same button Click a real
+    /// mouse click on that chrome button would (see RecordingChrome's Invoke* methods), after
+    /// rejecting an action that button isn't valid for right now as an explicit error instead of
+    /// the silent no-op a disabled button would give.</summary>
+    internal string? InvokeChromeAction(string action)
+    {
+        switch (action)
+        {
+            case "start":
+                if (_phase != Phase.Setup) return $"cannot start while recording is {_phase}";
+                _chrome!.InvokeStartStop();
+                return null;
+            case "stop":
+                if (_phase != Phase.Capturing) return $"cannot stop while recording is {_phase}";
+                _chrome!.InvokeStartStop();
+                return null;
+            case "pause":
+                if (_phase != Phase.Capturing || _paused) return "cannot pause: not capturing, or already paused";
+                _chrome!.InvokePauseResume();
+                return null;
+            case "resume":
+                if (!_paused) return "cannot resume: not paused";
+                _chrome!.InvokePauseResume();
+                return null;
+            case "save":
+                if (_phase != Phase.Reviewing) return $"cannot save while recording is {_phase}";
+                _chrome!.InvokeSave();
+                return null;
+            case "cancel":
+                _chrome!.InvokeCancel();
+                return null;
+            default:
+                return $"unknown chrome action \"{action}\"";
+        }
     }
 
     /// <summary>Encoder thread only. Moves every queued audio chunk into the MP4 writer, mapping

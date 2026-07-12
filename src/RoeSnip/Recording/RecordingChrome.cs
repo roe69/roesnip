@@ -18,6 +18,7 @@ namespace RoeSnip.Recording;
 // UseWindowsForms, so System.Windows.Forms/System.Drawing collide with WPF names).
 using Color = System.Windows.Media.Color;
 using Button = System.Windows.Controls.Button;
+using ButtonBase = System.Windows.Controls.Primitives.ButtonBase;
 using Brushes = System.Windows.Media.Brushes;
 using Cursors = System.Windows.Input.Cursors;
 using FontFamily = System.Windows.Media.FontFamily;
@@ -33,9 +34,17 @@ using VAlign = System.Windows.VerticalAlignment;
 /// anchored just outside the recorded selection that walks the user through THREE states instead
 /// of starting capture the instant the format is chosen:
 ///   Setup     - nothing is being captured yet. Shows Start, the MP4-only audio toggles (Mic /
-///               System audio - hidden entirely for GIF, which has no audio track), the GIF-only
-///               size preset row (Quality/Balanced/Compact pills - hidden entirely for MP4, which
-///               has no size preset), and Cancel.
+///               System audio - hidden entirely for GIF, which has no audio track), the Quality
+///               row (Max/High/Medium/Low/Min pills, shown for BOTH formats as of the
+///               recording-size-tiers workstream, since MP4 bitrate tiers and GIF encoder tiers
+///               are the same five-way promise even though the codecs are unrelated - persisted
+///               enum members/settings strings stay Max/Quality/Balanced/Compact/Minimal, only the
+///               display label changed, see GifSizePresets.DisplayLabel), the FPS row directly
+///               under it (a free-integer slider over the format's own Min/MaxFps range -
+///               quality/framerate decoupling workstream, stage 3, widened from four fixed chips
+///               to a slider by the quality/fps expansion workstream: fps is an independent Setup
+///               choice instead of an emergent side effect of the quality tier) plus a live size
+///               estimate readout under both, and Cancel.
 ///   Recording - Start was pressed; the real WGC/encoder pipeline (RecordingController) is live.
 ///               Shows the red dot + ticking elapsed time and Stop. Audio toggles are disabled
 ///               here (the encoder already baked in whatever they were set to at Start - see
@@ -82,11 +91,27 @@ internal sealed class RecordingChrome : Window
     private readonly ToggleButton _micToggle;
     private readonly ToggleButton _systemAudioToggle;
     private readonly StackPanel _audioRow;
-    private readonly ToggleButton _gifQualityChip;
-    private readonly ToggleButton _gifBalancedChip;
-    private readonly ToggleButton _gifCompactChip;
-    private readonly StackPanel _gifSizeRow;
-    private GifSizePreset _gifSizePreset; // mirrors whichever chip is currently checked
+    private readonly ToggleButton _sizeMaxChip;
+    private readonly ToggleButton _sizeQualityChip;
+    private readonly ToggleButton _sizeBalancedChip;
+    private readonly ToggleButton _sizeCompactChip;
+    private readonly ToggleButton _sizeMinimalChip;
+    private readonly StackPanel _sizeRow;
+    // FPS row (quality/fps expansion workstream): a free-integer WPF Slider replaces the old
+    // four-chip row — see the ctor's own comment (where the slider is built) for why a slider fits
+    // a wide, mostly-continuous range better than a fixed chip set.
+    private readonly Slider _fpsSlider;
+    private readonly TextBlock _fpsValueLabel;
+    private readonly StackPanel _fpsRow;
+    // Debounces FpsChanged/SettingsStore.Save while the slider is actively being dragged — see
+    // RestartFpsDebounce's own doc comment.
+    private readonly DispatcherTimer _fpsDebounceTimer;
+    private int _lastPersistedFps; // last value FpsChanged actually fired for — suppresses a redundant persist
+    private readonly TextBlock _estimateText;
+    private GifSizePreset _sizePreset; // mirrors whichever size chip is currently checked
+    private int _fps; // mirrors the FPS slider's current value - drives the MP4/GIF estimate
+                       // together with _sizePreset; was a ctor-only readonly value pre-decoupling,
+                       // now user-editable in Setup like the size preset (see ApplyFpsValue)
     private readonly Button _restartButton;
     private readonly Button _saveButton;
     private readonly Button _cancelButton;
@@ -110,18 +135,25 @@ internal sealed class RecordingChrome : Window
     public event Action? CancelRequested;
     public event Action<bool>? MicToggled;
     public event Action<bool>? SystemAudioToggled;
-    /// <summary>Setup state's GIF size row - fires once per actual selection change (clicking the
-    /// already-checked chip is a no-op, see SelectGifSizePreset). Never fires for MP4 (the row is
-    /// collapsed and disabled outside GIF takes).</summary>
-    public event Action<GifSizePreset>? GifSizePresetChanged;
+    /// <summary>Setup state's size preset row - fires once per actual selection change (clicking
+    /// the already-checked chip is a no-op, see SelectSizePreset). Fires for BOTH formats now (the
+    /// row is shown for both) - RecordingSession.SetSizePreset persists to whichever settings key
+    /// matches the take's own format.</summary>
+    public event Action<GifSizePreset>? SizePresetChanged;
+    /// <summary>Setup state's FPS row (quality/framerate decoupling workstream, stage 3) - fires
+    /// once per actual selection change, same no-op-on-re-click contract as
+    /// <see cref="SizePresetChanged"/> above (see <see cref="SelectFps"/>).
+    /// RecordingSession.SetFps persists to whichever settings key matches the take's own format.</summary>
+    public event Action<int>? FpsChanged;
 
     public RecordingChrome(
         MonitorInfo monitor, RectPhysical selectionPx, RecordingFormat format,
-        bool initialMic, bool initialSystemAudio, GifSizePreset initialGifSizePreset)
+        bool initialMic, bool initialSystemAudio, GifSizePreset initialSizePreset, int fps)
     {
         _monitor = monitor;
         _selectionPx = selectionPx;
         _format = format;
+        _fps = fps;
 
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
@@ -186,6 +218,7 @@ internal sealed class RecordingChrome : Window
             bool on = _micToggle.IsChecked == true;
             SetAudioToggleLabel(_micToggle, "Mic", on);
             MicToggled?.Invoke(on);
+            UpdateEstimate(); // MP4 only in practice (this toggle is hidden for GIF), but harmless either way
         };
 
         _systemAudioToggle = BuildAudioToggle("System audio", initialSystemAudio);
@@ -195,6 +228,7 @@ internal sealed class RecordingChrome : Window
             bool on = _systemAudioToggle.IsChecked == true;
             SetAudioToggleLabel(_systemAudioToggle, "System audio", on);
             SystemAudioToggled?.Invoke(on);
+            UpdateEstimate();
         };
 
         _audioRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
@@ -203,27 +237,88 @@ internal sealed class RecordingChrome : Window
         // GIF has no audio track at all - the row is gone, not just grayed, since it never applies.
         _audioRow.Visibility = _format == RecordingFormat.Mp4 ? Visibility.Visible : Visibility.Collapsed;
 
-        // GIF-only size preset row - the audio row's mirror image (MP4 has no size preset, GIF has
-        // no audio track, so exactly one of the two rows is ever visible for a given take). Radio
-        // behavior across the three chips, not three independent booleans: exactly one is checked
-        // at all times, enforced by SelectGifSizePreset explicitly setting all three IsChecked
-        // values on every click (including a re-click of the already-checked chip, which
-        // ToggleButton's own built-in click-toggles-IsChecked behavior would otherwise uncheck).
-        _gifSizePreset = initialGifSizePreset;
-        _gifQualityChip = BuildSizePresetChip("Quality", initialGifSizePreset == GifSizePreset.Quality);
-        _gifQualityChip.Click += (_, _) => SelectGifSizePreset(GifSizePreset.Quality);
-        _gifBalancedChip = BuildSizePresetChip("Balanced", initialGifSizePreset == GifSizePreset.Balanced);
-        _gifBalancedChip.Click += (_, _) => SelectGifSizePreset(GifSizePreset.Balanced);
-        _gifCompactChip = BuildSizePresetChip("Compact", initialGifSizePreset == GifSizePreset.Compact);
-        _gifCompactChip.Click += (_, _) => SelectGifSizePreset(GifSizePreset.Compact);
+        // Size preset row - shown for BOTH formats as of the recording-size-tiers workstream (MP4
+        // bitrate tiers and GIF encoder tiers are the same five-way promise as of the quality/fps
+        // expansion workstream's Minimal tier). Radio behavior across the five chips, not five
+        // independent booleans: exactly one is checked at all times, enforced by SelectSizePreset
+        // explicitly setting all five chips' IsChecked values on every click (including a re-click
+        // of the already-checked chip, which ToggleButton's own built-in click-toggles-IsChecked
+        // behavior would otherwise uncheck). Chip TEXT is the Max/High/Medium/Low/Min display label
+        // (GifSizePresets.DisplayLabel) - the enum member names and persisted settings strings
+        // underneath stay Max/Quality/Balanced/Compact/Minimal unchanged.
+        _sizePreset = initialSizePreset;
+        _sizeMaxChip = BuildChip(GifSizePresets.DisplayLabel(GifSizePreset.Max), initialSizePreset == GifSizePreset.Max);
+        _sizeMaxChip.Click += (_, _) => SelectSizePreset(GifSizePreset.Max);
+        _sizeQualityChip = BuildChip(GifSizePresets.DisplayLabel(GifSizePreset.Quality), initialSizePreset == GifSizePreset.Quality);
+        _sizeQualityChip.Click += (_, _) => SelectSizePreset(GifSizePreset.Quality);
+        _sizeBalancedChip = BuildChip(GifSizePresets.DisplayLabel(GifSizePreset.Balanced), initialSizePreset == GifSizePreset.Balanced);
+        _sizeBalancedChip.Click += (_, _) => SelectSizePreset(GifSizePreset.Balanced);
+        _sizeCompactChip = BuildChip(GifSizePresets.DisplayLabel(GifSizePreset.Compact), initialSizePreset == GifSizePreset.Compact);
+        _sizeCompactChip.Click += (_, _) => SelectSizePreset(GifSizePreset.Compact);
+        _sizeMinimalChip = BuildChip(GifSizePresets.DisplayLabel(GifSizePreset.Minimal), initialSizePreset == GifSizePreset.Minimal);
+        _sizeMinimalChip.Click += (_, _) => SelectSizePreset(GifSizePreset.Minimal);
 
-        _gifSizeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
-        _gifSizeRow.Children.Add(_gifQualityChip);
-        _gifSizeRow.Children.Add(_gifBalancedChip);
-        _gifSizeRow.Children.Add(_gifCompactChip);
-        // MP4 has no size preset at all - inverted visibility from _audioRow, same "gone, not just
-        // grayed" reasoning (it never applies to that format).
-        _gifSizeRow.Visibility = _format == RecordingFormat.Gif ? Visibility.Visible : Visibility.Collapsed;
+        _sizeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+        _sizeRow.Children.Add(_sizeMaxChip);
+        _sizeRow.Children.Add(_sizeQualityChip);
+        _sizeRow.Children.Add(_sizeBalancedChip);
+        _sizeRow.Children.Add(_sizeCompactChip);
+        _sizeRow.Children.Add(_sizeMinimalChip);
+
+        // FPS row - the decoupled framerate axis sitting directly under Quality (quality/framerate
+        // decoupling workstream, stage 3). Quality/fps expansion workstream, stage 2: the old
+        // four-chip row (one fixed choice per format) is REPLACED by a free-integer slider now that
+        // RecordingSizeEstimator exposes a continuous Min/MaxFps range per format instead of an
+        // allowed set — a slider reads naturally over a ~45-value range where four discrete chips
+        // never could, and the patch-behind carry (GifEncoder.PatchLastDelay) makes every integer
+        // fps in range legal, not just the four old divisors of 100.
+        (int minFps, int maxFps) = _format == RecordingFormat.Gif
+            ? (RecordingSizeEstimator.GifMinFps, RecordingSizeEstimator.GifMaxFps)
+            : (RecordingSizeEstimator.Mp4MinFps, RecordingSizeEstimator.Mp4MaxFps);
+        _fpsSlider = new Slider
+        {
+            Minimum = minFps,
+            Maximum = maxFps,
+            Value = fps,
+            IsSnapToTickEnabled = true,
+            TickFrequency = 1,
+            Width = 150,
+            VerticalAlignment = VAlign.Center,
+            Focusable = false,
+        };
+        _fpsValueLabel = new TextBlock
+        {
+            Text = $"{fps} fps",
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 12,
+            Foreground = new SolidColorBrush(TextPrimary),
+            VerticalAlignment = VAlign.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+            MinWidth = 44,
+        };
+        // ValueChanged fires on every tick while dragging - update the label/estimate live (cheap,
+        // no I/O) but only ARM the debounce for the actual settings write (SetFps -> SettingsStore.
+        // Save), so a drag across the whole range writes to disk once, not per-tick.
+        _fpsSlider.ValueChanged += (_, e) =>
+        {
+            ApplyFpsValue((int)Math.Round(e.NewValue));
+            RestartFpsDebounce();
+        };
+        _fpsDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _fpsDebounceTimer.Tick += (_, _) => PersistFpsNow();
+        _lastPersistedFps = fps;
+
+        _fpsRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+        _fpsRow.Children.Add(_fpsSlider);
+        _fpsRow.Children.Add(_fpsValueLabel);
+
+        _estimateText = new TextBlock
+        {
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 11,
+            Foreground = new SolidColorBrush(TextMuted),
+            Margin = new Thickness(0, 3, 0, 0),
+        };
 
         _restartButton = BuildButton("Restart", isDanger: false);
         _restartButton.Click += (_, _) => ShowRestartConfirm();
@@ -247,7 +342,11 @@ internal sealed class RecordingChrome : Window
         _normalPanel = new StackPanel { Margin = new Thickness(12, 8, 12, 8) };
         _normalPanel.Children.Add(indicatorRow);
         _normalPanel.Children.Add(_audioRow);
-        _normalPanel.Children.Add(_gifSizeRow);
+        _normalPanel.Children.Add(BuildRowHeader("Quality"));
+        _normalPanel.Children.Add(_sizeRow);
+        _normalPanel.Children.Add(BuildRowHeader("FPS"));
+        _normalPanel.Children.Add(_fpsRow);
+        _normalPanel.Children.Add(_estimateText);
         _normalPanel.Children.Add(actionRow);
 
         // Inline restart confirmation (item: "guarded by a confirmation prompt"). Built in the SAME
@@ -292,6 +391,7 @@ internal sealed class RecordingChrome : Window
             Child = _root,
         };
 
+        UpdateEstimate();
         ApplyState();
     }
 
@@ -412,14 +512,17 @@ internal sealed class RecordingChrome : Window
         return toggle;
     }
 
-    /// <summary>One chip of the GIF size preset row - visually IDENTICAL recipe to
+    /// <summary>One chip of a radio-style row - visually IDENTICAL recipe to
     /// <see cref="BuildAudioToggle"/> (checked = solid orange fill + dark on-primary text, unchecked
-    /// = dim ghost pill + muted text), but the label is just the preset name with no on/off suffix:
-    /// unlike a standalone boolean toggle, this chip's meaning ("Balanced") is stated by its own
-    /// text regardless of which one is checked, and the checked/unchecked pair across all three
-    /// chips is what conveys the selection - reading any one chip's label already tells you what
-    /// selecting it would do.</summary>
-    private static ToggleButton BuildSizePresetChip(string label, bool initiallyChecked)
+    /// = dim ghost pill + muted text), but the label is just the choice's own name with no on/off
+    /// suffix: unlike a standalone boolean toggle, this chip's meaning ("Balanced", "25") is stated
+    /// by its own text regardless of which one is checked, and the checked/unchecked pair across
+    /// the row's chips is what conveys the selection - reading any one chip's label already tells
+    /// you what selecting it would do. Shared by BOTH the size preset row and the FPS row (the two
+    /// chip rows differ only in their choice set and what each click means, not in how a chip looks
+    /// or behaves) - see <see cref="SelectSizePreset"/>/<see cref="SelectFps"/> for the two radio
+    /// handlers that use it.</summary>
+    private static ToggleButton BuildChip(string label, bool initiallyChecked)
     {
         var chip = new ToggleButton
         {
@@ -459,27 +562,116 @@ internal sealed class RecordingChrome : Window
         return chip;
     }
 
-    /// <summary>One of the three GIF size chips was clicked. Enforces the radio invariant (exactly
-    /// one checked) by setting all three chips' IsChecked explicitly rather than trusting whichever
-    /// one ToggleButton itself already flipped - this both un-checks the other two on a real switch
+    /// <summary>Small muted caption above a chip row ("Quality" / "FPS") - the rows themselves carry
+    /// no other label, so without this the four/four chips would read as an unlabeled block.</summary>
+    private static TextBlock BuildRowHeader(string text) => new()
+    {
+        Text = text,
+        FontFamily = new FontFamily("Segoe UI"),
+        FontSize = 10,
+        Foreground = new SolidColorBrush(TextMuted),
+        Margin = new Thickness(0, 6, 0, 2),
+    };
+
+    /// <summary>Applies one chip's checked/unchecked visual state - the two properties every radio
+    /// handler below (<see cref="SelectSizePreset"/>, <see cref="SelectFps"/>) needs to set on every
+    /// chip in its row on every click (see <see cref="BuildChip"/>'s own doc comment for why
+    /// Foreground must be set here as a local value, not a template trigger).</summary>
+    private static void SetChipCheckedVisual(ToggleButton chip, bool isChecked)
+    {
+        chip.IsChecked = isChecked;
+        chip.Foreground = new SolidColorBrush(isChecked ? TextOnPrimary : TextMuted);
+    }
+
+    /// <summary>One of the four size chips was clicked. Enforces the radio invariant (exactly
+    /// one checked) by setting all four chips' IsChecked explicitly rather than trusting whichever
+    /// one ToggleButton itself already flipped - this both un-checks the other three on a real switch
     /// AND re-checks the clicked chip when it was already the selected one (ToggleButton's built-in
     /// click behavior would otherwise leave a no-op click showing NOTHING selected). Only raises
-    /// <see cref="GifSizePresetChanged"/> when the selection actually changed.</summary>
-    private void SelectGifSizePreset(GifSizePreset preset)
+    /// <see cref="SizePresetChanged"/> when the selection actually changed, but always recomputes the
+    /// estimate readout (even a no-op re-click leaves the text correct, cheaply).</summary>
+    private void SelectSizePreset(GifSizePreset preset)
     {
-        bool changed = preset != _gifSizePreset;
-        _gifSizePreset = preset;
+        bool changed = preset != _sizePreset;
+        _sizePreset = preset;
 
-        _gifQualityChip.IsChecked = preset == GifSizePreset.Quality;
-        _gifQualityChip.Foreground = new SolidColorBrush(preset == GifSizePreset.Quality ? TextOnPrimary : TextMuted);
-        _gifBalancedChip.IsChecked = preset == GifSizePreset.Balanced;
-        _gifBalancedChip.Foreground = new SolidColorBrush(preset == GifSizePreset.Balanced ? TextOnPrimary : TextMuted);
-        _gifCompactChip.IsChecked = preset == GifSizePreset.Compact;
-        _gifCompactChip.Foreground = new SolidColorBrush(preset == GifSizePreset.Compact ? TextOnPrimary : TextMuted);
+        SetChipCheckedVisual(_sizeMaxChip, preset == GifSizePreset.Max);
+        SetChipCheckedVisual(_sizeQualityChip, preset == GifSizePreset.Quality);
+        SetChipCheckedVisual(_sizeBalancedChip, preset == GifSizePreset.Balanced);
+        SetChipCheckedVisual(_sizeCompactChip, preset == GifSizePreset.Compact);
+        SetChipCheckedVisual(_sizeMinimalChip, preset == GifSizePreset.Minimal);
 
+        UpdateEstimate();
         if (changed)
         {
-            GifSizePresetChanged?.Invoke(preset);
+            SizePresetChanged?.Invoke(preset);
+        }
+    }
+
+    /// <summary>Applies a new fps value to the slider's own visible state (mirror field, value
+    /// label, live estimate) — called from every ValueChanged tick during a drag AND from
+    /// <see cref="InvokeFps"/>, so both a live drag and an automation-driven set go through the
+    /// exact same "what does this fps value look like" logic. Deliberately does NOT touch
+    /// persistence/<see cref="FpsChanged"/> - see <see cref="RestartFpsDebounce"/>/
+    /// <see cref="PersistFpsNow"/> for that half.</summary>
+    private void ApplyFpsValue(int fps)
+    {
+        _fps = fps;
+        _fpsValueLabel.Text = $"{fps} fps";
+        UpdateEstimate();
+    }
+
+    /// <summary>Restarts the debounce window every time the slider moves (drag or arrow-key step):
+    /// <see cref="_fpsDebounceTimer"/>'s Tick only ever fires once the value has sat still for its
+    /// whole interval, so a continuous drag across the full range writes to
+    /// <see cref="RoeSnip.App.SettingsStore"/> exactly once (at drag-end, or after the same short
+    /// pause), not once per tick — "best-effort save must not spam disk per tick" per this
+    /// workstream's own rule. <see cref="PersistFpsNow"/> is the eventual landing point either way,
+    /// whether reached by this timer or by an immediate automation set.</summary>
+    private void RestartFpsDebounce()
+    {
+        _fpsDebounceTimer.Stop();
+        _fpsDebounceTimer.Start();
+    }
+
+    /// <summary>The actual persistence half of an fps change: raises <see cref="FpsChanged"/> (which
+    /// RecordingSession.SetFps turns into a SettingsStore.Save), but only when the value genuinely
+    /// differs from the last value actually persisted - same no-op-suppression contract the old
+    /// chip row's SelectFps had, just decoupled from "the UI value changed" (which happens every
+    /// slider tick) instead of coupled to it.</summary>
+    private void PersistFpsNow()
+    {
+        _fpsDebounceTimer.Stop();
+        if (_fps == _lastPersistedFps)
+        {
+            return;
+        }
+        _lastPersistedFps = _fps;
+        FpsChanged?.Invoke(_fps);
+    }
+
+    /// <summary>Recomputes the live size-estimate readout from the current selection size, checked
+    /// size chip, current FPS slider value, and (MP4 only) audio toggle state - see
+    /// RecordingSizeEstimator for the actual math. Called from the ctor (initial value),
+    /// SelectSizePreset (chip clicks) / ApplyFpsValue (every slider tick), UpdateSelection
+    /// (Setup-phase region resize/move), and the audio toggle click handlers.</summary>
+    private void UpdateEstimate()
+    {
+        int width = Math.Max(1, _selectionPx.Width);
+        int height = Math.Max(1, _selectionPx.Height);
+        if (_format == RecordingFormat.Mp4)
+        {
+            bool audioEnabled = _micToggle.IsChecked == true || _systemAudioToggle.IsChecked == true;
+            double bytesPerSecond = RecordingSizeEstimator.Mp4BytesPerSecond(width, height, _fps, _sizePreset, audioEnabled);
+            _estimateText.Text = RecordingSizeEstimator.FormatEstimate(bytesPerSecond);
+        }
+        else
+        {
+            double bytesPerSecond = RecordingSizeEstimator.GifTypicalBytesPerSecond(width, height, _fps, _sizePreset);
+            // GIF's estimate is a typical-activity guess (see GifTypicalBytesPerSecond's own doc
+            // comment), never a bound - the suffix says so, MP4's tighter target-bitrate estimate
+            // above does not get one.
+            _estimateText.Text = RecordingSizeEstimator.FormatEstimate(bytesPerSecond) + " (varies with motion)";
         }
     }
 
@@ -567,11 +759,13 @@ internal sealed class RecordingChrome : Window
         NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_TOPMOST, x, y, barWidthPx, barHeightPx, NativeMethods.SWP_NOACTIVATE);
     }
 
-    /// <summary>The user dragged the recorded region (RegionOutline): follow it so the HUD stays
-    /// anchored to the region's new spot. UI thread.</summary>
+    /// <summary>The user dragged or resized the recorded region (RegionOutline): follow it so the
+    /// HUD stays anchored to the region's new spot, and (a size change during Setup) so the live
+    /// estimate readout reflects the new pixel dimensions. UI thread.</summary>
     public void UpdateSelection(RectPhysical selectionPx)
     {
         _selectionPx = selectionPx;
+        UpdateEstimate();
         RequestReposition();
     }
 
@@ -655,10 +849,14 @@ internal sealed class RecordingChrome : Window
         _micToggle.IsEnabled = _state == ChromeState.Setup;
         _systemAudioToggle.IsEnabled = _state == ChromeState.Setup;
 
-        // GIF size preset is likewise fixed per take (baked into GifEncoder.Create at Start) - only
-        // editable in Setup. Disabled on the whole row (not hidden) once running, mirroring the
-        // audio toggles above rather than the row's own Visibility (that stays GIF-vs-MP4 only).
-        _gifSizeRow.IsEnabled = _state == ChromeState.Setup;
+        // Size preset is likewise fixed per take (baked into GifEncoder.Create/Mp4Encoder.Create at
+        // Start) - only editable in Setup. Disabled on the whole row (not hidden) once running,
+        // mirroring the audio toggles above; the row itself is always visible now (both formats).
+        _sizeRow.IsEnabled = _state == ChromeState.Setup;
+
+        // FPS is likewise fixed per take (baked into RegionRecorder/GifEncoder.Create/Mp4Encoder.Create
+        // at Start via RecordingSession._targetFps) - same Setup-only editability as the size row.
+        _fpsRow.IsEnabled = _state == ChromeState.Setup;
 
         // Restart only makes sense once something has actually been captured.
         _restartButton.IsEnabled = _state != ChromeState.Setup;
@@ -699,5 +897,65 @@ internal sealed class RecordingChrome : Window
     {
         try { Close(); }
         catch (InvalidOperationException) { /* already closing */ }
+    }
+
+    // ---------- Automation hooks (App/AutomationServer.cs) ----------
+    //
+    // Each Invoke* method raises the SAME Click routed event a real mouse click on that exact
+    // button would (RaiseEvent, not a direct call into the handler) - the state-gating each
+    // button's own Click handler already does (Start-vs-Stop sharing one button, e.g.) applies
+    // unchanged, so these can never desync from what a real click does. RecordingSession's own
+    // InvokeChromeAction wraps these with the phase validity checks a disabled button would
+    // otherwise silently enforce (see that method).
+
+    /// <summary>The live size-estimate readout's text, verbatim - AutomationServer's `state`
+    /// command reports this exactly as shown, not a re-derived value.</summary>
+    internal string EstimateText => _estimateText.Text;
+
+    /// <summary>Mirrors whichever size chip is currently checked.</summary>
+    internal GifSizePreset CurrentSizePreset => _sizePreset;
+
+    /// <summary>Mirrors the FPS slider's current value.</summary>
+    internal int CurrentFps => _fps;
+
+    internal void InvokeStartStop() => _startStopButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    internal void InvokePauseResume() => _pauseResumeButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    internal void InvokeSave() => _saveButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    internal void InvokeCancel() => _cancelButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+
+    internal void InvokeSizePreset(GifSizePreset preset)
+    {
+        var chip = preset switch
+        {
+            GifSizePreset.Max => _sizeMaxChip,
+            GifSizePreset.Quality => _sizeQualityChip,
+            GifSizePreset.Balanced => _sizeBalancedChip,
+            GifSizePreset.Compact => _sizeCompactChip,
+            GifSizePreset.Minimal => _sizeMinimalChip,
+            _ => throw new ArgumentOutOfRangeException(nameof(preset), preset, "Unknown GifSizePreset."),
+        };
+        chip.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    }
+
+    /// <summary>Automation's equivalent of dragging the FPS slider to an exact value (quality/fps
+    /// expansion workstream). RecordingSession.SetFpsForAutomation already rejects a value outside
+    /// the current format's own Min/MaxFps range before ever calling this, so the range check below
+    /// is a belt-and-braces invariant check, not a normal error path. Unlike a real drag, this must
+    /// take effect (and persist) IMMEDIATELY rather than waiting out the debounce window — an
+    /// automation caller has no way to "wait for the drag to settle", and the old chip-click
+    /// contract this replaces always persisted synchronously — so this sets the slider's value
+    /// (which raises ValueChanged when it actually differs), then unconditionally re-applies and
+    /// force-persists rather than relying on that event alone, since WPF does not raise ValueChanged
+    /// for a same-value set and a same-value automation call must still behave like a real
+    /// re-click of the current value (recompute, no-op on persistence).</summary>
+    internal void InvokeFps(int fps)
+    {
+        if (fps < (int)_fpsSlider.Minimum || fps > (int)_fpsSlider.Maximum)
+        {
+            throw new ArgumentOutOfRangeException(nameof(fps), fps, "fps is outside this format's slider range.");
+        }
+        _fpsSlider.Value = fps;
+        ApplyFpsValue(fps);
+        PersistFpsNow();
     }
 }

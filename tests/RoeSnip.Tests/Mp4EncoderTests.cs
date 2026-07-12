@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using RoeSnip.Imaging;
 using RoeSnip.Recording;
+using RoeSnip.Recording.Gif;
 using Vortice.MediaFoundation;
 using Xunit;
 
@@ -40,6 +41,155 @@ public class Mp4EncoderTests
     {
         long bitrate = Mp4Encoder.ComputeBitrate(width, height, fps);
         Assert.InRange(bitrate, 2_000_000, 16_000_000);
+    }
+
+    // ---------- Recording-size-tiers overload: ComputeBitrate(w, h, fps, GifSizePreset) ----------
+
+    [Theory]
+    [InlineData(1280, 720, 30)]
+    [InlineData(64, 64, 12)]
+    [InlineData(3840, 2160, 60)]
+    [InlineData(640, 400, 50)]
+    public void ComputeBitrate_QualityPreset_MatchesLegacyThreeArgOverloadExactly(int width, int height, int fps)
+    {
+        long viaPreset = Mp4Encoder.ComputeBitrate(width, height, fps, GifSizePreset.Quality);
+        long legacy = Mp4Encoder.ComputeBitrate(width, height, fps);
+        Assert.Equal(legacy, viaPreset);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Max_TypicalSelection_Is4xTheQualityFactor()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(1280, 720, 30, GifSizePreset.Max);
+        // 4.0 * 0.1 * 1280 * 720 * 30 = 11,059,200 — inside [8e6, 64e6], not clamped.
+        Assert.Equal(11_059_200, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Max_TinySelection_ClampsToTheEightMbpsFloor()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(64, 64, 12, GifSizePreset.Max);
+        Assert.Equal(8_000_000, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Max_HugeSelection_ClampsToTheSixtyFourMbpsCeiling()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(3840, 2160, 60, GifSizePreset.Max);
+        Assert.Equal(64_000_000, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Balanced_TypicalSelection_Is0Point6xTheQualityFactor()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(1280, 720, 30, GifSizePreset.Balanced);
+        // 0.6 * 0.1 * 1280 * 720 * 30 = 1,658,880 — inside [1.5e6, 10e6], not clamped.
+        Assert.Equal(1_658_880, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Balanced_TinySelection_ClampsToTheOnePointFiveMbpsFloor()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(64, 64, 12, GifSizePreset.Balanced);
+        Assert.Equal(1_500_000, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Balanced_HugeSelection_ClampsToTheTenMbpsCeiling()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(3840, 2160, 60, GifSizePreset.Balanced);
+        Assert.Equal(10_000_000, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Compact_TypicalSelection_Is0Point35xTheQualityFactor()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(1920, 1080, 30, GifSizePreset.Compact);
+        // 0.35 * 0.1 * 1920 * 1080 * 30 = 2,177,280 mathematically, but 0.35 * 0.1 is not exactly
+        // representable in double (like the legacy overload's own 0.1 factor) — the actual
+        // left-to-right double multiplication lands one ulp below the whole number, and the
+        // (long) cast in ComputeBitrate truncates rather than rounds, so the real return value is
+        // 2,177,279. Still comfortably inside [1e6, 6e6], not clamped.
+        Assert.Equal(2_177_279, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Compact_SmallSelection_ClampsToTheOneMbpsFloor()
+    {
+        // 0.35 * 0.1 * 1280 * 720 * 30 = 967,680 — below the 1e6 floor even at a common 720p30
+        // selection, unlike Balanced/Max at the same size.
+        long bitrate = Mp4Encoder.ComputeBitrate(1280, 720, 30, GifSizePreset.Compact);
+        Assert.Equal(1_000_000, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Compact_HugeSelection_ClampsToTheSixMbpsCeiling()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(3840, 2160, 60, GifSizePreset.Compact);
+        Assert.Equal(6_000_000, bitrate);
+    }
+
+    [Theory]
+    [InlineData(GifSizePreset.Max, 8_000_000, 64_000_000)]
+    [InlineData(GifSizePreset.Quality, 2_000_000, 16_000_000)]
+    [InlineData(GifSizePreset.Balanced, 1_500_000, 10_000_000)]
+    [InlineData(GifSizePreset.Compact, 1_000_000, 6_000_000)]
+    [InlineData(GifSizePreset.Minimal, 500_000, 3_000_000)]
+    public void ComputeBitrate_NeverEscapesItsOwnClampedBand(GifSizePreset preset, long min, long max)
+    {
+        Assert.InRange(Mp4Encoder.ComputeBitrate(1, 1, 1, preset), min, max);
+        Assert.InRange(Mp4Encoder.ComputeBitrate(7680, 4320, 60, preset), min, max);
+    }
+
+    // ---------- Minimal tier (quality/fps expansion workstream) ----------
+
+    [Fact]
+    public void ComputeBitrate_Minimal_TypicalSelection_Is0Point15xTheQualityFactor()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(1280, 720, 30, GifSizePreset.Minimal);
+        // 0.15 * 0.1 * 1280 * 720 * 30 = 414,720 — below the 500k floor at this common 720p30
+        // selection (Minimal's clamp band starts noticeably higher than its unclamped formula
+        // would produce here, unlike Balanced/Max at the same size).
+        Assert.Equal(500_000, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Minimal_LargeSelection_UnclampedInBand()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(1920, 1080, 30, GifSizePreset.Minimal);
+        // 0.15 * 0.1 * 1920 * 1080 * 30 = 933,120 mathematically, but (like the Compact case above)
+        // 0.15 * 0.1 is not exactly representable in double, so the real left-to-right double
+        // multiplication lands one ulp below the whole number and the truncating (long) cast in
+        // ComputeBitrate returns 933,119. Still comfortably inside [500k, 3M], not clamped.
+        Assert.Equal(933_119, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Minimal_TinySelection_ClampsToTheFiveHundredKbpsFloor()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(64, 64, 12, GifSizePreset.Minimal);
+        Assert.Equal(500_000, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Minimal_HugeSelection_ClampsToTheThreeMbpsCeiling()
+    {
+        long bitrate = Mp4Encoder.ComputeBitrate(3840, 2160, 60, GifSizePreset.Minimal);
+        Assert.Equal(3_000_000, bitrate);
+    }
+
+    [Fact]
+    public void ComputeBitrate_Minimal_IsTheSmallestOfAllTiersAtTheSameSelection()
+    {
+        long minimal = Mp4Encoder.ComputeBitrate(1920, 1080, 30, GifSizePreset.Minimal);
+        long compact = Mp4Encoder.ComputeBitrate(1920, 1080, 30, GifSizePreset.Compact);
+        long balanced = Mp4Encoder.ComputeBitrate(1920, 1080, 30, GifSizePreset.Balanced);
+        long quality = Mp4Encoder.ComputeBitrate(1920, 1080, 30, GifSizePreset.Quality);
+        long max = Mp4Encoder.ComputeBitrate(1920, 1080, 30, GifSizePreset.Max);
+        Assert.True(minimal <= compact);
+        Assert.True(compact <= balanced);
+        Assert.True(balanced <= quality);
+        Assert.True(quality <= max);
     }
 
     /// <summary>Decode-back regression test for the vertical-flip bug: Mp4Encoder.Create's input

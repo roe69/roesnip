@@ -12,7 +12,25 @@ namespace RoeSnip.Recording.Gif;
 /// baseline must hold SOURCE values, not quantized ones).
 ///
 /// Every output buffer (<paramref name="indexScratch"/> and the baseline itself) is caller-owned
-/// and reused frame to frame — this runs at recording cadence, so nothing here allocates.</summary>
+/// and reused frame to frame — this runs at recording cadence, so nothing here allocates.
+///
+/// LOSSY RUN-EXTENSION (quality/fps expansion workstream, <paramref name="lossyRunThresholdSq"/>
+/// on the tiers that enable it — see <see cref="RoeSnip.Recording.Gif.GifEncoderOptions.LossyRunThresholdSq"/>'s
+/// own doc comment): a gifsicle-style lever, applied per row, left to right. Every row tracks the
+/// most recently PAINTED pixel's palette index (never the transparent index — a pixel classified
+/// transparent by the tolerance test above leaves that tracker untouched, so a lossy candidate can
+/// still look back across a transparent gap to the last real paint). When a candidate pixel would
+/// otherwise need a fresh LUT lookup, if the tracked index is a real palette entry and this pixel's
+/// SOURCE color is within <paramref name="lossyRunThresholdSq"/> (redmean-squared) of THAT entry's
+/// actual palette color, the pixel reuses the tracked index outright instead of resolving its own
+/// nearest color — no dither, no new LUT bucket fill. This is what turns a near-solid run (a UI
+/// fill, an anti-aliased glyph edge, a scroll-band background) into a genuinely long run of
+/// IDENTICAL indices for the LZW stage to compress, rather than alternating between two or three
+/// perceptually-indistinguishable-but-numerically-different palette entries. The baseline still
+/// records the pixel's own SOURCE value on a reuse (same drift rule as every other painted pixel —
+/// see the class doc above), so the bounded-error guarantee this buys is against the SOURCE, not
+/// against whatever the run's first pixel happened to look like: every reused pixel's displayed
+/// color is within threshold of its own true value, not just close to its neighbor.</summary>
 public static class GifDelta
 {
     // Standard 4x4 Bayer ordered-dither threshold matrix, values 0-15.
@@ -49,12 +67,16 @@ public static class GifDelta
         int transparentIndex,
         bool allowTransparency,
         byte channelTolerance,
-        byte ditherErrorFloor)
+        byte ditherErrorFloor,
+        int lossyRunThresholdSq = 0)
     {
         for (int y = box.Top; y < box.Bottom; y++)
         {
             int rowOffset = y * canvasWidth * 4;
             int bayerRow = (y & 3) * 4;
+            // Per-row run tracker (see class doc comment) — reset at the start of every row since a
+            // run never spans a row boundary; -1 means "no real paint yet this row".
+            int lastPaintedIndex = -1;
             for (int x = box.Left; x < box.Right; x++)
             {
                 int po = rowOffset + x * 4;
@@ -70,7 +92,29 @@ public static class GifDelta
                     int db = Math.Abs(b - lb), dg = Math.Abs(g - lg), dr = Math.Abs(r - lr);
                     if (db <= channelTolerance && dg <= channelTolerance && dr <= channelTolerance)
                     {
+                        // Not painted — leave lastPaintedIndex untouched (see class doc: a lossy
+                        // candidate later in the row can still look back across this gap).
                         indexScratch[po >> 2] = (byte)transparentIndex;
+                        continue;
+                    }
+                }
+
+                // Lossy run-extension fast path (disabled when lossyRunThresholdSq is 0, the default
+                // for every tier that must stay bit-exact — Max/Quality). Tried BEFORE the normal LUT
+                // lookup/dither below, never across the transparent index (lastPaintedIndex is only
+                // ever a real palette entry — see the class doc for why that's true by construction).
+                if (lossyRunThresholdSq > 0 && lastPaintedIndex >= 0)
+                {
+                    int rpo = lastPaintedIndex * 3;
+                    byte rb = paletteBgr[rpo], rg = paletteBgr[rpo + 1], rr = paletteBgr[rpo + 2];
+                    double runDist = GifColorDistance.RedmeanSquared(b, g, r, rb, rg, rr);
+                    if (runDist <= lossyRunThresholdSq)
+                    {
+                        indexScratch[po >> 2] = (byte)lastPaintedIndex;
+                        lastPaintedPixelsBgra[po] = b;
+                        lastPaintedPixelsBgra[po + 1] = g;
+                        lastPaintedPixelsBgra[po + 2] = r;
+                        lastPaintedPixelsBgra[po + 3] = 255;
                         continue;
                     }
                 }
@@ -105,6 +149,7 @@ public static class GifDelta
                 lastPaintedPixelsBgra[po + 1] = g;
                 lastPaintedPixelsBgra[po + 2] = r;
                 lastPaintedPixelsBgra[po + 3] = 255;
+                lastPaintedIndex = finalIndex; // always a real palette entry, never transparentIndex
             }
         }
     }

@@ -298,6 +298,34 @@ public static class OverlayController
         }
     }
 
+    // ---------- Automation hooks (App/AutomationServer.cs) ----------
+    //
+    // The dev-gated automation channel drives the SAME session the mouse/keyboard already drive -
+    // these are thin wrappers only because OverlaySession is a private nested class and its own
+    // OnCommand/_windows fields are private; every one of them calls straight into that existing
+    // logic (SetSelection, OnCommand), never duplicates it. All take/return virtual-desktop
+    // physical pixels (monitor origin folded in) to match AutomationServer's wire protocol.
+
+    /// <summary>The active session's current selection, or null if nothing is selected (or no
+    /// session is active).</summary>
+    internal static RectPhysical? GetSelectionForAutomation() => s_activeSession?.GetSelectionForAutomation();
+
+    /// <summary>Sets the selection on whichever monitor's window contains
+    /// <paramref name="virtualDesktopPx"/>'s top-left corner, through the exact SetSelection path
+    /// Ctrl+A (select-all) uses, so the dim mask and toolbar placement update exactly as a
+    /// completed drag would leave them. Null on success, else an error string.</summary>
+    internal static string? SetSelectionForAutomation(RectPhysical virtualDesktopPx) =>
+        s_activeSession?.SetSelectionForAutomation(virtualDesktopPx) ?? "no active overlay session";
+
+    /// <summary>Invokes the same OverlayCommand.RecordMp4/RecordGif the toolbar's Record menu
+    /// choices raise.</summary>
+    internal static string? RecordForAutomation(RecordingFormat format) =>
+        s_activeSession?.RecordForAutomation(format) ?? "no active overlay session";
+
+    /// <summary>Invokes the same OverlayCommand.Cancel the toolbar's X button raises.</summary>
+    internal static string? CancelForAutomation() =>
+        s_activeSession?.CancelForAutomation() ?? "no active overlay session";
+
     // ---------- Standalone ColorPickerWindow (UX round 2) ----------
 
     private static ColorPickerWindow? s_colorPickerWindow;
@@ -998,6 +1026,69 @@ public static class OverlayController
             }
 
             _completion.TrySetResult(result);
+        }
+
+        // ---------- Automation hooks (App/AutomationServer.cs) — see OverlayController's own
+        // wrapper methods for why these exist on this private nested class instead of being called
+        // directly. ----------
+
+        internal RectPhysical? GetSelectionForAutomation()
+        {
+            var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
+            if (window is null)
+            {
+                return null;
+            }
+            var sel = window.SelectionPx!.Value;
+            var b = window.Monitor.BoundsPx;
+            return new RectPhysical(b.Left + sel.Left, b.Top + sel.Top, b.Left + sel.Right, b.Top + sel.Bottom);
+        }
+
+        internal string? SetSelectionForAutomation(RectPhysical virtualDesktopPx)
+        {
+            var window = _windows.FirstOrDefault(w =>
+            {
+                var b = w.Monitor.BoundsPx;
+                return virtualDesktopPx.Left >= b.Left && virtualDesktopPx.Left < b.Right
+                    && virtualDesktopPx.Top >= b.Top && virtualDesktopPx.Top < b.Bottom;
+            });
+            if (window is null)
+            {
+                return "selection rect's top-left corner is not on any monitor";
+            }
+
+            var bounds = window.Monitor.BoundsPx;
+            var monitorRelative = new RectPhysical(
+                virtualDesktopPx.Left - bounds.Left, virtualDesktopPx.Top - bounds.Top,
+                virtualDesktopPx.Right - bounds.Left, virtualDesktopPx.Bottom - bounds.Top);
+
+            // Same bookkeeping a real drag-start on this monitor triggers: clear any selection on
+            // every OTHER monitor (selection lives on exactly one at a time) and make this the
+            // active/focused window.
+            OnSelectionStarted(window);
+            if (!ReferenceEquals(_activeWindow, window))
+            {
+                _activeWindow = window;
+                window.Activate();
+            }
+            window.SetSelectionForAutomation(monitorRelative);
+            return null;
+        }
+
+        internal string? RecordForAutomation(RecordingFormat format)
+        {
+            if (_windows.FirstOrDefault(w => w.SelectionPx is not null) is null)
+            {
+                return "no selection to record";
+            }
+            OnCommand(format == RecordingFormat.Gif ? OverlayCommand.RecordGif : OverlayCommand.RecordMp4);
+            return null;
+        }
+
+        internal string? CancelForAutomation()
+        {
+            OnCommand(OverlayCommand.Cancel);
+            return null;
         }
 
         /// <summary>The MonitorInfo for every monitor this session captured — used only to know

@@ -1293,6 +1293,17 @@ public partial class OverlayWindow : Window
         }
     }
 
+    /// <summary>AutomationServer hook (dev-gated automation channel — App/AutomationServer.cs):
+    /// sets the selection exactly the way Ctrl+A (select-all) does, so UpdateDimGeometry/
+    /// UpdateToolbarPlacement fire the same as a completed drag would leave them (selection
+    /// visible, toolbar shown). rect is MONITOR-RELATIVE physical pixels, the same convention every
+    /// other selection path in this class uses.</summary>
+    internal void SetSelectionForAutomation(RectPhysical monitorRelativeRect)
+    {
+        Annotations.Deselect();
+        SetSelection(ClampToFrame(monitorRelativeRect));
+    }
+
     /// <summary>Clears this window's selection/annotations — called by OverlayController when a
     /// new drag starts on a different monitor (selection lives on exactly one monitor at a time).</summary>
     internal void ClearSelection()

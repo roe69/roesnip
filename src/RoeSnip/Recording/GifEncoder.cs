@@ -10,14 +10,14 @@ namespace RoeSnip.Recording;
 /// <summary>Streams frames straight to a temp file as an animated GIF, building the LZW-compressed
 /// bytes itself instead of round-tripping every frame through WPF's <c>GifBitmapEncoder</c> (the old
 /// design — see git history for what that cost: a fresh managed byte[] per frame, routinely over the
-/// 85,000-byte LOH threshold, at recording cadence). The whole delta/palette/pacing pipeline lives in
+/// 85,000-byte LOH threshold, at recording cadence). The whole delta/palette pipeline lives in
 /// <c>RoeSnip.Recording.Gif</c> (<see cref="GifOctreeQuantizer"/>, <see cref="GifNearestColorLut"/>,
 /// <see cref="GifDelta"/>, <see cref="GifLzwEncoder"/>) — this class is orchestration only: it owns
 /// the frame-to-frame state (the diff baseline, the current palette, the reusable scratch buffers)
 /// and assembles each frame's GCE + Image Descriptor + Local Color Table + LZW data directly onto the
 /// output stream.
 ///
-/// Size/smoothness scheme (the timestamped <see cref="AddFrame(SdrImage, long)"/> overload — the
+/// Size/quality scheme (the timestamped <see cref="AddFrame(SdrImage, long)"/> overload — the
 /// recording path): a "last painted" canvas-sized BGRA8 buffer (allocated once, in <see cref="_lastPaintedPixelsBgra"/>)
 /// tracks what a viewer's screen would actually show. Every incoming frame is diffed against it with a
 /// per-channel tolerance (<see cref="GifEncoderOptions.ChannelTolerance"/>, Chebyshev) via
@@ -32,19 +32,25 @@ namespace RoeSnip.Recording;
 /// still fits the new painted set within <see cref="GifEncoderOptions.PaletteReuseErrorThreshold"/>,
 /// it is kept byte-for-byte (no octree rebuild, no LUT invalidation) — an unavoidable per-frame LCT
 /// write either way, since this file carries no Global Color Table for any frame to fall back on.
-/// Frame delays are exact-by-construction via the same patch-behind scheme as the old design: a frame
-/// is written with a provisional delay and PATCHED to its real display duration once the next frame's
-/// timestamp is known (2cs floor — browsers clamp 0/1cs to 10cs). Emit-rate shaping adds a delay FLOOR
-/// keyed to how much of the canvas a candidate frame's bbox covers (30%/65% thresholds, 5cs/8cs
-/// floors) — a candidate arriving before its floor has elapsed is skipped outright, its time folding
-/// into the previous frame's eventual patch, so bursty large-motion content doesn't spam tiny-delay
-/// frames. Every 15 media-clock seconds (<see cref="GifEncoderOptions.EffectiveKeyframeInterval"/>),
-/// a frame that would emit anyway instead re-baselines the WHOLE canvas opaquely (fresh palette, no
-/// transparency, baseline reset) — keyframes only ever piggyback on an emit that was already
-/// happening, so a take that never changes emits nothing and never drifts, by construction. The raw
-/// <see cref="AddFrame(SdrImage, ushort)"/> primitive is the same full-canvas opaque quantize+encode
-/// path with a caller-supplied fixed delay and no diffing at all (tests use it as an
-/// always-full-frame comparison baseline); do not interleave the two overloads on one instance.
+/// Frame delays are exact-by-construction via a patch-behind scheme: a frame is written with a
+/// provisional delay and PATCHED to its real display duration once the next frame's timestamp is
+/// known (2cs floor — browsers clamp 0/1cs to 10cs). Every 15 media-clock seconds
+/// (<see cref="GifEncoderOptions.EffectiveKeyframeInterval"/>), a frame that would emit anyway
+/// instead re-baselines the WHOLE canvas opaquely (fresh palette, no transparency, baseline reset) —
+/// keyframes only ever piggyback on an emit that was already happening, so a take that never changes
+/// emits nothing and never drifts, by construction. The raw <see cref="AddFrame(SdrImage, ushort)"/>
+/// primitive is the same full-canvas opaque quantize+encode path with a caller-supplied fixed delay
+/// and no diffing at all (tests use it as an always-full-frame comparison baseline); do not interleave
+/// the two overloads on one instance.
+///
+/// RATE CONTROL LIVES AT CAPTURE CADENCE, NOT HERE (quality/framerate decoupling workstream): this
+/// class used to also shape emit rate itself — a candidate frame whose changed bbox covered a large
+/// enough fraction of the canvas was held back behind a minimum delay floor, so a GIF's effective
+/// framerate on motion-heavy content was an accidental side effect of whichever size/quality tier was
+/// picked. That coupling is gone. Every candidate frame that clears the tolerance test above emits
+/// immediately (subject only to the keyframe promotion above); how often a candidate frame ARRIVES at
+/// all is controlled upstream, by RegionRecorder's own capture-cadence schedule throttle against the
+/// user's chosen fps. This class has no framerate opinion of its own anymore.
 ///
 /// LOH/Gen2 discipline: every scratch buffer this class or the Gif/ primitives touch per frame (the
 /// diff baseline, the canvas-sized index buffer, the box-sized packed-index buffer, the dense
@@ -152,8 +158,8 @@ public sealed class GifEncoder : IDisposable
     /// <summary>Encoder thread only — the recording path. The first call establishes the baseline as
     /// an opaque full-canvas keyframe. Every later call diffs <paramref name="frame"/> against the
     /// last-painted baseline (tolerance-gated — see the class doc); no change means no emit. A change
-    /// is subject to the emit-rate delay floor (skipped candidates fold their time into whichever
-    /// frame emits next) and, once 15 media-clock seconds have passed since the last keyframe, is
+    /// always emits (no emit-rate shaping here — see the class doc's "rate control lives at capture
+    /// cadence" note) and, once 15 media-clock seconds have passed since the last keyframe, is
     /// promoted to a full-canvas re-baseline instead of a changed-region delta.
     ///
     /// Returns true when the frame was EMITTED. Unlike the old design this method no longer retains a
@@ -178,16 +184,6 @@ public sealed class GifEncoder : IDisposable
         if (!TryGetChangedBounds(_lastPaintedPixelsBgra, frame.Pixels, _width, _height, out var box, _options.ChannelTolerance))
         {
             return false; // nothing changed beyond tolerance — the previous frame just keeps displaying
-        }
-
-        double areaFraction = (double)box.Width * box.Height / ((double)_width * _height);
-        double csSinceLastEmit = Math.Max(0, timestampTicks - _lastEmitTimestampTicks) * 100.0 / _timestampTicksPerSecond;
-        int floorCs = areaFraction >= _options.HugeMotionAreaFraction ? _options.HugeMotionDelayFloorCs
-                    : areaFraction >= _options.LargeMotionAreaFraction ? _options.LargeMotionDelayFloorCs
-                    : 0;
-        if (floorCs > 0 && csSinceLastEmit < floorCs)
-        {
-            return false; // too soon for a large/huge-motion candidate — its time folds into the next emit
         }
 
         bool isKeyframe = (timestampTicks - _lastKeyframeTimestampTicks) >= (long)(_options.EffectiveKeyframeInterval.TotalSeconds * _timestampTicksPerSecond);
@@ -307,7 +303,8 @@ public sealed class GifEncoder : IDisposable
 
         GifDelta.ClassifyAndPaint(
             currentPixels, _lastPaintedPixelsBgra, _indexScratch, _width, box,
-            _lut, _paletteBgr, transparentIndex, allowTransparency, _options.ChannelTolerance, _options.DitherErrorFloor);
+            _lut, _paletteBgr, transparentIndex, allowTransparency, _options.ChannelTolerance, _options.DitherErrorFloor,
+            _options.LossyRunThresholdSq);
 
         int boxWidth = box.Width, boxHeight = box.Height;
         for (int y = 0; y < boxHeight; y++)

@@ -207,6 +207,14 @@ public static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
 
+    // The read side of the pair above — used only by AutomationServer's `includeExcluded`
+    // screenshot path (App/AutomationServer.cs) to discover which of the app's own windows are
+    // currently WDA_EXCLUDEFROMCAPTURE before temporarily clearing it, so it can restore exactly
+    // those windows afterward rather than guessing/forcing every window back to excluded.
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowDisplayAffinity(IntPtr hWnd, out uint pdwAffinity);
+
     public const uint WDA_NONE = 0x00000000;
     public const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
 

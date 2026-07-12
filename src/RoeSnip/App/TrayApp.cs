@@ -35,6 +35,7 @@ public sealed class TrayApp : ITrayNotifier
     private RoeSnipSettings _settings = RoeSnipSettings.Default;
     private EventHandler? _activeBalloonClickHandler;
     private SettingsWindow? _settingsWindow;
+    private AutomationServer? _automationServer;
 
     /// <summary>Runs the tray app: NotifyIcon + context menu + message loop. A normal launch while
     /// another instance is already running (named mutex held) REPLACES that instance with this one -
@@ -55,6 +56,10 @@ public sealed class TrayApp : ITrayNotifier
         }
 
         bool signalCaptureOnly = Array.IndexOf(args, "--signal-capture") >= 0;
+        // Dev-gated automation channel (App/AutomationServer.cs): only checked here, never inside
+        // RunInstance's normal flow, so a launch without --automation/ROESNIP_AUTOMATION=1 behaves
+        // byte-for-byte like before this feature existed.
+        bool automationEnabled = AutomationServer.IsRequested(args);
         var mutex = new Mutex(initiallyOwned: true, MutexName, out bool createdNew);
 
         if (signalCaptureOnly)
@@ -89,7 +94,7 @@ public sealed class TrayApp : ITrayNotifier
         using (mutex)
         {
             var app = new TrayApp();
-            return app.RunInstance();
+            return app.RunInstance(automationEnabled);
         }
     }
 
@@ -127,7 +132,7 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
-    private int RunInstance()
+    private int RunInstance(bool automationEnabled)
     {
         Application.EnableVisualStyles();
 
@@ -179,6 +184,16 @@ public sealed class TrayApp : ITrayNotifier
         _pipeListenerCts = new CancellationTokenSource();
         _ = ListenForSignalAsync(_pipeListenerCts.Token);
 
+        if (automationEnabled)
+        {
+            // Dev-gated automation channel (App/AutomationServer.cs) for driving this app
+            // deterministically from agents/E2E instead of synthetic mouse/UIA. TriggerCapture is
+            // passed by reference (not re-implemented) so a `trigger` command runs the exact same
+            // path --signal-capture/the tray icon/the hotkey already do.
+            _automationServer = new AutomationServer(System.Windows.Threading.Dispatcher.CurrentDispatcher, TriggerCapture);
+            _automationServer.Start();
+        }
+
         // Self-update (CHANGE 2): best-effort cleanup of any leftover .old/.new from a prior
         // install/update swap, then - only when this IS the installed copy (a portable/dev run has
         // nothing sensible to update itself into) - a silent background check for a newer GitHub
@@ -225,6 +240,7 @@ public sealed class TrayApp : ITrayNotifier
         Application.Run();
 
         _pipeListenerCts.Cancel();
+        _automationServer?.Stop();
         _notifyIcon.Visible = false;
         _hotkeyManager.Dispose();
         _uiThreadMarshal.Dispose();
