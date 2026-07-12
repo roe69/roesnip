@@ -58,6 +58,13 @@ public partial class OverlayWindow : Window
     private RoeSnipSettings _settings;
     private Action<OverlayWindow> _onActivatedByMouse;
     private Action<OverlayWindow> _onSelectionStarted;
+    // Cross-monitor selection (multimon-selection): the two new callbacks a NewSelection drag uses
+    // instead of calling SetSelection directly — see OverlaySession.OnSpanningCandidate/
+    // FinalizeNewSelectionDrag in OverlayController.cs for what they do. Every other drag mode
+    // (Move/Resize/annotation) is untouched and still calls SetSelection locally — see
+    // docs/DESIGN-MULTIMON-SELECTION.md's "What v1 deliberately does not do".
+    private Action<OverlayWindow, RectPhysical> _onSpanningCandidate;
+    private Action<OverlayWindow> _onFinalizeNewSelection;
     private Action<OverlayCommand> _onCommand;
     private Action<PickedColorInfo> _onColorPicked;
     private bool _pickOnlyMode;
@@ -148,6 +155,23 @@ public partial class OverlayWindow : Window
     internal CapturedFrame Frame => _frame;
     internal RectPhysical? SelectionPx => _selectionPx;
 
+    /// <summary>Cross-monitor selection (multimon-selection): the already-tone-mapped preview,
+    /// exposed so OverlaySession.RenderSpanningSelection can crop it directly — the SAME per-monitor
+    /// bytes the local (non-spanning) render path (RenderSelectionWithAnnotations) already crops
+    /// from, never a re-tone-map.</summary>
+    internal SdrImage Preview => _preview;
+
+    /// <summary>Cross-monitor selection: true while the CURRENT selection (this window's own local
+    /// slice included) touches more than one monitor — set only by SetSpanningLocalSelection, never
+    /// by the plain SetSelection path Move/Resize/annotation drags still use. Read by
+    /// OnPreviewMouseLeftButtonDown to refuse starting a Resize/Move drag against a spanning
+    /// selection (see docs/DESIGN-MULTIMON-SELECTION.md) and by UpdateToolbarPlacement/ShowToolbar
+    /// to hide annotation tools.</summary>
+    internal bool IsSpanningSelection => _isSpanningSelection;
+
+    private bool _isSpanningSelection;
+    private bool _isSpanningPrimary;
+
     /// <summary>True while this window has anything worth cancelling short of closing the whole
     /// overlay — used by OverlayController's two-stage Esc (stage: clear snip, stay open).</summary>
     internal bool HasSnipInProgress =>
@@ -217,13 +241,16 @@ public partial class OverlayWindow : Window
         RoeSnipSettings settings,
         Action<OverlayWindow> onActivatedByMouse,
         Action<OverlayWindow> onSelectionStarted,
+        Action<OverlayWindow, RectPhysical> onSpanningCandidate,
+        Action<OverlayWindow> onFinalizeNewSelection,
         Action<OverlayCommand> onCommand,
         Action<PickedColorInfo> onColorPicked,
         bool pickOnlyMode)
     {
         InitializeComponent();
         AssignSessionFields(
-            frame, preview, settings, onActivatedByMouse, onSelectionStarted, onCommand, onColorPicked, pickOnlyMode);
+            frame, preview, settings, onActivatedByMouse, onSelectionStarted, onSpanningCandidate,
+            onFinalizeNewSelection, onCommand, onColorPicked, pickOnlyMode);
         WireInputHandlers();
         _initialized = true;
     }
@@ -248,7 +275,8 @@ public partial class OverlayWindow : Window
 
         AssignSessionFields(
             placeholderFrame, placeholderPreview, RoeSnipSettings.Default,
-            static _ => { }, static _ => { }, static _ => { }, static _ => { }, pickOnlyMode: false);
+            static _ => { }, static _ => { }, static (_, _) => { }, static _ => { }, static _ => { },
+            static _ => { }, pickOnlyMode: false);
         WireInputHandlers();
         // _initialized deliberately stays false — armed by Initialize() once a real session claims
         // this window (see that method).
@@ -265,7 +293,8 @@ public partial class OverlayWindow : Window
     /// brace, since flow analysis doesn't follow through an ordinary method call.</summary>
     [System.Diagnostics.CodeAnalysis.MemberNotNull(
         nameof(_frame), nameof(_preview), nameof(_settings), nameof(_liveSettings),
-        nameof(_onActivatedByMouse), nameof(_onSelectionStarted), nameof(_onCommand), nameof(_onColorPicked),
+        nameof(_onActivatedByMouse), nameof(_onSelectionStarted), nameof(_onSpanningCandidate),
+        nameof(_onFinalizeNewSelection), nameof(_onCommand), nameof(_onColorPicked),
         nameof(_textFontFamily))]
     private void AssignSessionFields(
         CapturedFrame frame,
@@ -273,6 +302,8 @@ public partial class OverlayWindow : Window
         RoeSnipSettings settings,
         Action<OverlayWindow> onActivatedByMouse,
         Action<OverlayWindow> onSelectionStarted,
+        Action<OverlayWindow, RectPhysical> onSpanningCandidate,
+        Action<OverlayWindow> onFinalizeNewSelection,
         Action<OverlayCommand> onCommand,
         Action<PickedColorInfo> onColorPicked,
         bool pickOnlyMode)
@@ -283,6 +314,8 @@ public partial class OverlayWindow : Window
         _liveSettings = settings;
         _onActivatedByMouse = onActivatedByMouse;
         _onSelectionStarted = onSelectionStarted;
+        _onSpanningCandidate = onSpanningCandidate;
+        _onFinalizeNewSelection = onFinalizeNewSelection;
         _onCommand = onCommand;
         _onColorPicked = onColorPicked;
         _pickOnlyMode = pickOnlyMode;
@@ -358,6 +391,8 @@ public partial class OverlayWindow : Window
         RoeSnipSettings settings,
         Action<OverlayWindow> onActivatedByMouse,
         Action<OverlayWindow> onSelectionStarted,
+        Action<OverlayWindow, RectPhysical> onSpanningCandidate,
+        Action<OverlayWindow> onFinalizeNewSelection,
         Action<OverlayCommand> onCommand,
         Action<PickedColorInfo> onColorPicked,
         bool pickOnlyMode)
@@ -371,7 +406,8 @@ public partial class OverlayWindow : Window
         _ownedPlaceholderFrame = null;
 
         AssignSessionFields(
-            frame, preview, settings, onActivatedByMouse, onSelectionStarted, onCommand, onColorPicked, pickOnlyMode);
+            frame, preview, settings, onActivatedByMouse, onSelectionStarted, onSpanningCandidate,
+            onFinalizeNewSelection, onCommand, onColorPicked, pickOnlyMode);
 
         var previewBitmap = preview.ToBitmapSource();
         PreviewImage.Source = previewBitmap;
@@ -701,6 +737,29 @@ public partial class OverlayWindow : Window
         // press anywhere else still draws as before, so overlapping shapes stay reachable (outline
         // interiors / off-segment space don't hit-test at all; filled kinds by starting the drag
         // outside them).
+        // Cross-monitor selection (multimon-selection): a spanning selection cannot be resized or
+        // moved via handles/body-drag — Move/Resize capture _dragStartRect as THIS window's own
+        // local slice, which for a spanning selection is only an intersection, not the true rect
+        // (see docs/DESIGN-MULTIMON-SELECTION.md's "What v1 deliberately does not do" for the
+        // desync this would otherwise cause). Any mouse-down while spanning instead starts a brand
+        // new selection drag outright, unconditionally, skipping the handle/body/annotation
+        // cascade below entirely — this also sidesteps a real false-positive hazard: a SECONDARY
+        // window's own local rect has an edge sitting exactly at the monitor boundary, which
+        // Adorner.HitTestHandle would otherwise mistake for a real resize handle.
+        if (_isSpanningSelection)
+        {
+            Annotations.Deselect();
+            _dragMode = DragMode.NewSelection;
+            _newSelectionPending = true;
+            _dragAnchorPx = px;
+            _dragAnchorDip = dip;
+            CaptureMouse();
+            MagnifierControl.Hide();
+            UpdateToolCursor();
+            e.Handled = true;
+            return;
+        }
+
         bool editsExistingShape =
             Annotations.HitTestSelectedHandle(px) != SelectionHandle.None
             || Annotations.HitTestSelectedEndpoint(px) >= 0
@@ -918,11 +977,24 @@ public partial class OverlayWindow : Window
                     _newSelectionPending = false;
                     _onSelectionStarted(this); // clears other monitors' selections, per DESIGN.md
                 }
-                SetSelection(RectPhysical.FromSize(
+                // Cross-monitor selection: _dragAnchorPx/px are THIS window's own local physical
+                // pixels, deliberately never clamped to this window's frame during the drag (see
+                // docs/DESIGN-MULTIMON-SELECTION.md) — WPF keeps delivering these even once the
+                // cursor has visually left this window, because CaptureMouse() is a Win32 SetCapture
+                // (HWND-level, not client-area-level). Translate to virtual-desktop coordinates
+                // (this window's own monitor origin folded in) before handing it to the session,
+                // which distributes each monitor's own intersection back out via
+                // SetSpanningLocalSelection — which is also what sets THIS window's own _selectionPx
+                // now, replacing the old direct SetSelection call here.
+                var localCandidate = RectPhysical.FromSize(
                     (int)Math.Min(_dragAnchorPx.X, px.X),
                     (int)Math.Min(_dragAnchorPx.Y, px.Y),
                     (int)Math.Abs(px.X - _dragAnchorPx.X),
-                    (int)Math.Abs(px.Y - _dragAnchorPx.Y)));
+                    (int)Math.Abs(px.Y - _dragAnchorPx.Y));
+                var monitorOrigin = Monitor.BoundsPx;
+                _onSpanningCandidate(this, new RectPhysical(
+                    monitorOrigin.Left + localCandidate.Left, monitorOrigin.Top + localCandidate.Top,
+                    monitorOrigin.Left + localCandidate.Right, monitorOrigin.Top + localCandidate.Bottom));
                 break;
 
             case DragMode.Move:
@@ -989,9 +1061,14 @@ public partial class OverlayWindow : Window
                         TriggerColorPick(_dragAnchorPx, _dragAnchorDip);
                     }
                 }
-                else if (_selectionPx is { } sel)
+                else
                 {
-                    SetSelection(sel.Width < 2 || sel.Height < 2 ? null : ClampToFrame(sel));
+                    // Cross-monitor selection: the too-small-cancel rule must be judged against the
+                    // TRUE selection (the shared virtual rect while spanning), not just this window's
+                    // own local slice — a spanning selection whose slice on THIS monitor happens to
+                    // be a couple of pixels wide (e.g. the drag ended right at the seam) is not "too
+                    // small" overall. See OverlaySession.FinalizeNewSelectionDrag.
+                    _onFinalizeNewSelection(this);
                 }
                 break;
 
@@ -1293,17 +1370,6 @@ public partial class OverlayWindow : Window
         }
     }
 
-    /// <summary>AutomationServer hook (dev-gated automation channel — App/AutomationServer.cs):
-    /// sets the selection exactly the way Ctrl+A (select-all) does, so UpdateDimGeometry/
-    /// UpdateToolbarPlacement fire the same as a completed drag would leave them (selection
-    /// visible, toolbar shown). rect is MONITOR-RELATIVE physical pixels, the same convention every
-    /// other selection path in this class uses.</summary>
-    internal void SetSelectionForAutomation(RectPhysical monitorRelativeRect)
-    {
-        Annotations.Deselect();
-        SetSelection(ClampToFrame(monitorRelativeRect));
-    }
-
     /// <summary>Clears this window's selection/annotations — called by OverlayController when a
     /// new drag starts on a different monitor (selection lives on exactly one monitor at a time).</summary>
     internal void ClearSelection()
@@ -1319,7 +1385,37 @@ public partial class OverlayWindow : Window
         }
         CancelActiveTextEditor();
         Annotations.Clear();
-        SetSelection(null);
+        SetSpanningLocalSelection(null, isSpanning: false, isPrimary: false, virtualRectForLabel: null);
+    }
+
+    /// <summary>Cross-monitor selection (multimon-selection): the per-window half of
+    /// OverlaySession.OnSpanningCandidate's distribute step — sets THIS window's own local slice of
+    /// the current selection (monitor-relative physical pixels, or null if the shared virtual rect
+    /// doesn't intersect this monitor at all) and the two flags that change how it renders/behaves:
+    /// <paramref name="isSpanning"/> (the OVERALL selection, not just this window's slice, touches
+    /// ≥2 monitors) and <paramref name="isPrimary"/> (this is the one window that owns the toolbar/
+    /// interaction — the window whose drag produced the current candidate). Reuses the existing
+    /// SetSelection pipeline verbatim (dim mask, adorner, toolbar placement) — a spanning selection's
+    /// per-window rendering is the SAME code path as an ordinary one, just fed a different rect; see
+    /// docs/DESIGN-MULTIMON-SELECTION.md.</summary>
+    internal void SetSpanningLocalSelection(
+        RectPhysical? monitorRelativeRect, bool isSpanning, bool isPrimary, RectPhysical? virtualRectForLabel)
+    {
+        _isSpanningSelection = isSpanning;
+        _isSpanningPrimary = isPrimary;
+        Adorner.SuppressHandlesAndBadge = isSpanning && !isPrimary;
+        Adorner.OverrideSizeLabel = isSpanning && isPrimary && virtualRectForLabel is { } v
+            ? string.Create(CultureInfo.InvariantCulture, $"{v.Width} x {v.Height}")
+            : null;
+        if (isSpanning)
+        {
+            // Belt-and-braces (the toolbar already hides every drawing tool while spanning — see
+            // ShowToolbar): no annotation shape can exist to select/edit on a spanning selection, so
+            // there is nothing for the stitcher (RenderSpanningSelection) to burn in.
+            _currentTool = AnnotationTool.None;
+            Annotations.Deselect();
+        }
+        SetSelection(monitorRelativeRect);
     }
 
 
@@ -1344,6 +1440,15 @@ public partial class OverlayWindow : Window
     private void UpdateToolbarPlacement()
     {
         if (_selectionPx is not { } sel)
+        {
+            HideToolbar();
+            return;
+        }
+
+        // Cross-monitor selection: only the PRIMARY window of a spanning selection ever shows a
+        // toolbar — a secondary window's own local slice is real selection state (for rendering/
+        // hit-testing) but never gets its own toolbar instance. See docs/DESIGN-MULTIMON-SELECTION.md.
+        if (_isSpanningSelection && !_isSpanningPrimary)
         {
             HideToolbar();
             return;
@@ -1503,6 +1608,11 @@ public partial class OverlayWindow : Window
         _toolbar.SetStrokeWidth(_currentStrokeWidth);
         _toolbar.SetHistoryState(Annotations.CanUndo, Annotations.CanRedo);
         _toolbar.SetRecordAudioToggles(_liveSettings.RecordMicrophone, _liveSettings.RecordSystemAudio);
+        // Cross-monitor selection: re-evaluated on every show, not just once, so a reused toolbar
+        // instance can never show stale drawing tools/Record after a spanning<->single-monitor
+        // transition (a fresh drag replacing a spanning selection with a same-monitor one, or vice
+        // versa) on the same session.
+        _toolbar.SetSpanningMode(_isSpanningSelection);
         _toolbar.Visibility = Visibility.Visible;
     }
 

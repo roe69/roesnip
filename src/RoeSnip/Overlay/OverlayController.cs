@@ -477,6 +477,18 @@ public static class OverlayController
         private int _renderedCount;
         private long _responseBaseTimestamp;
 
+        // ---------- Cross-monitor selection (multimon-selection) ----------
+        //
+        // Both null for every ordinary, single-monitor selection — the pre-existing per-window
+        // _selectionPx-based code paths (Confirm/Record/GetSelectionForAutomation's own
+        // _windows.FirstOrDefault(w => w.SelectionPx is not null)) are what run in that case,
+        // completely unchanged. These two fields are only ever non-null while a NewSelection drag's
+        // candidate rect has been distributed across ≥2 monitors — see OnSpanningCandidate. See
+        // docs/DESIGN-MULTIMON-SELECTION.md for the full design.
+        private RectPhysical? _spanningVirtual;
+        private OverlayWindow? _spanningPrimaryWindow;
+        private readonly RectPhysical _virtualDesktopBounds;
+
         public OverlaySession(
             IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors,
             RoeSnipSettings settings,
@@ -487,6 +499,7 @@ public static class OverlayController
             _onColorPicked = onColorPicked;
             _pickOnlyMode = pickOnlyMode;
             _monitors = OrderCursorMonitorFirst(monitors);
+            _virtualDesktopBounds = ComputeVirtualDesktopBounds(_monitors);
 
             // Installed before any window is constructed/shown/receives input, so session keys are
             // covered for the session's entire visible lifetime. Every path out of RunAsync —
@@ -560,7 +573,8 @@ public static class OverlayController
                         window.Closed += (_, _) => Finish(null);
                         _windows.Add(window);
                         window.Initialize(
-                            frame, preview, _settings, OnActivatedByMouse, OnSelectionStarted, OnCommand,
+                            frame, preview, _settings, OnActivatedByMouse, OnSelectionStarted,
+                            OnSpanningCandidate, FinalizeNewSelectionDrag, OnCommand,
                             _onColorPicked, _pickOnlyMode);
                         window.Dispatcher.Invoke(static () => { }, System.Windows.Threading.DispatcherPriority.Loaded);
                         window.MoveOnScreen();
@@ -569,7 +583,8 @@ public static class OverlayController
                     else
                     {
                         window = new OverlayWindow(
-                            frame, preview, _settings, OnActivatedByMouse, OnSelectionStarted, OnCommand,
+                            frame, preview, _settings, OnActivatedByMouse, OnSelectionStarted,
+                            OnSpanningCandidate, FinalizeNewSelectionDrag, OnCommand,
                             _onColorPicked, _pickOnlyMode);
                         window.Closed += (_, _) => Finish(null);
                         window.ContentRendered += (_, _) => OnOverlayContentRendered(window);
@@ -760,6 +775,200 @@ public static class OverlayController
             }
         }
 
+        // ---------- Cross-monitor selection (multimon-selection) ----------
+
+        private static RectPhysical ComputeVirtualDesktopBounds(
+            IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors)
+        {
+            int left = int.MaxValue, top = int.MaxValue, right = int.MinValue, bottom = int.MinValue;
+            foreach (var (frame, _) in monitors)
+            {
+                var b = frame.Monitor.BoundsPx;
+                left = Math.Min(left, b.Left);
+                top = Math.Min(top, b.Top);
+                right = Math.Max(right, b.Right);
+                bottom = Math.Max(bottom, b.Bottom);
+            }
+            return new RectPhysical(left, top, right, bottom);
+        }
+
+        private RectPhysical ClampToVirtualDesktop(RectPhysical r) => new(
+            Math.Clamp(r.Left, _virtualDesktopBounds.Left, _virtualDesktopBounds.Right),
+            Math.Clamp(r.Top, _virtualDesktopBounds.Top, _virtualDesktopBounds.Bottom),
+            Math.Clamp(r.Right, _virtualDesktopBounds.Left, _virtualDesktopBounds.Right),
+            Math.Clamp(r.Bottom, _virtualDesktopBounds.Top, _virtualDesktopBounds.Bottom));
+
+        private static RectPhysical IntersectRects(RectPhysical a, RectPhysical b) => new(
+            Math.Max(a.Left, b.Left), Math.Max(a.Top, b.Top),
+            Math.Min(a.Right, b.Right), Math.Min(a.Bottom, b.Bottom));
+
+        /// <summary>The one new primitive (multimon-selection): called by whichever window's
+        /// NewSelection drag is currently live, on every mouse-move, with its local candidate rect
+        /// already translated to virtual-desktop physical pixels (see OverlayWindow's own doc
+        /// comment at its call site). Clamps to the virtual-desktop bounding box, intersects against
+        /// every monitor, and pushes each monitor's own intersection (or null) into that window via
+        /// SetSpanningLocalSelection — which is the SAME dim-mask/adorner/toolbar-placement pipeline
+        /// every ordinary single-monitor selection already used, just fed a different rect. Degrades
+        /// to exactly the old per-window behavior whenever the candidate only ever touches one
+        /// monitor (the common case): <see cref="_spanningVirtual"/> stays null, and that one
+        /// window's own SetSpanningLocalSelection call is functionally identical to the old direct
+        /// SetSelection call it replaced.</summary>
+        private void OnSpanningCandidate(OverlayWindow owner, RectPhysical candidateVirtual)
+        {
+            var clamped = ClampToVirtualDesktop(candidateVirtual.Normalized());
+
+            var hits = new List<(OverlayWindow Window, RectPhysical LocalRect)>(_windows.Count);
+            foreach (var w in _windows)
+            {
+                var bounds = w.Monitor.BoundsPx;
+                var intersection = IntersectRects(clamped, bounds);
+                if (intersection.Width > 0 && intersection.Height > 0)
+                {
+                    hits.Add((w, new RectPhysical(
+                        intersection.Left - bounds.Left, intersection.Top - bounds.Top,
+                        intersection.Right - bounds.Left, intersection.Bottom - bounds.Top)));
+                }
+            }
+
+            bool spanning = hits.Count >= 2;
+            foreach (var w in _windows)
+            {
+                RectPhysical? localRect = null;
+                foreach (var hit in hits)
+                {
+                    if (ReferenceEquals(hit.Window, w))
+                    {
+                        localRect = hit.LocalRect;
+                        break;
+                    }
+                }
+                bool isPrimary = localRect is not null && ReferenceEquals(w, owner);
+                w.SetSpanningLocalSelection(localRect, spanning, isPrimary, spanning ? clamped : null);
+            }
+
+            _spanningVirtual = spanning ? clamped : null;
+            _spanningPrimaryWindow = spanning ? owner : null;
+        }
+
+        /// <summary>Mouse-up (or the `select` automation command) finalizing a NewSelection drag —
+        /// applies the existing "<2px on either axis = cancel, not a real selection" rule against
+        /// the TRUE selection size: the shared virtual rect while spanning, or else the single owning
+        /// window's own local rect exactly as the pre-existing code did. (Judging the rule against
+        /// just the calling window's own local slice would be wrong while spanning — that slice can
+        /// legitimately be a couple of pixels wide right at a monitor seam even though the overall
+        /// selection is large.) Every window's own SetSpanningLocalSelection call from the drag's
+        /// last OnSpanningCandidate already left correct state in place; this only needs to act when
+        /// the result must be discarded as too small.</summary>
+        internal void FinalizeNewSelectionDrag(OverlayWindow owner)
+        {
+            if (_spanningVirtual is { } v)
+            {
+                if (v.Width < 2 || v.Height < 2)
+                {
+                    ClearSpanningSelection();
+                }
+                return;
+            }
+
+            if (owner.SelectionPx is { } sel && (sel.Width < 2 || sel.Height < 2))
+            {
+                owner.SetSpanningLocalSelection(null, isSpanning: false, isPrimary: false, virtualRectForLabel: null);
+            }
+        }
+
+        private void ClearSpanningSelection()
+        {
+            foreach (var w in _windows)
+            {
+                w.SetSpanningLocalSelection(null, isSpanning: false, isPrimary: false, virtualRectForLabel: null);
+            }
+            _spanningVirtual = null;
+            _spanningPrimaryWindow = null;
+        }
+
+        /// <summary>Byte-composites the final spanning selection (multimon-selection): crops each
+        /// intersecting window's own ALREADY tone-mapped preview (SdrImage.Crop — the same crop every
+        /// single-monitor render already does) and copies it into a canvas sized to the virtual
+        /// selection rect, at that window's own virtual-desktop-relative offset. Never touches
+        /// FP16/tone-mapping — this only ever combines bytes each window's own OverlayWindow.Preview
+        /// already tone-mapped with ITS OWN monitor's photometrics, per the hard constraint. Gaps (no
+        /// captured monitor covers part of the rect) are left OPAQUE BLACK — a deliberate, documented
+        /// choice (see docs/DESIGN-MULTIMON-SELECTION.md), not an accidental default. Annotations are
+        /// never burned in here: a spanning selection can never have any (see
+        /// OverlayWindow.SetSpanningLocalSelection), so this is a plain array composite, not a
+        /// DrawingVisual/RenderTargetBitmap pass.</summary>
+        private SdrImage RenderSpanningSelection(RectPhysical virtualRect)
+        {
+            var n = virtualRect.Normalized();
+            int width = Math.Max(1, n.Width);
+            int height = Math.Max(1, n.Height);
+            var pixels = new byte[width * 4 * height];
+            for (int i = 3; i < pixels.Length; i += 4)
+            {
+                pixels[i] = 255; // opaque black canvas — see the doc comment above for why
+            }
+
+            foreach (var w in _windows)
+            {
+                if (w.SelectionPx is not { } localSel)
+                {
+                    continue;
+                }
+                var cropLocal = localSel.Normalized();
+                if (cropLocal.Width <= 0 || cropLocal.Height <= 0)
+                {
+                    continue;
+                }
+
+                SdrImage crop;
+                try
+                {
+                    crop = w.Preview.Crop(cropLocal);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(
+                        $"RoeSnip: spanning-selection crop failed for monitor {w.Monitor.DeviceName} (non-fatal, that slice stays black): {ex.Message}");
+                    continue;
+                }
+
+                var monitorOrigin = w.Monitor.BoundsPx;
+                int destX = monitorOrigin.Left + cropLocal.Left - n.Left;
+                int destY = monitorOrigin.Top + cropLocal.Top - n.Top;
+                CompositeInto(pixels, width, height, crop, destX, destY);
+            }
+
+            return new SdrImage(width, height, pixels);
+        }
+
+        private static void CompositeInto(byte[] dest, int destWidth, int destHeight, SdrImage src, int destX, int destY)
+        {
+            for (int y = 0; y < src.Height; y++)
+            {
+                int dy = destY + y;
+                if (dy < 0 || dy >= destHeight)
+                {
+                    continue;
+                }
+                int srcRowOffset = y * src.Stride;
+                int destRowOffset = dy * destWidth * 4;
+                for (int x = 0; x < src.Width; x++)
+                {
+                    int dx = destX + x;
+                    if (dx < 0 || dx >= destWidth)
+                    {
+                        continue;
+                    }
+                    int so = srcRowOffset + x * 4;
+                    int doff = destRowOffset + dx * 4;
+                    dest[doff + 0] = src.Pixels[so + 0];
+                    dest[doff + 1] = src.Pixels[so + 1];
+                    dest[doff + 2] = src.Pixels[so + 2];
+                    dest[doff + 3] = 255;
+                }
+            }
+        }
+
         private void OnCommand(OverlayCommand command)
         {
             if (_finished)
@@ -813,6 +1022,16 @@ public static class OverlayController
         /// write happens back there via WriteJxr.</summary>
         private void Record(RecordingFormat format)
         {
+            if (_spanningVirtual is not null)
+            {
+                // The toolbar already hides Record while spanning (ToolbarControl.SetSpanningMode) —
+                // this is the defensive backstop. Recording is a live per-frame WGC capture against a
+                // single monitor's duplication output; stitching multiple monitors' live streams is a
+                // materially larger feature than this one-shot still composite. See
+                // docs/DESIGN-MULTIMON-SELECTION.md's "What v1 deliberately does not do".
+                return;
+            }
+
             var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
             if (window is null)
             {
@@ -865,6 +1084,11 @@ public static class OverlayController
                     clearedSnip = true;
                 }
             }
+            // Cross-monitor selection: the shared spanning state is session-level, not any one
+            // window's — clear it unconditionally alongside every window's own ClearSelection above
+            // (a harmless no-op when nothing was spanning).
+            _spanningVirtual = null;
+            _spanningPrimaryWindow = null;
             if (!clearedSnip)
             {
                 Finish(null);
@@ -873,6 +1097,12 @@ public static class OverlayController
 
         private void Confirm(bool copy, bool save, bool saveHdr)
         {
+            if (_spanningVirtual is { } spanningRect && _spanningPrimaryWindow is { } primary)
+            {
+                ConfirmSpanning(spanningRect, primary, copy, save, saveHdr);
+                return;
+            }
+
             var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
             if (window is null)
             {
@@ -935,6 +1165,82 @@ public static class OverlayController
                 copyPerformed,
                 savedPath,
                 saveHdr);
+
+            Finish(result);
+        }
+
+        /// <summary>Cross-monitor selection's own Confirm path: Copy/Save only (Save HDR is a
+        /// documented v1 cut — see docs/DESIGN-MULTIMON-SELECTION.md — forced off regardless of what
+        /// the caller asked for, since the toolbar never offers it while spanning and automation's
+        /// `chrome`/toolbar-equivalent commands have no spanning-aware SaveHdr entry point either).
+        /// Mirrors the non-spanning Confirm above (same clipboard/dialog/write calls, same
+        /// stay-open-on-cancelled-dialog behavior) but renders via RenderSpanningSelection's byte
+        /// composite instead of a single window's annotated crop, and packages the result with
+        /// <see cref="OverlayResult.SpanningVirtualSelectionPx"/> set so Program.cs's HDR-export
+        /// branch knows to skip it even if AutoSaveHdrCopy is on.</summary>
+        private void ConfirmSpanning(RectPhysical virtualRect, OverlayWindow primary, bool copy, bool save, bool saveHdr)
+        {
+            SdrImage rendered;
+            try
+            {
+                rendered = RenderSpanningSelection(virtualRect);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: spanning-selection render failed: {ex.Message}");
+                return;
+            }
+
+            if (saveHdr)
+            {
+                Console.Error.WriteLine(
+                    "RoeSnip: Save HDR is not available for a selection spanning multiple monitors; skipped.");
+            }
+
+            bool copyPerformed = false;
+            if (copy)
+            {
+                try
+                {
+                    ClipboardService.CopyToClipboard(rendered);
+                    copyPerformed = true;
+                    primary.ShowShutterFlash();
+                }
+                catch (Exception)
+                {
+                    // Same non-fatal reasoning as the single-monitor Confirm above.
+                }
+            }
+
+            string? savedPath = null;
+            if (save)
+            {
+                savedPath = TryShowSaveDialog(primary);
+                if (savedPath is null)
+                {
+                    return; // user cancelled the Save dialog — stay open, same as the single-monitor path
+                }
+
+                try
+                {
+                    PngWriter.WriteFile(savedPath, rendered);
+                }
+                catch (Exception)
+                {
+                    savedPath = null;
+                }
+            }
+
+            var result = new OverlayResult(
+                primary.Monitor,
+                primary.SelectionPx ?? default,
+                rendered,
+                primary.Frame,
+                copyPerformed,
+                savedPath,
+                SaveHdrRequested: false,
+                RecordingRequested: null,
+                SpanningVirtualSelectionPx: virtualRect);
 
             Finish(result);
         }
@@ -1034,6 +1340,14 @@ public static class OverlayController
 
         internal RectPhysical? GetSelectionForAutomation()
         {
+            // Cross-monitor selection: the shared virtual rect IS already virtual-desktop physical
+            // pixels (the wire protocol's own convention), so it's returned as-is — no per-window
+            // origin math needed, unlike the non-spanning fallback below.
+            if (_spanningVirtual is { } v)
+            {
+                return v;
+            }
+
             var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
             if (window is null)
             {
@@ -1044,6 +1358,12 @@ public static class OverlayController
             return new RectPhysical(b.Left + sel.Left, b.Top + sel.Top, b.Left + sel.Right, b.Top + sel.Bottom);
         }
 
+        /// <summary>Cross-monitor selection: the `select` automation command's own lever for
+        /// spanning rects (see docs/DESIGN-MULTIMON-SELECTION.md's "Automation" section) — routes
+        /// through the EXACT same OnSpanningCandidate/FinalizeNewSelectionDrag functions a real drag
+        /// uses, never a separate implementation. The owning/"primary" window is chosen the same way
+        /// the pre-existing single-monitor automation path already did: whichever monitor contains
+        /// the rect's top-left corner.</summary>
         internal string? SetSelectionForAutomation(RectPhysical virtualDesktopPx)
         {
             var window = _windows.FirstOrDefault(w =>
@@ -1057,11 +1377,6 @@ public static class OverlayController
                 return "selection rect's top-left corner is not on any monitor";
             }
 
-            var bounds = window.Monitor.BoundsPx;
-            var monitorRelative = new RectPhysical(
-                virtualDesktopPx.Left - bounds.Left, virtualDesktopPx.Top - bounds.Top,
-                virtualDesktopPx.Right - bounds.Left, virtualDesktopPx.Bottom - bounds.Top);
-
             // Same bookkeeping a real drag-start on this monitor triggers: clear any selection on
             // every OTHER monitor (selection lives on exactly one at a time) and make this the
             // active/focused window.
@@ -1071,12 +1386,17 @@ public static class OverlayController
                 _activeWindow = window;
                 window.Activate();
             }
-            window.SetSelectionForAutomation(monitorRelative);
+            OnSpanningCandidate(window, virtualDesktopPx.Normalized());
+            FinalizeNewSelectionDrag(window); // applies the same too-small-cancel rule a real mouse-up would
             return null;
         }
 
         internal string? RecordForAutomation(RecordingFormat format)
         {
+            if (_spanningVirtual is not null)
+            {
+                return "recording is not supported for a selection spanning multiple monitors";
+            }
             if (_windows.FirstOrDefault(w => w.SelectionPx is not null) is null)
             {
                 return "no selection to record";
