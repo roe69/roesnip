@@ -904,10 +904,16 @@ internal sealed class RecordingChrome : Window
         // Save only finalizes a take that has already been stopped.
         _saveButton.IsEnabled = _state == ChromeState.Reviewing;
 
-        // Share likewise only makes sense once a take exists to upload (Reviewing) - see
-        // ShareRequested's own doc comment for why enabling it further (once a real provider is
-        // configured) is left to whoever wires this event up.
-        _shareButton.IsEnabled = _state == ChromeState.Reviewing;
+        // Share likewise only makes sense once a take exists to upload (Reviewing) - AND only once
+        // something is actually listening for ShareRequested. Nothing subscribes to it yet (see that
+        // event's own doc comment: RecordingController hasn't been wired up), so gating purely on
+        // _state would ship a visible, enabled button that silently does nothing when clicked -
+        // exactly the "clickable but silently broken" state ToolbarControl.SetShareProviders'
+        // own doc comment deliberately avoids for its sibling Share button. Checking for a real
+        // subscriber here means this button turns itself on automatically the moment
+        // RecordingController subscribes, with no separate "providers configured" plumbing needed on
+        // this class.
+        _shareButton.IsEnabled = _state == ChromeState.Reviewing && ShareRequested is not null;
 
         RequestReposition();
     }
