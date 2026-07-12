@@ -158,6 +158,7 @@ public class GifEncoderStageProfilingTests
         Assert.True(b.FrameCount > 0);
         Assert.True(b.TotalMs > 0, "no stage recorded any time at all — instrumentation is not wired up");
         Assert.True(b.BboxScanPct > 0, "bbox scan bucket never recorded time");
+        Assert.True(b.CollectPaintedPct > 0, "collect-painted bucket never recorded time");
         Assert.True(b.PalettePct > 0, "octree/LUT (palette) bucket never recorded time");
         Assert.True(b.ClassifyAndPaintPct > 0, "ClassifyAndPaint bucket never recorded time");
         Assert.True(b.PackAndHeaderPct > 0, "pack/header bucket never recorded time");
