@@ -239,11 +239,15 @@ public interface ITrayNotifier
     void ShowError(string message);
 
     /// <summary>Sharing/upload subsystem: a share upload finished successfully and its URL has
-    /// already been copied to the clipboard by the caller (whichever code ends up driving
+    /// already been ATTEMPTED onto the clipboard by the caller (whichever code ends up driving
     /// ToolbarControl's Share click / RecordingChrome's Share click - see Sharing/ShareManager's own
     /// doc comment for the current state of that wiring) - mirrors ShowSavedBalloon's click-to-open
-    /// pattern, except the balloon click opens the URL in the default browser instead of a folder.</summary>
-    void ShowShareUploadedBalloon(string url);
+    /// pattern, except the balloon click opens the URL in the default browser instead of a folder.
+    /// <paramref name="clipboardCopied"/> (senior-review fix): whether that clipboard write actually
+    /// succeeded - Clipboard.SetText can throw (another process holding the clipboard open is
+    /// common on Windows), and the balloon text must not claim "copied the link" when it didn't;
+    /// implementations should vary their wording on this instead of hard-coding a copied claim.</summary>
+    void ShowShareUploadedBalloon(string url, bool clipboardCopied);
 }
 
 public enum CliMode { None, Diag, Capture }

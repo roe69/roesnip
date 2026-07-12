@@ -1372,7 +1372,34 @@ internal sealed class RecordingSession
 
         _phase = Phase.Reviewing;
         _chrome!.SetPaused(true); // Reviewing's Pause/Resume button must read (and route as) Resume
+        // Senior-review fix (Finding 1c): re-evaluate the chrome's Share button gate every time
+        // Reviewing is (re-)entered, from the same fresh-disk-read helper RequestShare itself uses
+        // — mirrors ToolbarControl.SetShareProviders' own "no clickable-but-broken button" rule
+        // instead of RecordingChrome's old check (whether ShareRequested has ANY subscriber, which
+        // Start() always satisfies unconditionally and so never actually reflected whether Share
+        // could ever succeed).
+        _chrome!.SetShareAvailable(ResolveFreshDefaultShareProvider() is not null);
         _chrome!.EnterReviewing();
+    }
+
+    /// <summary>Sharing/* subsystem: the single fresh-disk-state provider lookup shared by
+    /// <see cref="RequestShare"/> (deciding whether Share is a no-op) and
+    /// <see cref="StopCaptureToReview"/> (deciding whether the chrome's Share button should even be
+    /// enabled) — see RequestShare's own doc comment for why "fresh" (a plain <see
+    /// cref="SettingsStore.Load()"/>, not this session's own <see cref="_liveSettings"/> snapshot)
+    /// matters here specifically: a provider configured via the tray's Settings window while a take
+    /// sits in Reviewing must be picked up without needing a new take.</summary>
+    private static RoeSnip.Sharing.ShareProviderConfig? ResolveFreshDefaultShareProvider()
+    {
+        try
+        {
+            return RoeSnip.Sharing.ShareManager.ResolveDefault(SettingsStore.Load());
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: fresh settings load for share availability check failed: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>Chrome's confirmed Restart (the confirmation prompt itself lives in
@@ -1498,13 +1525,30 @@ internal sealed class RecordingSession
     /// own doc comment names this class as the owner responsible for wiring it). DESIGN, spelled out
     /// because the integration brief specifically asked for it:
     ///
+    /// Senior-review fix (HIGH, data loss): the provider is resolved FIRST, from a FRESH
+    /// <see cref="SettingsStore.Load()"/> — not this session's own <see cref="_liveSettings"/>
+    /// snapshot, which can be minutes stale by the time a Reviewing take gets around to sharing —
+    /// so a provider added via the tray's Settings window WHILE this take sits in Reviewing is seen.
+    /// If nothing resolves, this is a plain NO-OP: an honest balloon ("configure a share provider in
+    /// Settings first") and an early return, before <see cref="HardStopCaptureIfNeeded"/> ever runs.
+    /// The take is left exactly as it was — still soft-stopped, still fully Resumable — instead of
+    /// the old behavior, which hard-stopped and rearmed regardless, then discovered "no provider"
+    /// only inside the detached upload task, by which point <see cref="UploadSharedTakeAsync"/>'s own
+    /// finally-block had already deleted the only copy of a take the user could never get back.
+    ///
+    /// Only once a provider resolves does this go on to do what Share always did:
+    ///
     /// Stop is a SOFT stop (see StopCaptureToReview's own doc comment) — the recorder/encoder stay
     /// alive through Reviewing so Resume can continue the SAME take. The temp file is therefore NOT
     /// necessarily complete/stable yet when Share is clicked; uploading it mid-write would race the
-    /// encoder thread. So Share's first step is exactly what Save's first step already is: call
+    /// encoder thread. So Share's next step is exactly what Save's first step already is: call
     /// HardStopCaptureIfNeeded() to join the encoder thread and finalize the container. That call is
     /// irreversible (it's the same hard stop Save/Restart/Cancel all use) — once it succeeds, Resume
-    /// is gone regardless of what Share does next, exactly as if the user had clicked Save.
+    /// is gone regardless of what Share does next, exactly as if the user had clicked Save. The
+    /// finalized file's size is exactly what ShareManager.UploadAsync's own offline MaxUploadBytes
+    /// pre-flight check (run against the real FileStream this method opens, before any network call)
+    /// judges — see UploadSharedTakeAsync's own doc comment for why a preflight rejection is handled
+    /// as an ordinary upload failure rather than needing a separate code path here.
     ///
     /// Unlike Save, this never calls SaveOutput/File.Move — the point is to upload the file WITHOUT
     /// moving it, so the temp path stays exactly where BeginCapture wrote it and a plain FileStream
@@ -1518,18 +1562,24 @@ internal sealed class RecordingSession
     /// asked to share) — the take is DONE, precisely like a completed Save. Re-arming immediately
     /// also happens to be the only option that doesn't block the UI thread on the network: the actual
     /// upload is kicked off as a DETACHED task (never awaited here) against a few plain local values
-    /// captured before rearming (temp path, a friendly filename, content type, the live settings, the
-    /// notifier) — none of them alias the session's own mutable fields, so a user who immediately
-    /// starts a brand-new take (fresh _mp4TempPath/_gifTempPath) can never race the in-flight upload
-    /// of the OLD one. The upload's own result (success or failure) is reported purely via the tray
-    /// balloon (ShowShareUploadedBalloon/ShowError) once it lands, whatever this session is doing by
-    /// then — there is deliberately no "please wait" UI on the chrome for it, since the chrome has
-    /// already moved on to Setup by the time the network call even starts.
+    /// captured before rearming (temp path, a friendly filename, content type, the resolved provider
+    /// config, the notifier) — none of them alias the session's own mutable fields, so a user who
+    /// immediately starts a brand-new take (fresh _mp4TempPath/_gifTempPath) can never race the
+    /// in-flight upload of the OLD one. The upload's own result (success or failure) is reported
+    /// purely via the tray balloon (ShowShareUploadedBalloon/ShowError) once it lands, whatever this
+    /// session is doing by then — there is deliberately no "please wait" UI on the chrome for it,
+    /// since the chrome has already moved on to Setup by the time the network call even starts.
     ///
-    /// The temp file is deleted once the upload finishes (success or failure) by
-    /// <see cref="UploadSharedTakeAsync"/> — a leak only if the process exits mid-upload, the same
-    /// accepted risk HardStopCaptureIfNeeded's own "abandoned encoder thread" branch already documents
-    /// for a wedged encoder.
+    /// FAILURE = DATA LOSS, confronted honestly (senior-review fix — this doc comment used to only
+    /// discuss the "process exits mid-upload" leak below, never the far more common "the upload
+    /// itself simply failed" case): once HardStopCaptureIfNeeded succeeds, Resume is gone for good —
+    /// there is no path back to Reviewing. So <see cref="UploadSharedTakeAsync"/> now deletes the
+    /// temp file ONLY on a successful upload; every failure (network error, timeout, an offline
+    /// MaxUploadBytes rejection, a provider that stopped resolving between the check above and the
+    /// call) leaves the finished mp4/gif sitting in the temp directory and names its FULL PATH in the
+    /// error balloon, so the user can still go rescue it by hand. A leaked temp file only if the
+    /// process exits mid-upload remains the one accepted gap (same as before this fix) — everything
+    /// else that can go wrong now preserves the recording instead of silently discarding it.
     ///
     /// A hard-stop failure (wedged encoder) is handled exactly like SaveAndFinish's own failure
     /// branch: error balloon, tear the whole session down, nothing to upload.</summary>
@@ -1539,6 +1589,17 @@ internal sealed class RecordingSession
         {
             return; // same reentrancy reasoning as SaveAndFinish's own guard — see _sharing's own doc comment
         }
+
+        // Resolve the provider FIRST and from FRESH disk state — see this method's own doc comment
+        // for why both of those must happen before the irreversible hard stop below, not after it.
+        var config = ResolveFreshDefaultShareProvider();
+        if (config is null)
+        {
+            // No-op: the take stays exactly as it was — still soft-stopped, still fully Resumable.
+            _notifier?.ShowError("Recording not shared: configure a share provider in Settings first.");
+            return;
+        }
+
         _sharing = true;
 
         bool joined = HardStopCaptureIfNeeded();
@@ -1554,58 +1615,57 @@ internal sealed class RecordingSession
         string ext = _format == RecordingFormat.Mp4 ? ".mp4" : ".gif";
         string contentType = _format == RecordingFormat.Mp4 ? "video/mp4" : "image/gif";
         string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}{ext}";
-        RoeSnipSettings settingsForUpload = _liveSettings;
         ITrayNotifier? notifier = _notifier;
         Dispatcher? dispatcher = _uiDispatcher;
 
         _sharing = false;
         RearmForAnotherTake(); // chrome is back in Setup from here — see this method's own doc comment for why
 
-        _ = UploadSharedTakeAsync(tempPath, fileName, contentType, settingsForUpload, notifier, dispatcher);
+        _ = UploadSharedTakeAsync(tempPath, fileName, contentType, config, notifier, dispatcher);
     }
 
     /// <summary>The detached background half of <see cref="RequestShare"/> — runs after the chrome
     /// has already moved on (see that method's doc comment for why this is never awaited from there).
-    /// A plain static method (everything it touches arrives as a parameter) so there is no risk of it
-    /// reading a session field that some LATER take has since overwritten. Never throws:
-    /// ShareManager.UploadAsync already contracts to return a Success=false result instead of
-    /// throwing for an ordinary failure; the try/catch here is belt-and-braces for the file-stream/
-    /// provider-lookup plumbing around that call. Notifier calls are marshalled through
-    /// <paramref name="dispatcher"/> (captured from the session's own _uiDispatcher before this task
-    /// started) rather than called directly from this thread — ConfigureAwait(false) on the upload
-    /// means this method resumes on an arbitrary thread-pool thread once the network call completes,
-    /// and ITrayNotifier's WinForms NotifyIcon-backed implementation is not safe to call off the UI
-    /// thread, the same reasoning RecordingController's own OnRecorderFaulted/RequestForceStopAndSave
-    /// already apply via this exact _uiDispatcher.BeginInvoke pattern elsewhere in this file.</summary>
+    /// A plain static method (everything it touches arrives as a parameter, including the already-
+    /// resolved <paramref name="config"/> — RequestShare resolves it up front now, see that method's
+    /// own doc comment, so this no longer re-resolves against any settings snapshot of its own) so
+    /// there is no risk of it reading a session field that some LATER take has since overwritten.
+    /// Never throws: ShareManager.UploadAsync already contracts to return a Success=false result
+    /// instead of throwing for an ordinary failure (including its own offline MaxUploadBytes
+    /// pre-flight check against this method's FileStream, run before any network call); the
+    /// try/catch here is belt-and-braces for the file-stream/provider plumbing around that call.
+    /// Notifier calls are marshalled through <paramref name="dispatcher"/> (captured from the
+    /// session's own _uiDispatcher before this task started) rather than called directly from this
+    /// thread — ConfigureAwait(false) on the upload means this method resumes on an arbitrary
+    /// thread-pool thread once the network call completes, and ITrayNotifier's WinForms NotifyIcon-
+    /// backed implementation is not safe to call off the UI thread, the same reasoning
+    /// RecordingController's own OnRecorderFaulted/RequestForceStopAndSave already apply via this
+    /// exact _uiDispatcher.BeginInvoke pattern elsewhere in this file.</summary>
     private static async Task UploadSharedTakeAsync(
-        string tempPath, string fileName, string contentType, RoeSnipSettings settings,
+        string tempPath, string fileName, string contentType, RoeSnip.Sharing.ShareProviderConfig config,
         ITrayNotifier? notifier, Dispatcher? dispatcher)
     {
         RoeSnip.Sharing.ShareUploadResult result;
         try
         {
-            var config = RoeSnip.Sharing.ShareManager.ResolveDefault(settings);
-            if (config is null)
-            {
-                result = new RoeSnip.Sharing.ShareUploadResult(false, null, "Recording not shared: no share provider is configured yet.");
-            }
-            else
-            {
-                await using var stream = new FileStream(
-                    tempPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16, useAsync: true);
-                result = await RoeSnip.Sharing.ShareManager
-                    .UploadAsync(config, stream, fileName, contentType, CancellationToken.None)
-                    .ConfigureAwait(false);
-            }
+            await using var stream = new FileStream(
+                tempPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16, useAsync: true);
+            result = await RoeSnip.Sharing.ShareManager
+                .UploadAsync(config, stream, fileName, contentType, CancellationToken.None)
+                .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             result = new RoeSnip.Sharing.ShareUploadResult(false, null, $"Recording share upload failed: {ex.Message}");
         }
-        finally
+
+        // Senior-review fix (HIGH, data loss): delete the temp file ONLY on a successful upload —
+        // see RequestShare's own doc comment ("FAILURE = DATA LOSS") for why an upload failure (or
+        // an offline MaxUploadBytes pre-flight rejection, which surfaces through the exact same
+        // Success=false result) must never be the thing that erases the user's only copy of the
+        // recording. The old unconditional delete-in-finally is gone.
+        if (result.Success)
         {
-            // Best-effort — the WITHOUT-moving-it contract means this is the only cleanup the temp
-            // file ever gets; same accepted best-effort reasoning as CleanupTempFile's own try/catch.
             try { if (File.Exists(tempPath)) File.Delete(tempPath); }
             catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
         }
@@ -1614,17 +1674,25 @@ internal sealed class RecordingSession
         {
             if (result.Success && result.Url is not null)
             {
-                // ITrayNotifier.ShowShareUploadedBalloon's own doc comment documents the URL as
-                // "already ... copied to the clipboard by the caller" — this IS that caller, same
-                // clipboard-then-balloon order OverlaySession.UploadShareAsync uses for the toolbar's
-                // own Share button.
+                // Senior-review fix: the balloon used to unconditionally claim "copied the link" even
+                // when this SetText call below threw — vary its text on a clipboard failure instead
+                // (ShowShareUploadedBalloon's own second parameter).
+                bool clipboardCopied = true;
                 try { System.Windows.Clipboard.SetText(result.Url); }
-                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: share URL clipboard copy failed (non-fatal): {ex.Message}"); }
-                notifier?.ShowShareUploadedBalloon(result.Url);
+                catch (Exception ex)
+                {
+                    clipboardCopied = false;
+                    Console.Error.WriteLine($"RoeSnip: share URL clipboard copy failed (non-fatal): {ex.Message}");
+                }
+                notifier?.ShowShareUploadedBalloon(result.Url, clipboardCopied);
             }
             else
             {
-                notifier?.ShowError(result.ErrorMessage ?? "Recording share upload failed.");
+                // Senior-review fix (HIGH, data loss): name the preserved file's full path so the
+                // user can go rescue it by hand — the temp file above was deliberately NOT deleted
+                // for this exact branch.
+                string message = result.ErrorMessage ?? "Recording share upload failed.";
+                notifier?.ShowError($"{message} The recording was kept at: {tempPath}");
             }
         }
 

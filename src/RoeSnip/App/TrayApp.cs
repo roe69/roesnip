@@ -529,7 +529,7 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <inheritdoc/>
-    public void ShowShareUploadedBalloon(string url)
+    public void ShowShareUploadedBalloon(string url, bool clipboardCopied)
     {
         if (_notifyIcon is null) return;
 
@@ -548,7 +548,12 @@ public sealed class TrayApp : ITrayNotifier
         };
         _notifyIcon.BalloonTipClicked += _activeBalloonClickHandler;
         _notifyIcon.BalloonTipTitle = "RoeSnip";
-        _notifyIcon.BalloonTipText = "Uploaded and copied the link. Click to open it.";
+        // Senior-review fix: this used to unconditionally claim "copied the link" even when the
+        // clipboard write actually threw (Clipboard.SetText can fail, e.g. another process holding
+        // the clipboard open) - honest wording now depends on whether it really succeeded.
+        _notifyIcon.BalloonTipText = clipboardCopied
+            ? "Uploaded and copied the link. Click to open it."
+            : $"Uploaded: {url} (clipboard was busy). Click to open it.";
         _notifyIcon.ShowBalloonTip(4000);
     }
 

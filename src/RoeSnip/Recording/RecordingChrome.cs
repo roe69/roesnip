@@ -126,6 +126,12 @@ internal sealed class RecordingChrome : Window
     private readonly Button _restartButton;
     private readonly Button _saveButton;
     private readonly Button _shareButton;
+    // Senior-review fix (Finding 1c): whether an enabled share provider actually resolves right now
+    // — set by RecordingSession.StopCaptureToReview from a fresh disk read every time Reviewing is
+    // (re-)entered (see SetShareAvailable's own doc comment), NOT just "does anything subscribe to
+    // ShareRequested" (Start() always subscribes unconditionally, so that old check was always true
+    // and never reflected whether a click could actually succeed).
+    private bool _shareAvailable;
     private readonly Button _cancelButton;
     private readonly StackPanel _normalPanel;
     private readonly StackPanel _confirmPanel;
@@ -745,7 +751,14 @@ internal sealed class RecordingChrome : Window
     /// below would run off the bottom of the monitor, and clamping horizontally so it never runs
     /// off either side. Re-run after every state change (Setup/Recording/Reviewing/confirm all
     /// have different content sizes) so the panel stays anchored to the selection instead of
-    /// drifting as SizeToContent grows or shrinks it from a fixed top-left corner.</summary>
+    /// drifting as SizeToContent grows or shrinks it from a fixed top-left corner.
+    ///
+    /// TODO (deferred, senior review Finding 7 — pre-existing, not fixed by this pass): every clamp
+    /// below is computed purely against <see cref="_monitor"/>'s own bounds, even for a SPANNING
+    /// selection whose _selectionPx can extend well past that one monitor's edges. The HUD only ever
+    /// gets clamped/anchored within the anchor monitor, so a spanning take's far edge (on some OTHER
+    /// monitor) gets no placement coverage of its own — a gap in the spanning-anchor story, not
+    /// addressed here.</summary>
     private void PositionNearSelection(IntPtr hwnd)
     {
         double scale = _monitor.DpiX / 96.0;
@@ -847,6 +860,18 @@ internal sealed class RecordingChrome : Window
         ApplyState();
     }
 
+    /// <summary>Senior-review fix (Finding 1c): called by RecordingSession.StopCaptureToReview,
+    /// immediately before <see cref="EnterReviewing"/> (whose own ApplyState call is what actually
+    /// applies this to the button — deliberately not called again here, since _state is still the
+    /// PREVIOUS phase at this point), with a FRESH (not this session's own stale settings snapshot)
+    /// answer to "does an enabled share provider exist right now" — see that call site's own doc
+    /// comment. ApplyState reads this flag instead of checking whether anything subscribes to
+    /// <see cref="ShareRequested"/>, which used to always be true in practice (RecordingSession.
+    /// Start() subscribes unconditionally) and so never actually gated on whether a click could
+    /// succeed — the same "no clickable-but-broken button" rule ToolbarControl.SetShareProviders
+    /// already applies to its own sibling Share button.</summary>
+    internal void SetShareAvailable(bool available) => _shareAvailable = available;
+
     private void ShowRestartConfirm()
     {
         _showingRestartConfirm = true;
@@ -905,15 +930,14 @@ internal sealed class RecordingChrome : Window
         _saveButton.IsEnabled = _state == ChromeState.Reviewing;
 
         // Share likewise only makes sense once a take exists to upload (Reviewing) - AND only once
-        // something is actually listening for ShareRequested. RecordingSession.Start() subscribes
-        // unconditionally now (see RequestShare's own doc comment), so in practice this is always
-        // non-null for a real session - kept as a real subscriber check anyway (rather than hard-
-        // coding _state alone) so a hypothetical future caller that constructs a RecordingChrome
-        // without wiring ShareRequested still gets an honestly-disabled button instead of a visible,
-        // enabled one that silently does nothing when clicked - exactly the "clickable but silently
-        // broken" state ToolbarControl.SetShareProviders' own doc comment deliberately avoids for its
-        // sibling Share button.
-        _shareButton.IsEnabled = _state == ChromeState.Reviewing && ShareRequested is not null;
+        // an enabled share provider actually resolves (Finding 1c, senior review). Used to check
+        // "is anything listening for ShareRequested" instead - RecordingSession.Start() subscribes
+        // unconditionally, so that was always true for a real session and never actually reflected
+        // whether a click could succeed. _shareAvailable is refreshed from a FRESH disk read every
+        // time Reviewing is (re-)entered - see SetShareAvailable's own doc comment - matching the
+        // "no clickable-but-broken button" rule ToolbarControl.SetShareProviders already applies to
+        // its own sibling Share button.
+        _shareButton.IsEnabled = _state == ChromeState.Reviewing && _shareAvailable;
 
         RequestReposition();
     }
