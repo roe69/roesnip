@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using RoeSnip.Capture;
@@ -181,7 +182,19 @@ public sealed class GifEncoder : IDisposable
             return true;
         }
 
-        if (!TryGetChangedBounds(_lastPaintedPixelsBgra, frame.Pixels, _width, _height, out var box, _options.ChannelTolerance))
+        bool changed;
+        RectPhysical box;
+        if (GifEncoderStageTimings.Enabled)
+        {
+            long t0 = Stopwatch.GetTimestamp();
+            changed = TryGetChangedBounds(_lastPaintedPixelsBgra, frame.Pixels, _width, _height, out box, _options.ChannelTolerance);
+            GifEncoderStageTimings.BboxScanTicks += Stopwatch.GetTimestamp() - t0;
+        }
+        else
+        {
+            changed = TryGetChangedBounds(_lastPaintedPixelsBgra, frame.Pixels, _width, _height, out box, _options.ChannelTolerance);
+        }
+        if (!changed)
         {
             return false; // nothing changed beyond tolerance — the previous frame just keeps displaying
         }
@@ -275,12 +288,20 @@ public sealed class GifEncoder : IDisposable
             paintedPixels = currentPixels;
             paintedCount = _width * _height;
         }
+        else if (GifEncoderStageTimings.Enabled)
+        {
+            long t0 = Stopwatch.GetTimestamp();
+            paintedCount = CollectPaintedPixels(currentPixels, box);
+            GifEncoderStageTimings.CollectPaintedTicks += Stopwatch.GetTimestamp() - t0;
+            paintedPixels = _paintedPixelScratch.AsSpan(0, paintedCount * 4);
+        }
         else
         {
             paintedCount = CollectPaintedPixels(currentPixels, box);
             paintedPixels = _paintedPixelScratch.AsSpan(0, paintedCount * 4);
         }
 
+        long paletteT0 = GifEncoderStageTimings.Enabled ? Stopwatch.GetTimestamp() : 0;
         bool paletteReused = false;
         if (!forceRebuild && paintedCount > 0 && _paletteColorCount > 0)
         {
@@ -294,6 +315,10 @@ public sealed class GifEncoder : IDisposable
                 : 1;
             _lut.Rebuild(_paletteBgr, _paletteColorCount);
         }
+        if (GifEncoderStageTimings.Enabled)
+        {
+            GifEncoderStageTimings.PaletteTicks += Stopwatch.GetTimestamp() - paletteT0;
+        }
 
         int transparentIndex = _paletteColorCount;
         int entries = _paletteColorCount + 1; // + the reserved transparent slot, always present
@@ -301,11 +326,17 @@ public sealed class GifEncoder : IDisposable
         int sizeBits = Log2(physicalLctSize) - 1;
         int minCodeSize = Math.Max(2, Log2(physicalLctSize));
 
+        long classifyT0 = GifEncoderStageTimings.Enabled ? Stopwatch.GetTimestamp() : 0;
         GifDelta.ClassifyAndPaint(
             currentPixels, _lastPaintedPixelsBgra, _indexScratch, _width, box,
             _lut, _paletteBgr, transparentIndex, allowTransparency, _options.ChannelTolerance, _options.DitherErrorFloor,
             _options.LossyRunThresholdSq);
+        if (GifEncoderStageTimings.Enabled)
+        {
+            GifEncoderStageTimings.ClassifyAndPaintTicks += Stopwatch.GetTimestamp() - classifyT0;
+        }
 
+        long packT0 = GifEncoderStageTimings.Enabled ? Stopwatch.GetTimestamp() : 0;
         int boxWidth = box.Width, boxHeight = box.Height;
         for (int y = 0; y < boxHeight; y++)
         {
@@ -358,9 +389,18 @@ public sealed class GifEncoder : IDisposable
             _stream.WriteByte(0);
             _stream.WriteByte(0);
         }
+        if (GifEncoderStageTimings.Enabled)
+        {
+            GifEncoderStageTimings.PackAndHeaderTicks += Stopwatch.GetTimestamp() - packT0;
+        }
 
         // ---- LZW data ----
+        long lzwT0 = GifEncoderStageTimings.Enabled ? Stopwatch.GetTimestamp() : 0;
         _lzw.Encode(_stream, _boxIndexScratch.AsSpan(0, boxWidth * boxHeight), minCodeSize);
+        if (GifEncoderStageTimings.Enabled)
+        {
+            GifEncoderStageTimings.LzwTicks += Stopwatch.GetTimestamp() - lzwT0;
+        }
 
         return delayOffset;
     }
