@@ -313,18 +313,40 @@ public static class OverlayController
     /// <summary>Sets the selection on whichever monitor's window contains
     /// <paramref name="virtualDesktopPx"/>'s top-left corner, through the exact SetSelection path
     /// Ctrl+A (select-all) uses, so the dim mask and toolbar placement update exactly as a
-    /// completed drag would leave them. Null on success, else an error string.</summary>
-    internal static string? SetSelectionForAutomation(RectPhysical virtualDesktopPx) =>
-        s_activeSession?.SetSelectionForAutomation(virtualDesktopPx) ?? "no active overlay session";
+    /// completed drag would leave them. Null on success, else an error string.
+    ///
+    /// Reads s_activeSession into a local once and branches on IT rather than using
+    /// "s_activeSession?.Method(...) ?? "no active overlay session"" — see the identical fix and
+    /// its doc comment on RecordingController's own automation wrappers (commit d56ad19). Every
+    /// method here returns "null on success, else an error string", so "?." simply FORWARDS
+    /// whatever the underlying call returns, including a legitimate null success; "??" then can't
+    /// tell "the receiver was null" apart from "the receiver was NOT null and its method returned
+    /// null to mean success" — both look like a null left-hand side, so the fallback string fired
+    /// on every successful call too, reporting ok:false while the mutation landed anyway.</summary>
+    internal static string? SetSelectionForAutomation(RectPhysical virtualDesktopPx)
+    {
+        var session = s_activeSession;
+        return session is null ? "no active overlay session" : session.SetSelectionForAutomation(virtualDesktopPx);
+    }
 
     /// <summary>Invokes the same OverlayCommand.RecordMp4/RecordGif the toolbar's Record menu
-    /// choices raise.</summary>
-    internal static string? RecordForAutomation(RecordingFormat format) =>
-        s_activeSession?.RecordForAutomation(format) ?? "no active overlay session";
+    /// choices raise. See SetSelectionForAutomation's doc comment for why this reads
+    /// s_activeSession into a local and branches on it instead of "?." + "??".</summary>
+    internal static string? RecordForAutomation(RecordingFormat format)
+    {
+        var session = s_activeSession;
+        return session is null ? "no active overlay session" : session.RecordForAutomation(format);
+    }
 
-    /// <summary>Invokes the same OverlayCommand.Cancel the toolbar's X button raises.</summary>
-    internal static string? CancelForAutomation() =>
-        s_activeSession?.CancelForAutomation() ?? "no active overlay session";
+    /// <summary>Invokes the same OverlayCommand.Cancel the toolbar's X button raises. See
+    /// SetSelectionForAutomation's doc comment for why this reads s_activeSession into a local and
+    /// branches on it instead of "?." + "??" — CancelForAutomation always returns null on success,
+    /// so the old pattern reported ok:false on literally every successful cancel.</summary>
+    internal static string? CancelForAutomation()
+    {
+        var session = s_activeSession;
+        return session is null ? "no active overlay session" : session.CancelForAutomation();
+    }
 
     /// <summary>Cross-monitor selection (multimon-selection): Copy/Save had no automation entry
     /// point at all before this — the toolbar's Copy button raises OverlayCommand.Copy exactly like
@@ -334,9 +356,14 @@ public static class OverlayController
     /// dialog entirely — same production render/write calls Confirm/ConfirmSpanning already use,
     /// just without the interactive picker. Added specifically so a spanning selection's Copy/Save
     /// path — the one place this feature has no other test lever — can be driven and verified
-    /// end-to-end; see docs/DESIGN-MULTIMON-SELECTION.md.</summary>
-    internal static string? ConfirmForAutomation(string action, string? path) =>
-        s_activeSession?.ConfirmForAutomation(action, path) ?? "no active overlay session";
+    /// end-to-end; see docs/DESIGN-MULTIMON-SELECTION.md. See SetSelectionForAutomation's doc
+    /// comment for why this reads s_activeSession into a local and branches on it instead of "?."
+    /// + "??".</summary>
+    internal static string? ConfirmForAutomation(string action, string? path)
+    {
+        var session = s_activeSession;
+        return session is null ? "no active overlay session" : session.ConfirmForAutomation(action, path);
+    }
 
     // ---------- Standalone ColorPickerWindow (UX round 2) ----------
 

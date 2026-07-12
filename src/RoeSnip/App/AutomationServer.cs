@@ -457,10 +457,6 @@ internal sealed class AutomationServer
             }
             if (OverlayController.IsSessionActive)
             {
-                // NOTE: OverlayController.SetSelectionForAutomation (Overlay/OverlayController.cs,
-                // out of scope for this fix — see HandleRecord's own doc comment for the full
-                // writeup) has a live-verified null-coalescing bug that reports this as ok:false
-                // even when IsSessionActive is true here and the selection is applied successfully.
                 return OverlayController.SetSelectionForAutomation(rect);
             }
             return "idle: nothing to select (use trigger first)";
@@ -496,23 +492,13 @@ internal sealed class AutomationServer
         // settled now — a genuine start failure just rides out the full PollTimeout below instead
         // of being guessed at from an ambiguous "idle" snapshot.
         //
-        // The DOMINANT bug live verification actually turned up, though, was upstream of this
-        // poll entirely and is NOT fixable here: OverlayController.RecordForAutomation (Overlay/
-        // OverlayController.cs) is `s_activeSession?.RecordForAutomation(format) ?? "no active
-        // overlay session"` — the exact null-coalescing collapse documented on RecordingController
-        // .InvokeChromeAction's own doc comment (that class's four automation wrappers had, and
-        // now no longer have, the identical bug). When RecordForAutomation's underlying instance
-        // method legitimately returns null for SUCCESS, "?." forwards that null indistinguishably
-        // from "s_activeSession was null", so "?? "no active overlay session"" fires anyway —
-        // `error` above comes back non-null and this method returns BuildError before ever
-        // reaching the PollUntil below, even though the record request was accepted and a
-        // recording then genuinely starts a moment later. Live-reproduced: `record` immediately
-        // after a successful `trigger` reports ok:false every time (not just under a race — even
-        // with an explicit multi-second delay first), while a following `state` call shows the
-        // recording actually started. OverlayController.cs is owned by a different, concurrent
-        // workstream (Overlay/* is off-limits here — see this fix's own task boundary) and needs
-        // the same "read the field into a local, branch on IT" fix RecordingController's wrappers
-        // just got; flagged here rather than silently left for the next person to rediscover.
+        // (OverlayController.RecordForAutomation used to have its own null-coalescing collapse —
+        // same bug as RecordingController.InvokeChromeAction's wrappers, fixed by d56ad19 — where
+        // "s_activeSession?.RecordForAutomation(format) ?? "no active overlay session"" couldn't
+        // tell "no session" apart from "the session's own call legitimately returned null for
+        // success", so `error` came back non-null on every successful record request. Fixed
+        // alongside these automation wrappers by reading s_activeSession into a local and branching
+        // on it, the same fix RecordingController's wrappers already got.)
         //
         // Pure layer: none of this reasoning is testable in AutomationProtocolTests — it depends
         // on OverlayController/RecordingController's live static state and the WPF dispatcher's
