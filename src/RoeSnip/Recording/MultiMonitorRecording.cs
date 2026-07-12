@@ -116,4 +116,45 @@ public static class MultiMonitorRecording
         var b = monitor.BoundsPx;
         return new RectPhysical(absolute.Left - b.Left, absolute.Top - b.Top, absolute.Right - b.Left, absolute.Bottom - b.Top);
     }
+
+    /// <summary>Virtual-desktop-absolute overlap of two rects — the public counterpart of the
+    /// class's own private area-only helper, needed once spanning capture (phase 2,
+    /// PLAN-MULTIMON-RECORDING.md §1) has to know WHERE each monitor's own captured pixels land,
+    /// not just whether/how-much they overlap. Returns a degenerate (zero-width and/or
+    /// zero-height, but never inverted) rect anchored at the higher of the two lefts/tops when
+    /// there is no real overlap — callers check <c>Width &gt; 0 &amp;&amp; Height &gt; 0</c> (see
+    /// <see cref="IntersectingMonitors"/>) rather than relying on this method to signal "no
+    /// overlap" any other way.</summary>
+    public static RectPhysical Intersect(RectPhysical a, RectPhysical b)
+    {
+        int left = Math.Max(a.Left, b.Left);
+        int top = Math.Max(a.Top, b.Top);
+        int right = Math.Max(left, Math.Min(a.Right, b.Right));
+        int bottom = Math.Max(top, Math.Min(a.Bottom, b.Bottom));
+        return new RectPhysical(left, top, right, bottom);
+    }
+
+    /// <summary>Every monitor <paramref name="selectionAbs"/> overlaps by a positive area, ordered
+    /// by <see cref="MonitorInfo.Index"/> for determinism — the SET a spanning recording (phase 2,
+    /// §1) builds one <see cref="RegionRecorder"/> per. A selection that sits entirely on one
+    /// monitor returns a one-element list: spanning with N==1 is deliberately just the ordinary
+    /// non-spanning case at the geometry layer, not a separate code path (see
+    /// <see cref="SpanningCanvasCompositor"/>'s own class doc for how that degenerate case stays
+    /// exactly as cheap as the pre-spanning single-recorder pipeline). A selection dragged into a
+    /// dead gap between non-adjacent monitors returns an EMPTY list — the caller's job to decide
+    /// what "stay put"/"snap to nearest" means in that case, same convention
+    /// <see cref="FindOwningMonitor"/> already uses for its own null return.</summary>
+    public static IReadOnlyList<MonitorInfo> IntersectingMonitors(RectPhysical selectionAbs, IReadOnlyList<MonitorInfo> monitors)
+    {
+        var result = new List<MonitorInfo>();
+        foreach (var m in monitors)
+        {
+            if (IntersectionArea(selectionAbs, m.BoundsPx) > 0)
+            {
+                result.Add(m);
+            }
+        }
+        result.Sort(static (x, y) => x.Index.CompareTo(y.Index));
+        return result;
+    }
 }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using RoeSnip.Capture;
 using RoeSnip.Recording;
 using Xunit;
@@ -220,5 +221,94 @@ public class MultiMonitorRecordingTests
         var relative = MultiMonitorRecording.ToMonitorRelative(clamped, Display2);
         var monitorLocalBounds = new RectPhysical(0, 0, Display2.BoundsPx.Width, Display2.BoundsPx.Height);
         Assert.True(MultiMonitorRecording.Contains(monitorLocalBounds, relative));
+    }
+
+    // ---------- Intersect (multi-monitor recording phase 2 - spanning capture geometry) ----------
+
+    [Fact]
+    public void Intersect_OverlappingRects_IsTheSharedRegion()
+    {
+        var a = RectPhysical.FromSize(2400, 100, 800, 600); // 2400-3200, 100-700
+        var b = Display3.BoundsPx; // 0-2560, 0-1440
+        var result = MultiMonitorRecording.Intersect(a, b);
+        Assert.Equal(new RectPhysical(2400, 100, 2560, 700), result);
+    }
+
+    [Fact]
+    public void Intersect_NoOverlap_IsDegenerateNotInverted()
+    {
+        var a = RectPhysical.FromSize(10_000, 10_000, 400, 300); // far off in a dead gap
+        var result = MultiMonitorRecording.Intersect(a, Display3.BoundsPx);
+        Assert.Equal(0, result.Width);
+        Assert.Equal(0, result.Height);
+        Assert.True(result.Right >= result.Left); // never inverted, even with no real overlap
+        Assert.True(result.Bottom >= result.Top);
+    }
+
+    [Fact]
+    public void Intersect_TouchingEdgeExactly_IsZeroWidthAtTheSeam()
+    {
+        // A rect that starts exactly where DISPLAY3 ends (x=2560) touches but doesn't overlap.
+        var a = RectPhysical.FromSize(2560, 100, 400, 300);
+        var result = MultiMonitorRecording.Intersect(a, Display3.BoundsPx);
+        Assert.Equal(0, result.Width);
+    }
+
+    [Fact]
+    public void Intersect_IsSymmetric()
+    {
+        var a = RectPhysical.FromSize(2400, -200, 800, 600);
+        Assert.Equal(MultiMonitorRecording.Intersect(a, Display1.BoundsPx), MultiMonitorRecording.Intersect(Display1.BoundsPx, a));
+    }
+
+    // ---------- IntersectingMonitors ----------
+
+    [Fact]
+    public void IntersectingMonitors_FullyOnOneMonitor_ReturnsJustThatOne()
+    {
+        var region = RectPhysical.FromSize(100, 100, 800, 600); // entirely on DISPLAY3
+        var result = MultiMonitorRecording.IntersectingMonitors(region, ThreeMonitors);
+        Assert.Single(result);
+        Assert.Equal(Display3.DeviceName, result[0].DeviceName);
+    }
+
+    [Fact]
+    public void IntersectingMonitors_StraddlingTwoMonitors_ReturnsBothIndexOrdered()
+    {
+        // Straddles the DISPLAY3/DISPLAY2 vertical seam at x=2560.
+        var region = RectPhysical.FromSize(2400, 100, 400, 300); // 2400-2800
+        var result = MultiMonitorRecording.IntersectingMonitors(region, ThreeMonitors);
+        Assert.Equal(2, result.Count);
+        Assert.Equal(Display3.DeviceName, result[0].DeviceName); // Index 0
+        Assert.Equal(Display2.DeviceName, result[1].DeviceName); // Index 2
+    }
+
+    [Fact]
+    public void IntersectingMonitors_SpanningAllThree_ReturnsAllThreeIndexOrdered()
+    {
+        // A huge selection covering the whole union bounds touches all three monitors at once.
+        var region = MultiMonitorRecording.UnionBounds(ThreeMonitors);
+        var result = MultiMonitorRecording.IntersectingMonitors(region, ThreeMonitors);
+        Assert.Equal(3, result.Count);
+        Assert.Equal(new[] { "\\\\.\\DISPLAY3", "\\\\.\\DISPLAY1", "\\\\.\\DISPLAY2" }, result.Select(m => m.DeviceName));
+    }
+
+    [Fact]
+    public void IntersectingMonitors_DeadGap_ReturnsEmpty()
+    {
+        var region = RectPhysical.FromSize(10_000, 10_000, 400, 300);
+        var result = MultiMonitorRecording.IntersectingMonitors(region, ThreeMonitors);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void IntersectingMonitors_TouchingEdgeExactly_DoesNotCount()
+    {
+        // Same "touching but not overlapping" boundary Contains() treats as inside, but
+        // IntersectingMonitors (built on a POSITIVE-area test) must not count a zero-width sliver.
+        var region = RectPhysical.FromSize(2560, 100, 400, 300); // starts exactly at DISPLAY3's right edge
+        var result = MultiMonitorRecording.IntersectingMonitors(region, ThreeMonitors);
+        Assert.Single(result);
+        Assert.Equal(Display2.DeviceName, result[0].DeviceName); // only the monitor it's genuinely ON
     }
 }
