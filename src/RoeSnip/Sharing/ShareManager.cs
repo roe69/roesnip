@@ -15,14 +15,16 @@ namespace RoeSnip.Sharing;
 /// network call, and runs the upload against one process-wide HttpClient (never one-per-call - same
 /// convention App/UpdateManager.cs already uses for its own GitHub calls).
 ///
-/// NOTE on this codebase's current wiring state: this facade is fully implemented and unit-tested
-/// against a mock HttpMessageHandler (see ShareManagerTests), but nothing calls it against the real
-/// network yet, and no caller currently invokes it from a live UI click - wiring an actual UI click
-/// all the way through to a live call requires changes in Overlay/OverlayWindow.xaml.cs (for the
-/// toolbar's Share button - it needs to resolve the current selection's rendered bytes) and
-/// Recording/RecordingController.cs (for the recording chrome's Share button - it owns the finished
-/// take's temp file path), neither of which this facade or its callers touch (see those two
-/// components' own doc comments for the events/hooks they expose for that future wiring).</summary>
+/// Wiring state (integration pass, 2026-07): both live UI callers are now wired. The toolbar's Share
+/// button calls this via OverlaySession.ShareCurrentSelection (Overlay/OverlayController.cs), which
+/// resolves the current selection's rendered bytes through the same render path Copy already uses.
+/// The recording chrome's Reviewing-state Share button calls this via RecordingSession.RequestShare
+/// (Recording/RecordingController.cs), which owns the finished take's temp file path - see that
+/// method's own doc comment for the hard-stop/upload/re-arm design (Share triggers the same hard
+/// stop Save uses, then uploads the temp file WITHOUT moving it). Unit tests (ShareManagerTests)
+/// still exercise this facade only against a mock HttpMessageHandler - no test here opens a real
+/// socket; see TESTING.md's "Sharing/upload subsystem" section for what has and hasn't been verified
+/// against a real provider.</summary>
 public static class ShareManager
 {
     private static readonly Lazy<HttpClient> SharedClient = new(CreateHttpClient);

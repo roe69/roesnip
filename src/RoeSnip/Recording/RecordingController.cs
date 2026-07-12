@@ -254,6 +254,12 @@ internal sealed class RecordingSession
     private long _pauseStartTicks; // Stopwatch.GetTimestamp() when the current pause began (valid only while _paused)
     private bool _audioTrackEnabled; // this take's MP4 has an AAC track (fixed at BeginCapture)
     private bool _saving; // reentrancy guard: the SaveFileDialog pumps messages, so a PrtScr press mid-dialog re-enters SaveAndFinish
+    // Sharing/* subsystem: same reentrancy role as _saving (a hard stop must never run twice
+    // concurrently against one pipeline), checked alongside it in both RequestShare and
+    // SaveAndFinish's own entry guards — see RequestShare's own doc comment for why Share needs a
+    // SEPARATE flag rather than reusing _saving outright (their guard windows don't nest the same
+    // way: Share never re-enters itself via a nested message pump the way Save's SaveFileDialog does).
+    private bool _sharing;
 
     public RecordingSession(
         MonitorInfo monitor, RectPhysical selectionPx, RecordingFormat format,
@@ -356,6 +362,10 @@ internal sealed class RecordingSession
             _chrome.ResumeRequested += Resume;
             _chrome.RestartConfirmed += RestartTake;
             _chrome.SaveRequested += () => SaveAndFinish();
+            // Sharing/* subsystem: RecordingChrome.ShareRequested's own doc comment documents this
+            // exact subscription as the missing wire — see RequestShare's own doc comment for the
+            // full hard-stop/upload/re-arm design.
+            _chrome.ShareRequested += RequestShare;
             _chrome.CancelRequested += CancelAndDiscard;
             _chrome.MicToggled += v => SetAudioToggle(mic: v, systemAudio: null);
             _chrome.SystemAudioToggled += v => SetAudioToggle(mic: null, systemAudio: v);
@@ -1410,12 +1420,16 @@ internal sealed class RecordingSession
     /// outcome tears the session down as before.</summary>
     private void SaveAndFinish(bool rearmAfterSave = true)
     {
-        if (_phase != Phase.Reviewing || _saving)
+        if (_phase != Phase.Reviewing || _saving || _sharing)
         {
             // _saving: the save dialog below runs a nested message pump on this thread, so a
             // PrtScr press while it is open dispatches straight back into this method with _phase
             // still Reviewing — without this guard the reentrant call could save/re-arm first and
             // the suspended outer call would then tear the fresh session down when it resumed.
+            // _sharing: belt-and-braces (RequestShare never re-enters via a nested pump the way Save
+            // does, and it always resets _sharing/re-arms to Setup before returning, so in practice
+            // _phase is already back to Setup by the time this could fire concurrently) — see
+            // RequestShare's own doc comment.
             return;
         }
         _saving = true;
@@ -1478,6 +1492,153 @@ internal sealed class RecordingSession
         _chrome!.EnterSetup();
         _chrome!.Show(); // was Hidden to own the save dialog
         _outline?.SetInteractionMode(allowResize: true); // new take - the region can be reshaped again
+    }
+
+    /// <summary>Reviewing state's Share button (Sharing/* subsystem — RecordingChrome.ShareRequested's
+    /// own doc comment names this class as the owner responsible for wiring it). DESIGN, spelled out
+    /// because the integration brief specifically asked for it:
+    ///
+    /// Stop is a SOFT stop (see StopCaptureToReview's own doc comment) — the recorder/encoder stay
+    /// alive through Reviewing so Resume can continue the SAME take. The temp file is therefore NOT
+    /// necessarily complete/stable yet when Share is clicked; uploading it mid-write would race the
+    /// encoder thread. So Share's first step is exactly what Save's first step already is: call
+    /// HardStopCaptureIfNeeded() to join the encoder thread and finalize the container. That call is
+    /// irreversible (it's the same hard stop Save/Restart/Cancel all use) — once it succeeds, Resume
+    /// is gone regardless of what Share does next, exactly as if the user had clicked Save.
+    ///
+    /// Unlike Save, this never calls SaveOutput/File.Move — the point is to upload the file WITHOUT
+    /// moving it, so the temp path stays exactly where BeginCapture wrote it and a plain FileStream
+    /// reads it for the upload.
+    ///
+    /// "Re-arm or teardown consistent with Save's flow" (the brief's own phrasing): this chooses
+    /// re-arm, unconditionally, immediately after a successful hard stop — mirroring SaveAndFinish's
+    /// OWN successful-save branch (RearmForAnotherTake), not its dialog-cancelled/failure branches.
+    /// The reasoning: once the pipeline is hard-stopped, sitting in Reviewing has nothing left to
+    /// offer (Resume is impossible; Restart/Cancel would just discard a take the user explicitly
+    /// asked to share) — the take is DONE, precisely like a completed Save. Re-arming immediately
+    /// also happens to be the only option that doesn't block the UI thread on the network: the actual
+    /// upload is kicked off as a DETACHED task (never awaited here) against a few plain local values
+    /// captured before rearming (temp path, a friendly filename, content type, the live settings, the
+    /// notifier) — none of them alias the session's own mutable fields, so a user who immediately
+    /// starts a brand-new take (fresh _mp4TempPath/_gifTempPath) can never race the in-flight upload
+    /// of the OLD one. The upload's own result (success or failure) is reported purely via the tray
+    /// balloon (ShowShareUploadedBalloon/ShowError) once it lands, whatever this session is doing by
+    /// then — there is deliberately no "please wait" UI on the chrome for it, since the chrome has
+    /// already moved on to Setup by the time the network call even starts.
+    ///
+    /// The temp file is deleted once the upload finishes (success or failure) by
+    /// <see cref="UploadSharedTakeAsync"/> — a leak only if the process exits mid-upload, the same
+    /// accepted risk HardStopCaptureIfNeeded's own "abandoned encoder thread" branch already documents
+    /// for a wedged encoder.
+    ///
+    /// A hard-stop failure (wedged encoder) is handled exactly like SaveAndFinish's own failure
+    /// branch: error balloon, tear the whole session down, nothing to upload.</summary>
+    private void RequestShare()
+    {
+        if (_phase != Phase.Reviewing || _saving || _sharing)
+        {
+            return; // same reentrancy reasoning as SaveAndFinish's own guard — see _sharing's own doc comment
+        }
+        _sharing = true;
+
+        bool joined = HardStopCaptureIfNeeded();
+        if (!joined)
+        {
+            _sharing = false;
+            _notifier?.ShowError("Recording could not be shared: the encoder did not stop in time.");
+            TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: false); // already messaged above
+            return;
+        }
+
+        string tempPath = _format == RecordingFormat.Mp4 ? _mp4TempPath! : _gifTempPath!;
+        string ext = _format == RecordingFormat.Mp4 ? ".mp4" : ".gif";
+        string contentType = _format == RecordingFormat.Mp4 ? "video/mp4" : "image/gif";
+        string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}{ext}";
+        RoeSnipSettings settingsForUpload = _liveSettings;
+        ITrayNotifier? notifier = _notifier;
+        Dispatcher? dispatcher = _uiDispatcher;
+
+        _sharing = false;
+        RearmForAnotherTake(); // chrome is back in Setup from here — see this method's own doc comment for why
+
+        _ = UploadSharedTakeAsync(tempPath, fileName, contentType, settingsForUpload, notifier, dispatcher);
+    }
+
+    /// <summary>The detached background half of <see cref="RequestShare"/> — runs after the chrome
+    /// has already moved on (see that method's doc comment for why this is never awaited from there).
+    /// A plain static method (everything it touches arrives as a parameter) so there is no risk of it
+    /// reading a session field that some LATER take has since overwritten. Never throws:
+    /// ShareManager.UploadAsync already contracts to return a Success=false result instead of
+    /// throwing for an ordinary failure; the try/catch here is belt-and-braces for the file-stream/
+    /// provider-lookup plumbing around that call. Notifier calls are marshalled through
+    /// <paramref name="dispatcher"/> (captured from the session's own _uiDispatcher before this task
+    /// started) rather than called directly from this thread — ConfigureAwait(false) on the upload
+    /// means this method resumes on an arbitrary thread-pool thread once the network call completes,
+    /// and ITrayNotifier's WinForms NotifyIcon-backed implementation is not safe to call off the UI
+    /// thread, the same reasoning RecordingController's own OnRecorderFaulted/RequestForceStopAndSave
+    /// already apply via this exact _uiDispatcher.BeginInvoke pattern elsewhere in this file.</summary>
+    private static async Task UploadSharedTakeAsync(
+        string tempPath, string fileName, string contentType, RoeSnipSettings settings,
+        ITrayNotifier? notifier, Dispatcher? dispatcher)
+    {
+        RoeSnip.Sharing.ShareUploadResult result;
+        try
+        {
+            var config = RoeSnip.Sharing.ShareManager.ResolveDefault(settings);
+            if (config is null)
+            {
+                result = new RoeSnip.Sharing.ShareUploadResult(false, null, "Recording not shared: no share provider is configured yet.");
+            }
+            else
+            {
+                await using var stream = new FileStream(
+                    tempPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16, useAsync: true);
+                result = await RoeSnip.Sharing.ShareManager
+                    .UploadAsync(config, stream, fileName, contentType, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            result = new RoeSnip.Sharing.ShareUploadResult(false, null, $"Recording share upload failed: {ex.Message}");
+        }
+        finally
+        {
+            // Best-effort — the WITHOUT-moving-it contract means this is the only cleanup the temp
+            // file ever gets; same accepted best-effort reasoning as CleanupTempFile's own try/catch.
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); }
+            catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
+        }
+
+        void ReportResult()
+        {
+            if (result.Success && result.Url is not null)
+            {
+                // ITrayNotifier.ShowShareUploadedBalloon's own doc comment documents the URL as
+                // "already ... copied to the clipboard by the caller" — this IS that caller, same
+                // clipboard-then-balloon order OverlaySession.UploadShareAsync uses for the toolbar's
+                // own Share button.
+                try { System.Windows.Clipboard.SetText(result.Url); }
+                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: share URL clipboard copy failed (non-fatal): {ex.Message}"); }
+                notifier?.ShowShareUploadedBalloon(result.Url);
+            }
+            else
+            {
+                notifier?.ShowError(result.ErrorMessage ?? "Recording share upload failed.");
+            }
+        }
+
+        if (dispatcher is not null)
+        {
+            // Discarded: same reasoning as OverlaySession's own identical pattern in
+            // OverlayController.cs — DispatcherOperation is awaitable, but this method's job ends
+            // once the UI-thread callback is queued.
+            _ = dispatcher.BeginInvoke(new Action(ReportResult));
+        }
+        else
+        {
+            ReportResult(); // no dispatcher captured (shouldn't happen — Start() always sets _uiDispatcher first) — report inline rather than silently drop it
+        }
     }
 
     /// <summary>The single terminal path every end-of-recording route funnels through (Save,

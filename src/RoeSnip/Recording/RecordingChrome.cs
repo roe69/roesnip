@@ -149,8 +149,8 @@ internal sealed class RecordingChrome : Window
     /// lives in RecordingController's own private fields - see RecordingController.cs, which is the
     /// owner responsible for subscribing to this event, reading its own temp path, and driving the
     /// actual upload/clipboard/balloon sequence - the same division of labor SaveRequested already
-    /// uses for finalizing the take). RecordingController.cs does not yet subscribe to this event -
-    /// see this class's own doc comment.</summary>
+    /// uses for finalizing the take). RecordingSession.Start() subscribes this to RequestShare - see
+    /// that method's own doc comment for the hard-stop/upload/re-arm design.</summary>
     public event Action? ShareRequested;
     /// <summary>Available in every state - aborts the whole recording without saving.</summary>
     public event Action? CancelRequested;
@@ -905,14 +905,14 @@ internal sealed class RecordingChrome : Window
         _saveButton.IsEnabled = _state == ChromeState.Reviewing;
 
         // Share likewise only makes sense once a take exists to upload (Reviewing) - AND only once
-        // something is actually listening for ShareRequested. Nothing subscribes to it yet (see that
-        // event's own doc comment: RecordingController hasn't been wired up), so gating purely on
-        // _state would ship a visible, enabled button that silently does nothing when clicked -
-        // exactly the "clickable but silently broken" state ToolbarControl.SetShareProviders'
-        // own doc comment deliberately avoids for its sibling Share button. Checking for a real
-        // subscriber here means this button turns itself on automatically the moment
-        // RecordingController subscribes, with no separate "providers configured" plumbing needed on
-        // this class.
+        // something is actually listening for ShareRequested. RecordingSession.Start() subscribes
+        // unconditionally now (see RequestShare's own doc comment), so in practice this is always
+        // non-null for a real session - kept as a real subscriber check anyway (rather than hard-
+        // coding _state alone) so a hypothetical future caller that constructs a RecordingChrome
+        // without wiring ShareRequested still gets an honestly-disabled button instead of a visible,
+        // enabled one that silently does nothing when clicked - exactly the "clickable but silently
+        // broken" state ToolbarControl.SetShareProviders' own doc comment deliberately avoids for its
+        // sibling Share button.
         _shareButton.IsEnabled = _state == ChromeState.Reviewing && ShareRequested is not null;
 
         RequestReposition();
