@@ -751,9 +751,37 @@ public static class OverlayController
         /// Render-priority pass, so by the time the flash actually disappears the real, on-screen,
         /// opaque overlay is already there to occlude it. Hiding late is always invisible (the
         /// overlay is opaque and the flash is itself capture-excluded, so a brief overlap can never
-        /// leak into a screenshot); hiding early is exactly the bug this fixes.</summary>
+        /// leak into a screenshot); hiding early is exactly the bug this fixes.
+        ///
+        /// Torn-down-session NRE guard (found via rapid automated trigger/escape cycling): for a
+        /// non-pooled window this method is reached via `window.ContentRendered += (_, _) =>
+        /// OnOverlayContentRendered(window)`, subscribed in RunAsync BEFORE window.Show(). WPF does
+        /// not raise ContentRendered synchronously — it's queued and fires on a later dispatcher
+        /// pass once the render thread has actually composited a frame. A fast enough Cancel/
+        /// CancelStage-to-empty (Esc arriving before that render pass has run) reaches Finish()
+        /// first: Finish sets `_finished = true` and then calls window.CloseOverlay() -> Close(),
+        /// whose OnClosed handler (OverlayWindow.xaml.cs) deliberately nulls `_frame` to release the
+        /// session's pixel buffers early — see that method's own doc comment, which assumed (wrongly
+        /// under this race) that "nothing reads Frame/Monitor after OnClosed". The already-queued
+        /// ContentRendered then fires anyway on the closed window, invoking this method, which reads
+        /// `window.Monitor` (= `_frame.Monitor`) below — a NullReferenceException on `_frame`, which
+        /// crashed the whole process since this runs on the dispatcher thread with nothing above it
+        /// to catch. `_finished` is exactly the flag Finish() sets before doing any of that teardown,
+        /// so bailing out here the moment it's set is both necessary and sufficient: every side
+        /// effect this method would otherwise perform (the latency logs, and hiding the flash for
+        /// this monitor / all monitors) is already subsumed by Finish()'s own unconditional
+        /// FlashDimmer.HideAll() in its finally block, so skipping them here loses nothing. Left as
+        /// a guard rather than unsubscribing ContentRendered in Finish(), since Finish() closes
+        /// windows in a plain foreach with no reference back to each window's own lambda to
+        /// unsubscribe, and the flash/overlay dim-show handoff sequencing above is deliberately not
+        /// being restructured to fix this.</summary>
         private void OnOverlayContentRendered(OverlayWindow window)
         {
+            if (_finished)
+            {
+                return;
+            }
+
             _renderedCount++;
             double elapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(_responseBaseTimestamp).TotalMilliseconds;
             if (_renderedCount == 1)
