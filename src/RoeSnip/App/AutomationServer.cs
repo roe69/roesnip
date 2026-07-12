@@ -793,7 +793,16 @@ internal sealed class AutomationServer
 /// invocation never touches TrayApp's single-instance mutex/pipe the way a bare launch does.</summary>
 public static class AutomationClient
 {
-    public static int Run(string argument)
+    public static int Run(string argument) => Run(argument, AutomationProtocol.PipeName);
+
+    /// <summary>Pipe-name-parameterized overload. Exists so AutomationClientTests can drive this
+    /// method against a private, per-test pipe instead of the real "RoeSnip-Automation" name — a
+    /// resident RoeSnip running with --automation already owns that name with
+    /// maxNumberOfServerInstances:1, and squatting on it from a test would both race a real
+    /// resident's bind and let a stray real `--auto` invocation talk to the test's fake server
+    /// mid-run. Matches this repo's "make the testable slice a plain public overload" convention
+    /// (see AutomationProtocol's own doc comment) instead of an InternalsVisibleTo edit.</summary>
+    public static int Run(string argument, string pipeName)
     {
         string json;
         try
@@ -833,7 +842,7 @@ public static class AutomationClient
         int exitCode;
         try
         {
-            client = new NamedPipeClientStream(".", AutomationProtocol.PipeName, PipeDirection.InOut);
+            client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut);
             client.Connect(2000);
 
             writer = new StreamWriter(client, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true) { AutoFlush = true, NewLine = "\n" };

@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
@@ -18,33 +19,49 @@ namespace RoeSnip.Tests;
 /// regardless of what the server does to its end immediately after replying.</summary>
 public class AutomationClientTests
 {
-    /// <summary>Starts a one-shot server on the real automation pipe name that reads exactly one
-    /// request line, writes <paramref name="serverResponse"/>, and disposes its stream/reader/
+    /// <summary>Starts a one-shot server on a private, per-call pipe name (never the real
+    /// "RoeSnip-Automation" name — a resident running with --automation owns that with
+    /// maxNumberOfServerInstances:1, so squatting on it here would race a real resident's bind and
+    /// let a stray real `--auto` invocation talk to this fake server mid-run) that reads exactly
+    /// one request line, writes <paramref name="serverResponse"/>, and disposes its stream/reader/
     /// writer immediately afterward (all three go out of scope at the end of the `using` block,
     /// deliberately right after the write) — the abrupt-close race this test exists to cover, not
     /// a graceful shutdown. Returns whatever exit code <see cref="AutomationClient.Run"/> produces
     /// against it.</summary>
     private static async Task<int> RunAgainstServerAsync(string request, string serverResponse)
     {
+        string pipeName = $"RoeSnip-Automation-Test-{Guid.NewGuid():N}";
         var serverReady = new TaskCompletionSource<bool>();
         var serverTask = Task.Run(() =>
         {
-            using var server = new NamedPipeServerStream(AutomationProtocol.PipeName, PipeDirection.InOut, 1);
-            serverReady.SetResult(true);
-            server.WaitForConnection();
-            using var writer = new StreamWriter(server, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true) { AutoFlush = true, NewLine = "\n" };
-            using var reader = new StreamReader(server, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
-            _ = reader.ReadLine(); // the client's request line — content doesn't matter to this test
-            writer.WriteLine(serverResponse);
-            // server/writer/reader all dispose here, right after the response line is flushed —
-            // exactly the abrupt-close shape a real resident produces on a fast round trip.
+            try
+            {
+                using var server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1);
+                serverReady.SetResult(true);
+                server.WaitForConnection();
+                using var writer = new StreamWriter(server, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true) { AutoFlush = true, NewLine = "\n" };
+                using var reader = new StreamReader(server, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+                _ = reader.ReadLine(); // the client's request line — content doesn't matter to this test
+                writer.WriteLine(serverResponse);
+                // server/writer/reader all dispose here, right after the response line is flushed —
+                // exactly the abrupt-close shape a real resident produces on a fast round trip.
+            }
+            catch (Exception ex)
+            {
+                // Fault serverReady too, not just serverTask: without this, a throw BEFORE
+                // SetResult(true) above (e.g. the pipe name is somehow already taken) leaves
+                // serverReady's task neither completed nor faulted, so `await serverReady.Task`
+                // below hangs forever instead of failing loudly with this exception.
+                serverReady.TrySetException(ex);
+                throw;
+            }
         });
 
         // Block until the pipe instance actually exists and is listening before the client tries
         // to connect — Connect(2000) would otherwise race a server that hasn't bound the name yet.
         await serverReady.Task;
 
-        int exitCode = AutomationClient.Run(request);
+        int exitCode = AutomationClient.Run(request, pipeName);
         await serverTask;
         return exitCode;
     }
