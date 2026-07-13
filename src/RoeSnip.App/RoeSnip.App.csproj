@@ -19,6 +19,10 @@
     <TargetFrameworks>net8.0;net8.0-windows10.0.22621.0</TargetFrameworks>
     <RootNamespace>RoeSnip.App</RootNamespace>
     <AssemblyName>RoeSnip</AssemblyName>
+    <!-- Compared against the GitHub Releases tag_name by AppShell/UpdateManager.cs (item 13) -
+         bump on every release, in lockstep with the WPF app's own RoeSnip.csproj <Version>
+         (release.yml's prep job bumps both). -->
+    <Version>1.0.0</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

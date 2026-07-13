@@ -1,0 +1,564 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Reflection;
+using System.Runtime.Versioning;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Win32;
+using RoeSnip.Core.Settings;
+
+namespace RoeSnip.App.AppShell;
+
+/// <summary>Install-to-%LOCALAPPDATA%\RoeSnip.App + self-update from GitHub Releases, ported from
+/// src/RoeSnip/App/UpdateManager.cs (WPF reference, esp. :41-48, :59-75, :206-309, :349-358,
+/// :435-527). The actual install/swap/registry mechanics are WINDOWS ONLY (replace-on-run's
+/// takeover, the atomic .old/.new exe swap, and the HKCU Run key all assume a real Windows install
+/// directory and executable) — <see cref="Install"/>/<see cref="ApplyUpdateAsync"/>/
+/// <see cref="CleanupStaleUpdateFiles"/>/<see cref="CleanupStaleExeWithRetry"/>/
+/// <see cref="ProcessPendingSourceCleanup"/> are all attributed windows-only and TrayApp never
+/// calls them off Windows (item 13d: Linux/macOS only get a passive "new version available" toast
+/// linking the release page, never a self-swap — see docs/PARITY.md's accepted-limitations list).
+/// <see cref="CheckForUpdateAsync"/> and the CurrentVersion*/<see cref="InstallExists"/>/
+/// <see cref="IsInstalled"/> reads are portable (an Assembly version read plus a GET to the GitHub
+/// API is OS-agnostic) so they compile and run identically everywhere — that's what the passive
+/// Linux/macOS notice reuses.
+///
+/// DISTINCT identity from the WPF app's own UpdateManager (both apps can be installed side by
+/// side; see docs/PARITY.md's Notes section): <see cref="InstallDir"/> is
+/// %LOCALAPPDATA%\RoeSnip.App (not \RoeSnip), the Run key value is "RoeSnip.App" (matches
+/// <see cref="StartupManager"/>'s own value name, not the WPF app's "RoeSnip"), and the release
+/// asset this downloads is "RoeSnipApp-win-x64.exe" — NOT "RoeSnip.exe", which is the WPF app's
+/// own asset name. Matching that name here would let this self-updater silently download and swap
+/// itself for the WPF exe, bricking the install; release.yml publishes both assets under their own
+/// distinct names specifically so this can never happen.
+///
+/// Every public entry point here is a convenience, never load-bearing: a private repo (404 until
+/// the release goes public), no network, a truncated download, or a locked file must never throw
+/// out into the tray or leave the install dir without a runnable exe. Not covered by an automated
+/// test for the file-system/registry mutation paths, for the same reason the WPF reference isn't —
+/// they mutate the real registry/filesystem and talk to a real HTTP endpoint, reviewed by eye
+/// instead. The pure JSON-parsing/version-compare core (<see cref="ParseUpdateInfo"/>) is fully
+/// unit-tested (RoeSnip.App.Tests/UpdateManagerTests.cs) since it takes no network or OS
+/// dependency at all.</summary>
+public static class UpdateManager
+{
+    private const string GitHubOwner = "roe69";
+    private const string GitHubRepo = "roesnip";
+
+    // Load-bearing exact match against release.yml's Windows RoeSnip.App asset name — see the
+    // class doc comment's warning about never letting this collide with the WPF app's own
+    // "RoeSnip.exe" asset.
+    private const string ReleaseAssetName = "RoeSnipApp-win-x64.exe";
+
+    private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+
+    // Matches StartupManager.ValueName exactly — both write/read the same HKCU value, so this
+    // updater's Install() and the Settings "run at startup" toggle can never fight over two
+    // different values for the same app.
+    private const string RunValueName = "RoeSnip.App";
+
+    // One shared HttpClient for the process lifetime (never one-per-call — see MSDN's socket
+    // exhaustion guidance) with the User-Agent GitHub's API mandates and rejects requests without.
+    private static readonly HttpClient HttpClient = CreateHttpClient();
+
+    // Serializes ApplyUpdateAsync across callers: the silent startup auto-update can be parked in
+    // its beforeLaunch idle-wait for minutes with the new exe already swapped in, and without this
+    // a concurrent manual "Check for updates" click would download into the same
+    // DownloadingExePath (IOException) and, worse, launch (and kill this process via
+    // replace-on-run) with no idle check of its own — defeating the whole point of the startup
+    // path's guard. Queueing here means a manual click during that window simply waits; it
+    // completes only after the parked call's own launch has already ended the process.
+    private static readonly SemaphoreSlim ApplyUpdateLock = new(1, 1);
+
+    public static string InstallDir { get; } =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RoeSnip.App");
+
+    public static string InstalledExePath { get; } = Path.Combine(InstallDir, "RoeSnip.exe");
+
+    private static string StaleExePath => InstalledExePath + ".old";
+    private static string DownloadingExePath => Path.Combine(InstallDir, "RoeSnip.exe.new");
+    private static string PendingSourceCleanupMarkerPath => Path.Combine(InstallDir, "pending-source-cleanup.txt");
+
+    /// <summary>The running build's version, straight off the assembly (set by the csproj's
+    /// &lt;Version&gt;) — compared against each release's tag_name.</summary>
+    public static Version CurrentVersion =>
+        Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0, 0);
+
+    /// <summary>"1.0.4"-shaped display text for <see cref="CurrentVersion"/> — the SDK always
+    /// fills in a Revision component (always 0 for this project's x.y.z &lt;Version&gt; scheme),
+    /// which reads as noise ("1.0.4.0") anywhere this is shown to the user (About window, tray
+    /// tooltip, update-check result). Matches the release tag's own x.y.z shape exactly. Portable
+    /// (no OS check) — item 13c surfaces this in About/tooltip on every OS.</summary>
+    public static string CurrentVersionText
+    {
+        get
+        {
+            Version v = CurrentVersion;
+            return $"{v.Major}.{v.Minor}.{v.Build}";
+        }
+    }
+
+    /// <summary>True when an installed copy already exists on disk
+    /// (%LOCALAPPDATA%\RoeSnip.App\RoeSnip.exe), regardless of whether THIS process is that copy.
+    /// Gates the one-time "Install RoeSnip" tray item.</summary>
+    public static bool InstallExists
+    {
+        get
+        {
+            try { return File.Exists(InstalledExePath); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+        }
+    }
+
+    /// <summary>True when this process is already running FROM the installed copy. Update-checks
+    /// only make sense when it's true (a portable/dev copy has nothing sensible to swap itself
+    /// for); the "Install RoeSnip" item is gated on <see cref="InstallExists"/> instead, not
+    /// this.</summary>
+    public static bool IsInstalled
+    {
+        get
+        {
+            string? current = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(current))
+            {
+                return false;
+            }
+
+            try
+            {
+                return string.Equals(
+                    Path.GetFullPath(current),
+                    Path.GetFullPath(InstalledExePath),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex) when (ex is IOException or ArgumentException or NotSupportedException)
+            {
+                return false;
+            }
+        }
+    }
+
+    private static HttpClient CreateHttpClient()
+    {
+        var client = new HttpClient();
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("RoeSnip.App-Updater");
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        return client;
+    }
+
+    // ---------------- portable: version check (every OS) ----------------
+
+    /// <summary>The latest GitHub release worth telling the user about: its version, the direct
+    /// download URL for the Windows asset (null when this OS/release has none — never used off
+    /// Windows), and the release page URL (what the Linux/macOS passive notice links to).</summary>
+    public sealed record UpdateInfo(Version Version, string? DownloadUrl, string ReleaseUrl);
+
+    /// <summary>Checks the GitHub Releases API for a newer published build. Returns null (never
+    /// throws) whenever there's nothing to offer: the repo is private (404), there's no network,
+    /// the response doesn't parse, or the release isn't newer than <see cref="CurrentVersion"/> —
+    /// see <see cref="ParseUpdateInfo"/> for the full gating.</summary>
+    public static async Task<UpdateInfo?> CheckForUpdateAsync()
+    {
+        try
+        {
+            string url = $"https://api.github.com/repos/{GitHubOwner}/{GitHubRepo}/releases/latest";
+            using HttpResponseMessage response = await HttpClient.GetAsync(url).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.Error.WriteLine($"RoeSnip: update check got HTTP {(int)response.StatusCode} from GitHub.");
+                return null;
+            }
+
+            await using Stream stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using JsonDocument document = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+            return ParseUpdateInfo(document.RootElement, CurrentVersion, requireWindowsAsset: OperatingSystem.IsWindows());
+        }
+        catch (Exception ex)
+        {
+            // A private repo (404), a network failure, or a malformed response all mean the same
+            // thing to the caller: no update available right now. Never let any of it crash the
+            // tray — log to stderr and move on.
+            Console.Error.WriteLine($"RoeSnip: update check failed (non-fatal): {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>Pure parse of one GitHub "releases/latest" JSON response — no network, unit-tested
+    /// directly against literal JSON (<c>requireWindowsAsset</c> is an explicit parameter, not an
+    /// internal <c>OperatingSystem.IsWindows()</c> read, purely so both branches are testable from
+    /// this Windows-hosted test project without needing a second OS to run on). Returns null
+    /// whenever there's nothing actionable: no tag_name, an unparseable version, or a release
+    /// that isn't strictly newer than <paramref name="currentVersion"/>. When
+    /// <paramref name="requireWindowsAsset"/> is true (the real Windows caller), ALSO returns null
+    /// when the release has no "RoeSnipApp-win-x64.exe" asset — a "version available" notice this
+    /// OS could never actually apply would be worse than silence, matching the WPF reference's
+    /// original all-or-nothing gate. When false (the Linux/macOS passive-notice caller),
+    /// DownloadUrl is populated when present but never required — that notice only needs Version
+    /// and ReleaseUrl.</summary>
+    public static UpdateInfo? ParseUpdateInfo(JsonElement root, Version currentVersion, bool requireWindowsAsset)
+    {
+        if (!root.TryGetProperty("tag_name", out JsonElement tagElement))
+        {
+            return null;
+        }
+
+        string? tag = tagElement.GetString();
+        if (string.IsNullOrWhiteSpace(tag))
+        {
+            return null;
+        }
+
+        string versionText = tag.Length > 0 && (tag[0] == 'v' || tag[0] == 'V') ? tag[1..] : tag;
+        if (!Version.TryParse(versionText, out Version? releaseVersion) || releaseVersion is null)
+        {
+            return null;
+        }
+
+        string releaseUrl = root.TryGetProperty("html_url", out JsonElement htmlUrlElement) &&
+            htmlUrlElement.GetString() is { Length: > 0 } html
+            ? html
+            : $"https://github.com/{GitHubOwner}/{GitHubRepo}/releases/tag/{tag}";
+
+        string? downloadUrl = null;
+        if (root.TryGetProperty("assets", out JsonElement assets) && assets.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement asset in assets.EnumerateArray())
+            {
+                if (asset.TryGetProperty("name", out JsonElement nameElement) &&
+                    string.Equals(nameElement.GetString(), ReleaseAssetName, StringComparison.OrdinalIgnoreCase) &&
+                    asset.TryGetProperty("browser_download_url", out JsonElement urlElement))
+                {
+                    downloadUrl = urlElement.GetString();
+                    break;
+                }
+            }
+        }
+
+        if (releaseVersion <= currentVersion)
+        {
+            return null;
+        }
+
+        if (requireWindowsAsset && string.IsNullOrEmpty(downloadUrl))
+        {
+            return null;
+        }
+
+        return new UpdateInfo(releaseVersion, downloadUrl, releaseUrl);
+    }
+
+    // ---------------- Windows-only: cleanup / install / apply ----------------
+
+    /// <summary>Best-effort delete of update leftovers (a ".old" from a prior swap that's unlocked
+    /// once that older process exited, and any ".new" abandoned by a download that never
+    /// completed). Called once, synchronously, at startup. Never throws.</summary>
+    [SupportedOSPlatform("windows")]
+    public static void CleanupStaleUpdateFiles()
+    {
+        TryDelete(StaleExePath);
+        TryDelete(DownloadingExePath);
+    }
+
+    /// <summary>Background bounded-retry delete of the ".old" exe a prior update swapped out —
+    /// right after an update hand-off the just-replaced process can still be exiting and holding
+    /// its renamed exe locked, so <see cref="CleanupStaleUpdateFiles"/>'s single synchronous
+    /// attempt can miss it. Never throws; call on a background thread.</summary>
+    [SupportedOSPlatform("windows")]
+    public static void CleanupStaleExeWithRetry() => TryDeleteWithRetry(StaleExePath);
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: could not clean up stale update file '{path}' (non-fatal): {ex.Message}");
+        }
+    }
+
+    private static void TryDeleteWithRetry(string path)
+    {
+        const int maxAttempts = 10;
+        const int retryDelayMs = 200; // ~2s total, bounded so a still-locked file never stalls startup
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    return;
+                }
+
+                File.Delete(path);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == maxAttempts - 1)
+                {
+                    Console.Error.WriteLine($"RoeSnip: could not delete '{path}' after retries (non-fatal): {ex.Message}");
+                    return;
+                }
+
+                Thread.Sleep(retryDelayMs);
+            }
+        }
+    }
+
+    /// <summary>Copies the currently-running exe to %LOCALAPPDATA%\RoeSnip.App, points the HKCU
+    /// Run key + RunAtStartup setting at that copy, and launches it — the installed copy then
+    /// takes over via replace-on-run (item 13a), so this call never needs to terminate the caller
+    /// itself. Every failure is caught, logged, and rethrown so the caller (TrayApp) keeps running
+    /// and shows an error instead of exiting on a silent failure.</summary>
+    [SupportedOSPlatform("windows")]
+    public static void Install()
+    {
+        try
+        {
+            string? currentExe = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(currentExe))
+            {
+                Console.Error.WriteLine("RoeSnip: install failed - could not determine the current executable path.");
+                return;
+            }
+
+            Directory.CreateDirectory(InstallDir);
+
+            if (string.Equals(Path.GetFullPath(currentExe), Path.GetFullPath(InstalledExePath), StringComparison.OrdinalIgnoreCase))
+            {
+                // Already running from the installed location - nothing to install.
+                return;
+            }
+
+            // Stage the copy under a temp name, then swap it into place, so InstalledExePath is
+            // never observable half-written. Same swap discipline ApplyUpdateAsync uses.
+            string stagingPath = DownloadingExePath;
+            TryDelete(stagingPath);
+            File.Copy(currentExe, stagingPath, overwrite: true);
+
+            TryDelete(StaleExePath);
+            bool movedExisting = false;
+            if (File.Exists(InstalledExePath))
+            {
+                // Rename any existing install out of the way first — works even when a running
+                // installed instance holds it locked (renaming a running exe is allowed on
+                // Windows; that process keeps running against its now-renamed handle until it
+                // exits, and CleanupStaleExeWithRetry deletes the .old once it does).
+                File.Move(InstalledExePath, StaleExePath);
+                movedExisting = true;
+            }
+
+            try
+            {
+                File.Move(stagingPath, InstalledExePath);
+            }
+            catch
+            {
+                // Never leave the install location without a runnable exe: put the prior copy back.
+                if (movedExisting && !File.Exists(InstalledExePath) && File.Exists(StaleExePath))
+                {
+                    File.Move(StaleExePath, InstalledExePath);
+                }
+
+                throw;
+            }
+
+            try
+            {
+                SetInstalledRunAtStartup();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: install could not set run-at-startup (non-fatal): {ex.Message}");
+            }
+
+            try
+            {
+                RoeSnipSettings settings = AppComposition.LoadSettingsOrDefault();
+                SettingsStore.Save(settings with { RunAtStartup = true });
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: install could not persist the run-at-startup setting (non-fatal): {ex.Message}");
+            }
+
+            // Make install behave like a MOVE, not a copy: the source exe can't delete itself
+            // while it's still running, so record it for the installed copy to clean up on its
+            // next startup, once the replace-on-run handoff below has this process exit and
+            // release its file lock.
+            try
+            {
+                File.WriteAllText(PendingSourceCleanupMarkerPath, currentExe);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: could not record source exe for post-install cleanup (non-fatal): {ex.Message}");
+            }
+
+            Process.Start(new ProcessStartInfo(InstalledExePath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: install failed: {ex.Message}");
+            throw;
+        }
+    }
+
+    /// <summary>Best-effort cleanup of the source exe a prior <see cref="Install"/> "move" left
+    /// behind (see the marker written there): reads <see cref="PendingSourceCleanupMarkerPath"/>
+    /// if present and, only when the recorded path exists, is a file literally named
+    /// "RoeSnip.exe", and is NOT <see cref="InstalledExePath"/>, deletes it with a short bounded
+    /// retry. The marker is removed afterward regardless of whether the delete succeeded. Runs on
+    /// a background thread; never throws into the tray.</summary>
+    [SupportedOSPlatform("windows")]
+    public static void ProcessPendingSourceCleanup()
+    {
+        string markerPath = PendingSourceCleanupMarkerPath;
+        try
+        {
+            if (!File.Exists(markerPath))
+            {
+                return;
+            }
+
+            string sourcePath = File.ReadAllText(markerPath).Trim();
+
+            if (!string.IsNullOrEmpty(sourcePath) &&
+                File.Exists(sourcePath) &&
+                string.Equals(Path.GetFileName(sourcePath), "RoeSnip.exe", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(InstalledExePath), StringComparison.OrdinalIgnoreCase))
+            {
+                TryDeleteWithRetry(sourcePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: post-install source cleanup failed (non-fatal): {ex.Message}");
+        }
+        finally
+        {
+            TryDelete(markerPath);
+        }
+    }
+
+    /// <summary>Writes the HKCU Run key directly for <see cref="InstalledExePath"/>. Mirrors
+    /// StartupManager.SetRunAtStartup(true), but that helper always points at
+    /// Environment.ProcessPath — here the CALLER is still the non-installed process, so the key
+    /// has to be pointed at the installed copy explicitly instead.</summary>
+    [SupportedOSPlatform("windows")]
+    private static void SetInstalledRunAtStartup()
+    {
+        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true)
+            ?? Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true);
+        key?.SetValue(RunValueName, $"\"{InstalledExePath}\"", RegistryValueKind.String);
+    }
+
+    /// <summary>Downloads the release's Windows exe, swaps it in for <see cref="InstalledExePath"/>,
+    /// and launches it — the new build then takes over via replace-on-run, which kills this
+    /// process. A truncated/failed download never touches the installed exe; a failure partway
+    /// through the swap rolls back to the previous exe so the install is never left without a
+    /// runnable copy. <paramref name="beforeLaunch"/> is awaited after the swap-in succeeds and
+    /// right before Process.Start — the swap itself is safe to do while the app is busy, but the
+    /// launch is not: replace-on-run would kill this instance mid-snip. Callers driven by an
+    /// explicit user click pass null and apply as soon as it is their turn; the silent startup
+    /// auto-update passes a delegate that waits for the app to go idle first. Calls are serialized
+    /// on <see cref="ApplyUpdateLock"/>. Rethrows on failure so the caller can surface it to the
+    /// user.</summary>
+    [SupportedOSPlatform("windows")]
+    public static async Task ApplyUpdateAsync(UpdateInfo info, Func<Task>? beforeLaunch = null)
+    {
+        await ApplyUpdateLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await ApplyUpdateCoreAsync(info, beforeLaunch).ConfigureAwait(false);
+        }
+        finally
+        {
+            ApplyUpdateLock.Release();
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static async Task ApplyUpdateCoreAsync(UpdateInfo info, Func<Task>? beforeLaunch)
+    {
+        if (string.IsNullOrEmpty(info.DownloadUrl))
+        {
+            // ParseUpdateInfo already refuses to return an UpdateInfo without this on Windows, but
+            // ApplyUpdateAsync is public — guard the contract explicitly rather than trusting every
+            // caller got there through CheckForUpdateAsync.
+            throw new InvalidOperationException($"No downloadable Windows asset for {info.Version}.");
+        }
+
+        string downloadPath = DownloadingExePath;
+        try
+        {
+            Directory.CreateDirectory(InstallDir);
+            TryDelete(downloadPath);
+
+            using (HttpResponseMessage response = await HttpClient
+                       .GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead)
+                       .ConfigureAwait(false))
+            {
+                response.EnsureSuccessStatusCode();
+                await using Stream source = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                await using (FileStream destination = File.Create(downloadPath))
+                {
+                    await source.CopyToAsync(destination).ConfigureAwait(false);
+                }
+            }
+
+            var downloaded = new FileInfo(downloadPath);
+            if (!downloaded.Exists || downloaded.Length == 0)
+            {
+                TryDelete(downloadPath);
+                throw new IOException($"Downloaded update for {info.Version} was empty or missing.");
+            }
+
+            TryDelete(StaleExePath);
+
+            bool renamedCurrent = false;
+            if (File.Exists(InstalledExePath))
+            {
+                File.Move(InstalledExePath, StaleExePath);
+                renamedCurrent = true;
+            }
+
+            try
+            {
+                File.Move(downloadPath, InstalledExePath);
+            }
+            catch
+            {
+                // Roll back: never leave the install without a runnable exe.
+                if (renamedCurrent && !File.Exists(InstalledExePath) && File.Exists(StaleExePath))
+                {
+                    File.Move(StaleExePath, InstalledExePath);
+                }
+
+                throw;
+            }
+
+            if (beforeLaunch is not null)
+            {
+                await beforeLaunch().ConfigureAwait(false);
+            }
+
+            Process.Start(new ProcessStartInfo(InstalledExePath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            TryDelete(downloadPath);
+            Console.Error.WriteLine($"RoeSnip: update to {info.Version} failed: {ex.Message}");
+            throw;
+        }
+    }
+}

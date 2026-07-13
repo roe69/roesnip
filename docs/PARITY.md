@@ -426,10 +426,90 @@ existing WPF test suite is the proof.
       linux/mac degradation: Sharing/* is pure BCL already portable via item 11; this item's own
       UI (ToolbarControl, the two new windows, OverlayController) is ordinary Avalonia control code
       with no OS-specific branches.
-- [ ] 13-install-self-update: Single-instance replace-on-run takeover (InstanceSignal.Exit),
+- [x] 13-install-self-update: Single-instance replace-on-run takeover (InstanceSignal.Exit),
       Windows install-to-LOCALAPPDATA + GitHub Releases self-update (own asset name, swap
       discipline, ApplyUpdateLock, idle gate, --self-update-now), version surfaced in
       About/tooltip, passive new-version notice on Linux/macOS. (XL)
+      SingleInstance.cs gained InstanceSignal.Exit + TryTakeOver (WPF TrayApp.cs:75-92 semantics):
+      a plain (no-flag) launch now sends Exit and waits up to 3s for the mutex before force-
+      terminating as a last resort, replacing the old (buggy) behavior where a bare relaunch
+      signalled TriggerCapture at the OLD process and exited. An explicit CLI verb ("capture"/
+      "settings") still just signals the resident without replacing it — RunResident branches on
+      InstanceSignal.None specifically. KillOtherInstances discriminates candidates by their own
+      MainModule exe path (matching either this process's own path or UpdateManager.InstalledExePath),
+      NEVER by process name — RoeSnip.App's AssemblyName is "RoeSnip", identical to the WPF app's,
+      so Process.GetProcessesByName("RoeSnip") returns both products' processes on a machine
+      running both; a by-name kill would have murdered the user's separate WPF resident.
+      AppShell/UpdateManager.cs (new) ported from src/RoeSnip/App/UpdateManager.cs: installs to
+      %LOCALAPPDATA%\RoeSnip.App (distinct from the WPF app's \RoeSnip), Run key value
+      "RoeSnip.App" (matches StartupManager's own value name), the same .old/.new atomic swap +
+      pending-source-cleanup-marker discipline, and the same static ApplyUpdateLock serializing
+      concurrent triggers. Portable/Windows-only split: CurrentVersion(Text)/InstallExists/
+      IsInstalled/CheckForUpdateAsync/ParseUpdateInfo compile and run on every OS (no
+      [SupportedOSPlatform] — an Assembly version read and a GET to the GitHub API are OS-agnostic);
+      Install/ApplyUpdateAsync/CleanupStale*/ProcessPendingSourceCleanup are attributed
+      windows-only and TrayApp only ever calls them behind `OperatingSystem.IsWindows()`. Release
+      asset name is "RoeSnipApp-win-x64.exe" — deliberately NOT "RoeSnip.exe" (the WPF app's own
+      asset); ParseUpdateInfo's `requireWindowsAsset` gate refuses to report an update on Windows
+      when that exact asset is missing from the release (mirrors the WPF reference's original
+      all-or-nothing gate), while the Linux/macOS passive-notice caller passes false and gets a
+      notice from Version/ReleaseUrl alone, never touching DownloadUrl. release.yml's build-windows
+      job now also publishes+renames+uploads this asset (win-x64.pubxml, same SelfContained/
+      PublishSingleFile/ReadyToRun-off shape as the WPF app's own profile); the prep job bumps both
+      apps' <Version> together so one release covers both. Program.cs gained
+      AppComposition.IsCaptureBusy (portable poll of the existing s_captureInProgress flag) for the
+      self-updater's beforeLaunch idle gate — WaitForIdleAsync polls it every 15s, same shape as
+      the WPF reference's CaptureGate/RecordingController poll; a comment flags that once Recording
+      lands (item 20) this gate must also poll its own "active" flag. Tray menu on Windows: "Install
+      RoeSnip" gated on !InstallExists (evaluated once at menu-build time, same as WPF), "Check for
+      updates" always present, both wired via named method-group handlers (not inline lambdas) so
+      the platform-compat analyzer can see the Windows-only calls are genuinely guarded — an inline
+      lambda closure hides the enclosing `if (OperatingSystem.IsWindows())` from CA1416's flow
+      analysis, which cost real (now-fixed) warnings during this item. --self-update-now added to
+      Program.cs's HiddenFlags allowlist, intercepted in TrayApp.Run before any single-instance
+      machinery, exactly like the WPF reference. Version (item 13c): CurrentVersionText now in the
+      tray tooltip and About text on every OS (RoeSnip.App.csproj gained a matching <Version>
+      element, none existed before this item). Linux/macOS (item 13d): CheckForNewVersionPassivelyAsync
+      runs at startup unconditionally (no InstallExists/IsInstalled gating — those are Windows-only
+      concepts), shows a toast linking straight to the GitHub release page on click, never
+      auto-applies or offers an Install/Check-for-updates menu item — accepted limitation, already
+      listed below. Tests: 20 new UpdateManagerTests.cs cases exercise ParseUpdateInfo's full
+      gating matrix (newer/same/older version, v-prefix/bare-tag parsing, missing tag_name,
+      unparseable version, Windows-asset-required vs. not-required, case-insensitive asset name
+      matching, the "must not match the WPF app's own RoeSnip.exe asset" regression case, html_url
+      vs. constructed-fallback release URL, InstallDir identity, CurrentVersionText's no-revision
+      shape) with zero network/OS dependency — `requireWindowsAsset` is an explicit parameter
+      (rather than reading OperatingSystem.IsWindows() internally) specifically so both the Windows
+      and the Linux/macOS-passive-notice code paths are testable from this one Windows-hosted test
+      project. The install/registry/exe-swap mutation paths are reviewed by eye, not unit-tested,
+      matching the WPF reference's own documented precedent (mutates the real registry/filesystem,
+      talks to a real HTTP endpoint). Build + full solution test suite green (919 tests: 419
+      RoeSnip.Tests + 358 Core.Tests + 133 App.Tests + 9 Platform.Windows.Tests — +17 net new in
+      App.Tests vs. item 12's count). Live-verified on Windows, this machine, standalone instances
+      started and killed by this item's own session (never the user's real resident, confirmed none
+      running before/after): (1) replace-on-run — started instance A with --automation (probed live
+      over its automation pipe to confirm residency), then launched a PLAIN instance B with no args;
+      within 4s A's PID had exited and B alone remained resident, and a follow-up pipe probe against
+      B timed out (confirming B is genuinely a fresh non-automation resident, not a leftover A).
+      (2) The real download+atomic-swap discipline — published two distinct self-contained
+      single-file win-x64 builds (v1.0.0 "old", v2.0.0 "new"), seeded %LOCALAPPDATA%\RoeSnip.App
+      with the old build, served the new build's bytes from a local loopback HTTP listener (never
+      the real GitHub API, nothing pushed), and called UpdateManager.ApplyUpdateAsync directly
+      against that URL: the installed exe's SHA-256 matched the new build exactly afterward, the
+      swapped-out old exe was atomically renamed to .old, Process.Start actually launched the new
+      exe as a real running process from the installed path (confirming the published single-file
+      asset format is genuinely runnable end to end, not just byte-swapped), and that new process's
+      own startup then cleaned up the .old file itself (CleanupStaleUpdateFiles firing correctly on
+      the newly-launched build). All test artifacts (install dir, settings dir, HKCU Run key
+      absence, spawned process) were verified clean and removed afterward. NOT separately exercised
+      live: the single combined scenario of an actual resident calling ApplyUpdateAsync on itself
+      and handing off via replace-on-run in one continuous run — the two pieces above independently
+      prove each half (replace-on-run takeover; real HTTP download+swap+successful relaunch) and
+      their interplay is a straightforward composition of both, reviewed by eye rather than staged
+      live, since the real trigger path (CheckForUpdatesOnStartupAsync hitting the real GitHub API)
+      cannot be exercised without either a live published release with this exact asset name or
+      debug-only URL-injection plumbing, both out of scope here. --self-update-now was not driven
+      live for the same reason (it always calls the real GitHub API, never a mock).
 - [ ] 14-shell-parity-batch: Hotkey rebind fixes (suspend live hotkey, PrintScreen
       keyup-only capture, real key names), WM_SETTINGCHANGE broadcast after the PrtScr
       consent registry write, competing-screenshot-tool startup warning, ColorPickerEnabled

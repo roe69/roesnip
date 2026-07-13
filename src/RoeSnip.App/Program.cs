@@ -360,11 +360,12 @@ public static class AppComposition
     }
 
     // Hidden flags (deliberately undocumented — not in CliOptions/PrintUsage): --automation
-    // gates the dev-only automation pipe (AppShell/AutomationServer.cs). Mirrors the WPF app's
-    // TrayApp.Run, which never routes --automation through its own "unknown argument" rejection
-    // either — allowlisted here so a resident launched with it isn't rejected as a bad CLI arg
-    // before AppShell/TrayApp.cs ever gets a chance to check AutomationServer.IsRequested.
-    private static readonly string[] HiddenFlags = { "--automation" };
+    // gates the dev-only automation pipe (AppShell/AutomationServer.cs). --self-update-now (item
+    // 13b) forces a synchronous check-and-apply against the installed copy and exits — mirrors
+    // the WPF app's TrayApp.Run, which never routes either flag through its own "unknown argument"
+    // rejection — allowlisted here so a resident launched with one isn't rejected as a bad CLI arg
+    // before AppShell/TrayApp.cs ever gets a chance to check for it.
+    private static readonly string[] HiddenFlags = { "--automation", "--self-update-now" };
 
     /// <summary>Entry point for launching the tray app (no CLI args, or exactly one hidden flag
     /// from <see cref="HiddenFlags"/>). If RunTrayApp is null (AppShell not present in this
@@ -415,6 +416,14 @@ public static class AppComposition
     // in progress, a new trigger is ignored (logged to stderr) rather than stacking a second
     // overlay set on top of the first (which would screenshot the first overlay's own UI).
     private static int s_captureInProgress; // 0 = idle, 1 = busy; only touched via Interlocked
+
+    /// <summary>True while <see cref="RunCaptureFlowAsync"/> is actively running (from trigger to
+    /// overlay close/export) — the self-updater's beforeLaunch idle gate
+    /// (AppShell/UpdateManager.cs, item 13b) polls this so a silent auto-update can never yank the
+    /// app out from under a live capture. Once a Recording subsystem lands (item 20) that gate
+    /// must also poll its own "active" flag, mirroring the WPF reference's
+    /// RecordingController.IsActive check.</summary>
+    internal static bool IsCaptureBusy => Volatile.Read(ref s_captureInProgress) != 0;
 
     /// <summary>The interactive capture flow: capture all monitors, run the overlay, then handle
     /// the cross-cutting follow-ups (HDR auto-save / Save-HDR button, "saved" balloon). Called by

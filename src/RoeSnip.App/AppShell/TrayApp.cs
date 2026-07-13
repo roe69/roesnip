@@ -47,25 +47,52 @@ public sealed class TrayApp : ITrayNotifier
         _lifetime = lifetime;
     }
 
-    /// <summary>Runs the tray app (the no-args launch path). If another instance is already
-    /// running, signals it to run the capture flow instead — same behavior as the WPF app's
-    /// second-launch semantics — and returns 0 without creating a second tray icon.</summary>
-    public static int Run(string[] args) => RunResident(InstanceSignal.None);
+    /// <summary>Runs the tray app (the no-args launch path). A plain launch while another instance
+    /// is already running REPLACES that instance with this one (item 13a, WPF TrayApp.cs:46-133
+    /// semantics) — it asks the old one to exit, waits for it to release the single-instance lock
+    /// (force-terminating it as a last resort, see SingleInstance.KillOtherInstances), then takes
+    /// over. That way "just run the exe" always means "run the latest build", never "poke whatever
+    /// is already running".</summary>
+    public static int Run(string[] args)
+    {
+        if (Array.IndexOf(args, "--self-update-now") >= 0)
+        {
+            // One-shot "force update now": check GitHub and, if there is a newer release, download
+            // + swap it and let the new build take over via replace-on-run, then exit — no tray
+            // icon, no single-instance mutex (so it never fights the running instance the new
+            // build replaces). See RunSelfUpdateNow.
+            return RunSelfUpdateNow();
+        }
 
-    /// <summary>The shared resident-instance entry: acquire the single-instance lock (or signal
-    /// the existing holder and exit 0), then start the Avalonia lifetime; once the framework is
-    /// up, <paramref name="initialAction"/> is performed (the "become the resident instance and do
-    /// the requested thing" half of the bare CLI verbs, PLAN-XPLAT.md §3.2/§6 flag 4).</summary>
+        return RunResident(InstanceSignal.None);
+    }
+
+    /// <summary>The shared resident-instance entry: acquire the single-instance lock, then start
+    /// the Avalonia lifetime; once the framework is up, <paramref name="initialAction"/> is
+    /// performed (the "become the resident instance and do the requested thing" half of the bare
+    /// CLI verbs, PLAN-XPLAT.md §3.2/§6 flag 4). <see cref="InstanceSignal.None"/> (a plain launch)
+    /// takes over any running instance in place (item 13a); a real verb (TriggerCapture/
+    /// TriggerSettings) just signals the running instance to do that one thing without
+    /// replacing it, and this process exits.</summary>
     internal static int RunResident(InstanceSignal initialAction)
     {
         var instanceLock = SingleInstance.TryAcquire();
         if (instanceLock is null)
         {
-            // A resident instance exists — it does the work; this process exits immediately.
-            // A bare no-args second launch maps to TriggerCapture (WPF app parity).
-            var signal = initialAction == InstanceSignal.None ? InstanceSignal.TriggerCapture : initialAction;
-            SingleInstance.SignalExistingInstance(signal);
-            return 0;
+            if (initialAction != InstanceSignal.None)
+            {
+                // An explicit CLI verb — just ask the resident instance to do that thing; this
+                // process exits immediately, no takeover.
+                SingleInstance.SignalExistingInstance(initialAction);
+                return 0;
+            }
+
+            instanceLock = SingleInstance.TryTakeOver(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(2));
+            if (instanceLock is null)
+            {
+                Console.Error.WriteLine("RoeSnip: could not take over from the running instance; leaving it in place.");
+                return 0;
+            }
         }
 
         s_initialAction = initialAction;
@@ -120,7 +147,39 @@ public sealed class TrayApp : ITrayNotifier
             _automationServer.Start();
         }
 
+        // Self-update (item 13b): best-effort cleanup of any leftover .old/.new from a prior
+        // install/update swap, then — only when this IS the installed copy — a silent background
+        // check for a newer GitHub release that, if found, downloads and applies it automatically
+        // (see CheckForUpdatesOnStartupAsync for the idle-wait guard on the relaunch that
+        // follows). Windows-only, per the class's own doc comment; Linux/macOS instead get a
+        // passive "new version available" notice with no self-swap (item 13d).
+        if (OperatingSystem.IsWindows())
+        {
+            UpdateManager.CleanupStaleUpdateFiles();
+            // Background cleanup that may need a bounded retry (a still-locked file must never
+            // stall startup): the source exe a prior Install() "move" left behind AND the ".old" a
+            // just-applied update swapped out. A named method (not an inline lambda) so the
+            // platform-compat analyzer can see this Task.Run reference is itself directly inside
+            // the IsWindows() guard above — it cannot see through an anonymous method body.
+            _ = Task.Run(RunPendingUpdateFileCleanup);
+            if (UpdateManager.IsInstalled)
+            {
+                _ = CheckForUpdatesOnStartupAsync();
+            }
+        }
+        else
+        {
+            _ = CheckForNewVersionPassivelyAsync();
+        }
+
         Dispatcher.UIThread.Post(() => _ = CompleteStartupAsync());
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RunPendingUpdateFileCleanup()
+    {
+        UpdateManager.ProcessPendingSourceCleanup();
+        UpdateManager.CleanupStaleExeWithRetry();
     }
 
     private async Task CompleteStartupAsync()
@@ -193,6 +252,11 @@ public sealed class TrayApp : ITrayNotifier
                     break;
                 case InstanceSignal.TriggerSettings:
                     OpenSettings();
+                    break;
+                case InstanceSignal.Exit:
+                    // Replace-on-run (item 13a): a plain launch elsewhere is taking over from us —
+                    // exit cleanly so it can acquire the single-instance mutex.
+                    ExitApplication();
                     break;
             }
         });
@@ -273,6 +337,223 @@ public sealed class TrayApp : ITrayNotifier
         }
 
         _lifetime.Shutdown();
+    }
+
+    // ---------------- Self-update (item 13b/13d) ----------------
+
+    /// <summary>Backs the hidden --self-update-now flag: synchronously checks GitHub for a newer
+    /// release and, if there is one, downloads + swaps it (UpdateManager.ApplyUpdateAsync, which
+    /// then launches the new build so replace-on-run hands off to it) before returning. No tray
+    /// icon and no single-instance mutex are ever created here — this process's only job is to
+    /// perform the swap and exit, leaving the freshly-launched new build as the running instance.
+    /// Windows-only (self-update has no portable swap strategy — item 13d); other OSes print a
+    /// pointer to the release page instead. Returns 0 on "updated"/"already current"/"not
+    /// applicable here", 1 only if the check/download/swap itself errored; never throws.</summary>
+    private static int RunSelfUpdateNow()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Console.Out.WriteLine(
+                "RoeSnip: --self-update-now is only available on Windows; grab the latest release " +
+                "manually from the release page on other platforms.");
+            return 0;
+        }
+
+        try
+        {
+            if (!UpdateManager.IsInstalled)
+            {
+                // Only the installed copy should force-update itself — see UpdateManager.IsInstalled's
+                // own doc comment for why a portable/dev copy has nothing sensible to swap itself for.
+                Console.Out.WriteLine($"RoeSnip: --self-update-now applies only to the installed copy ({UpdateManager.InstalledExePath}).");
+                return 0;
+            }
+
+            UpdateManager.UpdateInfo? update = UpdateManager.CheckForUpdateAsync().GetAwaiter().GetResult();
+            if (update is null)
+            {
+                Console.Out.WriteLine($"RoeSnip: already up to date (current {UpdateManager.CurrentVersion}).");
+                return 0;
+            }
+
+            Console.Out.WriteLine($"RoeSnip: updating {UpdateManager.CurrentVersion} -> {update.Version}...");
+            UpdateManager.ApplyUpdateAsync(update).GetAwaiter().GetResult();
+            Console.Out.WriteLine($"RoeSnip: updated to {update.Version}; new build launched.");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: self-update failed: {ex.Message}");
+            return 1;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private void OnInstallRoeSnipClicked(object? sender, EventArgs e) => InstallRoeSnip();
+
+    [SupportedOSPlatform("windows")]
+    private void OnCheckForUpdatesClicked(object? sender, EventArgs e) => _ = CheckForUpdatesFromMenuAsync();
+
+    /// <summary>The "Install RoeSnip" context-menu item (Windows only, only shown when
+    /// <see cref="UpdateManager.InstallExists"/> is false): copies this portable/dev run into
+    /// %LOCALAPPDATA%\RoeSnip.App and hands off to it, then exits this process so the installed
+    /// copy takes over. Runs off the UI thread (file copy + registry write) and never lets a
+    /// failure take the tray down with it: UpdateManager.Install rethrows on failure, so the catch
+    /// here shows an error toast and the exit is skipped, leaving the tray running as it was.</summary>
+    [SupportedOSPlatform("windows")]
+    private void InstallRoeSnip()
+    {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                UpdateManager.Install();
+                Dispatcher.UIThread.Post(ExitApplication);
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.UIThread.Post(() => ShowError($"Install failed: {ex.Message}"));
+            }
+        });
+    }
+
+    /// <summary>Silent startup update check (Windows only; only called when
+    /// <see cref="UpdateManager.IsInstalled"/> is true). Says nothing when there is nothing to
+    /// offer. When a newer release does exist, applies it automatically — no click required — but
+    /// the beforeLaunch delegate passed to ApplyUpdateAsync holds the actual relaunch (and the
+    /// replace-on-run kill that follows it) until <see cref="WaitForIdleAsync"/> reports idle, so
+    /// an update landing mid-snip can never yank the app out from under the user. Falls back to
+    /// the click-to-update toast if the auto-apply throws. Never blocks startup: fire-and-forget
+    /// from Start().</summary>
+    [SupportedOSPlatform("windows")]
+    private async Task CheckForUpdatesOnStartupAsync()
+    {
+        UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
+        if (update is null)
+        {
+            return;
+        }
+
+        Console.Error.WriteLine($"RoeSnip: auto-updating {UpdateManager.CurrentVersion} -> {update.Version}...");
+        try
+        {
+            await UpdateManager.ApplyUpdateAsync(update, WaitForIdleAsync).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: auto-update to {update.Version} failed: {ex.Message}");
+            Dispatcher.UIThread.Post(() => ShowUpdateAvailableToast(update));
+        }
+    }
+
+    /// <summary>Polled rather than event-driven: capture sessions are short-lived (seconds) and
+    /// AppComposition exposes no completion signal, so a coarse poll is the simplest thing that
+    /// cannot miss a state change. Once a Recording subsystem lands (item 20) this must also poll
+    /// its own "active" flag, mirroring the WPF reference's RecordingController.IsActive check.</summary>
+    private static async Task WaitForIdleAsync()
+    {
+        while (AppComposition.IsCaptureBusy)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>The "Check for updates" context-menu item (Windows only): unlike the silent
+    /// startup check, this always reports back via a toast/dialog rather than staying silent — a
+    /// deliberate, occasional, user-initiated click should always get a visible answer (up to
+    /// date / update offered / check failed).</summary>
+    [SupportedOSPlatform("windows")]
+    private async Task CheckForUpdatesFromMenuAsync()
+    {
+        UpdateManager.UpdateInfo? update;
+        try
+        {
+            update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: update check failed (non-fatal): {ex.Message}");
+            Dispatcher.UIThread.Post(() => ShowToast(
+                "Could not check for updates - GitHub could not be reached.", isError: true, durationMs: 6000, onClick: null));
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (update is not null)
+            {
+                _ = OfferUpdateAsync(update);
+            }
+            else
+            {
+                ShowToast($"RoeSnip {UpdateManager.CurrentVersionText} is up to date.", isError: false, durationMs: 4000, onClick: null);
+            }
+        });
+    }
+
+    /// <summary>Must already be on the UI thread. Asks Yes/No (Avalonia has no blocking
+    /// MessageBox — see ShowYesNoDialogAsync) and applies immediately on Yes.</summary>
+    [SupportedOSPlatform("windows")]
+    private async Task OfferUpdateAsync(UpdateManager.UpdateInfo update)
+    {
+        bool? answer = await ShowYesNoDialogAsync(
+            "RoeSnip",
+            $"RoeSnip {update.Version} is available (you have {UpdateManager.CurrentVersionText}). Update now?");
+        if (answer == true)
+        {
+            _ = ApplyUpdateFromToastAsync(update);
+        }
+    }
+
+    /// <summary>Shows the click-to-update toast (must already be on the UI thread). Startup checks
+    /// apply updates automatically without asking (CheckForUpdatesOnStartupAsync); this toast is
+    /// only reached as its failure fallback, so the user still has a way to update by hand if the
+    /// automatic download/swap failed.</summary>
+    [SupportedOSPlatform("windows")]
+    private void ShowUpdateAvailableToast(UpdateManager.UpdateInfo info)
+    {
+        ShowToast(
+            $"RoeSnip {info.Version} is available. Click to update.",
+            isError: false,
+            durationMs: 8000,
+            onClick: () => _ = ApplyUpdateFromToastAsync(info));
+    }
+
+    /// <summary>Runs off the UI thread (download + file swap); on success the new build takes over
+    /// via replace-on-run, so this instance simply gets told to exit shortly afterwards — nothing
+    /// further to do here. On failure, surfaces it as an error toast instead of letting it vanish
+    /// into an unobserved task.</summary>
+    [SupportedOSPlatform("windows")]
+    private async Task ApplyUpdateFromToastAsync(UpdateManager.UpdateInfo info)
+    {
+        try
+        {
+            await UpdateManager.ApplyUpdateAsync(info).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Dispatcher.UIThread.Post(() => ShowError($"Update to {info.Version} failed: {ex.Message}"));
+        }
+    }
+
+    /// <summary>Linux/macOS (item 13d): no install directory, no exe swap strategy that can be
+    /// tested here (see docs/PARITY.md's accepted-limitations list) — just a passive heads-up that
+    /// a newer release exists, linking straight to the GitHub release page so the user can grab it
+    /// themselves (an AppImage/.dmg download, same as their first install). Never auto-applies
+    /// anything.</summary>
+    private async Task CheckForNewVersionPassivelyAsync()
+    {
+        UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
+        if (update is null)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => ShowToast(
+            $"RoeSnip {update.Version} is available - click to view the release",
+            isError: false,
+            durationMs: 8000,
+            onClick: () => OpenUrl(update.ReleaseUrl)));
     }
 
     // ---------------- PrintScreen / Snipping Tool consent (Windows only) ----------------
@@ -439,7 +720,7 @@ public sealed class TrayApp : ITrayNotifier
             var text = new TextBlock
             {
                 Text =
-                    "RoeSnip\n\n" +
+                    $"RoeSnip {UpdateManager.CurrentVersionText}\n\n" +
                     "An HDR-correct screenshot tool. On HDR/Advanced-Color displays, RoeSnip captures the " +
                     "true linear scRGB frame and tone-maps it properly (matching the SDR white level and " +
                     "rolling off highlights) instead of producing the washed-out gray screenshots typical " +
@@ -647,13 +928,37 @@ public sealed class TrayApp : ITrayNotifier
             menu.Items.Add(captureItem);
             menu.Items.Add(settingsItem);
             menu.Items.Add(aboutItem);
+
+            // Self-update (item 13b) is a Windows-only feature (install-to-LOCALAPPDATA + the
+            // atomic exe swap have no portable equivalent) — Linux/macOS get a passive background
+            // notice instead (CheckForNewVersionPassivelyAsync), no menu items.
+            if (OperatingSystem.IsWindows())
+            {
+                menu.Items.Add(new NativeMenuItemSeparator());
+                if (!UpdateManager.InstallExists)
+                {
+                    // Only offered until an install actually exists on disk (evaluated once, here,
+                    // at menu-build time — same as the WPF reference). Gating on InstallExists
+                    // (not IsInstalled) means a rebuilt dev copy / fresh download / replace-on-run
+                    // takeover of an already-installed app does NOT re-offer "Install". A named
+                    // handler (not an inline lambda) — see RunPendingUpdateFileCleanup's comment
+                    // for why the platform-compat analyzer needs this shape here.
+                    var installItem = new NativeMenuItem("Install RoeSnip");
+                    installItem.Click += OnInstallRoeSnipClicked;
+                    menu.Items.Add(installItem);
+                }
+                var checkUpdatesItem = new NativeMenuItem("Check for updates");
+                checkUpdatesItem.Click += OnCheckForUpdatesClicked;
+                menu.Items.Add(checkUpdatesItem);
+            }
+
             menu.Items.Add(new NativeMenuItemSeparator());
             menu.Items.Add(exitItem);
 
             _trayIcon = new TrayIcon
             {
                 Icon = CreateTrayIconImage(),
-                ToolTipText = "RoeSnip",
+                ToolTipText = $"RoeSnip {UpdateManager.CurrentVersionText}",
                 Menu = menu,
                 IsVisible = true,
             };

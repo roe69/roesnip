@@ -3,9 +3,11 @@ name: release
 # ONE action: bump -> build (win-x64 / linux-x64 / osx-arm64) -> publish a single GitHub Release.
 # Modelled on installer-src's build-all.yml shape (a preflight/version job -> parallel per-platform
 # builds -> one all-or-nothing publish job), collapsed into a single workflow so cutting a release is
-# a single dispatch. RoeSnip's in-app self-updater (App/UpdateManager.cs) polls
-# GET /repos/roe69/roesnip/releases/latest and downloads the asset named EXACTLY "RoeSnip.exe" -
-# that Windows asset name is load-bearing and must never change.
+# a single dispatch. TWO in-app self-updaters poll GET /repos/roe69/roesnip/releases/latest and each
+# downloads its OWN exact asset name - the WPF app's App/UpdateManager.cs downloads "RoeSnip.exe",
+# the Avalonia port's AppShell/UpdateManager.cs downloads "RoeSnipApp-win-x64.exe". Both asset names
+# are load-bearing and must never change or collide (a name collision would let one app's updater
+# silently download and swap in the OTHER product's binary).
 #
 # LOOP SAFETY (why this cannot re-trigger itself):
 #   * There is NO `push: branches` trigger, so the version-bump commit prep pushes to the branch
@@ -95,12 +97,13 @@ jobs:
 
           # Bump only on manual dispatch. A tag-push builds the already-tagged commit unchanged.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # RoeSnip.csproj (the shipping WPF app) carries <Version>, compared against the release
-            # tag by App/UpdateManager.cs - always bump it.
+            # Both shipping apps carry <Version>, each compared against the release tag by their
+            # own UpdateManager.cs - always bump both together (one release covers both products).
             sed -i -E "s#<Version>[^<]*</Version>#<Version>${VERSION}</Version>#" src/RoeSnip/RoeSnip.csproj
+            sed -i -E "s#<Version>[^<]*</Version>#<Version>${VERSION}</Version>#" src/RoeSnip.App/RoeSnip.App.csproj
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/RoeSnip/RoeSnip.csproj
+            git add src/RoeSnip/RoeSnip.csproj src/RoeSnip.App/RoeSnip.App.csproj
             if git diff --cached --quiet; then
               echo "Version already $VERSION - nothing to commit."
             else
@@ -152,6 +155,25 @@ jobs:
         with:
           name: win
           path: src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe
+          if-no-files-found: error
+
+      # RoeSnip.App (the Avalonia cross-platform port) ships its own distinctly-named Windows asset
+      # so its self-updater (AppShell/UpdateManager.cs) can never collide with the WPF app's own
+      # "RoeSnip.exe" asset above - see that file's doc comment. win-x64.pubxml pins the same
+      # SelfContained/PublishSingleFile/ReadyToRun-off shape as the WPF app's own profile; -f/-r are
+      # passed explicitly because a multi-targeted project (net8.0 + this windows TFM) can't resolve
+      # which one to publish from the pubxml's own TargetFramework alone (NETSDK1129).
+      - name: Publish RoeSnip.App (win-x64)
+        run: dotnet publish src/RoeSnip.App/RoeSnip.App.csproj -c Release -f net8.0-windows10.0.22621.0 -r win-x64 -p:PublishProfile=win-x64 -p:Version=${{ needs.prep.outputs.version }}
+
+      - name: Rename RoeSnip.App Windows asset
+        run: mv src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnipApp-win-x64.exe
+
+      - name: Upload RoeSnip.App Windows asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-app
+          path: src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnipApp-win-x64.exe
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
