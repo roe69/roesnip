@@ -791,9 +791,31 @@ existing WPF test suite is the proof.
       capture exclusion holds. No resident process was left running afterward (test residents were
       started and stopped by the verifying session only). Full solution build + test green (987
       tests: 419 WPF + 371 Core (13 new) + 188 App + 9 Platform.Windows).
-- [ ] 19-recording-seams: Core encoder/audio abstractions (IVideoEncoder,
+- [x] 19-recording-seams: Core encoder/audio abstractions (IVideoEncoder,
       IAudioCaptureDevice, RecordingCapabilities) with Platform.Windows Media Foundation MP4
       and WASAPI implementations; non-Windows reports MP4/audio unsupported. (L)
+      Landed src/RoeSnip.Core/Recording/{IVideoEncoder,IAudioCaptureDevice,RecordingCapabilities,
+      GifVideoEncoder}.cs: IVideoEncoder/IAudioCaptureDevice mirror the ICaptureBackend seam shape
+      exactly (WriteFrame/WriteAudioSamples/FinishAsync; TryDequeue/Stop), each with its own
+      Windows-registrant [ModuleInitializer] registry (Mp4VideoEncoderRegistry,
+      AudioCaptureDeviceRegistry) plus RecordingCapabilitiesRegistry (SupportsMp4/Microphone/
+      Loopback, defaults to RecordingCapabilities.None when nothing is registered — never throws).
+      GifVideoEncoder wraps Core's own GifEncoder (item 04) directly, no platform dependency;
+      its inner encoder is opened on a 10,000,000-ticks/sec (100ns) clock specifically so
+      IVideoEncoder's single timestamp domain (MP4's native 100ns unit) needs no per-format
+      conversion at any call site — item 20 converts once, like the WPF app's own MP4 branch
+      already does, rather than juggling two domains. src/RoeSnip.Platform.Windows/{Mp4Encoder,
+      AudioCapture}.cs are near-verbatim ports of the WPF reference (Mp4Encoder.cs,
+      AudioCapture.cs) onto RoeSnip.Core.Imaging.SdrImage instead of the WPF app's own richer
+      SdrImage type; both register their capability/factory via ModuleInitializer, mirroring
+      WindowsCaptureBackend.cs. Linux/macOS: no implementations landed (intentional, per the
+      item spec) — RecordingCapabilitiesRegistry falls through to None there, so recording will
+      degrade to GIF-only/no-audio once item 20 wires RecordingController onto these seams; no
+      PipeWire/CoreAudio/ffmpeg scaffolding was added speculatively. New tests: GifVideoEncoder
+      exercised entirely through IVideoEncoder (dedupe-return-value, no-op audio, valid-GIF-file
+      output) plus RecordingCapabilitiesRegistry select/skip mechanics (RoeSnip.Core.Tests), and
+      a Windows registration + MP4 orientation-regression re-port (RoeSnip.Platform.Windows.Tests).
+      Whole-solution suite green: 419 WPF + 379 Core (+8) + 188 App + 14 Platform.Windows (+5).
 - [ ] 20-recording-engine: RegionRecorder/RecordingController port: schedule throttle,
       patch-behind delta, pause clock, RawFramesEqual dedupe, LOH-avoidance buffer reuse,
       ROESNIP_RECORD_AUTOSAVE hook, Windows staging-ring readback behind Platform. (XL)

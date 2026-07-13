@@ -15,6 +15,10 @@
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
     <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
+    <!-- Mp4Encoder/AudioCapture (recording-seams workstream): same pin as src/RoeSnip/RoeSnip.csproj.
+         Vortice.Multimedia (WaveFormat, DataFlow, Role, AudioClient* enums) ships inside this package,
+         not a separate one — same as the WPF app's own csproj. -->
+    <PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
   </ItemGroup>
 
   <ItemGroup>
