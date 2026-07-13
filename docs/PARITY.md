@@ -37,8 +37,29 @@ existing WPF test suite is the proof.
       chrome. Linux/macOS: documented no-op (already recorded under Accepted limitations below)
       — X11/Wayland expose no per-window capture-exclusion API and Avalonia does not surface
       NSWindow.sharingType.
-- [ ] 03-automation-pipe: Port the --auto JSON automation pipe (protocol, server, client)
+- [x] 03-automation-pipe: Port the --auto JSON automation pipe (protocol, server, client)
       for the overlay-only command subset; distinct pipe name so both residents coexist. (L)
+      Landed src/RoeSnip.App/AppShell/AutomationServer.cs (AutomationProtocol/AutomationServer/
+      AutomationClient), pipe name "RoeSnip.App-Automation" (distinct from the WPF app's
+      "RoeSnip-Automation"). Implements state/trigger/select/escape/screenshot/confirm(copy|save)
+      live against new *ForAutomation hooks on OverlayController/OverlayWindow (a static
+      s_activeSession mirroring the WPF app's own, cleared on every exit path including the two
+      early-return branches that don't call Finish()). record/preset/fps/chrome are still parsed/
+      validated (byte-identical wire shape to WPF, for a future recording port) but return a
+      structured "unsupported until recording is ported" error, never "unknown command".
+      screenshot is routed through this app's own CaptureService/SdrImage/PngWriter pipeline
+      (portable) rather than a Windows-only GDI CopyFromScreen — one simplification: an explicit
+      rect must fall within a single monitor (WPF's raw desktop grab could span monitors freely).
+      --auto intercepted in Program.Main before any single-instance machinery; --automation
+      added to AppComposition.RunTray's hidden-flag allowlist. Ported AutomationProtocolTests +
+      AutomationClientTests (keeping the abrupt-close disposal-order regression coverage) into a
+      new tests/RoeSnip.App.Tests project (net8.0-windows10.0.22621.0, added to the sln) — 54
+      tests, all green. NamedPipeServerStream/NamedPipeClientStream are Unix-domain-socket-backed
+      on macOS/Linux, so the whole channel is already portable; nothing Windows-only was added.
+      Live-verified on Windows: started a standalone --automation instance (never the user's real
+      resident, killed after), drove state/trigger/select/record(unsupported)/confirm
+      copy/screenshot(bare + rect + includeExcluded)/confirm save/escape end-to-end over the real
+      pipe.
 - [ ] 04-recording-core-extraction: Move the from-scratch GIF pipeline plus
       MultiMonitorRecording and RecordingSizeEstimator (and their tests) into RoeSnip.Core;
       retarget WPF onto the Core copies with byte-identical output. (L)

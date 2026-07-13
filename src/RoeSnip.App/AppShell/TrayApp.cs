@@ -30,6 +30,7 @@ public sealed class TrayApp : ITrayNotifier
 
     private static TrayApp? s_current;
     private static InstanceSignal s_initialAction = InstanceSignal.None;
+    private static bool s_automationEnabled;
 
     private readonly IClassicDesktopStyleApplicationLifetime _lifetime;
 
@@ -38,6 +39,7 @@ public sealed class TrayApp : ITrayNotifier
     private TrayIcon? _trayIcon;
     private CancellationTokenSource? _pipeListenerCts;
     private SettingsWindow? _openSettingsWindow;
+    private AutomationServer? _automationServer;
     private bool _exiting;
 
     private TrayApp(IClassicDesktopStyleApplicationLifetime lifetime)
@@ -67,6 +69,12 @@ public sealed class TrayApp : ITrayNotifier
         }
 
         s_initialAction = initialAction;
+        // Dev-gated automation channel (AppShell/AutomationServer.cs): read from the REAL process
+        // args (not whatever CliOptions parsed args into) so ROESNIP_AUTOMATION=1 or a literal
+        // `--automation` argument gates it the same way regardless of which entry point led here —
+        // a bare `RoeSnip.exe --automation` launch (args = ["--automation"]) and `RoeSnip capture`/
+        // `RoeSnip settings` with the env var set both need this to agree.
+        s_automationEnabled = AutomationServer.IsRequested(Environment.GetCommandLineArgs());
         try
         {
             int exitCode = Program.BuildAvaloniaApp()
@@ -75,6 +83,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         finally
         {
+            s_current?._automationServer?.Stop();
             s_current?._pipeListenerCts?.Cancel();
             s_current = null;
             instanceLock.Dispose();
@@ -100,6 +109,16 @@ public sealed class TrayApp : ITrayNotifier
 
         _pipeListenerCts = new CancellationTokenSource();
         _ = SingleInstance.ListenForSignalsAsync(OnInstanceSignal, _pipeListenerCts.Token);
+
+        if (s_automationEnabled)
+        {
+            // Dev-gated automation channel (AppShell/AutomationServer.cs) for driving this app
+            // deterministically from agents/E2E instead of synthetic mouse/UIA. TriggerCapture is
+            // passed by reference (not re-implemented) so a `trigger` command runs the exact same
+            // path the tray icon/hotkey/single-instance signal already do.
+            _automationServer = new AutomationServer(TriggerCapture);
+            _automationServer.Start();
+        }
 
         Dispatcher.UIThread.Post(() => _ = CompleteStartupAsync());
     }

@@ -636,6 +636,23 @@ public partial class OverlayWindow : Window
         UpdateToolbarPlacement();
     }
 
+    /// <summary>Automation hook (AppShell/AutomationServer.cs's `select` command, via
+    /// OverlayController.SetSelectionForAutomation): applies <paramref name="localPx"/> — already
+    /// in THIS window's own local physical-pixel coordinate space — through the exact same
+    /// SetSelection + clamp/too-small-cancel rule a real mouse-up finishing a NewSelection drag
+    /// takes (OnPreviewPointerReleased's own NewSelection branch), never a parallel
+    /// implementation. Also resets any in-progress drag/annotation state first, the same way a
+    /// fresh click-drag implicitly would.</summary>
+    internal void SetSelectionForAutomation(RectPhysical localPx)
+    {
+        _dragMode = DragMode.None;
+        _newSelectionPending = false;
+        ReleasePointer();
+
+        var clamped = ClampToFrame(localPx);
+        SetSelection(clamped.Width < 2 || clamped.Height < 2 ? null : clamped);
+    }
+
     /// <summary>Clears this window's selection/annotations — called by OverlayController when a
     /// new drag starts on a different monitor (selection lives on exactly one monitor at a time).</summary>
     internal void ClearSelection()

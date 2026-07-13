@@ -324,11 +324,20 @@ public static class AppComposition
         return anyWriteFailed ? 1 : 0;
     }
 
-    /// <summary>Entry point for launching the tray app (no CLI args). If RunTrayApp is null
-    /// (AppShell not present in this build), prints an error and returns 1.</summary>
+    // Hidden flags (deliberately undocumented — not in CliOptions/PrintUsage): --automation
+    // gates the dev-only automation pipe (AppShell/AutomationServer.cs). Mirrors the WPF app's
+    // TrayApp.Run, which never routes --automation through its own "unknown argument" rejection
+    // either — allowlisted here so a resident launched with it isn't rejected as a bad CLI arg
+    // before AppShell/TrayApp.cs ever gets a chance to check AutomationServer.IsRequested.
+    private static readonly string[] HiddenFlags = { "--automation" };
+
+    /// <summary>Entry point for launching the tray app (no CLI args, or exactly one hidden flag
+    /// from <see cref="HiddenFlags"/>). If RunTrayApp is null (AppShell not present in this
+    /// build), prints an error and returns 1.</summary>
     public static int RunTray(string[] args)
     {
-        if (args.Length > 0)
+        bool isHiddenFlagOnly = args.Length == 1 && Array.IndexOf(HiddenFlags, args[0]) >= 0;
+        if (args.Length > 0 && !isHiddenFlagOnly)
         {
             PrintUsage();
             return 1;
@@ -603,6 +612,23 @@ public static class Program
         // OutputType is WinExe on Windows (orchestrator-approved override to PLAN-XPLAT.md §6
         // flag 7) — reattach to the invoking terminal's console so CLI verbs still print.
         TryAttachParentConsole();
+
+        // `--auto` (dev-gated automation client — AppShell/AutomationServer.cs): handled here,
+        // before ANY of the single-instance machinery below (CliOptions.Parse/AppComposition.
+        // RunTray/RunTriggerCapture etc.), so a client invocation can never trigger the "normal
+        // launch replaces/signals the running instance" takeover a bare `RoeSnip.exe` does — it
+        // only ever talks to the automation pipe of whatever instance is already running. Mirrors
+        // the WPF app's Program.cs:849-862.
+        if (args.Length > 0 && args[0] == "--auto")
+        {
+            if (args.Length != 2)
+            {
+                Console.Error.WriteLine(
+                    "Usage: RoeSnip --auto '<json>'   (or --auto <command> for a zero-arg command, e.g. --auto state)");
+                return 1;
+            }
+            return AppShell.AutomationClient.Run(args[1]);
+        }
 
         // Platform assemblies self-register their ICaptureBackend via [ModuleInitializer], which
         // only runs when the assembly is LOADED — and .NET loads assemblies lazily on first type

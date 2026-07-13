@@ -579,6 +579,133 @@ RoeSnip.exe --auto escape
 :: {"ok":true,"mode":"idle",...}   -- Setup's Cancel discards the take (nothing was ever recorded)
 ```
 
+## Driving RoeSnip.App programmatically (agents/E2E)
+
+Applies to the Avalonia port (`src/RoeSnip.App`, item 03-automation-pipe), NOT the frozen WPF app
+above. Same idea as the WPF app's own automation channel — a deterministic, line-based JSON
+control pipe that calls straight into the same production code a real click/drag runs
+(`OverlayWindow`'s own `SetSelection`/`OnCommand` via the `*ForAutomation` hooks on
+`OverlayController`/`OverlayWindow`), never a re-implementation, never simulated input — ported
+into `src/RoeSnip.App/AppShell/AutomationServer.cs`, ONLY covering what this port currently has:
+the overlay (capture/select/copy/save), not recording. `NamedPipeServerStream`/
+`NamedPipeClientStream` map to Unix domain sockets on macOS/Linux, so the whole channel is
+portable — nothing here is Windows-only.
+
+**Distinct pipe name from the WPF app on purpose**: `RoeSnip.App-Automation`, not
+`RoeSnip-Automation` — both apps' residents run side by side on this machine (same rationale as
+`AppShell/SingleInstance.cs`'s own mutex/pipe name split), and sharing a name would let whichever
+app's `--auto` client connects second silently drive the OTHER app's resident.
+
+**Zero behavior change when off.** With neither the flag nor the env var below set, this channel
+does not exist: no pipe, no listener thread, nothing.
+
+### Starting the resident with automation enabled
+
+```
+set ROESNIP_AUTOMATION=1
+RoeSnip.exe
+```
+
+or equivalently:
+
+```
+RoeSnip.exe --automation
+```
+
+(`RoeSnip.exe` here is the Avalonia app's own binary — same `AssemblyName` as the WPF app, so
+make sure you're launching the one you mean; `src/RoeSnip.App/bin/<config>/<tfm>/RoeSnip.exe`.)
+`AppComposition.RunTray`'s hidden-flag allowlist accepts `--automation` specifically (mirroring
+the WPF app's `TrayApp.Run`); any other unrecognized argument still prints usage and exits 1.
+
+### The `--auto` CLI client
+
+`RoeSnip.exe --auto '<json>'` connects to the running resident's automation pipe, sends one JSON
+request line, prints the response line to STDOUT, and exits 0 (`"ok":true`) or 1 (`"ok":false`, or
+any failure to connect). Intercepted in `Program.Main` before any single-instance machinery, so it
+never touches `AppShell/SingleInstance.cs`'s mutex/pipe — always safe to run alongside a live
+resident.
+
+Zero-arg commands (`state`, `trigger`, `escape`) accept the same shorthand as the WPF app:
+
+```
+RoeSnip.exe --auto state
+RoeSnip.exe --auto '{"cmd":"state"}'      # equivalent
+```
+
+### Commands implemented in this port
+
+Same wire shape as the WPF app's `state` response (see that section above for the full field
+reference) — `mode` here is only ever `idle` or `overlay` (this port has no recording session, so
+`setup`/`capturing`/`reviewing` never appear, and `recordingFormat`/`preset`/`estimateText`/`fps`/
+`fpsRange` stay `null`).
+
+- **`state`** — current mode/selection/monitor list.
+- **`trigger`** — opens the capture overlay (same action as the tray icon / hotkey / the bare
+  `capture` CLI verb / a second-instance signal). Blocks (up to ~5s) until the overlay is
+  actually up.
+- **`select`** — `{"cmd":"select","x":100,"y":100,"w":400,"h":300}`. Sets the selection on
+  whichever monitor contains the rect's top-left corner, through the exact same
+  `SetSelection`/clamp/too-small-cancel path a real mouse-up finishing a drag takes. Errors if
+  idle (nothing to select — use `trigger` first).
+- **`escape`** — cancels the open overlay (if any) and returns to `idle`. A no-op
+  (`"ok":true`) if already idle.
+- **`screenshot`** — `{"cmd":"screenshot","path":"C:\\temp\\shot.png","rect":{...}}`. Captures via
+  this app's OWN `CaptureService`/`SdrImage`/`PngWriter` pipeline (the same one `--capture` and
+  the interactive overlay use), not a raw desktop grab — fully portable, but means an explicit
+  `rect` must fall within a SINGLE monitor's bounds (its top-left corner picks the monitor; the
+  rect is then clamped to that monitor's captured frame). Omit `rect` to capture the primary
+  monitor's full bounds. `"includeExcluded":true` temporarily clears
+  `WDA_EXCLUDEFROMCAPTURE` on this process's own windows (item 02's
+  `WindowCaptureExclusion.ClearOnOwnWindows`/`Restore`) for the duration of the capture, same
+  caveat as the WPF app's version (the affinity change and the capture aren't atomic with the
+  compositor). Only path/width/height are returned, never image bytes.
+- **`confirm`** — `{"cmd":"confirm","action":"copy"}` or
+  `{"cmd":"confirm","action":"save","path":"C:\\temp\\out.png"}`. `"save"` **requires an explicit
+  `path`** and writes directly via `PngWriter`, never popping the interactive save picker (which
+  would hang the pipe waiting for a human) — same production render
+  (`RenderSelectionWithAnnotations`) either path already uses. Requires an active overlay session
+  with a selection; errors otherwise. **Only `copy`/`save`** — no `"share"` (no Sharing/*
+  subsystem in this port yet).
+
+### Not yet supported: `record` / `preset` / `fps` / `chrome`
+
+Recording (`RecordingController`/`RecordingChrome`/`RecordingSession`) has not been ported to
+RoeSnip.App yet (tracked separately). These four commands are still parsed and validated with the
+SAME shape as the WPF app's wire protocol (so a future recording port only has to swap the live
+handlers, never the on-wire contract), but their live handlers return a structured error instead
+of dispatching to anything — e.g.:
+
+```
+RoeSnip.exe --auto "{\"cmd\":\"record\",\"format\":\"gif\"}"
+:: {"ok":false,"error":"\"record\" is unsupported until recording is ported to RoeSnip.App (tracked separately)"}
+```
+
+Never `"unknown command"` — the command name is valid on the wire, just not live yet.
+
+### Worked example
+
+```
+set ROESNIP_AUTOMATION=1
+RoeSnip.exe --automation &
+
+RoeSnip.exe --auto trigger
+:: {"ok":true,"mode":"overlay","selection":null,...}
+
+RoeSnip.exe --auto "{\"cmd\":\"select\",\"x\":100,\"y\":100,\"w\":400,\"h\":300}"
+:: {"ok":true,"mode":"overlay","selection":{"x":100,"y":100,"w":400,"h":300},...}
+
+RoeSnip.exe --auto "{\"cmd\":\"confirm\",\"action\":\"copy\"}"
+:: {"ok":true,"mode":"idle",...}   -- overlay closes on success, same as a real Ctrl+C
+```
+
+**Verified 2026-07-13** (this machine, real 3-monitor HDR layout, a standalone instance started
+and killed by this item's own session, never the user's real resident): `state` (idle, 3
+monitors listed), `trigger` -> `overlay`, `select` -> selection echoed back, `record` -> the
+structured unsupported error (not "unknown command"), `confirm copy` -> overlay closed back to
+`idle`, `screenshot` (both bare and with an explicit `rect`+`includeExcluded`) -> valid PNGs at
+the reported dimensions, a second `trigger`+`select`+`confirm save` -> PNG written to the given
+path and overlay closed, `escape` while idle -> no-op `ok:true`.
+
 ## Sharing/upload subsystem (`src/RoeSnip/Sharing/*`, added 2026-07-13)
 
 The declarative share-upload feature: `IShareProvider`/`ProviderSpec`/`ShareProviderCatalog`/

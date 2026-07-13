@@ -29,6 +29,41 @@ public enum OverlayCommand
 
 public static class OverlayController
 {
+    // ---------- Automation hooks (AppShell/AutomationServer.cs) — UI thread only, mirroring the
+    // WPF app's OverlayController.s_activeSession/IsSessionActive/*ForAutomation wrappers. Only
+    // ONE overlay session can ever be active at a time (RunAsync below is the sole entry point and
+    // this port has no spanning-selection concept yet — item 09), so a single static reference is
+    // enough; no stack/collection needed. ----------
+
+    private static OverlaySession? s_activeSession; // UI thread only
+
+    internal static bool IsSessionActive => s_activeSession is not null;
+
+    internal static RectPhysical? GetSelectionForAutomation() => s_activeSession?.GetSelectionForAutomation();
+
+    /// <summary>Reads s_activeSession into a local once and branches on IT rather than
+    /// "s_activeSession?.Method(...) ?? "no active overlay session"" — a null-coalescing collapse
+    /// here can't tell "no session" apart from "the session's own call legitimately returned null
+    /// for success" (the exact bug the WPF app's automation wrappers hit and fixed, per that
+    /// class's own doc comment).</summary>
+    internal static string? SetSelectionForAutomation(RectPhysical virtualDesktopPx)
+    {
+        var session = s_activeSession;
+        return session is null ? "no active overlay session" : session.SetSelectionForAutomation(virtualDesktopPx);
+    }
+
+    internal static string? CancelForAutomation()
+    {
+        var session = s_activeSession;
+        return session is null ? "no active overlay session" : session.CancelForAutomation();
+    }
+
+    internal static string? ConfirmForAutomation(string action, string? path)
+    {
+        var session = s_activeSession;
+        return session is null ? "no active overlay session" : session.ConfirmForAutomation(action, path);
+    }
+
     /// <summary>One OverlayWindow per monitor; runs until the user cancels (Esc) or confirms
     /// (Enter / double-click / toolbar action). Returns null on cancel. On confirm, performs
     /// Copy/Save side effects itself (clipboard + PNG dialog) per DESIGN.md, then returns a
@@ -46,6 +81,7 @@ public static class OverlayController
         }
 
         var session = new OverlaySession(monitors, settings);
+        s_activeSession = session;
         return session.RunAsync();
     }
 
@@ -103,6 +139,14 @@ public static class OverlayController
 
             if (_windows.Count == 0)
             {
+                // Automation hooks: this session never gets to Finish() (nothing was ever shown),
+                // so it must clear the active-session marker itself here — otherwise
+                // OverlayController.IsSessionActive would report true forever after a "no matching
+                // screens" edge case, wedging every future `trigger`/state-dependent automation call.
+                if (ReferenceEquals(s_activeSession, this))
+                {
+                    s_activeSession = null;
+                }
                 return Task.FromResult<OverlayResult?>(null);
             }
 
@@ -135,6 +179,12 @@ public static class OverlayController
                         // Best-effort: nothing further to do if closing a partially-shown window
                         // itself fails.
                     }
+                }
+                // Same leak this method's other early-exit branch documents: nothing calls Finish()
+                // on this path either, so the active-session marker must be cleared here too.
+                if (ReferenceEquals(s_activeSession, this))
+                {
+                    s_activeSession = null;
                 }
                 throw;
             }
@@ -472,7 +522,155 @@ public static class OverlayController
                 }
             }
 
+            if (ReferenceEquals(s_activeSession, this))
+            {
+                s_activeSession = null;
+            }
+
             _completion.TrySetResult(result);
+        }
+
+        // ---------- Automation hooks (AppShell/AutomationServer.cs) — see OverlayController's own
+        // wrapper methods for why these exist on this private nested class instead of being called
+        // directly. Ported from the WPF app's OverlayController.OverlaySession, minus the
+        // cross-monitor spanning-selection branch (item 09, not yet in this port) and the "share"
+        // action (no Sharing/* subsystem yet). ----------
+
+        internal RectPhysical? GetSelectionForAutomation()
+        {
+            var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
+            if (window is null)
+            {
+                return null;
+            }
+            var sel = window.SelectionPx!.Value;
+            var b = window.Monitor.BoundsPx;
+            return new RectPhysical(b.Left + sel.Left, b.Top + sel.Top, b.Left + sel.Right, b.Top + sel.Bottom);
+        }
+
+        /// <summary>Applies a virtual-desktop-pixel rect through the exact same
+        /// OnSelectionStarted/SetSelection path a real drag-and-release on the target monitor takes
+        /// (never a parallel implementation) — see OverlayWindow.SetSelectionForAutomation's own
+        /// doc comment for the too-small-cancel/clamp behavior that mirrors a real mouse-up.</summary>
+        internal string? SetSelectionForAutomation(RectPhysical virtualDesktopPx)
+        {
+            var normalized = virtualDesktopPx.Normalized();
+            var window = _windows.FirstOrDefault(w =>
+            {
+                var b = w.Monitor.BoundsPx;
+                return normalized.Left >= b.Left && normalized.Left < b.Right
+                    && normalized.Top >= b.Top && normalized.Top < b.Bottom;
+            });
+            if (window is null)
+            {
+                return "selection rect's top-left corner is not on any monitor";
+            }
+
+            // Same bookkeeping a real drag-start on this monitor triggers: clear any selection on
+            // every OTHER monitor (selection lives on exactly one at a time) and make this the
+            // active/focused window.
+            OnSelectionStarted(window);
+            if (!ReferenceEquals(_activeWindow, window))
+            {
+                _activeWindow = window;
+                window.Activate();
+            }
+
+            var bounds = window.Monitor.BoundsPx;
+            var localPx = new RectPhysical(
+                normalized.Left - bounds.Left, normalized.Top - bounds.Top,
+                normalized.Right - bounds.Left, normalized.Bottom - bounds.Top);
+            window.SetSelectionForAutomation(localPx);
+            return null;
+        }
+
+        internal string? CancelForAutomation()
+        {
+            OnCommand(OverlayCommand.Cancel);
+            return null;
+        }
+
+        /// <summary>See OverlayController.ConfirmForAutomation's own doc comment for why "save"
+        /// requires an explicit path (never the interactive dialog) and exists at all. Only
+        /// copy|save are supported (no Sharing/* subsystem in this port yet).</summary>
+        internal string? ConfirmForAutomation(string action, string? path)
+        {
+            switch (action)
+            {
+                case "copy":
+                    if (_windows.All(w => w.SelectionPx is null))
+                    {
+                        return "no selection to copy";
+                    }
+                    FireAndForget(ConfirmAsync(copy: true, save: false, saveHdr: false));
+                    return null;
+
+                case "save":
+                    if (string.IsNullOrWhiteSpace(path))
+                    {
+                        return "confirm \"save\" requires a non-empty \"path\" (automation never opens the Save dialog)";
+                    }
+                    if (_windows.All(w => w.SelectionPx is null))
+                    {
+                        return "no selection to save";
+                    }
+                    ConfirmSaveForAutomation(path);
+                    return null;
+
+                default:
+                    return "confirm requires \"action\": one of copy|save";
+            }
+        }
+
+        /// <summary>Save's automation path: the same render + PngWriter.WriteFile calls ConfirmAsync
+        /// already makes, just writing straight to <paramref name="path"/> instead of awaiting the
+        /// interactive save picker. Fully synchronous (no dialog, no clipboard) so — unlike
+        /// ConfirmAsync — it needs no fire-and-forget wrapper; any failure is caught and logged here
+        /// directly.</summary>
+        private void ConfirmSaveForAutomation(string path)
+        {
+            if (_finished || _confirmInProgress)
+            {
+                return;
+            }
+
+            var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
+            if (window is null)
+            {
+                return;
+            }
+
+            SdrImage rendered;
+            try
+            {
+                rendered = window.RenderSelectionWithAnnotations();
+            }
+            catch (InvalidOperationException)
+            {
+                return;
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                return;
+            }
+
+            try
+            {
+                PngWriter.WriteFile(path, rendered);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: automation save failed: {ex.Message}");
+                return;
+            }
+
+            if (_finished || window.SelectionPx is not { } selection)
+            {
+                return; // overlay was closed/cleared externally while this ran
+            }
+
+            var result = new OverlayResult(window.Monitor, selection, rendered, window.Frame, false, path, false);
+            Finish(result);
         }
     }
 }
