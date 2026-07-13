@@ -72,6 +72,12 @@ public partial class OverlayWindow : Window
     private readonly Action<OverlayWindow> _onFinalizeNewSelection;
     private readonly Action<OverlayCommand> _onCommand;
 
+    /// <summary>Sharing/* subsystem (item 12): the dropdown's per-provider pick carries a payload
+    /// OverlayCommand can't, so it goes through its own dedicated callback instead of _onCommand —
+    /// same reason onColorPicked (if this port had one) would bypass the enum too. Mirrors the WPF
+    /// app's own OverlayWindow._onShareToProvider.</summary>
+    private readonly Action<string> _onShareToProvider;
+
     private readonly Image _previewImage;
     private readonly Path _dimPath;
     private readonly Canvas _overlayCanvas;
@@ -164,6 +170,17 @@ public partial class OverlayWindow : Window
     /// re-tone-map.</summary>
     internal SdrImage Preview => _preview;
 
+    /// <summary>Sharing/* subsystem (item 12): the settings snapshot ShowToolbar's own
+    /// SetShareProviders call populates the provider picker from — exposed so
+    /// OverlaySession.ShareCurrentSelection/ShareToSpecificProvider resolve the actual upload target
+    /// from this SAME snapshot rather than the session's own separately-snapshotted _settings field,
+    /// so the dropdown's own choices can never disagree with what a click actually uploads to. Never
+    /// re-read from disk while the overlay stays open (see ShowToolbar's own doc comment on
+    /// SetShareProviders) — this is a live copy of THIS window's _liveSettings, same field the
+    /// palette/audio-toggle persistence already mutates in place. Mirrors the WPF app's own
+    /// OverlayWindow.LiveSettings.</summary>
+    internal RoeSnipSettings LiveSettings => _liveSettings;
+
     /// <summary>Cross-monitor selection: true while the CURRENT selection (this window's own local
     /// slice included) touches more than one monitor — set only by SetSpanningLocalSelection, never
     /// by the plain SetSelection path Move/Resize/annotation drags still use. Read by
@@ -232,6 +249,7 @@ public partial class OverlayWindow : Window
         _onSpanningCandidate = null!;
         _onFinalizeNewSelection = null!;
         _onCommand = null!;
+        _onShareToProvider = null!;
         _textFontFamily = "Segoe UI";
     }
 
@@ -243,7 +261,8 @@ public partial class OverlayWindow : Window
         Action<OverlayWindow> onSelectionStarted,
         Action<OverlayWindow, RectPhysical, bool> onSpanningCandidate,
         Action<OverlayWindow> onFinalizeNewSelection,
-        Action<OverlayCommand> onCommand)
+        Action<OverlayCommand> onCommand,
+        Action<string> onShareToProvider)
         : this()
     {
         _frame = frame;
@@ -254,6 +273,7 @@ public partial class OverlayWindow : Window
         _onSpanningCandidate = onSpanningCandidate;
         _onFinalizeNewSelection = onFinalizeNewSelection;
         _onCommand = onCommand;
+        _onShareToProvider = onShareToProvider;
         _textFontFamily = settings.TextFontFamily;
         _textFontSize = settings.TextFontSize;
         _textBold = settings.TextBold;
@@ -1444,6 +1464,16 @@ public partial class OverlayWindow : Window
             _toolbar.CopyClicked += () => _onCommand(OverlayCommand.Copy);
             _toolbar.SaveClicked += () => _onCommand(OverlayCommand.Save);
             _toolbar.SaveHdrClicked += () => _onCommand(OverlayCommand.SaveHdr);
+            // Sharing/* subsystem (item 12): plain click is the default-provider upload, routed
+            // through OverlayCommand.Share (payload-free, like every other command here). The
+            // dropdown's per-provider picker needs a payload the enum can't carry, so it goes through
+            // its own dedicated _onShareToProvider callback instead. ManageProvidersRequested has no
+            // reachable "open Settings" entry point from inside an overlay session, so it is
+            // deliberately left unwired: ToolbarControl disables the chevron itself whenever there
+            // are zero providers, which is exactly the case that would have raised this event, so it
+            // can never fire from a live click — no clickable-but-dead UI results.
+            _toolbar.ShareClicked += () => _onCommand(OverlayCommand.Share);
+            _toolbar.ShareToProviderRequested += providerId => _onShareToProvider(providerId);
             // The toolbar's X button always closes the whole overlay outright — deliberately NOT
             // the staged CancelStage semantics Esc has.
             _toolbar.CancelClicked += () => _onCommand(OverlayCommand.Cancel);
@@ -1508,8 +1538,37 @@ public partial class OverlayWindow : Window
         // transition (a fresh drag replacing a spanning selection with a same-monitor one, or vice
         // versa) on the same session.
         _toolbar.SetSpanningMode(_isSpanningSelection);
+        // Sharing/* subsystem (item 12): re-populated on every show (not just once) — but the real
+        // reason is POOLED-WINDOW REUSE (a window claimed from a pool, built and first-rendered
+        // against an earlier session's settings, or none at all, must pick up THIS session's own
+        // settings), not a live mid-session settings refresh. _liveSettings is a snapshot taken once,
+        // either at this window's construction or the last in-session edit IT made — it is never
+        // re-read from disk while the overlay stays open, so a share provider added/removed via the
+        // tray's separate Settings window WHILE this overlay is up will NOT be reflected here until
+        // the next capture starts a fresh session. OverlaySession.ShareCurrentSelection/
+        // ShareToSpecificProvider resolve the actual upload target from this exact same _liveSettings
+        // (via the LiveSettings property above), not the session's own separately-snapshotted
+        // _settings field, so the dropdown's own choices can never disagree with what a click
+        // actually uploads to — even though neither one is disk-fresh mid-session. Only ENABLED
+        // configs are offered — a built-in the user has never filled in a credential for is seeded
+        // disabled (ShareProviderCatalog.DefaultConfigFor) and must not appear as a clickable-but-
+        // broken picker entry. Mirrors the WPF app's own ShowToolbar wiring.
+        _toolbar.SetShareProviders(
+            RoeSnip.Core.Sharing.ShareManager.EffectiveConfigs(_liveSettings.ShareProviders)
+                .Where(c => c.Enabled)
+                .Select(c => (c.Id, c.DisplayName))
+                .ToList(),
+            _liveSettings.DefaultShareProviderId);
         _toolbar.IsVisible = true;
     }
+
+    /// <summary>Sharing/* subsystem (item 12): the overlay stays open for the whole upload (see
+    /// OverlaySession.ShareCurrentSelection's own doc comment), so OverlayController drives the
+    /// toolbar's busy state directly through this pass-through rather than through OverlayCommand. A
+    /// no-op if this window has no toolbar yet (nothing has been shared before a selection existed —
+    /// can't happen in practice, since the Share buttons only enable once a toolbar exists to hold
+    /// them, but kept null-safe like every other _toolbar? access in this class).</summary>
+    internal void SetShareBusy(bool busy) => _toolbar?.SetShareBusy(busy);
 
     /// <summary>The current palette as displayed: the persisted list, or (pre-item-08 settings
     /// file) the migration seed — every mutation below starts from this so the first edit

@@ -8,9 +8,8 @@ namespace RoeSnip.App.Tests;
 /// AppShell/AutomationServer.cs's own doc comment) — no live window, no Dispatcher, no pipe. Ported
 /// from the WPF app's tests/RoeSnip.Tests/AutomationProtocolTests.cs; the live half (actually
 /// driving OverlayController) is verified end-to-end against a resident process, not here — see
-/// TESTING.md's "Driving RoeSnip.App programmatically" section. The one behavioral divergence from
-/// the WPF suite: "confirm" only accepts copy|save here (no "share" — no Sharing/* subsystem in
-/// this port yet).</summary>
+/// TESTING.md's "Driving RoeSnip.App programmatically" section. "confirm" accepts copy|save|share,
+/// matching the WPF suite exactly (Sharing/* subsystem, item 12).</summary>
 public class AutomationProtocolTests
 {
     // ---------- TryParseRequest ----------
@@ -258,12 +257,12 @@ public class AutomationProtocolTests
     }
 
     [Fact]
-    public void ValidateArgs_Confirm_RejectsShare_NoSharingSubsystemInThisPort()
+    public void ValidateArgs_Confirm_ShareNeedsNoPath()
     {
+        // Sharing/* subsystem (item 12): "share" is accepted alongside copy|save, same as "copy" —
+        // the upload result is a URL, not a local file, so no "path" is required.
         var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"confirm\",\"action\":\"share\"}", out _)!;
-        string? error = AutomationProtocol.ValidateArgs("confirm", request);
-        Assert.NotNull(error);
-        Assert.Contains("copy|save", error);
+        Assert.Null(AutomationProtocol.ValidateArgs("confirm", request));
     }
 
     [Fact]

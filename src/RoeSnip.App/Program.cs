@@ -46,6 +46,12 @@ public interface ITrayNotifier
 {
     void ShowSavedBalloon(string filePath);
     void ShowError(string message);
+
+    /// <summary>Sharing/* subsystem: the toolbar Share split-button's result. Mirrors the WPF app's
+    /// ITrayNotifier.ShowShareUploadedBalloon - clipboardCopied is false only when the upload itself
+    /// succeeded but the follow-up clipboard write failed, so the balloon wording never claims a
+    /// copy that didn't actually happen.</summary>
+    void ShowShareUploadedBalloon(string url, bool clipboardCopied);
 }
 
 /// <summary>CliMode gains two new verbs beyond the WPF app's CliOptions (PLAN-XPLAT.md §2.8):
@@ -150,10 +156,17 @@ public static class AppComposition
     // wants to inject settings).
     public static Func<RoeSnipSettings>? LoadSettings { get; set; }
 
-    // Set by Overlay/OverlayController.cs (WP-X3) via [ModuleInitializer].
+    // Set by Overlay/OverlayController.cs (WP-X3) via [ModuleInitializer]. The trailing
+    // ITrayNotifier? (Sharing/* subsystem, item 12) is what OverlaySession.ShareCurrentSelection/
+    // ShareToSpecificProvider use to surface the toolbar Share button's result (URL-copied balloon /
+    // honest error balloon) - it has to be in hand for the WHOLE overlay session (Share can be
+    // clicked at any point while a selection exists), not just once at the very end the way the
+    // "saved" balloon below only matters after the overlay already closed. Mirrors the WPF app's own
+    // AppComposition.RunOverlay.
     public static Func<
         IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)>,
         RoeSnipSettings,
+        ITrayNotifier?,
         Task<OverlayResult?>>? RunOverlay { get; set; }
 
     // Wired by Program.RegisterPlatformHooks on Windows builds — null on non-Windows builds/RIDs,
@@ -467,7 +480,7 @@ public static class AppComposition
                     $"RoeSnip: capture-to-overlay {totalWatch.ElapsedMilliseconds} ms " +
                     $"(capture {captureMs} ms, tonemap {totalWatch.ElapsedMilliseconds - captureMs} ms)");
 
-                OverlayResult? result = await RunOverlay(monitorsWithPreview, settings);
+                OverlayResult? result = await RunOverlay(monitorsWithPreview, settings, notifier);
 
                 if (result is null)
                 {

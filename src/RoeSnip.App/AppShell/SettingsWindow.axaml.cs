@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
+using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
@@ -22,6 +24,15 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     private readonly Action<RoeSnipSettings> _onSaved;
     private readonly bool _hotkeyUnavailableOnWayland;
 
+    /// <summary>Sharing/* subsystem (item 12): ShareProvidersWindow self-persists (SettingsStore.Save)
+    /// the moment a provider is added/edited/removed — same "writes immediately" precedent this
+    /// window already sets for run-at-startup — rather than waiting for THIS window's own Save
+    /// button. _current tracks that so SaveButton_Click bases its own `with` update off the latest
+    /// on-disk ShareProviders/DefaultShareProviderId instead of the possibly-stale _original snapshot
+    /// captured when this window was opened; every other field still only takes effect on Save
+    /// exactly as before. Mirrors the WPF app's own SettingsWindow._current.</summary>
+    private RoeSnipSettings _current;
+
     private bool _capturingHotkey;
     private uint _pendingModifiers;
     private uint _pendingVirtualKey;
@@ -34,6 +45,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         InitializeComponent();
 
         _original = settings;
+        _current = settings;
         _hotkeyUnavailableOnWayland = hotkeyUnavailableOnWayland;
         _onSaved = onSaved;
         _pendingModifiers = settings.HotkeyModifiers;
@@ -61,6 +73,92 @@ public partial class SettingsWindow : Avalonia.Controls.Window
             Console.Error.WriteLine($"RoeSnip: could not read run-at-startup state: {ex.Message}");
             RunAtStartupCheckBox.IsChecked = _original.RunAtStartup;
         }
+
+        RefreshShareProvidersUi();
+    }
+
+    // ---------- Sharing/* subsystem (item 12) ----------
+
+    /// <summary>Guards DefaultShareProviderCombo.SelectedItem assignments below from re-entering
+    /// DefaultShareProviderCombo_SelectionChanged.</summary>
+    private bool _loadingShareProviders;
+
+    private void RefreshShareProvidersUi()
+    {
+        _loadingShareProviders = true;
+        try
+        {
+            DefaultShareProviderCombo.Items.Clear();
+
+            var enabledProviders = RoeSnip.Core.Sharing.ShareManager.EffectiveConfigs(_current.ShareProviders)
+                .Where(c => c.Enabled)
+                .ToList();
+
+            if (enabledProviders.Count == 0)
+            {
+                DefaultShareProviderCombo.Items.Add(new ComboBoxItem { Content = "No provider configured yet", Tag = "" });
+                DefaultShareProviderCombo.SelectedIndex = 0;
+                DefaultShareProviderCombo.IsEnabled = false;
+                return;
+            }
+
+            DefaultShareProviderCombo.IsEnabled = true;
+            ComboBoxItem? selected = null;
+            foreach (var config in enabledProviders)
+            {
+                var item = new ComboBoxItem
+                {
+                    Content = string.IsNullOrWhiteSpace(config.DisplayName) ? config.Id : config.DisplayName,
+                    Tag = config.Id,
+                };
+                DefaultShareProviderCombo.Items.Add(item);
+                if (string.Equals(config.Id, _current.DefaultShareProviderId, StringComparison.Ordinal))
+                {
+                    selected = item;
+                }
+            }
+
+            DefaultShareProviderCombo.SelectedItem = selected ?? DefaultShareProviderCombo.Items[0];
+        }
+        finally
+        {
+            _loadingShareProviders = false;
+        }
+    }
+
+    private void DefaultShareProviderCombo_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_loadingShareProviders
+            || DefaultShareProviderCombo.SelectedItem is not ComboBoxItem { Tag: string id } || id.Length == 0)
+        {
+            return;
+        }
+        _current = _current with { DefaultShareProviderId = id };
+    }
+
+    private async void ManageProvidersButton_Click(object? sender, RoutedEventArgs e)
+    {
+        var window = new ShareProvidersWindow(_current);
+        await window.ShowDialog(this);
+
+        // ShareProvidersWindow persists its own edits immediately (see this window's own field-level
+        // doc comment on _current) — reload from disk so this window's combo/eventual Save reflect
+        // whatever the user just changed, rather than the snapshot taken when Settings was opened.
+        // Every OTHER field in this window is still only staged locally until Save is clicked — only
+        // ShareProviders is meant to have been persisted by the sub-window (which never touches
+        // DefaultShareProviderId — see ShareProvidersWindow.RemoveAndSave for the one exception,
+        // clearing it when its own current provider is removed, a narrow case
+        // ShareManager.ResolveDefault already tolerates by falling back to the first enabled
+        // provider), so pull just that one field off the freshly-loaded settings and keep everything
+        // else — INCLUDING DefaultShareProviderId — as this window's own in-progress (possibly
+        // unsaved) edits. DefaultShareProviderId is edited by THIS window's own combo
+        // (DefaultShareProviderCombo_SelectionChanged, staged onto _current same as every other field
+        // below); pulling it from disk here would silently discard a combo selection the user made
+        // just before clicking Providers... to double-check something, snapping it back to the stale
+        // on-disk value the instant this dialog closes.
+        var reloaded = SettingsStore.Load();
+        _current = _current with { ShareProviders = reloaded.ShareProviders };
+        RefreshShareProvidersUi();
     }
 
     private void ChangeHotkeyButton_Click(object? sender, RoutedEventArgs e)
@@ -177,7 +275,11 @@ public partial class SettingsWindow : Avalonia.Controls.Window
 
         bool runAtStartup = RunAtStartupCheckBox.IsChecked == true;
 
-        var updated = _original with
+        // Based on _current, not _original: _current already reflects any ShareProviders/
+        // DefaultShareProviderId edits made (and self-persisted) via ManageProvidersButton_Click —
+        // see that field's own doc comment. Every other field below is still this window's own
+        // normal deferred-until-Save behavior, unchanged.
+        var updated = _current with
         {
             HotkeyModifiers = _pendingModifiers,
             HotkeyVirtualKey = _pendingVirtualKey,

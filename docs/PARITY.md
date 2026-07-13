@@ -380,9 +380,52 @@ existing WPF test suite is the proof.
       System.Text.Json, System.Text.RegularExpressions) plus Core's own portable SkiaSharp-backed
       imaging — it already builds and behaves identically on every OS RoeSnip.Core targets. No UI
       wiring changed in RoeSnip.App (still has no Sharing surface) — that is item 12's job.
-- [ ] 12-sharing-ui: Provider management windows, Settings entry point, and the overlay
+- [x] 12-sharing-ui: Provider management windows, Settings entry point, and the overlay
       Share split button + per-provider dropdown wired into OverlayController upload
       flows. (M)
+      Ported ShareProvidersWindow (master list, code-built rows, Enabled toggle persists
+      immediately, Configure.../Custom... open the edit window) and ShareProviderEditWindow
+      (per-provider ConfigFields form, real Test button via ShareTestImage/ShareManager) to
+      Avalonia — Avalonia has no synchronous ShowDialog (it's a Task), so the WPF "ShowDialog();
+      RefreshList();" straight line became an awaited OpenEditWindow; no PasswordBox (TextBox.
+      PasswordChar instead); no MessageBox (an inline ValidationErrorText for the Save-endpoint
+      guard, a small owned Yes/No dialog for Remove, mirroring TrayApp's own precedent). Settings
+      window gained a "Sharing" section (default-provider combo + Providers... button) with the
+      same _current/_original split the WPF window uses so ShareProvidersWindow's immediate
+      self-persist is picked up on close without discarding this window's own in-progress edits.
+      ToolbarControl gained the Share split button (default-provider click + a separately
+      always-visible, DISABLED-not-hidden chevron dropdown when zero providers are configured,
+      preserving d8fa815) via a MenuFlyout (Avalonia's Popup-rooted dropdown — OverlayWindow's
+      existing item-08 popup-safe IsWithin walk already covers it, no extra plumbing needed).
+      Ported OverlayController.ShareCurrentSelection/ShareToSpecificProvider verbatim (render
+      through the same RenderSelectionWithAnnotations/RenderSpanningSelection path Copy uses,
+      resolve the provider against the SAME OverlayWindow.LiveSettings snapshot the dropdown was
+      populated from, detached ShareManager.UploadAsync, URL to clipboard via
+      ClipboardService.TryCopyTextAsync, tray balloon via a new ITrayNotifier.
+      ShowShareUploadedBalloon, overlay stays open through the whole upload) — Dispatcher.
+      BeginInvoke became Dispatcher.UIThread.Post (this session runs on the Avalonia UI thread
+      already, but the upload's continuation resumes on a thread-pool thread after
+      ConfigureAwait(false)). Also wired the `--auto confirm share` automation action (WPF already
+      had it; this port's own automation harness had explicitly deferred it pending this item) —
+      AutomationProtocol.ValidateArgs and OverlaySession.ConfirmForAutomation both updated, plus
+      the one AutomationProtocolTests case that asserted the old rejection is now a positive test.
+      Verified live via the --auto pipe (own automation-enabled instance, own AppData profile,
+      started and killed by this item's own session, never the user's real resident): toolbar
+      Share button/chevron render disabled with zero providers configured (screenshot), enable
+      once a settings.json ShareProviders entry is added and the resident restarted (screenshot),
+      go busy mid-upload and re-enable after a real (deliberately failing — example.invalid) HTTP
+      attempt, `confirm action:share` with no provider configured surfaces "Share failed: no share
+      provider is configured." without closing the overlay, SettingsWindow's new Sharing section
+      renders with the disabled "No provider configured yet" combo. ShareProvidersWindow/
+      ShareProviderEditWindow's own rendering was not driven interactively (would need synthetic
+      mouse/keyboard input this session avoided per the no-synthetic-input rule) — verified via
+      build/compile of both TFMs plus code review instead, matching the WPF app's own item-11
+      precedent of "unit tests only, no live UI" for these exact two windows. Build + full
+      solution test suite green (902 tests unchanged in count: one AutomationProtocolTests case
+      renamed from a rejection assertion to an acceptance assertion, no net new/removed test). No
+      linux/mac degradation: Sharing/* is pure BCL already portable via item 11; this item's own
+      UI (ToolbarControl, the two new windows, OverlayController) is ordinary Avalonia control code
+      with no OS-specific branches.
 - [ ] 13-install-self-update: Single-instance replace-on-run takeover (InstanceSignal.Exit),
       Windows install-to-LOCALAPPDATA + GitHub Releases self-update (own asset name, swap
       discipline, ApplyUpdateLock, idle gate, --self-update-now), version surfaced in

@@ -660,12 +660,15 @@ reference) — `mode` here is only ever `idle` or `overlay` (this port has no re
   caveat as the WPF app's version (the affinity change and the capture aren't atomic with the
   compositor). Only path/width/height are returned, never image bytes.
 - **`confirm`** — `{"cmd":"confirm","action":"copy"}` or
-  `{"cmd":"confirm","action":"save","path":"C:\\temp\\out.png"}`. `"save"` **requires an explicit
-  `path`** and writes directly via `PngWriter`, never popping the interactive save picker (which
-  would hang the pipe waiting for a human) — same production render
-  (`RenderSelectionWithAnnotations`) either path already uses. Requires an active overlay session
-  with a selection; errors otherwise. **Only `copy`/`save`** — no `"share"` (no Sharing/*
-  subsystem in this port yet).
+  `{"cmd":"confirm","action":"save","path":"C:\\temp\\out.png"}` or
+  `{"cmd":"confirm","action":"share"}`. `"save"` **requires an explicit `path`** and writes
+  directly via `PngWriter`, never popping the interactive save picker (which would hang the pipe
+  waiting for a human) — same production render (`RenderSelectionWithAnnotations`) either path
+  already uses. `"share"` (Sharing/* subsystem, item 12) uploads to the configured default
+  provider through the exact same `OverlayCommand.Share` path the toolbar's Share button raises —
+  unlike `copy`/`save` it does **not** close the overlay (the response's `mode` stays `"overlay"`;
+  the upload's own result — success or failure — arrives later via the tray balloon, same as a
+  real click). Requires an active overlay session with a selection; errors otherwise.
 
 ### Not yet supported: `record` / `preset` / `fps` / `chrome`
 
@@ -780,3 +783,62 @@ record; each item above supersedes its counterpart here):**
 - Any WPF window in this feature (`SettingsWindow`'s new Sharing section, `ShareProvidersWindow`,
   `ShareProviderEditWindow`) opened on screen — no resident was launched this phase (single-instance
   mutex conflict with parallel tracks), so only compiled/reviewed, never clicked through interactively.
+
+## RoeSnip.App Sharing UI (item 12, added 2026-07-14)
+
+The Avalonia port's own Sharing UI: `AppShell/ShareProvidersWindow`, `AppShell/
+ShareProviderEditWindow`, `SettingsWindow`'s new "Sharing" section, `Overlay/ToolbarControl`'s
+Share split button, and `Overlay/OverlayController`'s `ShareCurrentSelection`/
+`ShareToSpecificProvider`. See PARITY.md item 12 for the full behavioral write-up (Avalonia-specific
+deviations: async `ShowDialog` instead of WPF's blocking one, `TextBox.PasswordChar` instead of
+`PasswordBox`, an inline `ValidationErrorText`/owned Yes-No dialog instead of `MessageBox`,
+`Dispatcher.UIThread.Post` instead of a per-window `Dispatcher.BeginInvoke`).
+
+**Verified 2026-07-14 (this machine, real 3-monitor HDR layout, a standalone `--automation`
+instance started and killed by this item's own session, never the user's real resident — same
+discipline the item-03 automation-pipe verification above already established):**
+
+- `--auto trigger` + `select` + `screenshot` of the toolbar region with zero providers configured:
+  the Share button (up-arrow-out-of-tray icon) and its chevron render visibly DIMMED but present
+  between Save HDR and Cancel (d8fa815's "disabled, not hidden, not dead" preserved).
+- Added a fake enabled custom provider (`Endpoint: https://example.invalid/upload`) directly to
+  this instance's own isolated `%APPDATA%\RoeSnip.App\settings.json`, restarted the resident, same
+  `trigger`+`select`+`screenshot`: the Share button/chevron now render fully bright (enabled) —
+  confirms the `ShareProviders`/`DefaultShareProviderId` settings round-trip and
+  `ToolbarControl.SetShareProviders`'s enable logic.
+- `--auto confirm {"action":"share"}` against that fake provider: response `mode` stayed
+  `"overlay"` (does NOT close, unlike copy/save) with `"ok":true`; a screenshot taken immediately
+  after showed the Share button DIMMED again (`SetShareBusy(true)`); stderr logged
+  `Test Fake Provider: upload request failed: No such host is known. (example.invalid:443)`
+  (a real HTTP attempt against the deliberately-unresolvable `.invalid` host, run through the exact
+  production `ShareManager.UploadAsync` → `ProviderSpecShareProvider` path); a follow-up screenshot
+  showed the Share button re-enabled (`SetShareBusy(false)` restored correctly after the failure).
+- `--auto confirm {"action":"share"}` with NO provider configured (before the fake-provider edit
+  above): `"ok":true`, `mode` stayed `"overlay"`; stderr logged
+  `Share failed: no share provider is configured.` — `ShareCurrentSelection`'s defensive
+  `ResolveDefault is null` branch.
+- `RoeSnip.exe settings` (signals the running --automation resident, same as the bare CLI verb
+  would) + full-screen `screenshot`: `SettingsWindow`'s new "Sharing" section renders — "Default
+  share provider" combo disabled showing "No provider configured yet", "Providers..." button
+  present.
+- `dotnet build RoeSnip.sln` / `dotnet test RoeSnip.sln` — 0 warnings/errors, full suite green (902
+  tests; net test-count unchanged — one `AutomationProtocolTests` case flipped from asserting
+  `"share"` is rejected to asserting it's accepted, no test added/removed).
+- Test-only settings.json edits were reverted and the standalone instance's process was killed
+  before this session ended; nothing was left running.
+
+**NOT verified — deliberately not driven interactively this phase:**
+
+- `ShareProvidersWindow`/`ShareProviderEditWindow` opened on screen (clicking "Providers...",
+  "Configure...", "Custom...", "Test", "Remove"). Driving these needs synthetic mouse/keyboard input
+  outside the `--auto` automation pipe's coverage (the pipe only reaches the overlay), which this
+  session avoided per the "no long-lived synthetic input" rule — same precedent the WPF app's own
+  item-11 pass already set for these two windows ("unit tests only... never clicked through
+  interactively"). Verified instead via clean compiles on both `RoeSnip.App` TFMs plus code review
+  against the WPF reference these were ported from line-for-line.
+- Any real, resolvable provider (RoeShare or any of the built-ins) end-to-end — only the
+  deliberately-failing `example.invalid` fake config above was exercised.
+- A SUCCESSFUL upload's tray balloon / clipboard-URL path (`ShowShareUploadedBalloon`) — only the
+  failure branch (`ShowError`) was exercised live; the success branch is unit-tested-shaped
+  (mirrors `ShowSavedBalloon`, which the item-03/09 passes above already verified live) but not
+  driven against a real upload this phase.

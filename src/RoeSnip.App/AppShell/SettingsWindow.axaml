@@ -39,6 +39,14 @@
       </StackPanel>
     </Grid>
 
+    <TextBlock Text="Sharing" FontSize="16" FontWeight="SemiBold" Margin="0,20,0,10"/>
+    <TextBlock Text="Default share provider" Foreground="#FF9A9A9A"/>
+    <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+      <ComboBox x:Name="DefaultShareProviderCombo" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Stretch"
+                SelectionChanged="DefaultShareProviderCombo_SelectionChanged"/>
+      <Button x:Name="ManageProvidersButton" Grid.Column="1" Content="Providers..." Click="ManageProvidersButton_Click"/>
+    </Grid>
+
     <TextBlock x:Name="ValidationErrorText" Foreground="#FFFF6B6B" TextWrapping="Wrap"
                IsVisible="False" Margin="0,8,0,0"/>
 

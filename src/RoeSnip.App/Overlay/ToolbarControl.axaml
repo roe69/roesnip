@@ -247,6 +247,32 @@
 
                     <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
+                    <!-- Share: uploads the current selection render to a configured Sharing/*
+                         provider (item 12). A real split button (not a single-click-opens-menu
+                         pattern): ShareButton's own click uploads straight to the DEFAULT provider
+                         (one click, mirrors Copy/Save), while ShareMenuButton is a SEPARATE,
+                         always-visible chevron affordance (no-hidden-controls: a control that opens
+                         a menu must show it can, never rely on hover) opening a menu to pick a
+                         specific configured provider instead. Both start disabled — the owning
+                         window enables them via SetShareProviders once at least one provider is
+                         configured (see that method's own doc comment for why this control never
+                         enables itself). Mirrors the WPF app's own ShareGroupPanel. -->
+                    <StackPanel x:Name="ShareGroupPanel" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="ShareButton" Classes="action" Width="30" Margin="2,2,0,2" IsEnabled="False"
+                                ToolTip.Tip="Share: no provider configured yet — set one up in Settings"
+                                ToolTip.ShowOnDisabled="True">
+                            <!-- Inverse of Save's down-arrow-into-tray: an up-arrow out of the tray. -->
+                            <Path Classes="icon" Data="M8,9 V1 M4.5,4.5 L8,1 L11.5,4.5 M1.5,11 V14.5 H14.5 V11"/>
+                        </Button>
+                        <Button x:Name="ShareMenuButton" Classes="action" Width="16" Margin="0,2,2,2" IsEnabled="False"
+                                ToolTip.Tip="Choose a provider to share to" ToolTip.ShowOnDisabled="True">
+                            <Path Fill="#F0F0F0" Data="M0,0 L4,4 L8,0 Z" Width="8" Height="4"
+                                  Stretch="Uniform" IsHitTestVisible="False"/>
+                        </Button>
+                    </StackPanel>
+
+                    <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
                     <Button x:Name="CancelButton" Classes="cancel" ToolTip.Tip="Cancel — close without capturing">
                         <Path Classes="icon" Width="11" Height="11" Data="M2,2 L14,14 M14,2 L2,14"/>
                     </Button>

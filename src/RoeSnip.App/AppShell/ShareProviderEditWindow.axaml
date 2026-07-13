@@ -1,0 +1,101 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="RoeSnip.App.AppShell.ShareProviderEditWindow"
+        Title="Configure provider"
+        Width="460" SizeToContent="Height"
+        MaxHeight="760"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="18">
+      <TextBlock x:Name="HeaderText" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4"/>
+      <TextBlock x:Name="UntestedBadgeText" Foreground="#FFDC6B2E" FontSize="11"
+                 TextWrapping="Wrap" Margin="0,0,0,6" IsVisible="False"/>
+      <TextBlock x:Name="NotesText" Foreground="#FF9A9A9A" FontSize="11"
+                 TextWrapping="Wrap" Margin="0,0,0,12"/>
+
+      <TextBlock Text="Display name" Foreground="#FF9A9A9A"/>
+      <TextBox x:Name="DisplayNameBox" Margin="0,0,0,10"/>
+      <CheckBox x:Name="EnabledCheckBox" Content="Enabled (offered as an upload target)" Margin="0,0,0,8"/>
+
+      <!-- Built-in provider: one Label+TextBox pair per ProviderSpec.ConfigFields entry, built in
+           code (ShareProviderEditWindow.axaml.cs BuildBuiltInFields) since the set of fields depends
+           entirely on which provider this is. -->
+      <StackPanel x:Name="BuiltInFieldsPanel" Margin="0,10,0,0" Spacing="2"/>
+
+      <!-- Custom provider: the full ProviderSpec editable directly - only shown when editing/adding
+           a Custom entry (see ShareProviderConfig.IsCustom). -->
+      <StackPanel x:Name="CustomSpecPanel" IsVisible="False" Margin="0,10,0,0" Spacing="2">
+        <TextBlock Text="Request" FontWeight="SemiBold" Margin="0,4,0,8"/>
+
+        <TextBlock Text="Endpoint URL (may use {Key} tokens - see Template values below)" Foreground="#FF9A9A9A"/>
+        <TextBox x:Name="EndpointBox" Margin="0,0,0,10"/>
+
+        <Grid ColumnDefinitions="*,12,*" Margin="0,0,0,10">
+          <StackPanel Grid.Column="0" Spacing="2">
+            <TextBlock Text="HTTP method" Foreground="#FF9A9A9A"/>
+            <TextBox x:Name="MethodBox"/>
+          </StackPanel>
+          <StackPanel Grid.Column="2" Spacing="2">
+            <TextBlock Text="Upload kind" Foreground="#FF9A9A9A"/>
+            <ComboBox x:Name="UploadKindCombo" HorizontalAlignment="Stretch" SelectionChanged="UploadKindCombo_SelectionChanged">
+              <ComboBoxItem Content="Multipart form (most services)"/>
+              <ComboBoxItem Content="Raw file bytes (e.g. RoeShare)"/>
+            </ComboBox>
+          </StackPanel>
+        </Grid>
+
+        <StackPanel x:Name="MultipartOnlyPanel" Spacing="2">
+          <TextBlock Text="Multipart field name for the file (default: file)" Foreground="#FF9A9A9A"/>
+          <TextBox x:Name="MultipartFieldNameBox" Margin="0,0,0,10"/>
+          <TextBlock Text="Extra form fields, one per line: name=value (may use {Key} tokens)" Foreground="#FF9A9A9A"/>
+          <TextBox x:Name="ExtraFieldsBox" AcceptsReturn="True" TextWrapping="Wrap" Height="56" Margin="0,0,0,10"/>
+        </StackPanel>
+
+        <TextBlock Text="Headers, one per line: Name: value (may use {Key} tokens)" Foreground="#FF9A9A9A"/>
+        <TextBox x:Name="HeadersBox" AcceptsReturn="True" TextWrapping="Wrap" Height="56" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Max upload size in MB (blank = unknown/unbounded)" Foreground="#FF9A9A9A"/>
+        <TextBox x:Name="MaxSizeMbBox" Margin="0,0,0,10"/>
+
+        <TextBlock Text="Response" FontWeight="SemiBold" Margin="0,4,0,8"/>
+        <TextBlock Text="How to find the URL in a successful response" Foreground="#FF9A9A9A"/>
+        <ComboBox x:Name="ResponseModeCombo" HorizontalAlignment="Stretch" Margin="0,0,0,10" SelectionChanged="ResponseModeCombo_SelectionChanged">
+          <ComboBoxItem Content="JSON path (e.g. data.link)"/>
+          <ComboBoxItem Content="Regex (URL is capture group 1)"/>
+          <ComboBoxItem Content="Whole response body is the URL"/>
+        </ComboBox>
+        <StackPanel x:Name="ResponseJsonPathPanel" Spacing="2">
+          <TextBlock Text="JSON path" Foreground="#FF9A9A9A"/>
+          <TextBox x:Name="ResponseJsonPathBox" Margin="0,0,0,10"/>
+        </StackPanel>
+        <StackPanel x:Name="ResponseRegexPanel" Spacing="2">
+          <TextBlock Text="Regex" Foreground="#FF9A9A9A"/>
+          <TextBox x:Name="ResponseRegexBox" Margin="0,0,0,10"/>
+        </StackPanel>
+
+        <TextBlock Text="Template values" FontWeight="SemiBold" Margin="0,4,0,8"/>
+        <TextBlock Text="One per line: Key=Value (e.g. ApiKey=..., BaseUrl=https://example.com) - referenced above as {Key}"
+                   Foreground="#FF9A9A9A" TextWrapping="Wrap"/>
+        <TextBox x:Name="CustomValuesBox" AcceptsReturn="True" TextWrapping="Wrap" Height="56" Margin="0,0,0,10"/>
+      </StackPanel>
+
+      <TextBlock TextWrapping="Wrap" Foreground="#FF9A9A9A" FontSize="11" Margin="0,4,0,10"
+                 Text="Values (including API keys/tokens) are stored in plain text in settings.json, same as every other RoeSnip setting - do not use a credential you can't afford to have read off disk."/>
+
+      <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+        <Button x:Name="TestButton" Content="Test" Click="TestButton_Click"/>
+        <TextBlock x:Name="TestStatusText" VerticalAlignment="Center" TextWrapping="Wrap"/>
+      </StackPanel>
+
+      <TextBlock x:Name="ValidationErrorText" Foreground="#FFFF6B6B" TextWrapping="Wrap"
+                 IsVisible="False" Margin="0,8,0,0"/>
+
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,20,0,0">
+        <Button x:Name="RemoveButton" Content="Remove" Click="RemoveButton_Click" IsVisible="False"/>
+        <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click"/>
+        <Button x:Name="SaveButton" Content="Save" Classes="accent" Click="SaveButton_Click"/>
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</Window>

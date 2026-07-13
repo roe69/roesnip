@@ -25,8 +25,8 @@ namespace RoeSnip.App.AppShell;
 /// fps/chrome, which this port does not yet implement live — see AutomationServer.HandleLine's own
 /// comment for why they're still validated here rather than folded into "unknown command") so a
 /// future recording port (tracked separately) only has to swap live handlers, never the protocol.
-/// The one deliberate SHAPE deviation is "confirm": this port has no Sharing/* subsystem yet, so
-/// "share" is not an accepted action (WPF accepts copy|save|share).</summary>
+/// "confirm" accepts copy|save|share (Sharing/* subsystem, item 12), matching the WPF wire
+/// contract exactly now that this port has a live Share path.</summary>
 public static class AutomationProtocol
 {
     /// <summary>Named-pipe name shared by AutomationServer (listens) and AutomationClient
@@ -111,11 +111,12 @@ public static class AutomationProtocol
                     : "record requires \"format\": \"gif\" or \"mp4\"";
 
             case "confirm":
-                // No Sharing/* subsystem in RoeSnip.App yet — only copy|save are accepted (WPF also
-                // accepts "share"; see this class's own doc comment).
-                if (!TryGetString(request, "action", out string? confirmAction) || confirmAction is not ("copy" or "save"))
+                // Sharing/* subsystem (item 12): "share" is accepted alongside copy|save, matching
+                // the WPF app — it needs no "path" (the upload result is a URL, not a local file),
+                // same as "copy".
+                if (!TryGetString(request, "action", out string? confirmAction) || confirmAction is not ("copy" or "save" or "share"))
                 {
-                    return "confirm requires \"action\": one of copy|save";
+                    return "confirm requires \"action\": one of copy|save|share";
                 }
                 if (confirmAction == "save"
                     && (!TryGetString(request, "path", out string? confirmPath) || string.IsNullOrWhiteSpace(confirmPath)))

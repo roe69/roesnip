@@ -53,6 +53,8 @@ public partial class ToolbarControl : UserControl
     private readonly StackPanel _toolsGroupPanel;
     private readonly StackPanel _historyGroupPanel;
     private readonly Button _saveHdrButton;
+    private readonly Button _shareButton;
+    private readonly Button _shareMenuButton;
     private readonly Button _undoButton;
     private readonly Button _redoButton;
     private readonly ComboBox _sizeComboBox;
@@ -83,6 +85,47 @@ public partial class ToolbarControl : UserControl
     public event Action? SaveClicked;
     public event Action? SaveHdrClicked;
     public event Action? CancelClicked;
+
+    // ---------- Share split-button (Sharing/* subsystem, item 12) ----------
+    //
+    // This control only ever RAISES these events / exposes these setters — it never touches
+    // Sharing/ShareManager itself and never knows what "the current selection render" even is (that
+    // lives in Overlay/OverlayController, which this control has no reference to). The owning window
+    // is responsible for: resolving the render, calling ShareManager.UploadAsync off the UI thread,
+    // copying the result URL to the clipboard, and driving SetShareBusy/tray balloon around the call
+    // — exactly the same division of labor CopyClicked/SaveClicked already use. Mirrors the WPF
+    // app's own ToolbarControl split-button (and its d8fa815 fix — see SetShareProviders/SetShareBusy
+    // below for the two gotchas that fix preserved).
+
+    /// <summary>ShareButton's own click: upload to the caller's configured DEFAULT provider. No
+    /// payload — mirrors CopyClicked/SaveClicked's own zero-arg shape.</summary>
+    public event Action? ShareClicked;
+
+    /// <summary>A specific provider was picked from ShareMenuButton's dropdown. The argument is that
+    /// provider's ShareProviderConfig.Id (opaque to this control — it only ever echoes back an Id it
+    /// was itself given via <see cref="SetShareProviders"/>).</summary>
+    public event Action<string>? ShareToProviderRequested;
+
+    /// <summary>Raised when ShareMenuButton is clicked while no provider is configured at all (the
+    /// menu would otherwise be empty). <see cref="SetShareProviders"/> disables ShareMenuButton
+    /// itself in exactly that case (per the no-hidden-controls rule — the chevron is DISABLED, not
+    /// hidden, not dead — d8fa815), so this can never actually fire from a live click; kept for
+    /// parity with the WPF control's own event shape.</summary>
+    public event Action? ManageProvidersRequested;
+
+    private readonly MenuFlyout _shareProviderMenuFlyout = new();
+    private readonly List<MenuItem> _shareProviderMenuItems = new();
+    private bool _shareHasProviders;
+
+    // d8fa815 gotcha #2: SetShareProviders is re-run on every toolbar show (pooled-window reuse —
+    // see OverlayWindow.ShowToolbar's own doc comment), which can land WHILE a Share upload is still
+    // in flight (the overlay stays open for the whole upload — see OverlaySession.
+    // ShareCurrentSelection's own doc comment — and the user is free to keep dragging the selection
+    // meanwhile). Without this flag, that re-run would unconditionally recompute IsEnabled from
+    // _shareHasProviders alone, silently re-enabling both buttons mid-upload and clobbering the busy
+    // state SetShareBusy(true) had just set. One flag, checked by both methods, is enough to keep
+    // them from fighting over the same two IsEnabled bits.
+    private bool _shareBusy;
 
     /// <summary>Text-style group (item 08) — Bold, Italic, font family. Only ever visible while the
     /// Text tool is selected. Font size is edited via the shared size ComboBox (pt mode).</summary>
@@ -121,6 +164,8 @@ public partial class ToolbarControl : UserControl
         _toolsGroupPanel = Find<StackPanel>("ToolsGroupPanel");
         _historyGroupPanel = Find<StackPanel>("HistoryGroupPanel");
         _saveHdrButton = Find<Button>("SaveHdrButton");
+        _shareButton = Find<Button>("ShareButton");
+        _shareMenuButton = Find<Button>("ShareMenuButton");
         _undoButton = Find<Button>("UndoButton");
         _redoButton = Find<Button>("RedoButton");
         _sizeComboBox = Find<ComboBox>("SizeComboBox");
@@ -150,6 +195,8 @@ public partial class ToolbarControl : UserControl
         Find<Button>("CopyButton").Click += (_, _) => CopyClicked?.Invoke();
         Find<Button>("SaveButton").Click += (_, _) => SaveClicked?.Invoke();
         _saveHdrButton.Click += (_, _) => SaveHdrClicked?.Invoke();
+        _shareButton.Click += (_, _) => ShareClicked?.Invoke();
+        _shareMenuButton.Click += OnShareMenuClick;
         Find<Button>("CancelButton").Click += (_, _) => CancelClicked?.Invoke();
 
         // Commit whatever was typed whenever keyboard focus leaves the size box entirely (clicking
@@ -195,6 +242,68 @@ public partial class ToolbarControl : UserControl
         _toolsGroupPanel.IsVisible = visible;
         _historyGroupPanel.IsVisible = visible;
         _colorSwatchPanel.IsVisible = visible;
+    }
+
+    /// <summary>Called by the owning window to (re)populate the provider picker — typically once
+    /// when the toolbar is (re)shown, mirroring SetPaletteColors' own "OverlayWindow keeps this in
+    /// sync" contract. Enables ShareButton/ShareMenuButton only once <paramref name="providers"/> is
+    /// non-empty (see this control's own class-level Share-group doc comment for why it never
+    /// enables itself) — a caller that never calls this at all leaves the buttons correctly disabled
+    /// forever rather than presenting as clickable-but-silently-broken. If a Share upload is still in
+    /// flight (<see cref="_shareBusy"/>) this deliberately does NOT re-enable either button — see
+    /// that field's own doc comment (d8fa815 gotcha #2). Mirrors the WPF control's own
+    /// SetShareProviders.</summary>
+    public void SetShareProviders(IReadOnlyList<(string Id, string Name)> providers, string? defaultId)
+    {
+        _shareProviderMenuFlyout.Items.Clear();
+        _shareProviderMenuItems.Clear();
+
+        foreach (var (id, name) in providers)
+        {
+            var item = new MenuItem
+            {
+                Header = string.Equals(id, defaultId, StringComparison.Ordinal) ? $"{name} (default)" : name,
+            };
+            item.Click += (_, _) => ShareToProviderRequested?.Invoke(id);
+            _shareProviderMenuFlyout.Items.Add(item);
+            _shareProviderMenuItems.Add(item);
+        }
+
+        _shareHasProviders = providers.Count > 0;
+        ToolTip.SetTip(_shareButton, _shareHasProviders
+            ? "Share: upload to your default provider"
+            : "Share: no provider configured yet — set one up in Settings");
+        if (_shareBusy)
+        {
+            return; // an upload is still running — SetShareBusy already disabled both buttons; leave that alone
+        }
+        _shareButton.IsEnabled = _shareHasProviders;
+        _shareMenuButton.IsEnabled = _shareHasProviders;
+    }
+
+    /// <summary>Upload-in-progress state. Disables both buttons for the duration — the same
+    /// visible-but-inert pattern Undo/Redo already use while inapplicable, rather than a spinner this
+    /// small icon-only control has no room for. Restores (rather than assumes) the enabled state
+    /// SetShareProviders last established, so busy=false never re-enables a Share button that has no
+    /// configured provider. Mirrors the WPF control's own SetShareBusy.</summary>
+    public void SetShareBusy(bool busy)
+    {
+        _shareBusy = busy;
+        _shareButton.IsEnabled = !busy && _shareHasProviders;
+        _shareMenuButton.IsEnabled = !busy && _shareHasProviders;
+        ToolTip.SetTip(_shareButton, busy
+            ? "Sharing..."
+            : (_shareHasProviders ? "Share: upload to your default provider" : "Share: no provider configured yet — set one up in Settings"));
+    }
+
+    private void OnShareMenuClick(object? sender, RoutedEventArgs e)
+    {
+        if (_shareProviderMenuItems.Count == 0)
+        {
+            ManageProvidersRequested?.Invoke();
+            return;
+        }
+        _shareProviderMenuFlyout.ShowAt(_shareMenuButton);
     }
 
     // ---------- Editable swatch palette (item 08) ----------
