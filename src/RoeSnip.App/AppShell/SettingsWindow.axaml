@@ -25,6 +25,7 @@
 
     <CheckBox x:Name="AutoSaveHdrCheckBox" Content="Always save an HDR (.jxr) copy alongside the PNG"/>
     <CheckBox x:Name="CopyOnSelectCheckBox" Content="Confirming a selection also copies it to the clipboard"/>
+    <CheckBox x:Name="ColorPickerCheckBox" Content="Enable the colour picker (click to pick a colour, loupe colour codes)"/>
     <CheckBox x:Name="RunAtStartupCheckBox" Content="Start RoeSnip at login"/>
 
     <TextBlock Text="Advanced tone-map overrides (leave blank for automatic)" Margin="0,10,0,4" Foreground="#FF9A9A9A"/>

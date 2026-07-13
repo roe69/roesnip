@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,6 +10,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using Microsoft.Win32;
 using RoeSnip.Core.Imaging;
@@ -193,6 +195,7 @@ public sealed class TrayApp : ITrayNotifier
 
             _hotkeyManager = new HotkeyManager(() => Dispatcher.UIThread.Post(TriggerCapture));
             _hotkeyManager.Register(_settings);
+            WarnIfPrintScreenConflict();
             MaybeShowWaylandHotkeyNotice();
 
             switch (s_initialAction)
@@ -291,7 +294,16 @@ public sealed class TrayApp : ITrayNotifier
         }
 
         bool hotkeyUnavailableOnWayland = _hotkeyManager?.IsUnavailableOnWayland == true;
-        var window = new SettingsWindow(_settings, hotkeyUnavailableOnWayland, updated => _ = ApplyUpdatedSettingsAsync(updated));
+        var window = new SettingsWindow(
+            _settings,
+            hotkeyUnavailableOnWayland,
+            updated => _ = ApplyUpdatedSettingsAsync(updated),
+            // Bugs 2 & 5 (SettingsWindow's own field-level doc comment): suspend the hotkey only
+            // for the (brief) span it is actively capturing a new combination; Unregister/Register
+            // (not Dispose) so the SAME HotkeyManager instance/hook keeps running underneath.
+            suspendGlobalHotkey: () => _hotkeyManager?.Unregister(),
+            resumeGlobalHotkey: () => _hotkeyManager?.Register(_settings));
+        window.Icon = AppIcon;
         window.Closed += (_, _) => _openSettingsWindow = null;
         _openSettingsWindow = window;
         window.Show();
@@ -625,6 +637,13 @@ public sealed class TrayApp : ITrayNotifier
                 {
                     using var writableKey = Registry.CurrentUser.OpenSubKey(PrintScreenRegistryKeyPath, writable: true);
                     writableKey?.SetValue(PrintScreenValueName, 0, RegistryValueKind.DWord);
+
+                    // The shell only reads PrintScreenKeyForSnippingEnabled at logon, so writing
+                    // the value alone leaves Snipping Tool grabbing PrtScr for the rest of this
+                    // session. Broadcast WM_SETTINGCHANGE (what the Windows Settings toggle does)
+                    // so it applies immediately and the hotkey below actually receives PrtScr,
+                    // matching the WPF app's TrayApp.cs:440-459.
+                    BroadcastKeyboardSettingChange();
                 }
                 catch (Exception ex)
                 {
@@ -660,6 +679,94 @@ public sealed class TrayApp : ITrayNotifier
                 $"RoeSnip: PrintScreen consent check failed, keeping PrintScreen-alone: {ex.Message}");
             return settings;
         }
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd, uint msg, IntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out IntPtr result);
+
+    private const uint WM_SETTINGCHANGE = 0x001A;
+    private static readonly IntPtr HWND_BROADCAST = new(0xffff);
+    private const uint SMTO_ABORTIFHUNG = 0x0002;
+
+    /// <summary>Broadcasts the same policy-change notification the WPF app sends after writing
+    /// PrintScreenKeyForSnippingEnabled (TrayApp.cs:440-459), so the shell picks the new value up
+    /// immediately instead of only at the next logon.</summary>
+    [SupportedOSPlatform("windows")]
+    private static void BroadcastKeyboardSettingChange()
+        => SendMessageTimeout(
+            HWND_BROADCAST, WM_SETTINGCHANGE, IntPtr.Zero, PrintScreenRegistryKeyPath, SMTO_ABORTIFHUNG, 1000, out _);
+
+    // Well-known screenshot tools that grab the PrintScreen key (process name -> friendly name),
+    // ported verbatim from the WPF app's TrayApp.KnownPrintScreenApps.
+    private static readonly (string Process, string Name)[] KnownPrintScreenApps =
+    {
+        ("ShareX", "ShareX"),
+        ("Greenshot", "Greenshot"),
+        ("Lightshot", "Lightshot"),
+        ("Snagit32", "Snagit"),
+        ("SnagitEditor", "Snagit"),
+        ("PicPick", "PicPick"),
+        ("flameshot", "Flameshot"),
+        ("Gyazo", "Gyazo"),
+        ("ScreenToGif", "ScreenToGif"),
+    };
+
+    /// <summary>Startup heads-up if RoeSnip's PrintScreen hotkey is likely being stolen by another
+    /// screenshot tool (ShareX etc.) - ported from the WPF app's TrayApp.WarnIfPrintScreenConflict
+    /// (TrayApp.cs:791-856). Only fires for a BARE PrintScreen hotkey - Ctrl+PrintScreen and other
+    /// combos don't collide with the usual PrtScr grabs. Two signals: the hotkey failed to arm
+    /// (another app already owns the key), or a known screenshot app is running (those often grab
+    /// PrtScr with a low-level hook this port's own SharpHook-based HotkeyManager cannot detect a
+    /// collision with, so they can steal the key even though registration itself "succeeded" -
+    /// see HotkeyManager's own class doc comment on how weak that signal already is here). A
+    /// non-blocking toast, never a modal, so it can never gate startup.</summary>
+    private void WarnIfPrintScreenConflict()
+    {
+        bool barePrintScreen = _settings.HotkeyModifiers == 0 && _settings.HotkeyVirtualKey == HotkeyManager.VkSnapshot;
+        if (!barePrintScreen)
+        {
+            return;
+        }
+
+        string? app = DetectRunningScreenshotApp();
+        bool registerFailed = _hotkeyManager?.IsRegistered == false;
+        if (app is null && !registerFailed)
+        {
+            return;
+        }
+
+        string who = app ?? "Another program";
+        ShowToast(
+            $"{who} may be using the PrintScreen key, which can stop RoeSnip's screenshot hotkey from " +
+            "working. Close it, or pick a different hotkey in RoeSnip's Settings.",
+            isError: true,
+            durationMs: 8000,
+            onClick: null);
+    }
+
+    private static string? DetectRunningScreenshotApp()
+    {
+        foreach (var (processName, displayName) in KnownPrintScreenApps)
+        {
+            try
+            {
+                var procs = Process.GetProcessesByName(processName);
+                foreach (var p in procs)
+                {
+                    p.Dispose();
+                }
+                if (procs.Length > 0)
+                {
+                    return displayName;
+                }
+            }
+            catch
+            {
+                // Best-effort detection - never let it break startup.
+            }
+        }
+        return null;
     }
 
     /// <summary>Minimal ownerless Yes/No dialog (Avalonia has no MessageBox). Returns true for
@@ -743,6 +850,7 @@ public sealed class TrayApp : ITrayNotifier
             var window = new Window
             {
                 Title = "About RoeSnip",
+                Icon = AppIcon,
                 Width = 440,
                 SizeToContent = SizeToContent.Height,
                 CanResize = false,
@@ -839,6 +947,7 @@ public sealed class TrayApp : ITrayNotifier
             var window = new Window
             {
                 WindowDecorations = WindowDecorations.None,
+                Icon = AppIcon,
                 Topmost = true,
                 ShowInTaskbar = false,
                 ShowActivated = false,
@@ -957,7 +1066,7 @@ public sealed class TrayApp : ITrayNotifier
 
             _trayIcon = new TrayIcon
             {
-                Icon = CreateTrayIconImage(),
+                Icon = AppIcon,
                 ToolTipText = $"RoeSnip {UpdateManager.CurrentVersionText}",
                 Menu = menu,
                 IsVisible = true,
@@ -977,9 +1086,37 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
+    /// <summary>Item 14 branding: the on-brand app icon (Assets/roesnip.ico, bundled as an
+    /// Avalonia resource - see RoeSnip.App.csproj), shared by the tray icon and every window this
+    /// class opens (Settings, About, toasts) so they all match the taskbar/titlebar icon a real
+    /// install would show. Resolved once and cached; falls back to the original procedurally-drawn
+    /// glyph (<see cref="CreateTrayIconImage"/>) if the resource is ever missing or fails to
+    /// decode, so startup can never regress/fail because of the icon - same belt-and-braces
+    /// fallback shape as the WPF app's own CreateTrayIcon (TrayApp.cs:1328-1346).</summary>
+    private static readonly Lazy<WindowIcon> s_appIcon = new(() => LoadBundledIcon() ?? CreateTrayIconImage());
+
+    private static WindowIcon AppIcon => s_appIcon.Value;
+
+    private static WindowIcon? LoadBundledIcon()
+    {
+        try
+        {
+            var uri = new Uri("avares://RoeSnip/Assets/roesnip.ico");
+            using var stream = AssetLoader.Open(uri);
+            return new WindowIcon(stream);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"RoeSnip: failed to load the bundled app icon ({ex.Message}); using the procedural glyph instead.");
+            return null;
+        }
+    }
+
     /// <summary>Draws the same stylized camera glyph as the WPF app's tray icon (accent-blue body,
     /// flash bump, dark lens) into a 32x32 BGRA raster, PNG-encodes it via Core's PngWriter, and
-    /// wraps it as a WindowIcon — no image assets, no System.Drawing dependency.</summary>
+    /// wraps it as a WindowIcon — no image assets, no System.Drawing dependency. The fallback path
+    /// for <see cref="AppIcon"/> above.</summary>
     private static WindowIcon CreateTrayIconImage()
     {
         const int size = 32;

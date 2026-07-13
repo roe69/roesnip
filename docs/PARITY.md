@@ -510,10 +510,49 @@ existing WPF test suite is the proof.
       cannot be exercised without either a live published release with this exact asset name or
       debug-only URL-injection plumbing, both out of scope here. --self-update-now was not driven
       live for the same reason (it always calls the real GitHub API, never a mock).
-- [ ] 14-shell-parity-batch: Hotkey rebind fixes (suspend live hotkey, PrintScreen
+- [x] 14-shell-parity-batch: Hotkey rebind fixes (suspend live hotkey, PrintScreen
       keyup-only capture, real key names), WM_SETTINGCHANGE broadcast after the PrtScr
       consent registry write, competing-screenshot-tool startup warning, ColorPickerEnabled
       toggle, .ico tray/window branding. (M)
+      - SettingsWindow now takes suspendGlobalHotkey/resumeGlobalHotkey callbacks from TrayApp
+        (Unregister/Register on the same HotkeyManager instance, not Dispose), suspended on
+        Change click and resumed on commit or window close - same Bugs 2/5 fix shape as WPF.
+        Added an OnKeyUp override (Key.Snapshot only) alongside OnKeyDown, both funneling into
+        one CommitCapturedKey, for the PrintScreen keyup-only quirk.
+      - DescribeVirtualKey moved to a new public HotkeyDisplayFormat class (testable without an
+        InternalsVisibleTo edit, matching this codebase's convention) and inverts
+        HotkeyManager.VirtualKeyToKeyCode's own SharpHook KeyCode names (stripping the "Vc"
+        prefix) instead of P/Invoking GetKeyNameText, which this port has no HWND to hang off -
+        raw hex remains the last-resort fallback for an unmapped vk.
+      - ResolvePrintScreenConsentAsync now broadcasts WM_SETTINGCHANGE (Windows-only P/Invoke,
+        [SupportedOSPlatform("windows")]) after writing PrintScreenKeyForSnippingEnabled=0, same
+        as the WPF app.
+      - WarnIfPrintScreenConflict ported verbatim (same KnownPrintScreenApps list) and called
+        once at startup after the hotkey is (re)armed; surfaces via the existing toast
+        (isError:true) since Avalonia's TrayIcon has no balloon-icon-kind API to distinguish a
+        warning from an error.
+      - ColorPickerCheckBox added to SettingsWindow.axaml/.axaml.cs (load + save), same copy as
+        WPF; the feature itself still arrives in item 22.
+      - Assets/roesnip.ico copied into RoeSnip.App as an AvaloniaResource; a cached AppIcon
+        (avares:// load, falling back to the existing procedural glyph on any failure) is now
+        used for the tray icon and the Settings/About/toast windows.
+      - Verified live on this machine: a standalone `--automation` RoeSnip.App instance (never
+        the user's resident) opened Settings via the CLI verb; a real-desktop screenshot
+        confirmed the ColorPicker checkbox text, the "PrintScreen" hotkey display text (proving
+        HotkeyDisplayFormat's inverted-table lookup), and the bundled .ico rendering correctly in
+        the window's titlebar (not the procedural fallback) - decoded byte-for-byte the same
+        orange/black glyph as the source .ico. The instance was killed immediately after
+        (verified no RoeSnip process left running).
+      - NOT verified live: actually pressing the physical PrintScreen key to exercise the
+        OnKeyUp capture path. This port's HotkeyManager uses a SharpHook global hook, not
+        RegisterHotKey - it does not claim/consume the key - but this machine's frozen WPF
+        RoeSnip app (when resident) DOES use RegisterHotKey for a real bare-PrintScreen binding,
+        so a synthetic PrtScr keypress risks firing that app's actual capture flow if it were
+        ever resident, which the hard rule against signalling the user's resident processes
+        forbids. Verified instead via the DescribeVirtualKey/DescribeHotkey unit tests
+        (tests/RoeSnip.App.Tests/HotkeyDisplayFormatTests.cs) plus code review against the WPF
+        reference this was ported from line-for-line - same precedent TESTING.md's item-12
+        entry already set for windows outside the automation pipe's reach.
 - [ ] 15-elevated-startup: Port ElevationManager (schtasks run-at-logon task via one-time
       UAC, error relay file, Settings checkbox + status text, hidden CLI verbs); hidden
       entirely on non-Windows. (L)

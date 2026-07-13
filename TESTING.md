@@ -842,3 +842,47 @@ discipline the item-03 automation-pipe verification above already established):*
   failure branch (`ShowError`) was exercised live; the success branch is unit-tested-shaped
   (mirrors `ShowSavedBalloon`, which the item-03/09 passes above already verified live) but not
   driven against a real upload this phase.
+
+## RoeSnip.App app-shell parity batch (item 14, added 2026-07-14)
+
+Six independent fixes: hotkey-rebind suspend/resume, PrintScreen keyup-only capture, real key
+names in the hotkey display, a WM_SETTINGCHANGE broadcast after the PrtScr consent registry
+write, a competing-screenshot-tool startup warning, a ColorPickerEnabled toggle, and `.ico`
+branding. See PARITY.md item 14 for the full behavioral write-up.
+
+**Verified 2026-07-14 (this machine, real 3-monitor HDR layout, a standalone `--automation`
+instance started and killed by this item's own session, never the user's real resident):**
+
+- `dotnet build RoeSnip.sln` / `dotnet test RoeSnip.sln` — 0 warnings/errors, full suite green
+  (946 tests; +27 from the new `HotkeyDisplayFormatTests`).
+- `RoeSnip.exe settings` (signals the standalone `--automation` resident) + full-screen
+  `screenshot`: the new "Enable the colour picker..." checkbox renders with the same wording as
+  the WPF app; the Hotkey box reads "PrintScreen" (the default binding, round-tripped through
+  `HotkeyDisplayFormat.DescribeHotkey`/`DescribeVirtualKey`'s inverted-KeyCode-table lookup, not
+  raw hex); the Settings window's titlebar shows the bundled `roesnip.ico` glyph (decoded
+  byte-for-byte the same orange/black icon as the source file when rendered standalone via
+  `System.Drawing.Icon` for comparison) — confirms the `avares://RoeSnip/Assets/roesnip.ico`
+  AvaloniaResource load path works, not the procedural-glyph fallback.
+- The standalone instance was killed immediately after (`Stop-Process`); `Get-Process -Name
+  RoeSnip` confirmed zero processes remained.
+
+**NOT verified — deliberately not driven interactively this phase:**
+
+- Actually pressing the physical PrintScreen key to exercise the new `OnKeyUp` capture path
+  (SettingsWindow's Change-hotkey flow). This port's `HotkeyManager` uses a SharpHook global
+  hook (observes, never claims/consumes the key), but this machine's frozen WPF `RoeSnip` app
+  uses real `RegisterHotKey` for a bare-PrintScreen binding when resident — a synthetic PrtScr
+  keypress risks firing that app's actual capture flow if it were ever resident, which the hard
+  rule against signalling the user's resident processes forbids. Verified instead via
+  `tests/RoeSnip.App.Tests/HotkeyDisplayFormatTests.cs` plus code review against the WPF
+  reference (SettingsWindow.xaml.cs:305-326) this was ported from line-for-line — same
+  precedent the item-12 entry above already set for windows outside the automation pipe's
+  reach.
+- `WarnIfPrintScreenConflict`'s actual toast firing against a real competing app (ShareX etc.)
+  running, or a genuine hotkey-registration failure — reviewed against the WPF reference
+  (verbatim `KnownPrintScreenApps` list, same two-signal gate) but not staged live.
+- The WM_SETTINGCHANGE broadcast's real effect (Snipping Tool releasing PrtScr mid-session
+  without a logoff) — the P/Invoke call itself is reviewed against the WPF app's own
+  `NativeMethods.SendMessageTimeout` usage, but exercising the consent flow's "Yes" branch live
+  needs a machine where Windows is actively intercepting PrtScr, which this dev machine's
+  current registry state does not reproduce on demand.

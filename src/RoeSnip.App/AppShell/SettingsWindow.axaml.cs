@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using Avalonia.Controls;
@@ -24,6 +23,17 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     private readonly Action<RoeSnipSettings> _onSaved;
     private readonly bool _hotkeyUnavailableOnWayland;
 
+    // Item 14 / WPF Bugs 2 & 5 (SettingsWindow.xaml.cs:34-43): the global hotkey and this
+    // window's own key capture compete for the same keystroke - on Windows RegisterHotKey claims
+    // a registered combo before it ever reaches a focused window's key events at all, and even
+    // this port's weaker SharpHook global hook still means "the OS action for that key already
+    // fired" for a bare PrintScreen (Snipping Tool intercept). TrayApp supplies these so the
+    // global hotkey can be suspended for the (brief) duration of an actual capture - fixing
+    // rebinding PrintScreen back onto itself - while staying registered/armed the rest of the
+    // time this window is open, so the hotkey still fires a normal snip with Settings open.
+    private readonly Action _suspendGlobalHotkey;
+    private readonly Action _resumeGlobalHotkey;
+
     /// <summary>Sharing/* subsystem (item 12): ShareProvidersWindow self-persists (SettingsStore.Save)
     /// the moment a provider is added/edited/removed — same "writes immediately" precedent this
     /// window already sets for run-at-startup — rather than waiting for THIS window's own Save
@@ -38,9 +48,14 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     private uint _pendingVirtualKey;
 
     // Parameterless ctor for the XAML loader/previewer only.
-    public SettingsWindow() : this(RoeSnipSettings.Default, hotkeyUnavailableOnWayland: false, _ => { }) { }
+    public SettingsWindow() : this(RoeSnipSettings.Default, hotkeyUnavailableOnWayland: false, _ => { }, () => { }, () => { }) { }
 
-    public SettingsWindow(RoeSnipSettings settings, bool hotkeyUnavailableOnWayland, Action<RoeSnipSettings> onSaved)
+    public SettingsWindow(
+        RoeSnipSettings settings,
+        bool hotkeyUnavailableOnWayland,
+        Action<RoeSnipSettings> onSaved,
+        Action suspendGlobalHotkey,
+        Action resumeGlobalHotkey)
     {
         InitializeComponent();
 
@@ -48,19 +63,30 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         _current = settings;
         _hotkeyUnavailableOnWayland = hotkeyUnavailableOnWayland;
         _onSaved = onSaved;
+        _suspendGlobalHotkey = suspendGlobalHotkey;
+        _resumeGlobalHotkey = resumeGlobalHotkey;
         _pendingModifiers = settings.HotkeyModifiers;
         _pendingVirtualKey = settings.HotkeyVirtualKey;
 
         LoadFromSettings();
+
+        // Bug 5 safety net: however this window closes (Save, Cancel, titlebar X, or mid-capture),
+        // make sure the global hotkey ends up (re)armed. Save's onSaved callback already
+        // re-registers with the newly-saved settings before Close() runs, so by the time this
+        // fires _resumeGlobalHotkey is a harmless, idempotent re-arm of the same (already correct)
+        // hotkey; on Cancel/X mid-capture it is what restores the hotkey ChangeHotkeyButton_Click
+        // suspended.
+        Closed += (_, _) => _resumeGlobalHotkey();
     }
 
     private void LoadFromSettings()
     {
-        HotkeyDisplay.Text = DescribeHotkey(_pendingModifiers, _pendingVirtualKey);
+        HotkeyDisplay.Text = HotkeyDisplayFormat.DescribeHotkey(_pendingModifiers, _pendingVirtualKey);
         WaylandHotkeyCaption.IsVisible = _hotkeyUnavailableOnWayland;
         SaveDirectoryBox.Text = _original.SaveDirectory;
         AutoSaveHdrCheckBox.IsChecked = _original.AutoSaveHdrCopy;
         CopyOnSelectCheckBox.IsChecked = _original.CopyOnSelect;
+        ColorPickerCheckBox.IsChecked = _original.ColorPickerEnabled;
         KneeOverrideBox.Text = _original.ToneMapKneeOverride?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         PeakOverrideBox.Text = _original.ToneMapPeakOverride?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
 
@@ -164,6 +190,14 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     private void ChangeHotkeyButton_Click(object? sender, RoutedEventArgs e)
     {
         _capturingHotkey = true;
+
+        // Bug 2: suspend the global hotkey for the duration of capture so the OS/hook delivers
+        // the keystroke to THIS window instead of acting on it as the still-armed hotkey - see
+        // this window's own field-level doc comment on _suspendGlobalHotkey. Restored the moment
+        // a key is committed (CommitCapturedKey) or this window closes without one ever being
+        // committed (the Closed handler in the constructor).
+        _suspendGlobalHotkey();
+
         HotkeyDisplay.Text = "Press a key combination...";
         Focus();
     }
@@ -185,6 +219,27 @@ public partial class SettingsWindow : Avalonia.Controls.Window
             return; // still waiting for a non-modifier key
         }
 
+        CommitCapturedKey(key, e.KeyModifiers);
+    }
+
+    /// <summary>Bug 2 (WPF SettingsWindow.xaml.cs:305-326): PrintScreen (VK_SNAPSHOT) is a
+    /// long-standing Windows quirk - it generates only a key-up, never a key-down, to whichever
+    /// window has focus - so it can only ever be captured here, not in OnKeyDown above. Every
+    /// other key is already handled on key-down and just passes through normally here.</summary>
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        if (!_capturingHotkey || e.Key != Key.Snapshot)
+        {
+            base.OnKeyUp(e);
+            return;
+        }
+
+        e.Handled = true;
+        CommitCapturedKey(Key.Snapshot, e.KeyModifiers);
+    }
+
+    private void CommitCapturedKey(Key key, KeyModifiers keyModifiers)
+    {
         uint? virtualKey = MapKeyToVirtualKey(key);
         if (virtualKey is null)
         {
@@ -193,15 +248,20 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         }
 
         uint modifiers = 0;
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Control)) modifiers |= HotkeyManager.ModControl;
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Alt)) modifiers |= HotkeyManager.ModAlt;
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift)) modifiers |= HotkeyManager.ModShift;
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Meta)) modifiers |= HotkeyManager.ModWin;
+        if (keyModifiers.HasFlag(KeyModifiers.Control)) modifiers |= HotkeyManager.ModControl;
+        if (keyModifiers.HasFlag(KeyModifiers.Alt)) modifiers |= HotkeyManager.ModAlt;
+        if (keyModifiers.HasFlag(KeyModifiers.Shift)) modifiers |= HotkeyManager.ModShift;
+        if (keyModifiers.HasFlag(KeyModifiers.Meta)) modifiers |= HotkeyManager.ModWin;
 
         _pendingModifiers = modifiers;
         _pendingVirtualKey = virtualKey.Value;
         _capturingHotkey = false;
-        HotkeyDisplay.Text = DescribeHotkey(_pendingModifiers, _pendingVirtualKey);
+        HotkeyDisplay.Text = HotkeyDisplayFormat.DescribeHotkey(_pendingModifiers, _pendingVirtualKey);
+
+        // Bug 5: capture is over - resume the global hotkey (still the OLD/saved binding; the new
+        // one only takes effect on Save) so it keeps firing while this window stays open deciding
+        // whether to Save or Cancel the new binding.
+        _resumeGlobalHotkey();
     }
 
     /// <summary>Maps an Avalonia <see cref="Key"/> to the Windows virtual-key code the settings
@@ -286,6 +346,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
             SaveDirectory = SaveDirectoryBox.Text ?? _original.SaveDirectory,
             AutoSaveHdrCopy = AutoSaveHdrCheckBox.IsChecked == true,
             CopyOnSelect = CopyOnSelectCheckBox.IsChecked == true,
+            ColorPickerEnabled = ColorPickerCheckBox.IsChecked == true,
             ToneMapKneeOverride = kneeOverride,
             ToneMapPeakOverride = peakOverride,
             RunAtStartup = runAtStartup,
@@ -377,14 +438,4 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         return true;
     }
 
-    private static string DescribeHotkey(uint modifiers, uint virtualKey)
-    {
-        var parts = new List<string>();
-        if ((modifiers & HotkeyManager.ModControl) != 0) parts.Add("Ctrl");
-        if ((modifiers & HotkeyManager.ModAlt) != 0) parts.Add("Alt");
-        if ((modifiers & HotkeyManager.ModShift) != 0) parts.Add("Shift");
-        if ((modifiers & HotkeyManager.ModWin) != 0) parts.Add("Win");
-        parts.Add(virtualKey == HotkeyManager.VkSnapshot ? "PrintScreen" : $"VK 0x{virtualKey:X2}");
-        return string.Join("+", parts);
-    }
 }

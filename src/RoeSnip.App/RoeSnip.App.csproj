@@ -66,6 +66,14 @@
     <ProjectReference Include="..\RoeSnip.Core\RoeSnip.Core.csproj" />
   </ItemGroup>
 
+  <!-- Branding (item 14): the same .ico the WPF app embeds as a manifest resource
+       (src/RoeSnip/Assets/roesnip.ico), bundled here as an Avalonia asset so TrayApp.AppIcon can
+       load it via avares://RoeSnip/Assets/roesnip.ico on every OS/publish shape (including
+       single-file), with the procedural glyph as a defensive fallback if that ever fails. -->
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\roesnip.ico" />
+  </ItemGroup>
+
   <!-- Conditional per-OS capture backend — see PLAN-XPLAT.md §1.7's worked explanation: with no
        RID (design-time / plain `dotnet build`) all three are referenced and compiled (a genuine
        cross-platform compile gate on this machine); with a real `-r <rid>` publish exactly one is. -->
