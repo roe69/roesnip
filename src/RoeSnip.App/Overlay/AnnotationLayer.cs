@@ -45,6 +45,14 @@ public sealed class AnnotationShape
     public double StrokeWidthPx { get; set; } = 3.0;
     public string Text { get; set; } = string.Empty;
 
+    // Text-only styling (item 08) — unused by every other tool. StrokeWidthPx doubles as the
+    // text's font size (matching the pre-existing convention CommitText already used). Mirrors
+    // WPF's AnnotationShape.TextFontFamily/TextBold/TextItalic exactly
+    // (src/RoeSnip/Overlay/AnnotationLayer.cs:66-68).
+    public string TextFontFamily { get; init; } = "Segoe UI";
+    public bool TextBold { get; init; }
+    public bool TextItalic { get; init; }
+
     /// <summary>Deep clone — PointsPx is a mutable List, so a shallow copy would alias the same
     /// list between the clone and the original. Feature B's "snapshot before a drag, diff after"
     /// undo model only works if a later in-place mutation of the live shape can't also silently
@@ -56,6 +64,9 @@ public sealed class AnnotationShape
         StrokeColor = StrokeColor,
         StrokeWidthPx = StrokeWidthPx,
         Text = Text,
+        TextFontFamily = TextFontFamily,
+        TextBold = TextBold,
+        TextItalic = TextItalic,
     };
 }
 
@@ -219,7 +230,9 @@ public sealed class AnnotationLayer : Control
     /// isn't a drag gesture. Returns the committed shape (null for the degenerate empty-text no-op)
     /// mirroring <see cref="EndShape"/>'s contract, so OverlayWindow can auto-select a just-typed
     /// text exactly like every other just-placed click-editable shape.</summary>
-    public AnnotationShape? CommitText(Point physicalPt, string text, Color color, double fontSizePx)
+    public AnnotationShape? CommitText(
+        Point physicalPt, string text, Color color, double fontSizePx,
+        string fontFamily = "Segoe UI", bool bold = false, bool italic = false)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -232,6 +245,9 @@ public sealed class AnnotationLayer : Control
             StrokeColor = color,
             StrokeWidthPx = fontSizePx,
             Text = text,
+            TextFontFamily = fontFamily,
+            TextBold = bold,
+            TextItalic = italic,
         };
         shape.PointsPx.Add(physicalPt);
         _history.Add(shape);
@@ -551,7 +567,8 @@ public sealed class AnnotationLayer : Control
                 return false;
             }
         }
-        return a.StrokeWidthPx.Equals(b.StrokeWidthPx) && a.Text == b.Text && a.StrokeColor == b.StrokeColor;
+        return a.StrokeWidthPx.Equals(b.StrokeWidthPx) && a.Text == b.Text && a.StrokeColor == b.StrokeColor
+            && a.TextFontFamily == b.TextFontFamily && a.TextBold == b.TextBold && a.TextItalic == b.TextItalic;
     }
 
     /// <summary>Live-mutates the selected shape's points during a move drag: shifts every point of
@@ -881,7 +898,14 @@ public sealed class AnnotationLayer : Control
 
     private static FormattedText BuildTextFormattedText(AnnotationShape shape, IBrush brush)
     {
-        var typeface = new Typeface(OverlayFonts.Ui, FontStyle.Normal, FontWeight.SemiBold);
+        // Mirrors WPF's own Text branch (AnnotationLayer.cs:1034-1042): a placed shape's OWN style
+        // wins, not whatever the toolbar's text-style group currently shows (an already-placed
+        // shape must render the style it was committed with, even after the user later flips
+        // Bold/Italic or picks a different font for the NEXT text annotation).
+        var typeface = new Typeface(
+            new FontFamily(shape.TextFontFamily),
+            shape.TextItalic ? FontStyle.Italic : FontStyle.Normal,
+            shape.TextBold ? FontWeight.Bold : FontWeight.SemiBold);
         return new FormattedText(
             shape.Text,
             CultureInfo.InvariantCulture,

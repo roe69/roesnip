@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="RoeSnip.App.Overlay.ToolbarControl"
              Focusable="False"
+             Cursor="Arrow"
              UseLayoutRounding="True">
     <UserControl.Styles>
         <!-- All icons are inline vector Path geometries (no image assets) — the same path data
@@ -21,7 +22,9 @@
         </Style>
 
         <!-- Focusable=False everywhere: clicking a toolbar button must never move keyboard focus
-             off the overlay window, so Esc/Enter/Ctrl+... always reach the window's key handler. -->
+             off the overlay window, so Esc/Enter/Ctrl+... always reach the window's key handler.
+             The size ComboBox is the one deliberate exception (see its own comment below) — typing
+             a value needs real keyboard focus, exactly like WPF's SizeComboBox. -->
         <Style Selector="ToggleButton.tool">
             <Setter Property="Width" Value="34"/>
             <Setter Property="Height" Value="28"/>
@@ -75,6 +78,9 @@
         <Style Selector="Button.action:pointerover">
             <Setter Property="Opacity" Value="0.85"/>
         </Style>
+        <Style Selector="Button.action:disabled">
+            <Setter Property="Opacity" Value="0.4"/>
+        </Style>
 
         <!-- The Cancel X: quiet until hovered, then unmistakably red. Always fully closes the
              overlay (never the staged Esc behavior). Always visible — no hover-only reveal. -->
@@ -121,112 +127,152 @@
             <Setter Property="BorderBrush" Value="White"/>
             <Setter Property="BorderThickness" Value="2"/>
         </Style>
-
-        <Style Selector="ToggleButton.stroke">
-            <Setter Property="Width" Value="28"/>
-            <Setter Property="Height" Value="28"/>
-            <Setter Property="Margin" Value="2"/>
-            <Setter Property="Background" Value="#2A2A2E"/>
-            <Setter Property="BorderBrush" Value="#3F3F46"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Focusable" Value="False"/>
-            <Setter Property="Template">
-                <ControlTemplate>
-                    <Border x:Name="Bg" Background="{TemplateBinding Background}"
-                            BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="4">
-                        <ContentPresenter Content="{TemplateBinding Content}"
-                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                </ControlTemplate>
-            </Setter>
-        </Style>
-        <Style Selector="ToggleButton.stroke:checked /template/ Border#Bg">
-            <Setter Property="Background" Value="#3A7CFD"/>
-        </Style>
     </UserControl.Styles>
 
     <Border Background="#EE1B1B1D" CornerRadius="6" BorderBrush="#3F3F46" BorderThickness="1">
-        <StackPanel Orientation="Horizontal" Margin="4">
-            <!-- Tools -->
-            <ToggleButton x:Name="SelectToolButton" Classes="tool"
-                          ToolTip.Tip="Select / move (default)" IsChecked="True">
-                <Path Classes="icon" StrokeDashArray="2.2,1.6" Data="M1,1 H15 V15 H1 Z"/>
-            </ToggleButton>
-            <ToggleButton x:Name="RectToolButton" Classes="tool" ToolTip.Tip="Rectangle">
-                <Path Classes="icon" Data="M1,3 H15 V13 H1 Z"/>
-            </ToggleButton>
-            <ToggleButton x:Name="EllipseToolButton" Classes="tool" ToolTip.Tip="Ellipse">
-                <Path Classes="icon" Data="M1,8 A7,5 0 1 1 15,8 A7,5 0 1 1 1,8"/>
-            </ToggleButton>
-            <ToggleButton x:Name="ArrowToolButton" Classes="tool" ToolTip.Tip="Arrow">
-                <Path Classes="icon" Data="M2,14 L13,3 M13,3 H7.5 M13,3 V8.5"/>
-            </ToggleButton>
-            <ToggleButton x:Name="LineToolButton" Classes="tool" ToolTip.Tip="Line">
-                <Path Classes="icon" Data="M2,14 L14,2"/>
-            </ToggleButton>
-            <ToggleButton x:Name="FreehandToolButton" Classes="tool" ToolTip.Tip="Freehand">
-                <Path Classes="icon" Data="M1,13 C3,4 6,4 8,9 C10,14 13,13 15,4"/>
-            </ToggleButton>
-            <ToggleButton x:Name="HighlightToolButton" Classes="tool"
-                          ToolTip.Tip="Highlighter: translucent marker (scroll wheel adjusts width)">
-                <!-- Chisel-tip marker: angled body with a flat tip stroke at the paper line -->
-                <Path Classes="icon" Data="M4,9 L9,4 L12,7 L7,12 Z M7,12 L4,9 M2,14 H7"/>
-            </ToggleButton>
-            <ToggleButton x:Name="PixelateToolButton" Classes="tool"
-                          ToolTip.Tip="Pixelate: censor a region (scroll wheel adjusts block size)">
-                <!-- Mosaic grid -->
-                <Path Classes="icon" StrokeThickness="1.2" Data="M2,2 H14 V14 H2 Z M6,2 V14 M10,2 V14 M2,6 H14 M2,10 H14"/>
-            </ToggleButton>
-            <ToggleButton x:Name="TextToolButton" Classes="tool" ToolTip.Tip="Text">
-                <Path Classes="icon" Data="M3,2 H13 M8,2 V14"/>
-            </ToggleButton>
+        <StackPanel Margin="6">
+            <!-- Row 1: tools + size (left) | Undo/Redo (right), an Auto|*|Auto Grid so both rows
+                 span the same width and the panel reads symmetrically — mirrors WPF's own Row 1
+                 layout (ToolbarControl.xaml:558-637). -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
 
-            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <ToggleButton x:Name="SelectToolButton" Classes="tool"
+                                  ToolTip.Tip="Select / move (default)" IsChecked="True">
+                        <Path Classes="icon" StrokeDashArray="2.2,1.6" Data="M1,1 H15 V15 H1 Z"/>
+                    </ToggleButton>
+                    <ToggleButton x:Name="RectToolButton" Classes="tool" ToolTip.Tip="Rectangle">
+                        <Path Classes="icon" Data="M1,3 H15 V13 H1 Z"/>
+                    </ToggleButton>
+                    <ToggleButton x:Name="EllipseToolButton" Classes="tool" ToolTip.Tip="Ellipse">
+                        <Path Classes="icon" Data="M1,8 A7,5 0 1 1 15,8 A7,5 0 1 1 1,8"/>
+                    </ToggleButton>
+                    <ToggleButton x:Name="ArrowToolButton" Classes="tool" ToolTip.Tip="Arrow">
+                        <Path Classes="icon" Data="M2,14 L13,3 M13,3 H7.5 M13,3 V8.5"/>
+                    </ToggleButton>
+                    <ToggleButton x:Name="LineToolButton" Classes="tool" ToolTip.Tip="Line">
+                        <Path Classes="icon" Data="M2,14 L14,2"/>
+                    </ToggleButton>
+                    <ToggleButton x:Name="FreehandToolButton" Classes="tool" ToolTip.Tip="Freehand">
+                        <Path Classes="icon" Data="M1,13 C3,4 6,4 8,9 C10,14 13,13 15,4"/>
+                    </ToggleButton>
+                    <ToggleButton x:Name="HighlightToolButton" Classes="tool"
+                                  ToolTip.Tip="Highlighter: translucent marker (scroll wheel adjusts width)">
+                        <!-- Chisel-tip marker: angled body with a flat tip stroke at the paper line -->
+                        <Path Classes="icon" Data="M4,9 L9,4 L12,7 L7,12 Z M7,12 L4,9 M2,14 H7"/>
+                    </ToggleButton>
+                    <ToggleButton x:Name="PixelateToolButton" Classes="tool"
+                                  ToolTip.Tip="Pixelate: censor a region (scroll wheel adjusts block size)">
+                        <!-- Mosaic grid -->
+                        <Path Classes="icon" StrokeThickness="1.2" Data="M2,2 H14 V14 H2 Z M6,2 V14 M10,2 V14 M2,6 H14 M2,10 H14"/>
+                    </ToggleButton>
+                    <ToggleButton x:Name="TextToolButton" Classes="tool" ToolTip.Tip="Text">
+                        <Path Classes="icon" Data="M3,2 H13 M8,2 V14"/>
+                    </ToggleButton>
 
-            <StackPanel x:Name="ColorSwatchPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
+                    <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
-            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+                    <!-- Numeric size input (item 08 — replaced the fixed small/medium/big stroke
+                         dots): shows "Npx" (stroke width) for the drawing tools and "Npt" (font
+                         size) while the Text tool is active; dropdown offers preset jumps, typed
+                         values are clamped by SizeInput. Enter commits and returns focus to the
+                         overlay window (see ToolbarControl.axaml.cs). -->
+                    <ComboBox x:Name="SizeComboBox" Width="76" Margin="2" VerticalAlignment="Center"
+                              IsEditable="True" IsTextSearchEnabled="False"
+                              ToolTip.Tip="Size: type a value or pick a preset (scroll wheel over the image also resizes)"/>
+                </StackPanel>
 
-            <StackPanel x:Name="StrokeWidthPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                    <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
-            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+                    <!-- Undo/Redo sit at a FIXED spot (before the collapsible text-style row), so
+                         switching to the Text tool never shoves them sideways mid-reach. Both start
+                         disabled; OverlayWindow drives IsEnabled from the annotation history
+                         (SetHistoryState) so an inapplicable action is visibly grayed out. -->
+                    <Button x:Name="UndoButton" Classes="action" IsEnabled="False" ToolTip.Tip="Undo (Ctrl+Z)">
+                        <!-- Curved undo arrow: head pointing left, tail sweeping down and back -->
+                        <Path Classes="icon" Data="M2,6 L6,2 M2,6 L6,10 M2,6 H10 A4.5,4.5 0 0 1 10,15 H6"/>
+                    </Button>
+                    <Button x:Name="RedoButton" Classes="action" IsEnabled="False" ToolTip.Tip="Redo (Ctrl+Y)">
+                        <!-- Mirrored undo arrow -->
+                        <Path Classes="icon" Data="M14,6 L10,2 M14,6 L10,10 M14,6 H6 A4.5,4.5 0 0 0 6,15 H10"/>
+                    </Button>
+                </StackPanel>
+            </Grid>
 
-            <Button x:Name="UndoButton" Classes="action" ToolTip.Tip="Undo (Ctrl+Z)">
-                <!-- Curved undo arrow: head pointing left, tail sweeping down and back -->
-                <Path Classes="icon" Data="M2,6 L6,2 M2,6 L6,10 M2,6 H10 A4.5,4.5 0 0 1 10,15 H6"/>
-            </Button>
+            <Border Height="1" Margin="1,4" Background="#3F3F46"/>
 
-            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+            <!-- Row 2: the editable palette (bottom-left) | terminal actions (bottom-right) —
+                 mirrors WPF's own Row 2 layout (ToolbarControl.xaml:641-770). -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
 
-            <Button x:Name="CopyButton" Classes="action" Background="#2E7D32" ToolTip.Tip="Copy (Ctrl+C)">
-                <!-- Two overlapping squares -->
-                <Path Classes="icon" Data="M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5"/>
-            </Button>
-            <Button x:Name="SaveButton" Classes="action" Background="#1565C0" ToolTip.Tip="Save (Ctrl+S)">
-                <!-- Down-arrow into tray -->
-                <Path Classes="icon" Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
-            </Button>
-            <Button x:Name="SaveHdrButton" Classes="action" Background="#6A1B9A"
-                    ToolTip.Tip="Save HDR original (.jxr, untouched FP16)">
-                <!-- Save glyph with a small HDR badge -->
-                <Grid>
-                    <Path Classes="icon" Width="13" Height="13" Margin="0,0,7,4"
-                          Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
-                    <Border Background="#D91B1B1D" CornerRadius="2" Padding="1.5,0"
-                            HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False">
-                        <TextBlock Text="HDR" FontSize="6.5" FontWeight="Bold" Foreground="#FFD54F"/>
-                    </Border>
-                </Grid>
-            </Button>
+                <!-- Every swatch is built in code from the persisted RoeSnipSettings.PaletteColors
+                     list (via SwatchPalette) and carries a right-click "Replace..." context menu —
+                     the only palette edit: the row's slot count never changes. -->
+                <StackPanel x:Name="ColorSwatchPanel" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center"/>
 
-            <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                    <Border Width="1" Margin="8,3" Background="#3F3F46"/>
 
-            <Button x:Name="CancelButton" Classes="cancel" ToolTip.Tip="Cancel — close without capturing">
-                <Path Classes="icon" Width="11" Height="11" Data="M2,2 L14,14 M14,2 L2,14"/>
-            </Button>
+                    <Button x:Name="CopyButton" Classes="action" Background="#2E7D32" ToolTip.Tip="Copy (Ctrl+C)">
+                        <!-- Two overlapping squares -->
+                        <Path Classes="icon" Data="M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5"/>
+                    </Button>
+                    <Button x:Name="SaveButton" Classes="action" Background="#1565C0" ToolTip.Tip="Save (Ctrl+S)">
+                        <!-- Down-arrow into tray -->
+                        <Path Classes="icon" Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
+                    </Button>
+                    <Button x:Name="SaveHdrButton" Classes="action" Background="#6A1B9A"
+                            ToolTip.Tip="Save HDR original (.jxr, untouched FP16)">
+                        <!-- Save glyph with a small HDR badge -->
+                        <Grid>
+                            <Path Classes="icon" Width="13" Height="13" Margin="0,0,7,4"
+                                  Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
+                            <Border Background="#D91B1B1D" CornerRadius="2" Padding="1.5,0"
+                                    HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                                <TextBlock Text="HDR" FontSize="6.5" FontWeight="Bold" Foreground="#FFD54F"/>
+                            </Border>
+                        </Grid>
+                    </Button>
+
+                    <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
+                    <Button x:Name="CancelButton" Classes="cancel" ToolTip.Tip="Cancel — close without capturing">
+                        <Path Classes="icon" Width="11" Height="11" Data="M2,2 L14,14 M14,2 L2,14"/>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- Row 3: text style (item 08; mirrors WPF's ToolbarControl.xaml:772-793) — only ever
+                 visible while the Text tool is active. A separate bottom row (leading hairline
+                 inside, so it collapses with the panel) so the panel grows downward instead of
+                 stretching Row 1 sideways. The font list is every installed system family (see
+                 ToolbarControl.axaml.cs's FontFamilyChoices); the font size itself lives in
+                 SizeComboBox (pt mode for the Text tool). -->
+            <StackPanel x:Name="TextStylePanel" IsVisible="False">
+                <Border Height="1" Margin="1,4" Background="#3F3F46"/>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <ToggleButton x:Name="BoldToggleButton" Classes="tool" Width="26"
+                                  Content="B" FontWeight="Bold" ToolTip.Tip="Bold"/>
+                    <ToggleButton x:Name="ItalicToggleButton" Classes="tool" Width="26"
+                                  Content="I" FontStyle="Italic" FontWeight="Bold" ToolTip.Tip="Italic"/>
+
+                    <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+
+                    <ComboBox x:Name="FontFamilyComboBox" Width="220" Margin="2" VerticalAlignment="Center"
+                              Focusable="False"/>
+                </StackPanel>
+            </StackPanel>
         </StackPanel>
     </Border>
 </UserControl>

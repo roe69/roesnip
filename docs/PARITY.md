@@ -200,9 +200,66 @@ existing WPF test suite is the proof.
       this is pure pointer/keyboard/rendering logic with no OS-specific behavior; the two cursor-
       vocabulary approximations above apply identically on every OS.
       Build + full test suite green (817 tests: 482 WPF + 260 Core + 70 App + 5 Platform.Windows).
-- [ ] 08-toolbar-parity: Popup-safe toolbar hit routing first, then the 10-slot persisted
+- [x] 08-toolbar-parity: Popup-safe toolbar hit routing first, then the 10-slot persisted
       palette with right-click Replace, numeric size ComboBox (SizeInput), text style row
       (Bold/Italic + font family on the shape model), and the Redo button. (L)
+      OverlayWindow.IsWithin (was toolbar-only visual-parent walk) now mirrors WPF's
+      IsWithinToolbar exactly: prefers the LOGICAL parent at each step (Avalonia.Visual itself
+      implements ILogical, so this needed no new bridging), falls back to visual, and treats a walk
+      that dead-ends outside the window as popup chrome (the size/font ComboBox dropdowns, the
+      palette's right-click menus, the Replace flyout all render in a disconnected PopupRoot, same
+      as WPF's own Popup) — this had to land first since every popup-bearing control below depends
+      on it. Also converted to an instance method + reused to hand keyboard focus back to the
+      window on any toolbar click that isn't into the size box (mirrors WPF OverlayWindow.xaml.cs
+      :706-717). SwatchPalette.cs and SizeInput.cs ported verbatim into RoeSnip.App/Overlay (both
+      framework-free, so — like item 05's AnnotationHistory — this is a parallel copy, not a shared
+      Core extraction; WPF's own copies stay untouched). Palette: ToolbarControl.SetPaletteColors
+      rebuilds the 10-slot row from SwatchPalette.EffectivePalette every toolbar show; each swatch's
+      ContextMenu has exactly one "Replace..." item, which shows a new ColorReplaceFlyout (a
+      DefaultColors quick-pick grid + a typed "#RRGGBB" TextBox) — the closest in-toolkit
+      substitute for WPF's System.Windows.Forms.ColorDialog, which has no Avalonia equivalent.
+      OverlayWindow.OnPaletteReplaceRequested/CurrentEffectivePalette/UpdatePalette mirror WPF's own
+      persistence pattern (PaletteColors written immediately via SettingsStore). One deliberate wire
+      deviation: ToolbarControl.PaletteReplaceRequested carries (index, Color) instead of WPF's
+      index-only shape, because the Flyout is anchored async UI only the control holding the swatch
+      can show, unlike WPF's blocking modal dialog OverlayWindow itself could invoke. Size: the
+      3-dot StrokeWidthPanel is gone; SizeComboBox is a real Avalonia IsEditable ComboBox (px for
+      drawing tools, pt for Text) driven by the ported SizeInput's clamp/parse/format/presets,
+      wired the same way WPF's does (commit on Enter/focus-loss via IsKeyboardFocusWithinProperty,
+      revert on Esc, apply-and-return-focus on a preset pick). The wheel handler's fall-through tail
+      (OverlayWindow.xaml.cs:2382-2391) — pre-dialing the DEFAULT stroke/font size for the next
+      shape when nothing is selected/mid-drawn — was also completed here (item 07 had stopped short
+      of it), now syncing the toolbar's own size box on every wheel-driven size change everywhere in
+      the handler. Text style: AnnotationShape/AnnotationLayer gained TextFontFamily/TextBold/
+      TextItalic (Clone, ShapeContentEquals, CommitText, and Draw's Typeface all updated) mirroring
+      WPF's AnnotationLayer.cs:61-84 exactly; OverlayWindow gained the _textFontFamily/_textFontSize
+      /_textBold/_textItalic fields WPF has always had (seeded from RoeSnipSettings, previously
+      entirely absent from this port), wired through BeginTextEditor/CommitActiveTextEditor and the
+      toolbar's new FontSizeSelected/BoldToggled/ItalicToggled/FontFamilySelected events exactly
+      like WPF's ShowToolbar wiring. The font-family ComboBox lists FontManager.Current.SystemFonts
+      (Avalonia's FontFamily.Name is already the best cross-platform display name — no
+      XmlLanguage/FamilyNames localization lookup needed, that was WPF-specific plumbing); the
+      per-row live "AaBb" font preview WPF's FontFamilyItemTemplate renders was deliberately not
+      ported (plain text labels only) — cosmetic-only simplification, noted rather than gold-plated.
+      Redo: a fixed-position sibling of Undo (both in the Row-1 Auto|*|Auto Grid's right column,
+      same as WPF), wired to AnnotationLayer.Redo(); SetHistoryState grays both from the existing
+      HistoryChanged event (item 05). Restructured ToolbarControl.axaml into WPF's exact 3-row shape
+      (tools+size | undo+redo; palette | Copy/Save/SaveHdr/Cancel; collapsed text-style row) without
+      touching Record/Share (items 21/12's territory — no placeholders added) or the existing Avalonia
+      flat-dark styling (the RL design-token system WPF's ToolbarControl.xaml carries is item 16's
+      job, not this one's). Build + full test suite green (863 tests: 482 WPF + 260 Core + 116 App +
+      5 Platform.Windows — +46 in App.Tests: ported SwatchPaletteTests/SizeInputTests verbatim
+      against this port's own copies, plus a small AnnotationShapeTextStyleTests for the new shape
+      fields). Live-verified on Windows: started a standalone --automation instance (killed after),
+      triggered the overlay, selected a region, and screenshotted (includeExcluded) to confirm the
+      toolbar renders the 2 visible rows correctly (9 tool icons, "4px" size box with chevron,
+      grayed Undo+Redo, the 10-swatch palette, Copy/Save/SaveHDR/Cancel) with the Text-tool-only
+      third row correctly collapsed; real click-drag interaction with the size box/palette
+      right-click/text-style row has no automation-pipe surface to drive it and remains an
+      interactive-session verification gap, same category as item 07's own note. No linux/mac
+      degradation — this is pure UI/rendering/model logic with no OS-specific behavior; the font
+      list naturally differs per OS (FontManager.Current.SystemFonts enumerates whatever's actually
+      installed there), which is correct behavior, not a gap.
 - [ ] 09-spanning-selection: Multi-monitor spanning selection (SpanningSelectionMath to Core,
       per-window distribution, real-edge handles) plus the spanning HDR .jxr export. (XL)
 - [ ] 10-capture-hot-path-perf: WGC capturer pre-provisioning/caching/keepalive/Prewarm in

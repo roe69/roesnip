@@ -112,12 +112,17 @@ public partial class OverlayWindow : Window
     /// untouched. Null for a brand-new text placement.</summary>
     private AnnotationShape? _textEditReplacing;
 
-    private const double MinStrokePx = 1.0, MaxStrokePx = 32.0; // mirrors WPF's SizeInput ranges (item 08 ports SizeInput itself)
-    private const double MinFontPt = 6.0, MaxFontPt = 96.0;
-
     private AnnotationTool _currentTool = AnnotationTool.None;
     private Color _currentColor = Colors.Red;
     private double _currentStrokeWidth = 4.0;
+
+    // Last-used text-annotation style (toolbar's text-style group, item 08) — applied to new text
+    // annotations and carried across overlay sessions via _liveSettings, mirroring WPF's own
+    // _textFontFamily/_textFontSize/_textBold/_textItalic fields (OverlayWindow.xaml.cs:174-177).
+    private string _textFontFamily;
+    private double _textFontSize;
+    private bool _textBold;
+    private bool _textItalic;
 
     private ToolbarControl? _toolbar;
     private TextBox? _activeTextEditor;
@@ -162,6 +167,7 @@ public partial class OverlayWindow : Window
         _onActivatedByMouse = null!;
         _onSelectionStarted = null!;
         _onCommand = null!;
+        _textFontFamily = "Segoe UI";
     }
 
     internal OverlayWindow(
@@ -179,6 +185,10 @@ public partial class OverlayWindow : Window
         _onActivatedByMouse = onActivatedByMouse;
         _onSelectionStarted = onSelectionStarted;
         _onCommand = onCommand;
+        _textFontFamily = settings.TextFontFamily;
+        _textFontSize = settings.TextFontSize;
+        _textBold = settings.TextBold;
+        _textItalic = settings.TextItalic;
 
         // Nearest-neighbor scaling for the frozen preview, same as the WPF version's
         // BitmapScalingMode.NearestNeighbor — on an all-96-DPI machine this is a 1:1 blit anyway.
@@ -359,6 +369,15 @@ public partial class OverlayWindow : Window
 
         if (IsWithin(_toolbar, e.Source))
         {
+            // Clicking any toolbar control OTHER than the size box hands focus back to this window
+            // (every other toolbar control is Focusable=false and would never take it) — otherwise
+            // a size box that was mid-edit would keep keyboard focus forever and Enter would keep
+            // committing the size instead of confirming the snip. Mirrors WPF's OnPreviewMouseLeftButtonDown
+            // (OverlayWindow.xaml.cs:706-717).
+            if (_toolbar?.IsWithinSizeInput(e.Source) != true)
+            {
+                Focus();
+            }
             return; // let the toolbar's own controls handle their own click
         }
 
@@ -749,7 +768,10 @@ public partial class OverlayWindow : Window
 
         if (_activeTextEditor is not null)
         {
-            _activeTextEditor.FontSize = Math.Clamp(_activeTextEditor.FontSize + notches * 2.0, MinFontPt, MaxFontPt);
+            double editorSize = SizeInput.ClampFont(_activeTextEditor.FontSize + notches * 2.0);
+            _activeTextEditor.FontSize = editorSize;
+            _textFontSize = editorSize;
+            _toolbar?.SetFontSize(editorSize);
             e.Handled = true;
             return;
         }
@@ -760,9 +782,10 @@ public partial class OverlayWindow : Window
         // wheel zooms its placement loupe instead (handled below).
         if (_annotations.InProgressTool is { } drawingTool && drawingTool != AnnotationTool.Pixelate)
         {
-            double newSize = Math.Clamp(_currentStrokeWidth + notches, MinStrokePx, MaxStrokePx);
+            double newSize = SizeInput.ClampStroke(_currentStrokeWidth + notches);
             _annotations.SetInProgressStrokeWidth(newSize);
             _currentStrokeWidth = newSize;
+            _toolbar?.SetStrokeWidth(newSize);
             e.Handled = true;
             return;
         }
@@ -777,7 +800,7 @@ public partial class OverlayWindow : Window
             if (selectedShape.Tool == AnnotationTool.Pixelate)
             {
                 _annotations.BeginDragSelected(); // no-op if a gesture from an earlier notch is still open
-                double newBlock = Math.Clamp(selectedShape.StrokeWidthPx + notches * 2.0, 3.0, MaxStrokePx);
+                double newBlock = Math.Clamp(selectedShape.StrokeWidthPx + notches * 2.0, 3.0, SizeInput.MaxStrokePx);
                 _annotations.SetSelectedPixelateBlock(newBlock);
                 // Resize ONLY the selected blur's mosaic block — do NOT sync it to the current tool
                 // size. A blur's coarseness is a per-shape edit, not the tool default.
@@ -788,17 +811,20 @@ public partial class OverlayWindow : Window
                                    or AnnotationTool.Line or AnnotationTool.Arrow)
             {
                 _annotations.BeginDragSelected();
-                double newWidth = Math.Clamp(selectedShape.StrokeWidthPx + notches, MinStrokePx, MaxStrokePx);
+                double newWidth = SizeInput.ClampStroke(selectedShape.StrokeWidthPx + notches);
                 _annotations.SetSelectedStrokeWidth(newWidth);
                 _currentStrokeWidth = newWidth;
+                _toolbar?.SetStrokeWidth(newWidth);
                 e.Handled = true;
                 return;
             }
             if (selectedShape.Tool == AnnotationTool.Text)
             {
                 _annotations.BeginDragSelected(); // no-op if a gesture from an earlier notch is still open
-                double resizedFont = Math.Clamp(selectedShape.StrokeWidthPx + notches * 2.0, MinFontPt, MaxFontPt);
+                double resizedFont = SizeInput.ClampFont(selectedShape.StrokeWidthPx + notches * 2.0);
                 _annotations.SetSelectedFontSize(resizedFont);
+                _textFontSize = resizedFont;
+                _toolbar?.SetFontSize(resizedFont);
                 e.Handled = true;
                 return;
             }
@@ -817,7 +843,26 @@ public partial class OverlayWindow : Window
                 TrySaveLiveSettings();
             }
             e.Handled = true;
+            return;
         }
+
+        // Every other drawing tool (Rectangle/Ellipse/Arrow/Line/Freehand/Highlight/Text) with
+        // nothing selected and nothing mid-drawn: the wheel pre-dials the DEFAULT size the next
+        // shape will use, syncing the toolbar's own size box so it stays honest. Mirrors WPF's own
+        // fall-through tail (OverlayWindow.xaml.cs:2382-2391).
+        if (_currentTool == AnnotationTool.Text)
+        {
+            double newSize = SizeInput.ClampFont(_textFontSize + notches * 2.0);
+            _textFontSize = newSize;
+            _toolbar?.SetFontSize(newSize);
+        }
+        else
+        {
+            double newWidth = SizeInput.ClampStroke(_currentStrokeWidth + notches);
+            _currentStrokeWidth = newWidth;
+            _toolbar?.SetStrokeWidth(newWidth);
+        }
+        e.Handled = true;
     }
 
     private void TrySaveLiveSettings()
@@ -883,22 +928,40 @@ public partial class OverlayWindow : Window
         return new RectPhysical(left, top, right, bottom).Normalized();
     }
 
-    private static bool IsWithin(Visual? container, object? source)
+    /// <summary>True when <paramref name="source"/> belongs to <paramref name="container"/>'s UI —
+    /// including content hosted in an Avalonia Popup (the size/font ComboBox dropdowns, the
+    /// palette's right-click context menus, the Replace flyout). Popup content renders in its own
+    /// disconnected PopupRoot visual tree, so a pure visual-parent walk never reaches back to
+    /// <paramref name="container"/> from a dropdown row and its clicks/scrolls would fall through
+    /// to the overlay's own select/draw/resize handlers. Each step prefers the LOGICAL parent (the
+    /// link Avalonia's Popup uses to bridge a popup's subtree back to the control that owns it —
+    /// Avalonia.Visual itself implements ILogical, so every Control already carries this) and falls
+    /// back to the visual parent for cases with no logical bridge. A walk that dead-ends without
+    /// reaching this window is popup chrome by definition (nothing inside the overlay's own tree
+    /// dead-ends before the window), so it counts as "within" too — that covers popup-rooted
+    /// elements with no logical bridge, e.g. context-menu internals. Ported from WPF's
+    /// IsWithinToolbar (OverlayWindow.xaml.cs:1308-1335).</summary>
+    private bool IsWithin(Visual? container, object? source)
     {
-        if (container is null || source is not Visual visual)
+        if (container is null || source is null)
         {
             return false;
         }
-        Visual? current = visual;
+        object? current = source;
         while (current is not null)
         {
             if (ReferenceEquals(current, container))
             {
                 return true;
             }
-            current = current.GetVisualParent();
+            if (ReferenceEquals(current, this))
+            {
+                return false; // reached the overlay window itself — a genuine overlay-surface event
+            }
+            current = (current as Avalonia.LogicalTree.ILogical)?.LogicalParent
+                ?? (current as Visual)?.GetVisualParent();
         }
-        return false;
+        return true; // dead-ended outside the window's tree: popup chrome
     }
 
     // ---------- Keyboard ----------
@@ -1148,12 +1211,57 @@ public partial class OverlayWindow : Window
             _toolbar.ColorSelected += color => _currentColor = color;
             _toolbar.StrokeWidthSelected += width => _currentStrokeWidth = width;
             _toolbar.UndoClicked += () => _annotations.Undo();
+            _toolbar.RedoClicked += () => _annotations.Redo();
+            // Keeps Undo/Redo grayed exactly when they'd be no-ops, whatever mutated the history
+            // (toolbar clicks, Ctrl+Z/Y, ClearSelection).
+            _annotations.HistoryChanged += () =>
+                _toolbar?.SetHistoryState(_annotations.CanUndo, _annotations.CanRedo);
             _toolbar.CopyClicked += () => _onCommand(OverlayCommand.Copy);
             _toolbar.SaveClicked += () => _onCommand(OverlayCommand.Save);
             _toolbar.SaveHdrClicked += () => _onCommand(OverlayCommand.SaveHdr);
             // The toolbar's X button always closes the whole overlay outright — deliberately NOT
             // the staged CancelStage semantics Esc has.
             _toolbar.CancelClicked += () => _onCommand(OverlayCommand.Cancel);
+
+            // Text-style group (item 08): live-applies to new annotations and to an in-progress edit.
+            _toolbar.FontSizeSelected += size =>
+            {
+                _textFontSize = SizeInput.ClampFont(size);
+                if (_activeTextEditor is not null)
+                {
+                    _activeTextEditor.FontSize = _textFontSize;
+                }
+            };
+            _toolbar.BoldToggled += bold =>
+            {
+                _textBold = bold;
+                if (_activeTextEditor is not null)
+                {
+                    _activeTextEditor.FontWeight = bold ? FontWeight.Bold : FontWeight.Normal;
+                }
+            };
+            _toolbar.ItalicToggled += italic =>
+            {
+                _textItalic = italic;
+                if (_activeTextEditor is not null)
+                {
+                    _activeTextEditor.FontStyle = italic ? FontStyle.Italic : FontStyle.Normal;
+                }
+            };
+            _toolbar.FontFamilySelected += family =>
+            {
+                _textFontFamily = family;
+                if (_activeTextEditor is not null)
+                {
+                    _activeTextEditor.FontFamily = new FontFamily(family);
+                }
+            };
+
+            // Palette editing (item 08): each swatch's right-click "Replace..." recolors it in
+            // place. All mutations persist immediately via SettingsStore, mirroring WPF's own
+            // OnPaletteReplaceRequested/UpdatePalette pattern.
+            _toolbar.PaletteReplaceRequested += OnPaletteReplaceRequested;
+
             // "Save HDR is Windows-only v1 (backend capability flag hides the button elsewhere)"
             // — DESIGN-XPLAT.md; the flag reaches the overlay as the composition root's
             // WriteHdrExport hook being non-null (set by WP-X2 from Platform.Windows's JxrWriter).
@@ -1165,8 +1273,62 @@ public partial class OverlayWindow : Window
                 _frame.Format == FrameFormat.Fp16ScRgb && AppComposition.WriteHdrExport is not null);
             _overlayCanvas.Children.Add(_toolbar);
         }
+
+        _toolbar.InitializeTextStyle(_textFontFamily, _textFontSize, _textBold, _textItalic);
+        RefreshToolbarPalette();
+        _toolbar.SetStrokeWidth(_currentStrokeWidth);
+        _toolbar.SetHistoryState(_annotations.CanUndo, _annotations.CanRedo);
         _toolbar.IsVisible = true;
     }
+
+    /// <summary>The current palette as displayed: the persisted list, or (pre-item-08 settings
+    /// file) the migration seed — every mutation below starts from this so the first edit
+    /// materializes the migrated list into PaletteColors. Mirrors WPF's CurrentEffectivePalette
+    /// (OverlayWindow.xaml.cs:2516-2520).</summary>
+    private List<string> CurrentEffectivePalette() =>
+        SwatchPalette.EffectivePalette(_liveSettings.PaletteColors, _liveSettings.CustomColors);
+
+    /// <summary>Pushes the current effective palette into the toolbar's swatch row — called
+    /// whenever the toolbar is (re)shown and after every palette edit. Mirrors WPF's
+    /// RefreshToolbarPalette (OverlayWindow.xaml.cs:1819-1831).</summary>
+    private void RefreshToolbarPalette() =>
+        _toolbar?.SetPaletteColors(CurrentEffectivePalette(), _currentColor);
+
+    /// <summary>Persists a palette mutation immediately (like the old custom-color flow) and
+    /// refreshes the toolbar's swatch row from it. Mirrors WPF's UpdatePalette
+    /// (OverlayWindow.xaml.cs:2522-2529).</summary>
+    private void UpdatePalette(List<string> palette)
+    {
+        _liveSettings = _liveSettings with { PaletteColors = palette };
+        TrySaveLiveSettings();
+        RefreshToolbarPalette();
+    }
+
+    /// <summary>Right-click "Replace...": the toolbar has already run its own ColorReplaceFlyout
+    /// (anchored to the swatch that was clicked — see ToolbarControl.BuildSwatchContextMenu) and
+    /// hands back the swatch's index plus the newly picked color; this swaps that palette entry in
+    /// place. If the replaced swatch was the active color, the replacement becomes active. Mirrors
+    /// WPF's OnPaletteReplaceRequested (OverlayWindow.xaml.cs:2543-2564), adapted because WPF's
+    /// System.Windows.Forms.ColorDialog is a blocking modal OverlayWindow itself could invoke,
+    /// while Avalonia's Flyout is anchored/async UI that only ToolbarControl (which owns the swatch
+    /// Control) can show — see ColorReplaceFlyout's own doc comment.</summary>
+    private void OnPaletteReplaceRequested(int index, Color picked)
+    {
+        var palette = CurrentEffectivePalette();
+        if (index < 0 || index >= palette.Count)
+        {
+            return;
+        }
+
+        bool wasActive = string.Equals(palette[index], FormatHex(_currentColor), StringComparison.OrdinalIgnoreCase);
+        if (wasActive)
+        {
+            _currentColor = picked;
+        }
+        UpdatePalette(SwatchPalette.ReplaceAt(palette, index, FormatHex(picked)));
+    }
+
+    private static string FormatHex(Color c) => $"#{c.R:X2}{c.G:X2}{c.B:X2}";
 
     private void HideToolbar()
     {
@@ -1520,7 +1682,10 @@ public partial class OverlayWindow : Window
         var editor = new TextBox
         {
             MinWidth = 140,
-            FontSize = editingExisting?.StrokeWidthPx ?? Math.Max(14.0, _currentStrokeWidth * 4.0),
+            FontSize = editingExisting?.StrokeWidthPx ?? _textFontSize,
+            FontFamily = new FontFamily(editingExisting?.TextFontFamily ?? _textFontFamily),
+            FontWeight = (editingExisting?.TextBold ?? _textBold) ? FontWeight.Bold : FontWeight.Normal,
+            FontStyle = (editingExisting?.TextItalic ?? _textItalic) ? FontStyle.Italic : FontStyle.Normal,
             Foreground = new SolidColorBrush(editColor),
             Background = new SolidColorBrush(Color.FromArgb(0x70, 0, 0, 0)),
             BorderBrush = new SolidColorBrush(editColor),
@@ -1571,6 +1736,9 @@ public partial class OverlayWindow : Window
                     StrokeColor = ((SolidColorBrush)editor.Foreground!).Color,
                     StrokeWidthPx = fontSize,
                     Text = text,
+                    TextFontFamily = editor.FontFamily.Name,
+                    TextBold = editor.FontWeight == FontWeight.Bold,
+                    TextItalic = editor.FontStyle == FontStyle.Italic,
                 };
                 replacement.PointsPx.Add(_activeTextEditorOriginPx);
                 _annotations.ReplaceShape(replacing, replacement);
@@ -1587,7 +1755,8 @@ public partial class OverlayWindow : Window
             // Auto-select the newly committed text exactly like a just-placed Pixelate/Rectangle/
             // etc — its chrome shows up immediately so it reads as grabbable/editable like every
             // other kind, without a trip through the Select tool.
-            var committed = _annotations.CommitText(_activeTextEditorOriginPx, text, _currentColor, fontSize);
+            var committed = _annotations.CommitText(
+                _activeTextEditorOriginPx, text, _currentColor, fontSize, _textFontFamily, _textBold, _textItalic);
             if (committed is not null)
             {
                 _annotations.Select(committed);
