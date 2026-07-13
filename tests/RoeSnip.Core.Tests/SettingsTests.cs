@@ -117,6 +117,21 @@ public class SettingsTests : IDisposable
             RunAtStartup = true,
             CopyOnSelect = true,
             PrintScreenPromptAnswered = true,
+            ColorPickerEnabled = true,
+            RecentPickedColors = new List<string> { "#AABBCC", "#112233" },
+            ColorFormatShowHex = false,
+            ColorFormatShowRgb = true,
+            ColorFormatShowHsl = false,
+            ColorFormatShowNits = true,
+            ColorFormatShowHsv = true,
+            ColorFormatShowCmyk = true,
+            MagnifierSampleRadius = 9,
+            TextFontFamily = "Consolas",
+            TextFontSize = 32.0,
+            TextBold = true,
+            TextItalic = true,
+            CustomColors = new List<string> { "#FF00FF", "#00FFAA" },
+            PaletteColors = new List<string> { "#E53935", "#123456", "#654321" },
         };
 
         SettingsStore.Save(original, settingsPath);
@@ -124,7 +139,23 @@ public class SettingsTests : IDisposable
 
         var loaded = SettingsStore.Load(settingsPath);
 
-        Assert.Equal(original, loaded);
+        // RoeSnipSettings.RecentPickedColors/CustomColors/PaletteColors are List<string>, whose
+        // default (reference) equality means a freshly-deserialized instance never == the original
+        // list instance even with identical content — assert their contents explicitly (xUnit's
+        // Assert.Equal does a structural/sequence compare for IEnumerable<T>), then neutralize them
+        // to the same reference before the whole-record equality check below so it isn't tripped up
+        // by that same reference-equality quirk on the remaining (scalar) fields. Mirrors the WPF
+        // app's own RoeSnip.Tests/SettingsTests.cs treatment of the same fields.
+        Assert.Equal(original.RecentPickedColors, loaded.RecentPickedColors);
+        Assert.Equal(original.CustomColors, loaded.CustomColors);
+        Assert.Equal(original.PaletteColors, loaded.PaletteColors);
+        var originalWithLoadedLists = original with
+        {
+            RecentPickedColors = loaded.RecentPickedColors,
+            CustomColors = loaded.CustomColors,
+            PaletteColors = loaded.PaletteColors,
+        };
+        Assert.Equal(originalWithLoadedLists, loaded);
     }
 
     [Fact]
@@ -144,7 +175,18 @@ public class SettingsTests : IDisposable
 
         Assert.Null(loaded.ToneMapKneeOverride);
         Assert.Null(loaded.ToneMapPeakOverride);
-        Assert.Equal(original, loaded);
+
+        // See SaveThenLoad_RoundTripsEveryField for why the list-valued fields need this treatment.
+        Assert.Equal(original.RecentPickedColors, loaded.RecentPickedColors);
+        Assert.Equal(original.CustomColors, loaded.CustomColors);
+        Assert.Equal(original.PaletteColors, loaded.PaletteColors);
+        var originalWithLoadedLists = original with
+        {
+            RecentPickedColors = loaded.RecentPickedColors,
+            CustomColors = loaded.CustomColors,
+            PaletteColors = loaded.PaletteColors,
+        };
+        Assert.Equal(originalWithLoadedLists, loaded);
     }
 
     [Fact]
@@ -172,5 +214,66 @@ public class SettingsTests : IDisposable
         SettingsStore.Save(RoeSnipSettings.Default, nestedPath);
 
         Assert.True(File.Exists(nestedPath));
+    }
+
+    [Fact]
+    public void SaveThenLoad_RoundTripsDefaults()
+    {
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+
+        SettingsStore.Save(RoeSnipSettings.Default, settingsPath);
+        var loaded = SettingsStore.Load(settingsPath);
+
+        // Mirrors the WPF app's own SaveThenLoad_RoundTripsUxRound2Defaults: every field this work
+        // item added must serialize AND deserialize back to its documented default, not just
+        // whatever the in-memory record initializer happens to produce.
+        Assert.False(loaded.ColorPickerEnabled);
+        Assert.Empty(loaded.RecentPickedColors);
+        Assert.True(loaded.ColorFormatShowHex);
+        Assert.True(loaded.ColorFormatShowRgb);
+        Assert.True(loaded.ColorFormatShowHsl);
+        Assert.True(loaded.ColorFormatShowNits);
+        Assert.False(loaded.ColorFormatShowHsv);
+        Assert.False(loaded.ColorFormatShowCmyk);
+        Assert.Equal(5, loaded.MagnifierSampleRadius);
+        Assert.Equal("Segoe UI", loaded.TextFontFamily);
+        Assert.Equal(20.0, loaded.TextFontSize);
+        Assert.False(loaded.TextBold);
+        Assert.False(loaded.TextItalic);
+        Assert.Empty(loaded.CustomColors);
+        Assert.Empty(loaded.PaletteColors); // empty = "not migrated" sentinel, mirrors the WPF app
+    }
+
+    [Fact]
+    public void Load_JsonMissingNewFields_FallsBackToTheirDefaults()
+    {
+        // Simulates a settings.json written by an OLDER Core build that predates this work item's
+        // fields entirely (not just a hand-added unknown field, which
+        // Load_JsonWithUnknownFields_IgnoresThemAndUsesKnownValues above already covers) — every
+        // field this item added must be entirely ABSENT from the JSON and still resolve to its
+        // record-initializer default rather than throwing or deserializing to a CLR default (e.g.
+        // TextFontSize silently becoming 0.0 instead of 20.0).
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+        File.WriteAllText(settingsPath, """
+            {
+              "SchemaVersion": 1,
+              "CopyOnSelect": true
+            }
+            """);
+
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.True(loaded.CopyOnSelect);
+        Assert.False(loaded.ColorPickerEnabled);
+        Assert.Empty(loaded.RecentPickedColors);
+        Assert.True(loaded.ColorFormatShowHex);
+        Assert.False(loaded.ColorFormatShowHsv);
+        Assert.Equal(5, loaded.MagnifierSampleRadius);
+        Assert.Equal("Segoe UI", loaded.TextFontFamily);
+        Assert.Equal(20.0, loaded.TextFontSize);
+        Assert.Empty(loaded.CustomColors);
+        Assert.Empty(loaded.PaletteColors);
     }
 }

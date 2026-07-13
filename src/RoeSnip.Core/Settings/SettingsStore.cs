@@ -19,6 +19,18 @@ public static class SettingsStore
     {
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
+        // Every RoeSnipSettings field is documented to stay JSON-primitive so the file remains
+        // human-editable and forward/backward compatible across builds that add or reorder enum
+        // members - but Core's settings graph is growing toward fields (the ShareProviders/
+        // GifSizePreset/Mp4SizePreset feature work items still to land) whose underlying types
+        // embed raw enums that were never routed through that string-parsing convention and would
+        // otherwise persist as bare ordinals. A JsonStringEnumConverter fixes that for every enum
+        // in the settings graph at once (member NAME survives a reorder; an unknown/hand-typed name
+        // throws JsonException same as any other malformed field, which Load's fail-closed catch
+        // below already treats as "start from defaults" rather than crashing) - added here ahead of
+        // time, mirroring the WPF app's own App/Settings.cs, so it's in place BEFORE any enum field
+        // lands rather than as an afterthought retrofit.
+        Converters = { new JsonStringEnumConverter() },
     };
 
     public static string SettingsDirectory => ConfigPaths.ConfigDirectory;

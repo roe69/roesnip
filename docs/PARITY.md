@@ -15,9 +15,15 @@ existing WPF test suite is the proof.
 
 ## Work items (ordered)
 
-- [ ] 01-core-settings: Extend Core RoeSnipSettings toward the WPF field set (color picker,
+- [x] 01-core-settings: Extend Core RoeSnipSettings toward the WPF field set (color picker,
       magnifier, text annotation, palette fields) and add JsonStringEnumConverter to
       SettingsStore before any enum-bearing field lands. (S)
+      Landed ColorPickerEnabled, RecentPickedColors, the 6 legacy ColorFormatShow* bools,
+      MagnifierSampleRadius, the 4 TextFont*/Text* fields, and CustomColors/PaletteColors —
+      every no-new-type field this item covers. ColorFormats/ShareProviders/GifSizePreset/
+      Mp4SizePreset intentionally NOT ported here (need new types / land with items 11 & 20).
+      JsonStringEnumConverter added to SettingsStore ahead of any Core enum field so it's in
+      place before one lands. No platform-specific behavior; identical on all three OSes.
 - [ ] 02-capture-exclusion: Platform capture-exclusion seam (WDA_EXCLUDEFROMCAPTURE on
       Windows, documented no-op elsewhere) applied to the Avalonia OverlayWindow, honoring
       ROESNIP_DIAG_NOEXCLUDE. (M)
