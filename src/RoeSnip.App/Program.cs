@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using RoeSnip.Core.Capture;
@@ -420,10 +419,12 @@ public static class AppComposition
 
     // Reentrancy guard (audit finding B, ported from the WPF app): TriggerCapture can be invoked
     // from the hotkey, the tray menu, icon click, and the second-instance pipe. All funnel into
-    // this one method, so a single Interlocked flag here covers every trigger. While a capture is
-    // in progress, a new trigger is ignored (logged to stderr) rather than stacking a second
-    // overlay set on top of the first (which would screenshot the first overlay's own UI).
-    private static int s_captureInProgress; // 0 = idle, 1 = busy; only touched via Interlocked
+    // this one method, which now shares AppShell.CaptureGate (item 17) rather than owning a private
+    // Interlocked flag — the same gate the startup warmup thread holds for its own throwaway
+    // capture, so a trigger landing mid-warmup waits it out instead of racing it (see the
+    // WarmupPending/HeldByWarmup handling in RunCaptureFlowAsync below). While a capture is in
+    // progress, a new trigger is ignored (logged to stderr) rather than stacking a second overlay
+    // set on top of the first (which would screenshot the first overlay's own UI).
 
     /// <summary>True while <see cref="RunCaptureFlowAsync"/> is actively running (from trigger to
     /// overlay close/export) — the self-updater's beforeLaunch idle gate
@@ -431,7 +432,7 @@ public static class AppComposition
     /// app out from under a live capture. Once a Recording subsystem lands (item 20) that gate
     /// must also poll its own "active" flag, mirroring the WPF reference's
     /// RecordingController.IsActive check.</summary>
-    internal static bool IsCaptureBusy => Volatile.Read(ref s_captureInProgress) != 0;
+    internal static bool IsCaptureBusy => AppShell.CaptureGate.IsBusy;
 
     /// <summary>The interactive capture flow: capture all monitors, run the overlay, then handle
     /// the cross-cutting follow-ups (HDR auto-save / Save-HDR button, "saved" balloon). Called by
@@ -445,7 +446,37 @@ public static class AppComposition
             return;
         }
 
-        if (Interlocked.CompareExchange(ref s_captureInProgress, 1, 0) != 0)
+        // Cold-start CaptureGate race fix (item 17, ported from the WPF app's Program.cs:526-542):
+        // if the startup warmup thread is still running its Warmup* steps but hasn't reached
+        // WarmupCaptureSessions' TryEnter yet, the gate itself is still free — a trigger landing in
+        // exactly that window would WIN CaptureGate against the warmup and then pay first-time
+        // capture-backend init itself instead of riding the warmup's own init. Waiting here is
+        // strictly better: a wedged/slow warmup still can't brick the hotkey — the poll gives up
+        // after 5 seconds and proceeds regardless.
+        if (AppShell.CaptureGate.WarmupPending)
+        {
+            var warmupWait = System.Diagnostics.Stopwatch.StartNew();
+            while (AppShell.CaptureGate.WarmupPending && warmupWait.ElapsedMilliseconds < 5000)
+            {
+                await Task.Delay(25);
+            }
+        }
+
+        bool entered = AppShell.CaptureGate.TryEnter();
+        if (!entered && AppShell.CaptureGate.HeldByWarmup)
+        {
+            // The gate is held by the sub-second startup warmup capture, not a real session. A
+            // trigger landing in that window is a deliberate user action — wait the warmup out
+            // (bounded) instead of silently dropping it, which would make an early trigger right
+            // after launch do nothing at all.
+            var wait = System.Diagnostics.Stopwatch.StartNew();
+            while (!entered && wait.ElapsedMilliseconds < 3000)
+            {
+                await Task.Delay(25);
+                entered = AppShell.CaptureGate.TryEnter();
+            }
+        }
+        if (!entered)
         {
             Console.Error.WriteLine("RoeSnip: capture already in progress; ignoring trigger.");
             return;
@@ -581,7 +612,14 @@ public static class AppComposition
         }
         finally
         {
-            Interlocked.Exchange(ref s_captureInProgress, 0);
+            AppShell.CaptureGate.Exit();
+            // Idle-memory trim (item 17): every capture flow, successful or not, is a full-scale
+            // allocation burst (per-monitor FP16 frame buffers + SDR previews). Schedule() itself
+            // defers the actual collect to ApplicationIdle via Dispatcher.UIThread.Post, which is
+            // safe to call from any thread (this finally can run on a background/threadpool
+            // continuation, not necessarily the UI thread) — see IdleMemoryTrimmer's own doc
+            // comment for the full rationale.
+            IdleMemoryTrimmer.Schedule();
         }
     }
 

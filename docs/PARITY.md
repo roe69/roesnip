@@ -687,9 +687,48 @@ existing WPF test suite is the proof.
       backend that can't do custom cursors degrades to the system cursor instead of crashing.
       Build + full test suite green (974 tests: 419 WPF + 358 Core + 188 App + 9 Platform.Windows
       - +24 in App.Tests for CursorKey/CircleSpec, ported verbatim from the WPF suite).
-- [ ] 17-perf-startup-idle: Warmup-thread slice of the instant-dim architecture (pre-JIT
+- [x] 17-perf-startup-idle: Warmup-thread slice of the instant-dim architecture (pre-JIT
       capture/tonemap/encode/window type, WGC Prewarm), IdleMemoryTrimmer port with a
       Platform trim hook, TieredCompilation=false plus publish-profile tuning. (L)
+      AppShell/CaptureGate.cs ports the WPF CaptureGate verbatim (TryEnter/Exit/WarmupPending/
+      HeldByWarmup/IsBusy) and AppComposition.RunCaptureFlowAsync now shares it instead of a
+      private Interlocked flag, including the WarmupPending/HeldByWarmup poll race-fix ported
+      from Program.cs:526-542 - a trigger during warmup waits it out instead of being dropped
+      or double-paying capture-backend init. AppShell/TrayApp.StartWarmup/RunWarmup ports the
+      WPF warmup steps minus the flash-dimmer/overlay-pool ones (item 18, not landed yet - "no
+      window parking" is this item's sanctioned scope): monitor enumeration, MapToSdr+PngWriter
+      over a synthetic Fp16 frame, real OverlayWindow construction (Measure/Arrange, never
+      Show()n), then one real throwaway per-monitor capture holding CaptureGate, with
+      WgcCapturer.Prewarm for non-DD-broken monitors behind `#if WINDOWS`. IdleMemoryTrimmer.cs
+      ports the WPF Aggressive-collect/WaitForPendingFinalizers/Forced-collect sequence onto
+      Avalonia's Dispatcher.UIThread.Post(DispatcherPriority.ApplicationIdle) - Avalonia DOES
+      expose ApplicationIdle directly (no need to fall back to Background) - with a
+      WgcCapturer.TrimCachedDeviceMemory() platform hook behind `#if WINDOWS` (no-op on Linux/
+      macOS, which hold no comparable permanently-warm GPU device cache); scheduled from
+      RunWarmup's own finally, AppComposition.RunCaptureFlowAsync's finally, and made
+      call-site-safe from any thread (Interlocked coalescing flag, not the WPF reference's
+      UI-thread-only bool) since this port's warmup thread calls Schedule() directly.
+      TieredCompilation=false added to RoeSnip.App.csproj in this same commit (same WPF
+      rationale: warmup front-loads JIT, so tier-0-then-reJIT is pure cost here). Publish
+      tuning: win-x64.pubxml gains EnableCompressionInSingleFile=false (already had R2R=false/
+      SatelliteResourceLanguages=en); the linux-x64/osx-arm64 release.yml leg (no pubxml, RID
+      is matrix-driven) gets the same three properties passed directly. Measured on this
+      machine (3 monitors) via the --auto automation pipe, trigger+escape, comparing a git-
+      stashed pre-change build against this commit's build: baseline capture-to-overlay was
+      250 ms cold (tonemap 23 ms) then 121/126 ms on triggers 2-3 with tonemap BALLOONING to
+      97-98 ms per monitor - the exact tiered-JIT re-promotion the WPF reference's own comment
+      documents, reproduced live in this port; after warmup+TieredCompilation=false,
+      capture-to-overlay was 38 ms then 36 ms with tonemap flat at 8 ms on every trigger, no
+      re-promotion spike. No linux/mac degradation beyond what item 18 already documents below
+      (window parking is out of scope for both): the warmup steps that ARE ported here (backend
+      init, tonemap/encode, OverlayWindow construction) are all portable Avalonia/Core code and
+      run on every OS; only the WgcCapturer.Prewarm and TrimCachedDeviceMemory calls are
+      Windows-only, and both degrade to a no-op via `#if WINDOWS` rather than failing. Build +
+      full solution test suite green (974 tests: 419 WPF + 358 Core + 188 App + 9
+      Platform.Windows - no new tests added: CaptureGate/IdleMemoryTrimmer/TrayApp warmup
+      mirror the WPF reference's own CaptureGate/IdleMemoryTrimmer/TrayApp, none of which have
+      dedicated tests either - these mutate real GC/OS/window state rather than exposing
+      pure testable logic).
 - [ ] 18-flash-dim-windows: Windows-only instant-dim flash + parked overlay window pool
       behind a platform strategy, ROESNIP_NO_FLASH fallback, measured latency before/after;
       Linux/macOS keep the direct path. (XL)

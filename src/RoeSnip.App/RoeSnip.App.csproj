@@ -31,6 +31,18 @@
     <!-- Windows-only in effect (per-monitor-v2 DPI awareness + asInvoker), harmless elsewhere
          (PLAN-XPLAT.md §1.5). -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Item 17 (ported from the WPF app's identical RoeSnip.csproj setting/comment): this app's
+         whole architecture exists to pay JIT/init costs upfront on a background warmup thread
+         (AppShell/TrayApp.cs RunWarmup) rather than gradually on the hotkey path, so tiered-JIT's
+         normal "cheap tier-0 first, re-JIT once hot" promotion timing is actively counterproductive
+         here — the WPF reference measured 60-105 ms of AVX2 tonemap max-scan promotion cost on the
+         first two REAL captures after launch despite already running that exact code on real
+         full-size frames during warmup, and a DOTNET_TieredCompilation=0 A/B collapsed it to
+         1-4 ms immediately. Disabling tiered compilation forces every method to its fully-optimized
+         tier on first call instead, so the extra full-opt JIT time lands on the warmup thread
+         (off the hot path) rather than on the second real screenshot a user takes. Only meaningful
+         together with the warmup thread landing in the same commit — see that file's doc comment. -->
+    <TieredCompilation>false</TieredCompilation>
   </PropertyGroup>
 
   <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('win')) Or ('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Windows')))">

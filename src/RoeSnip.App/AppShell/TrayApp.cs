@@ -13,6 +13,8 @@ using Avalonia.Media;
 using Avalonia.Platform;
 using Avalonia.Threading;
 using Microsoft.Win32;
+using RoeSnip.App.Overlay;
+using RoeSnip.Core.Capture;
 using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Settings;
 
@@ -184,6 +186,11 @@ public sealed class TrayApp : ITrayNotifier
         {
             _ = CheckForNewVersionPassivelyAsync();
         }
+
+        // Cold-start warmup (item 17, ported from the WPF app's TrayApp.StartWarmup/RunWarmup):
+        // runs on its own background thread so it can never delay the tray icon/pipe listener
+        // above coming up, and never blocks (or is blocked by) the PrintScreen consent flow below.
+        StartWarmup();
 
         Dispatcher.UIThread.Post(() => _ = CompleteStartupAsync());
     }
@@ -365,6 +372,250 @@ public sealed class TrayApp : ITrayNotifier
         }
 
         _lifetime.Shutdown();
+    }
+
+    // ---------------- Cold-start warmup (item 17) ----------------
+
+    /// <summary>Pre-pays the heavy first-capture costs off the UI thread, ported from the WPF
+    /// app's TrayApp.StartWarmup/RunWarmup (TrayApp.cs:872-1145) minus the flash-dimmer/overlay-
+    /// pool steps — this port has no parked-window architecture yet (PLAN-XPLAT.md tracks that as
+    /// separate, later work; this is the sanctioned "no window parking" safe slice). What remains:
+    /// JIT of the tone-map/PNG-encode path, monitor enumeration, construction of the real
+    /// OverlayWindow type (BAML/XAML-load + layout JIT), and one REAL throwaway capture per
+    /// monitor through the exact CaptureService path a hotkey press takes (pre-provisioning
+    /// WgcCapturer's cached device on Windows via <see cref="RoeSnip.Platform.Windows.WgcCapturer.Prewarm"/>).
+    /// That throwaway capture may briefly show the OS capture border on WGC-fallback monitors —
+    /// accepted at tray startup, same as the WPF reference (no session is left running, so no
+    /// border persists). Fully try/caught and never fatal — a warmup failure just means the first
+    /// real hotkey press is as slow as it always was, not a crash.</summary>
+    private void StartWarmup()
+    {
+        // Cold-start CaptureGate race fix (ported from the WPF app's identical S5 comment): flag
+        // the gate as "warmup pending" BEFORE the warmup thread even starts, so a trigger that
+        // fires in the brief window between StartWarmup returning and RunWarmup's first
+        // CaptureGate.TryEnter (WarmupCaptureSessions) still sees WarmupPending=true and waits
+        // rather than racing straight past the not-yet-busy gate into paying first-time
+        // capture-backend init itself. RunWarmup clears this in a finally on every exit path.
+        CaptureGate.WarmupPending = true;
+
+        var thread = new Thread(RunWarmup)
+        {
+            IsBackground = true,
+            Priority = ThreadPriority.BelowNormal,
+            Name = "RoeSnip-Warmup",
+        };
+        thread.Start();
+    }
+
+    private void RunWarmup()
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            var monitors = WarmupCaptureBackendInit();
+            WarmupToneMapAndEncode();
+            WarmupOverlayWindowType();
+            WarmupCaptureSessions(monitors);
+            stopwatch.Stop();
+            Console.Error.WriteLine($"RoeSnip: warmup completed in {stopwatch.ElapsedMilliseconds} ms");
+
+            // Warmup itself is a full-scale burst (throwaway full-res captures + tonemaps) — sweep
+            // its garbage so the app starts its resident life at the small footprint, not at the
+            // warmup high-water mark. Schedule() is safe to call from this background thread (see
+            // its own doc comment) and defers the actual collect to ApplicationIdle, so it can
+            // never suspend the UI thread mid-warmup.
+            IdleMemoryTrimmer.Schedule();
+        }
+        catch (Exception ex)
+        {
+            // Never let a warmup failure be visible as anything other than "the first real capture
+            // is exactly as cold as before" — this is a pure optimization, not a requirement.
+            Console.Error.WriteLine($"RoeSnip: warmup failed (non-fatal): {ex.Message}");
+        }
+        finally
+        {
+            // Unblock any RunCaptureFlowAsync call currently polling WarmupPending, on every
+            // possible exit from this method — success, an exception caught above, or a benign
+            // zero-monitors early return inside one of the Warmup* steps. A stuck WarmupPending=true
+            // would otherwise make every hotkey press wait out the full 5-second poll deadline for
+            // nothing.
+            CaptureGate.WarmupPending = false;
+        }
+    }
+
+    /// <summary>Pre-creates the monitor enumeration a real capture pays on its first call (DXGI
+    /// factory/adapter/output walk on Windows; portal/RandR queries elsewhere) — otherwise-shared
+    /// setup cost that a hotkey press would pay for the first time.</summary>
+    private static IReadOnlyList<MonitorInfo> WarmupCaptureBackendInit()
+        => new CaptureService().EnumerateMonitors();
+
+    /// <summary>Exercises the exact code path a real capture's tone-map/encode stretch runs
+    /// (SdrImage.FromCapturedFrame -> ToneMapper.MapToSdr -> PngWriter.Encode) against a small
+    /// synthetic frame with a fake MonitorInfo — no real capture session, so nothing ever
+    /// flashes.</summary>
+    private static void WarmupToneMapAndEncode()
+    {
+        const int size = 256;
+        using var frame = CreateSyntheticWarmupFrame(size);
+
+        var sdr = SdrImage.FromCapturedFrame(frame, new RoeSnip.Core.Color.ToneMapOptions());
+        _ = PngWriter.Encode(sdr);
+    }
+
+    /// <summary>Builds the small synthetic Fp16 scRGB frame shared by
+    /// <see cref="WarmupToneMapAndEncode"/> and <see cref="WarmupOverlayWindowType"/> — a fake
+    /// MonitorInfo plus <paramref name="size"/>x<paramref name="size"/> pixel data alternating a
+    /// plain-SDR value and an HDR-highlight value per column, so ToneMapper's pass-through AND
+    /// shoulder/dither branches both actually execute (a uniform frame would only ever hit
+    /// whichever single branch its one value falls into). Caller owns and must Dispose the
+    /// returned frame. Ported from the WPF app's identical CreateSyntheticWarmupFrame.</summary>
+    private static CapturedFrame CreateSyntheticWarmupFrame(int size)
+    {
+        var monitor = new MonitorInfo(
+            Index: -1, DeviceName: "RoeSnip-Warmup", BackendKey: "warmup",
+            BoundsPx: RectPhysical.FromSize(0, 0, size, size),
+            DpiX: 96, DpiY: 96, Scale: 1.0, AdvancedColorActive: true,
+            SdrWhiteNits: 240.0, MaxLuminanceNits: 1000.0, IsPrimary: true);
+
+        Span<byte> dim = stackalloc byte[2];
+        Span<byte> bright = stackalloc byte[2];
+        BitConverter.TryWriteBytes(dim, (Half)0.5f);    // plain SDR gray — exercises the pass-through branch
+        BitConverter.TryWriteBytes(bright, (Half)2.5f); // 200 nits — exercises the shoulder/dither branch
+
+        var pixels = new byte[size * size * 8]; // Fp16ScRgb: 8 bytes/pixel (4 x Half)
+        for (int y = 0; y < size; y++)
+        {
+            int rowOffset = y * size * 8;
+            for (int x = 0; x < size; x++)
+            {
+                var src = (x % 2 == 0) ? dim : bright;
+                int pixelOffset = rowOffset + x * 8;
+                for (int channel = 0; channel < 4; channel++)
+                {
+                    pixels[pixelOffset + channel * 2] = src[0];
+                    pixels[pixelOffset + channel * 2 + 1] = src[1];
+                }
+            }
+        }
+
+        return new CapturedFrame(
+            FrameFormat.Fp16ScRgb, size, size, size * 8, pixels, monitor,
+            sdrWhiteInBufferUnits: monitor.SdrWhiteNits / 80.0);
+    }
+
+    /// <summary>Warms the real OverlayWindow type: the first-ever construction of OverlayWindow
+    /// (AvaloniaXamlLoader.Load for it AND its nested ToolbarControl.axaml) plus custom-control JIT
+    /// is a measurable share of the first real overlay's latency. Must run on the UI thread
+    /// (Avalonia windows are UI-thread-affine, like WPF's), and deliberately NEVER Show()s the
+    /// window: with no HWND ever mapped visible, Measure+Arrange alone is enough to force the
+    /// visual tree to build and lay out for real, which is where the load/JIT cost actually lands.
+    /// Fire-and-forget from the warmup thread (Dispatcher.UIThread.Post), same as every other
+    /// Warmup* step's own non-fatal try/catch — a failure here costs nothing but the optimization.</summary>
+    private void WarmupOverlayWindowType()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            const int size = 256;
+            CapturedFrame? frame = null;
+            try
+            {
+                frame = CreateSyntheticWarmupFrame(size);
+                var sdr = SdrImage.FromCapturedFrame(frame, new RoeSnip.Core.Color.ToneMapOptions());
+
+                var window = new OverlayWindow(
+                    frame, sdr, RoeSnipSettings.Default,
+                    static _ => { }, static _ => { }, static (_, _, _) => { }, static _ => { },
+                    static _ => { }, static _ => { });
+                window.Measure(new Size(size, size));
+                window.Arrange(new Rect(0, 0, size, size));
+                window.Close(); // never Show()n — see method doc.
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: overlay window type warmup failed (non-fatal): {ex.Message}");
+            }
+            finally
+            {
+                frame?.Dispose();
+            }
+        });
+    }
+
+    /// <summary>One real throwaway capture per monitor at startup: warms the capture backend end
+    /// to end and, on Windows, pre-provisions WgcCapturer's per-monitor item/device cache so the
+    /// first-ever DD-to-WGC fallback (or first WGC monitor) doesn't pay that cost on a hotkey
+    /// press. Holds the process-wide CaptureGate: a concurrent real capture could otherwise race
+    /// this one and spuriously poison shared capture-backend state. (A trigger inside this
+    /// sub-second window waits it out — see CaptureGate.HeldByWarmup/RunCaptureFlowAsync.)</summary>
+    private static void WarmupCaptureSessions(IReadOnlyList<MonitorInfo> monitors)
+    {
+        if (monitors.Count == 0)
+        {
+            return;
+        }
+        if (!CaptureGate.TryEnter())
+        {
+            Console.Error.WriteLine("RoeSnip: skipping warmup capture; a real capture is already in progress.");
+            return;
+        }
+        // Flag the hold as warmup's so a real hotkey press in this window waits for the gate
+        // (RunCaptureFlowAsync) instead of being dropped.
+        CaptureGate.HeldByWarmup = true;
+
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            var captureService = new CaptureService();
+            var frames = captureService.CaptureAll(monitors);
+            try
+            {
+                // Mirrors AppComposition.RunCaptureFlowAsync's real tonemap step (fixed-slot
+                // Parallel.For) rather than a sequential foreach, so this warms the same
+                // threadpool-ramp + full-size LUT/SIMD path a real hotkey press actually exercises.
+                var previews = new SdrImage[frames.Count];
+                Parallel.For(0, frames.Count, i =>
+                {
+                    previews[i] = SdrImage.FromCapturedFrame(frames[i], new RoeSnip.Core.Color.ToneMapOptions());
+                });
+            }
+            finally
+            {
+                foreach (var frame in frames)
+                {
+                    frame.Dispose();
+                }
+            }
+
+#if WINDOWS
+            // Monitors whose capture above went through (borderless) Desktop Duplication never
+            // touched WGC — pre-provision WgcCapturer's cached item/device for them too (cheap,
+            // and sessionless, so no border), covering the cost of a first-ever DD->WGC fallback.
+            foreach (var monitor in monitors)
+            {
+                if (!RoeSnip.Core.Capture.CaptureCache.Default.IsDesktopDuplicationBroken(monitor.DeviceName))
+                {
+                    try
+                    {
+                        RoeSnip.Platform.Windows.WgcCapturer.Prewarm(monitor, throwawayFrame: false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine(
+                            $"RoeSnip: WGC pre-provisioning failed for monitor {monitor.DeviceName} (non-fatal): {ex.Message}");
+                    }
+                }
+            }
+#endif
+            watch.Stop();
+            Console.Error.WriteLine(
+                $"RoeSnip: warmup capture ({frames.Count}/{monitors.Count} monitors) completed in " +
+                $"{watch.ElapsedMilliseconds} ms (the OS capture border may have flashed once on WGC monitors)");
+        }
+        finally
+        {
+            CaptureGate.HeldByWarmup = false;
+            CaptureGate.Exit();
+        }
     }
 
     // ---------------- Self-update (item 13b/13d) ----------------

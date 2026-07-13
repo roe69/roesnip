@@ -219,8 +219,14 @@ jobs:
       # to true"). Setting that property lets restore resolve the windows TFM's ref packs without a
       # Windows host; the actual publish stays net8.0 + the target RID (Platform.Windows is not
       # referenced for a non-win RID). AssemblyName is RoeSnip, so the published binary is <publish>/RoeSnip.
+      # Item 17: same PublishReadyToRun/EnableCompressionInSingleFile/SatelliteResourceLanguages
+      # trio as the win-x64.pubxml (see that file's comments) - this leg has no pubxml of its own
+      # (the RID is matrix-driven), so the properties are passed directly. Compression only bites
+      # once PublishSingleFile is on (not set on this folder-publish leg today), but keeping the
+      # property here means flipping single-file on later doesn't silently reintroduce the idle-RAM
+      # regression the win-x64 build already fixed.
       - name: Publish RoeSnip.App (${{ matrix.rid }})
-        run: dotnet publish src/RoeSnip.App -c Release -f net8.0 -r ${{ matrix.rid }} --self-contained -p:EnableWindowsTargeting=true -p:Version=${{ needs.prep.outputs.version }}
+        run: dotnet publish src/RoeSnip.App -c Release -f net8.0 -r ${{ matrix.rid }} --self-contained -p:EnableWindowsTargeting=true -p:PublishReadyToRun=false -p:EnableCompressionInSingleFile=false -p:SatelliteResourceLanguages=en -p:Version=${{ needs.prep.outputs.version }}
 
       # ---- Linux: AppImage via the official static appimagetool -------------------------------
       - name: Package .AppImage
