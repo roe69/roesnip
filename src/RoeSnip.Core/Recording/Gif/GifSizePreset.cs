@@ -1,15 +1,17 @@
 using System;
 
-namespace RoeSnip.Recording.Gif;
+namespace RoeSnip.Core.Recording.Gif;
 
 /// <summary>User-facing recording size/quality tier, picked from the recording chrome's Setup-only
 /// size row (shown for BOTH formats as of the size-tiers workstream — see RecordingChrome's size
-/// preset row) and persisted as a plain string, per format, on
-/// <see cref="RoeSnip.RoeSnipSettings.GifSizePreset"/> / <see cref="RoeSnip.RoeSnipSettings.Mp4SizePreset"/>
-/// (matching that record's string-not-enum persistence convention — see its doc comment). Despite
+/// preset row) and persisted as a plain string, per format, on the WPF app's own
+/// <c>RoeSnip.RoeSnipSettings.GifSizePreset</c> / <c>RoeSnip.RoeSnipSettings.Mp4SizePreset</c>
+/// (matching that record's string-not-enum persistence convention — see its doc comment; a plain
+/// <c>&lt;c&gt;</c> reference, not <c>&lt;see cref&gt;</c>, since that WPF-only type is not visible
+/// from this portable assembly). Despite
 /// the "Gif"-namespaced home (kept here rather than moved to a format-neutral namespace — see this
 /// file's own history for that call), the enum is used by both GIF and MP4 takes: MP4's
-/// <see cref="RoeSnip.Recording.Mp4Encoder.ComputeBitrate(int,int,int,GifSizePreset)"/> overload
+/// <see cref="RoeSnip.Core.Recording.Mp4BitrateEstimator.ComputeBitrate(int,int,int,GifSizePreset)"/> overload
 /// consumes it too, rather than inventing a parallel MP4-only enum for what is the same four-tier
 /// concept.
 ///
@@ -212,8 +214,8 @@ public static class GifSizePresets
         _ => throw new ArgumentOutOfRangeException(nameof(preset), preset, "Unknown GifSizePreset."),
     };
 
-    /// <summary>Parses the persisted settings string (<see cref="RoeSnip.RoeSnipSettings.GifSizePreset"/>)
-    /// case-insensitively; any unrecognized or missing value fails SAFE to <see cref="GifSizePreset.Quality"/>
+    /// <summary>Parses the persisted settings string (the WPF app's own
+    /// <c>RoeSnip.RoeSnipSettings.GifSizePreset</c>) case-insensitively; any unrecognized or missing value fails SAFE to <see cref="GifSizePreset.Quality"/>
     /// rather than throwing, matching the rest of this settings record's fail-closed-to-default
     /// convention (see SettingsStore.Load's own doc comment) — a garbled or future-schema value on
     /// disk must never crash the recording flow, only silently fall back to today's behavior.</summary>

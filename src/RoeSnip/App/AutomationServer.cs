@@ -13,7 +13,8 @@ using RoeSnip.Capture;
 using RoeSnip.Interop;
 using RoeSnip.Overlay;
 using RoeSnip.Recording;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording;
+using RoeSnip.Core.Recording.Gif;
 
 namespace RoeSnip.App;
 

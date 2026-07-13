@@ -6,7 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using RoeSnip.Imaging;
 using RoeSnip.Recording;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording.Gif;
 using Xunit;
 
 namespace RoeSnip.Tests;

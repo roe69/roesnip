@@ -1,12 +1,12 @@
 using System;
 using System.IO;
 using System.Security.Cryptography;
-using RoeSnip.Imaging;
-using RoeSnip.Recording;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Imaging;
+using RoeSnip.Core.Recording;
+using RoeSnip.Core.Recording.Gif;
 using Xunit;
 
-namespace RoeSnip.Tests;
+namespace RoeSnip.Core.Tests;
 
 /// <summary>GIF software-encode CPU workstream: locks the exact on-disk bytes GifEncoder produces
 /// for a fixed, deterministic input to a hardcoded SHA-256 hash, specifically so

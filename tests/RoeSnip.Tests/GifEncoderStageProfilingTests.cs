@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using RoeSnip.Imaging;
 using RoeSnip.Recording;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording.Gif;
 using Xunit;
 using Xunit.Abstractions;
 

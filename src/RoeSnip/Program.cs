@@ -149,19 +149,19 @@ public sealed record RoeSnipSettings
 
     /// <summary>GIF recording size/quality tier, chosen from the recording chrome's Setup-only GIF
     /// row and persisted immediately (same SettingsStore.Save best-effort pattern as the audio
-    /// toggles above). A plain string, not the <see cref="Recording.Gif.GifSizePreset"/> enum
+    /// toggles above). A plain string, not the <see cref="RoeSnip.Core.Recording.Gif.GifSizePreset"/> enum
     /// itself — this record's JSON persistence style keeps every field JSON-primitive so the file
     /// stays human-editable and forward/backward compatible across builds that add or reorder enum
-    /// members. Parsed via <see cref="Recording.Gif.GifSizePresets.Parse"/>, which fails safe to
+    /// members. Parsed via <see cref="RoeSnip.Core.Recording.Gif.GifSizePresets.Parse"/>, which fails safe to
     /// "Quality" (this default) for any unknown or corrupt value rather than throwing.</summary>
     public string GifSizePreset { get; init; } = "Quality";
 
     /// <summary>MP4 recording size/quality tier — the same recording-chrome size row as
     /// <see cref="GifSizePreset"/> above, but format's own separate memory: switching between GIF
     /// and MP4 takes must not clobber the other format's last-picked tier. Same plain-string,
-    /// same <see cref="Recording.Gif.GifSizePresets.Parse"/> fail-safe-to-"Quality" convention,
+    /// same <see cref="RoeSnip.Core.Recording.Gif.GifSizePresets.Parse"/> fail-safe-to-"Quality" convention,
     /// and (despite the "Gif"-namespaced parser/enum — see that enum's own doc comment for why it
-    /// wasn't moved) the SAME <see cref="Recording.Gif.GifSizePreset"/> enum, not a parallel
+    /// wasn't moved) the SAME <see cref="RoeSnip.Core.Recording.Gif.GifSizePreset"/> enum, not a parallel
     /// MP4-only one.</summary>
     public string Mp4SizePreset { get; init; } = "Quality";
 
@@ -169,23 +169,23 @@ public sealed record RoeSnipSettings
     /// widened from four fixed choices to a free integer slider by the quality/fps expansion
     /// workstream — see RecordingChrome's FPS row): the chrome's FPS slider persists here,
     /// independent of <see cref="GifSizePreset"/> — the two axes are orthogonal user choices now
-    /// (see Recording/RecordingSizeEstimator.cs's own doc comment for why). A plain int, not
+    /// (see RoeSnip.Core's Recording/RecordingSizeEstimator.cs own doc comment for why). A plain int, not
     /// validated at load time: an old build, a hand-edited settings file, or a future build's
     /// differently-shaped range could all leave a value here that falls outside today's
-    /// <see cref="Recording.RecordingSizeEstimator.GifMinFps"/>..<see cref="Recording.RecordingSizeEstimator.GifMaxFps"/>
+    /// <see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.GifMinFps"/>..<see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.GifMaxFps"/>
     /// range — rather than throw or silently keep an invalid capture rate, every USE site clamps
-    /// this through <see cref="Recording.RecordingSizeEstimator.ClampFps"/> against those live
+    /// this through <see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.ClampFps"/> against those live
     /// bounds (same fail-safe-at-use-time convention <see cref="GifSizePreset"/>'s own
-    /// <see cref="Recording.Gif.GifSizePresets.Parse"/> already uses). Default matches
-    /// <see cref="Recording.RecordingSizeEstimator.GifDefaultFps"/>.</summary>
+    /// <see cref="RoeSnip.Core.Recording.Gif.GifSizePresets.Parse"/> already uses). Default matches
+    /// <see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.GifDefaultFps"/>.</summary>
     public int GifFps { get; init; } = 25;
 
     /// <summary>MP4 recording framerate — same fail-safe-at-use-time contract as
     /// <see cref="GifFps"/> above, clamped against
-    /// <see cref="Recording.RecordingSizeEstimator.Mp4MinFps"/>..<see cref="Recording.RecordingSizeEstimator.Mp4MaxFps"/>
+    /// <see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.Mp4MinFps"/>..<see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.Mp4MaxFps"/>
     /// instead, and its own independent settings key (format-specific memory, same split as
     /// <see cref="GifSizePreset"/>/<see cref="Mp4SizePreset"/>). Default matches
-    /// <see cref="Recording.RecordingSizeEstimator.Mp4DefaultFps"/>.</summary>
+    /// <see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.Mp4DefaultFps"/>.</summary>
     public int Mp4Fps { get; init; } = 30;
 
     // ---------- Sharing/upload subsystem (Sharing/*) ----------

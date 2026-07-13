@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using RoeSnip.Capture;
-using RoeSnip.Imaging;
-using RoeSnip.Recording;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Capture;
+using RoeSnip.Core.Imaging;
+using RoeSnip.Core.Recording;
+using RoeSnip.Core.Recording.Gif;
 using Xunit;
 
-namespace RoeSnip.Tests;
+namespace RoeSnip.Core.Tests;
 
 /// <summary>End-to-end behavioral coverage of the timestamped <c>AddFrame(SdrImage, long)</c> delta
 /// pipeline — transparency-mask correctness, palette reuse, and keyframing — all verified against

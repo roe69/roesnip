@@ -11,7 +11,12 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using RoeSnip.Capture;
 using RoeSnip.Interop;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording.Gif;
+// Recording-core-extraction: RecordingSizeEstimator moved to RoeSnip.Core.Recording. A plain
+// `using RoeSnip.Core.Recording;` would also pull in that namespace's own MultiMonitorRecording,
+// which collides with this file's enclosing RoeSnip.Recording.MultiMonitorRecording (the WPF app's
+// own copy, kept separate — see that class's doc comment) — an alias avoids the ambiguity.
+using RecordingSizeEstimator = RoeSnip.Core.Recording.RecordingSizeEstimator;
 
 namespace RoeSnip.Recording;
 

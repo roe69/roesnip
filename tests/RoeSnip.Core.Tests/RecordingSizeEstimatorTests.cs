@@ -1,8 +1,8 @@
-using RoeSnip.Recording;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording;
+using RoeSnip.Core.Recording.Gif;
 using Xunit;
 
-namespace RoeSnip.Tests;
+namespace RoeSnip.Core.Tests;
 
 /// <summary>The pure live-estimate math behind the recording chrome's size readout — no live
 /// encoder/chrome needed, see RecordingSizeEstimator's own doc comment.</summary>
@@ -13,7 +13,7 @@ public class RecordingSizeEstimatorTests
     [Fact]
     public void Mp4BytesPerSecond_QualityNoAudio_IsBitrateOverEight()
     {
-        // Mp4Encoder.ComputeBitrate(1280, 720, 30) = 2,764,800 (unclamped) -> /8 = 345,600 B/s.
+        // Mp4BitrateEstimator.ComputeBitrate(1280, 720, 30) = 2,764,800 (unclamped) -> /8 = 345,600 B/s.
         double bps = RecordingSizeEstimator.Mp4BytesPerSecond(1280, 720, 30, GifSizePreset.Quality, audioEnabled: false);
         Assert.Equal(345_600, bps);
     }
@@ -22,7 +22,7 @@ public class RecordingSizeEstimatorTests
     public void Mp4BytesPerSecond_QualityWithAudio_AddsTheAacTrackRate()
     {
         double bps = RecordingSizeEstimator.Mp4BytesPerSecond(1280, 720, 30, GifSizePreset.Quality, audioEnabled: true);
-        Assert.Equal(345_600 + Mp4Encoder.AudioAacBytesPerSecond, bps);
+        Assert.Equal(345_600 + Mp4BitrateEstimator.AudioAacBytesPerSecond, bps);
         Assert.Equal(361_600, bps);
     }
 
@@ -43,13 +43,13 @@ public class RecordingSizeEstimatorTests
         double withoutAudio = RecordingSizeEstimator.Mp4BytesPerSecond(64, 64, 12, GifSizePreset.Balanced, audioEnabled: false);
         double withAudio = RecordingSizeEstimator.Mp4BytesPerSecond(64, 64, 12, GifSizePreset.Balanced, audioEnabled: true);
         Assert.Equal(187_500, withoutAudio);
-        Assert.Equal(187_500 + Mp4Encoder.AudioAacBytesPerSecond, withAudio);
+        Assert.Equal(187_500 + Mp4BitrateEstimator.AudioAacBytesPerSecond, withAudio);
     }
 
     [Fact]
     public void Mp4BytesPerSecond_DoublingFps_DoublesUnclampedRate()
     {
-        // Mp4Encoder.ComputeBitrate scales linearly by fps (0.1 bpp * fps), so the byte-rate
+        // Mp4BitrateEstimator.ComputeBitrate scales linearly by fps (0.1 bpp * fps), so the byte-rate
         // estimate composes with the quality axis for free — this locks that composition rather
         // than re-deriving ComputeBitrate's own formula (that's Mp4EncoderTests' job).
         double at30 = RecordingSizeEstimator.Mp4BytesPerSecond(1280, 720, 30, GifSizePreset.Quality, audioEnabled: false);

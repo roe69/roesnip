@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace RoeSnip.Recording.Gif;
+namespace RoeSnip.Core.Recording.Gif;
 
 /// <summary>Builds an up-to-N-color palette from a flat set of BGRA8 pixels via a classic octree
 /// quantizer, with one deliberate deviation from the textbook version: when the tree must shed

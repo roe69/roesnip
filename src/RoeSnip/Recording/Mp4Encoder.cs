@@ -1,9 +1,10 @@
 using System;
 using System.Runtime.InteropServices;
 using RoeSnip.Imaging;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording.Gif;
 using Vortice.MediaFoundation;
 using Vortice.Multimedia;
+using Mp4BitrateEstimator = RoeSnip.Core.Recording.Mp4BitrateEstimator;
 
 namespace RoeSnip.Recording;
 
@@ -44,46 +45,21 @@ public sealed class Mp4Encoder : IDisposable
 
     /// <summary>Bitrate heuristic: 0.1 bits/pixel/frame (a standard "medium quality" H.264 rule of
     /// thumb), clamped to a sane [2, 16] Mbps band so a tiny selection doesn't starve the encoder
-    /// and a huge one doesn't produce an unreasonably large file. Pulled out as its own static
-    /// method (no IMFSinkWriter dependency) so it's unit-testable without a live MF session —
-    /// see Mp4EncoderTests. This is the parameterless-preset overload: its behavior is pinned
+    /// and a huge one doesn't produce an unreasonably large file. Recording-core-extraction
+    /// workstream: the actual math now lives in the portable <see cref="Mp4BitrateEstimator"/>
+    /// (RoeSnip.Core.Recording — no IMFSinkWriter dependency, so RoeSnip.App/Avalonia can compute
+    /// the same estimate without this Windows-only encoder), this is a straight passthrough kept
+    /// here so every existing call site (Mp4EncoderTests, RecordingController, RecordingChrome)
+    /// keeps working unchanged. This is the parameterless-preset overload: its behavior is pinned
     /// forever by <see cref="ComputeBitrate(int,int,int,GifSizePreset)"/>'s Quality case, which
     /// must return exactly this value — see that overload's own doc comment.</summary>
     public static long ComputeBitrate(int width, int height, int fps) =>
-        Math.Clamp((long)(0.1 * width * height * fps), 2_000_000, 16_000_000);
+        Mp4BitrateEstimator.ComputeBitrate(width, height, fps);
 
-    /// <summary>Recording-size-tiers overload: applies a per-tier multiplier to the same 0.1bpp
-    /// heuristic <see cref="ComputeBitrate(int,int,int)"/> uses, each with its own clamp band so a
-    /// tiny selection at any tier still gets a usable minimum bitrate and a huge one at any tier
-    /// still has a ceiling. <see cref="GifSizePreset.Quality"/> is handled by delegating straight
-    /// to the three-argument overload rather than recomputing "1.0x [2M,16M]" here a second time —
-    /// that overload's existing tests (and every existing MP4 call site that doesn't pass a preset)
-    /// must see byte-identical output to before this tiers workstream existed. The other tiers'
-    /// factors/clamps (see the switch below) were chosen to bracket Quality symmetrically: Max
-    /// roughly quadruples the target bitrate for near-visually-lossless H.264 at typical recording
-    /// resolutions, Balanced/Compact roughly mirror the GIF-side Balanced/Compact size reduction so
-    /// the two formats' tiers read as the same promise ("smaller, more compressed") even though the
-    /// underlying codecs are unrelated. Minimal (quality/fps expansion workstream) continues that
-    /// same downward slope at 0.15x — MP4/H.264 has no GIF-style palette/lossy-run lever to spend
-    /// this tier's extra shrink on, so it is simply a lower target bitrate with its own, lower
-    /// clamp band.</summary>
-    public static long ComputeBitrate(int width, int height, int fps, GifSizePreset preset)
-    {
-        if (preset == GifSizePreset.Quality)
-        {
-            return ComputeBitrate(width, height, fps);
-        }
-
-        (double factor, long min, long max) = preset switch
-        {
-            GifSizePreset.Max => (4.0, 8_000_000L, 64_000_000L),
-            GifSizePreset.Balanced => (0.6, 1_500_000L, 10_000_000L),
-            GifSizePreset.Compact => (0.35, 1_000_000L, 6_000_000L),
-            GifSizePreset.Minimal => (0.15, 500_000L, 3_000_000L),
-            _ => throw new ArgumentOutOfRangeException(nameof(preset), preset, "Unknown GifSizePreset."),
-        };
-        return Math.Clamp((long)(factor * 0.1 * width * height * fps), min, max);
-    }
+    /// <summary>Recording-size-tiers overload — see <see cref="Mp4BitrateEstimator.ComputeBitrate(int,int,int,GifSizePreset)"/>
+    /// for the full tier-factor/clamp-band reasoning; this is a straight passthrough.</summary>
+    public static long ComputeBitrate(int width, int height, int fps, GifSizePreset preset) =>
+        Mp4BitrateEstimator.ComputeBitrate(width, height, fps, preset);
 
     /// <summary>The one PCM format every audio path speaks (AudioCaptureEngine converts both
     /// WASAPI sources to it via AUTOCONVERTPCM, this class encodes it to AAC): 48 kHz, stereo,
@@ -93,11 +69,13 @@ public sealed class Mp4Encoder : IDisposable
     public const int AudioBitsPerSample = 16;
     public const int AudioBlockAlign = AudioChannels * AudioBitsPerSample / 8;
 
-    /// <summary>128 kbps AAC, the standard screen-recording choice: 128000 / 8 = 16000 bytes/second
-    /// — named here (rather than left as the inline magic number the Create's AudioAvgBytesPerSecond
-    /// media-type attribute used to be) so RecordingSizeEstimator's MP4 audio-overhead term can
-    /// cite the exact same figure instead of re-deriving/duplicating it.</summary>
-    public const int AudioAacBytesPerSecond = 16_000;
+    /// <summary>128 kbps AAC, the standard screen-recording choice: 128000 / 8 = 16000 bytes/second.
+    /// Recording-core-extraction workstream: the canonical constant now lives on the portable
+    /// <see cref="Mp4BitrateEstimator"/> (so RecordingSizeEstimator's MP4 audio-overhead term can
+    /// cite it without a Windows-only dependency); this const-to-const reference keeps this
+    /// Windows-only encoder's own AudioAvgBytesPerSecond media-type attribute and every existing
+    /// WPF call site (AudioCapture.cs, Mp4EncoderTests) unchanged.</summary>
+    public const int AudioAacBytesPerSecond = Mp4BitrateEstimator.AudioAacBytesPerSecond;
 
     private readonly IMFSinkWriter _writer;
     private readonly int _streamIndex;

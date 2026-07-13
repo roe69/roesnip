@@ -1,8 +1,8 @@
 using System;
 using System.Globalization;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording.Gif;
 
-namespace RoeSnip.Recording;
+namespace RoeSnip.Core.Recording;
 
 /// <summary>Pure, allocation-light math behind the recording chrome's live "this will be about X
 /// big" readout (recording-size-tiers workstream). No dependency on GifEncoder/Mp4Encoder's live
@@ -31,9 +31,9 @@ public static class RecordingSizeEstimator
     public const int GifMaxFps = 50;
 
     /// <summary>MP4 capture framerate bounds. MP4/H.264 has no GIF-style whole-centisecond
-    /// constraint (Media Foundation's FrameRate attribute is an arbitrary rational, see
-    /// Mp4Encoder.Create's MFSetAttributeRatio call), so the ceiling here is simply a sane upper
-    /// bound for screen-recording content, not a hard format limit the way GIF's 50fps is.</summary>
+    /// constraint (Media Foundation's FrameRate attribute is an arbitrary rational, see the WPF
+    /// app's Mp4Encoder.Create's MFSetAttributeRatio call), so the ceiling here is simply a sane
+    /// upper bound for screen-recording content, not a hard format limit the way GIF's 50fps is.</summary>
     public const int Mp4MinFps = 5;
     public const int Mp4MaxFps = 60;
 
@@ -50,12 +50,13 @@ public static class RecordingSizeEstimator
     public static int ClampFps(int requested, int minFps, int maxFps) => Math.Clamp(requested, minFps, maxFps);
 
     /// <summary>Bytes/second an MP4 take at this preset is expected to produce: the video bitrate
-    /// (see <see cref="Mp4Encoder.ComputeBitrate(int,int,int,GifSizePreset)"/>) converted from bits
-    /// to bytes, plus the AAC track's own byte rate when audio is enabled — see
-    /// <see cref="Mp4Encoder.AudioAacBytesPerSecond"/> for that figure and where it's cited on the
-    /// encoder side. Unlike GIF's estimate below, this one is a tight bound, not a "typical
-    /// activity" guess: MF's sink writer targets the requested AvgBitrate continuously regardless
-    /// of motion, so the number here is what an MP4 take of ANY content actually produces.
+    /// (see <see cref="Mp4BitrateEstimator.ComputeBitrate(int,int,int,GifSizePreset)"/>) converted
+    /// from bits to bytes, plus the AAC track's own byte rate when audio is enabled — see
+    /// <see cref="Mp4BitrateEstimator.AudioAacBytesPerSecond"/> for that figure and where it's cited
+    /// on the WPF app's own live encoder side. Unlike GIF's estimate below, this one is a tight
+    /// bound, not a "typical activity" guess: MF's sink writer targets the requested AvgBitrate
+    /// continuously regardless of motion, so the number here is what an MP4 take of ANY content
+    /// actually produces.
     ///
     /// Already fps-parameterized before the quality/framerate decoupling workstream — ComputeBitrate
     /// scales its 0.1-bits/pixel/frame heuristic by fps directly, so the quality axis (preset) and
@@ -63,15 +64,15 @@ public static class RecordingSizeEstimator
     /// only the GIF estimate below needed a formula rewrite to add the same composition.</summary>
     public static double Mp4BytesPerSecond(int width, int height, int fps, GifSizePreset preset, bool audioEnabled)
     {
-        long videoBitrate = Mp4Encoder.ComputeBitrate(width, height, fps, preset);
+        long videoBitrate = Mp4BitrateEstimator.ComputeBitrate(width, height, fps, preset);
         double videoBytesPerSecond = videoBitrate / 8.0;
-        return videoBytesPerSecond + (audioEnabled ? Mp4Encoder.AudioAacBytesPerSecond : 0);
+        return videoBytesPerSecond + (audioEnabled ? Mp4BitrateEstimator.AudioAacBytesPerSecond : 0);
     }
 
     /// <summary>Quality-tier multiplier on the per-pixel-per-frame constant below, one per
     /// <see cref="GifSizePreset"/>. QUALITY/FPS EXPANSION WORKSTREAM: these are no longer a blended
     /// guess — GifSizeBenchmarkTests.QualityAxis_BlendedScrollNoiseRatio_MeetsCalibratedTargets
-    /// measures each tier's actual blended (mean of scroll and noise) byte ratio against
+    /// measured each tier's actual blended (mean of scroll and noise) byte ratio against
     /// High/Quality at 640x400@25fps, and this class's factors are set to EXACTLY those measured
     /// numbers, so the live estimate tracks what the calibrated lossy-run/palette/scale levers
     /// actually produce rather than a hand-picked approximation. Measured ratio table (also cited

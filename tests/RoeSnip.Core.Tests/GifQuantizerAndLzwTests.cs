@@ -1,9 +1,9 @@
 using System;
 using System.IO;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording.Gif;
 using Xunit;
 
-namespace RoeSnip.Tests;
+namespace RoeSnip.Core.Tests;
 
 /// <summary>Unit tests for the three <c>Recording/Gif/*</c> building blocks GifEncoder's
 /// orchestration leans on: the octree palette quantizer, the version-stamped nearest-color LUT, and

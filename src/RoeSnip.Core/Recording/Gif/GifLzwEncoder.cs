@@ -1,18 +1,18 @@
 using System;
 using System.IO;
 
-namespace RoeSnip.Recording.Gif;
+namespace RoeSnip.Core.Recording.Gif;
 
 /// <summary>A from-scratch GIF-flavor LZW compressor (variable 2-12 bit codes, LSB-first bit
 /// packing, 255-byte data sub-blocks) replacing the old design's approach of asking WPF's
 /// <c>GifBitmapEncoder</c> to do this per frame and salvaging the bytes back out — see the removed
-/// <c>EncodeAndWrite</c> on <see cref="RoeSnip.Recording.GifEncoder"/> for why that was ever
+/// <c>EncodeAndWrite</c> on <see cref="RoeSnip.Core.Recording.GifEncoder"/> for why that was ever
 /// necessary in the first place (no incremental multi-Save API) and what it cost.
 ///
 /// One instance is created once and reused for every frame of a recording: the dictionary (an
 /// open-addressing hash table mapping (prefixCode, nextSymbolByte) to a code) and the bit/sub-block
 /// packing buffers are all instance fields sized once and cleared in place between calls, never
-/// reallocated — the same LOH/Gen2 discipline documented on <see cref="RoeSnip.Recording.GifEncoder"/>
+/// reallocated — the same LOH/Gen2 discipline documented on <see cref="RoeSnip.Core.Recording.GifEncoder"/>
 /// applies here: this runs at recording cadence, once per emitted frame.
 ///
 /// <see cref="Encode"/> assumes every value in <c>indices</c> is strictly less than

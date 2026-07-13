@@ -1,10 +1,10 @@
 using System.Collections.Generic;
 using System.Linq;
-using RoeSnip.Capture;
-using RoeSnip.Recording;
+using RoeSnip.Core.Capture;
+using RoeSnip.Core.Recording;
 using Xunit;
 
-namespace RoeSnip.Tests;
+namespace RoeSnip.Core.Tests;
 
 /// <summary>Pure geometry tests for the multi-monitor recording phase-1 drag-handoff decision logic
 /// (MultiMonitorRecording — see that class's own doc comment). No live WGC/device/window needed —
@@ -15,23 +15,26 @@ public class MultiMonitorRecordingTests
 {
     // Three-monitor layout used throughout, modeled on a real dev rig noted in TESTING.md:
     // DISPLAY3 primary at (0,0)-(2560,1440), DISPLAY1 directly above it at (0,-1440)-(2560,0), and
-    // DISPLAY2 to the right of DISPLAY3 at (2560,0)-(4480,1440).
+    // DISPLAY2 to the right of DISPLAY3 at (2560,0)-(4480,1440). BackendKey/Scale replace the WPF
+    // app's own MonitorInfo's HMonitor field here — this portable MonitorInfo has no live handle
+    // (see its own doc comment); BackendKey values below are arbitrary but distinct, matching this
+    // record's "opaque outside the ICaptureBackend that produced it" contract.
     private static MonitorInfo Display3 => new(
-        Index: 0, DeviceName: "\\\\.\\DISPLAY3", HMonitor: 1,
+        Index: 0, DeviceName: "\\\\.\\DISPLAY3", BackendKey: "0x1",
         BoundsPx: new RectPhysical(0, 0, 2560, 1440),
-        DpiX: 96, DpiY: 96, AdvancedColorActive: false,
+        DpiX: 96, DpiY: 96, Scale: 1.0, AdvancedColorActive: false,
         SdrWhiteNits: 240.0, MaxLuminanceNits: 1000.0, IsPrimary: true);
 
     private static MonitorInfo Display1 => new(
-        Index: 1, DeviceName: "\\\\.\\DISPLAY1", HMonitor: 2,
+        Index: 1, DeviceName: "\\\\.\\DISPLAY1", BackendKey: "0x2",
         BoundsPx: new RectPhysical(0, -1440, 2560, 0),
-        DpiX: 96, DpiY: 96, AdvancedColorActive: true,
+        DpiX: 96, DpiY: 96, Scale: 1.0, AdvancedColorActive: true,
         SdrWhiteNits: 203.0, MaxLuminanceNits: 800.0, IsPrimary: false);
 
     private static MonitorInfo Display2 => new(
-        Index: 2, DeviceName: "\\\\.\\DISPLAY2", HMonitor: 3,
+        Index: 2, DeviceName: "\\\\.\\DISPLAY2", BackendKey: "0x3",
         BoundsPx: new RectPhysical(2560, 0, 4480, 1440),
-        DpiX: 96, DpiY: 96, AdvancedColorActive: false,
+        DpiX: 96, DpiY: 96, Scale: 1.0, AdvancedColorActive: false,
         SdrWhiteNits: 240.0, MaxLuminanceNits: 1000.0, IsPrimary: false);
 
     private static IReadOnlyList<MonitorInfo> ThreeMonitors => new[] { Display3, Display1, Display2 };

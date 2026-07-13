@@ -63,4 +63,13 @@
     <PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Recording-core-extraction workstream: the from-scratch GIF pipeline and the portable
+         recording-size math now live in RoeSnip.Core so RoeSnip.App (Avalonia) can share them; this
+         WPF app keeps its own thin GifEncoder wrapper (see Recording/GifEncoder.cs) plus its own
+         MultiMonitorRecording copy (its MonitorInfo carries a live HMONITOR the portable one has no
+         equivalent for — see that file's own doc comment) but retargets everything else onto Core. -->
+    <ProjectReference Include="..\RoeSnip.Core\RoeSnip.Core.csproj" />
+  </ItemGroup>
+
 </Project>

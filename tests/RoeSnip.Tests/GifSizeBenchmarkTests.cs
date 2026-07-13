@@ -4,9 +4,14 @@ using System.IO;
 using System.Windows.Media.Imaging;
 using RoeSnip.Imaging;
 using RoeSnip.Recording;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording.Gif;
 using Xunit;
 using Xunit.Abstractions;
+// Recording-core-extraction: RecordingSizeEstimator moved to RoeSnip.Core.Recording. A plain
+// `using RoeSnip.Core.Recording;` would also pull in that namespace's own GifEncoder, which
+// collides with the WPF app's own RoeSnip.Recording.GifEncoder (already in scope via the
+// `using RoeSnip.Recording;` above and used throughout this file) — an alias avoids the ambiguity.
+using RecordingSizeEstimator = RoeSnip.Core.Recording.RecordingSizeEstimator;
 
 namespace RoeSnip.Tests;
 

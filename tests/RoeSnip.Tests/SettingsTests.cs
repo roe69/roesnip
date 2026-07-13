@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using RoeSnip.App;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording.Gif;
 using Xunit;
 
 namespace RoeSnip.Tests;
@@ -401,7 +401,7 @@ public class SettingsTests : IDisposable
         var loaded = SettingsStore.Load(settingsPath);
 
         Assert.Equal(999, loaded.GifFps);
-        Assert.Equal(50, RoeSnip.Recording.RecordingSizeEstimator.ClampFps(
-            loaded.GifFps, RoeSnip.Recording.RecordingSizeEstimator.GifMinFps, RoeSnip.Recording.RecordingSizeEstimator.GifMaxFps));
+        Assert.Equal(50, RoeSnip.Core.Recording.RecordingSizeEstimator.ClampFps(
+            loaded.GifFps, RoeSnip.Core.Recording.RecordingSizeEstimator.GifMinFps, RoeSnip.Core.Recording.RecordingSizeEstimator.GifMaxFps));
     }
 }

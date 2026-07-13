@@ -1,9 +1,9 @@
 using System;
 
-namespace RoeSnip.Recording.Gif;
+namespace RoeSnip.Core.Recording.Gif;
 
 /// <summary>Every tunable in the delta/palette scheme documented on
-/// <see cref="RoeSnip.Recording.GifEncoder"/>, gathered into one immutable record instead of
+/// <see cref="RoeSnip.Core.Recording.GifEncoder"/>, gathered into one immutable record instead of
 /// scattered constants so the whole scheme's numbers can be read (and, in tests, overridden) in
 /// one place. Defaults are the values the design was tuned against; production code should pass
 /// <see langword="null"/> (the parameterless default) unless a test specifically needs different

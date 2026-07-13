@@ -1,9 +1,9 @@
 using System;
 using System.Diagnostics;
 
-namespace RoeSnip.Recording.Gif;
+namespace RoeSnip.Core.Recording.Gif;
 
-/// <summary>Off-by-default per-stage wall-time accumulators for <see cref="RoeSnip.Recording.GifEncoder"/>'s
+/// <summary>Off-by-default per-stage wall-time accumulators for <see cref="RoeSnip.Core.Recording.GifEncoder"/>'s
 /// frame pipeline, used only to answer "where does the CPU actually go" for the GIF software-encode
 /// CPU workstream (see GifSizeBenchmarkTests' own class doc for the benchmark content these numbers
 /// were gathered against). <see cref="Enabled"/> defaults to false: every call site guards its

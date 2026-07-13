@@ -60,9 +60,38 @@ existing WPF test suite is the proof.
       resident, killed after), drove state/trigger/select/record(unsupported)/confirm
       copy/screenshot(bare + rect + includeExcluded)/confirm save/escape end-to-end over the real
       pipe.
-- [ ] 04-recording-core-extraction: Move the from-scratch GIF pipeline plus
+- [x] 04-recording-core-extraction: Move the from-scratch GIF pipeline plus
       MultiMonitorRecording and RecordingSizeEstimator (and their tests) into RoeSnip.Core;
       retarget WPF onto the Core copies with byte-identical output. (L)
+      Landed RoeSnip.Core/Recording/{GifEncoder.cs,Gif/*} (GifDelta, GifEncoderOptions,
+      GifEncoderStageTimings, GifLzwEncoder, GifNearestColorLut, GifOctreeQuantizer,
+      GifSizePreset), RoeSnip.Core/Recording/{MultiMonitorRecording.cs,RecordingSizeEstimator.cs,
+      Mp4BitrateEstimator.cs} — the last one a new pure-math extraction of Mp4Encoder.ComputeBitrate
+      /AudioAacBytesPerSecond, needed so RecordingSizeEstimator's MP4 term has no Vortice/Media
+      Foundation dependency. RoeSnip.csproj now references RoeSnip.Core; the WPF app's own
+      GifEncoder.cs became a thin wrapper (its own richer SdrImage, with a WPF-only
+      ToBitmapSource() and a recording-cadence reuseOutput overload, gets re-wrapped into a Core
+      SdrImage per call with a last-buffer cache so no per-candidate-frame allocation is
+      reintroduced) and Mp4Encoder.ComputeBitrate/AudioAacBytesPerSecond now delegate to
+      Mp4BitrateEstimator — every existing WPF call site and test (Mp4EncoderTests,
+      GifEncoderTests, GifSizeBenchmarkTests, GifEncoderStageProfilingTests,
+      GifLzwEncoderRealDecoderTests) kept its own source unmodified beyond `using` fixes.
+      TWO DELIBERATE DEVIATIONS from a literal move, both because the WPF app's own types are
+      genuinely richer than the portable ones this ticket assumed were shared: (1)
+      MultiMonitorRecording is NOT deleted from WPF — its MonitorInfo carries a live HMONITOR
+      that WgcCapturer/DesktopDuplicationCapturer read directly, which the portable MonitorInfo
+      (opaque BackendKey string, for cross-OS use) has no equivalent for; unifying them means
+      refactoring the WPF capture layer, out of scope here. Both copies are independently
+      unit-tested. (2) GifLzwEncoderRealDecoderTests stays in RoeSnip.Tests, namespace-retargeted
+      only — it verifies GifLzwEncoder's output through WPF's GifBitmapDecoder AND GDI+
+      (System.Drawing), both PresentationCore/Windows-only, so it cannot run on Core.Tests'
+      portable net8.0 TFM without violating "never drag PresentationCore into Core"; it still
+      tests the real (now Core) GifLzwEncoder class, just from the WPF-side project. 4 of the 5
+      named Gif tests (GifEncoderByteIdentityRegressionTests, GifDeltaBehaviorTests,
+      GifQuantizerAndLzwTests, GifSizePresetTests) plus MultiMonitorRecordingTests (MonitorInfo
+      construction adapted to BackendKey/Scale) and RecordingSizeEstimatorTests moved into
+      RoeSnip.Core.Tests. 714 -> 770 tests total (482 RoeSnip.Tests + 229 Core.Tests + 54
+      App.Tests + 5 Platform.Windows.Tests), all green.
 - [ ] 05-annotation-history: Port AnnotationHistory (Add/Remove/Replace command model with a
       real redo branch) and wire Undo/Redo shortcuts in the Avalonia overlay. (M)
 - [ ] 06-highlight-pixelate-magnifier: Highlight and Pixelate annotation tools (incl.

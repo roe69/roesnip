@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace RoeSnip.Tests;
+namespace RoeSnip.Core.Tests;
 
 /// <summary>Standalone reference GIF-LZW decoder for tests only — <see cref="RoeSnip.Core.Recording.Gif.GifLzwEncoder"/>
 /// has no matching decode side of its own (nothing in the app ever needs to decode a GIF it just

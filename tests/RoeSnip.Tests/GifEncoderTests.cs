@@ -10,7 +10,7 @@ namespace RoeSnip.Tests;
 
 /// <summary>GifEncoder streams: each frame's GCE + Image Descriptor + Local Color Table + LZW data
 /// is built and appended to the output file as it arrives, via the encoder's own octree
-/// quantizer/LZW compressor (see <c>RoeSnip.Recording.Gif</c>) rather than a live WPF encode salvage.
+/// quantizer/LZW compressor (see <c>RoeSnip.Core.Recording.Gif</c>) rather than a live WPF encode salvage.
 /// Covers the streaming lifecycle (Create/AddFrame/FinalizeAndClose end to end, decoded back through
 /// <see cref="GifBitmapDecoder"/>), the timestamped delta path's skip/changed-region/delay
 /// patch-behind behavior, and <see cref="GifEncoder.TryGetChangedBounds"/> directly.</summary>

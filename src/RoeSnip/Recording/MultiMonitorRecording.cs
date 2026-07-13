@@ -8,12 +8,21 @@ namespace RoeSnip.Recording;
 /// recording region across a monitor boundary — snap to the destination monitor, not true spanning
 /// capture; see PLAN-MULTIMON-RECORDING.md §3). No live WGC/device/window/thread dependency — same
 /// "make the testable slice a public class instead of an InternalsVisibleTo edit" convention this
-/// codebase already uses for <see cref="RecordingSizeEstimator"/>/<see cref="Mp4Encoder"/>'s pure
-/// math (see either class's own doc comment). Every rect here is virtual-desktop-absolute physical
-/// pixels — the convention <see cref="RecordingSession"/>'s own selection state migrated to (plan
-/// §4) — never monitor-relative, except where a method name says otherwise
-/// (<see cref="ToMonitorRelative"/>, the one conversion point back into <see cref="RegionRecorder"/>'s
-/// own monitor-relative contract, which this workstream deliberately left unchanged).</summary>
+/// codebase already uses for <see cref="Mp4Encoder"/>'s pure math (see that class's own doc
+/// comment). Every rect here is virtual-desktop-absolute physical pixels — the convention
+/// <see cref="RecordingSession"/>'s own selection state migrated to (plan §4) — never
+/// monitor-relative, except where a method name says otherwise (<see cref="ToMonitorRelative"/>,
+/// the one conversion point back into <see cref="RegionRecorder"/>'s own monitor-relative
+/// contract, which this workstream deliberately left unchanged).
+///
+/// RECORDING-CORE-EXTRACTION (2026-07): NOT retargeted onto RoeSnip.Core.Recording.MultiMonitorRecording
+/// despite that portable copy existing now — this file's own <see cref="MonitorInfo"/> carries a
+/// live Win32 HMONITOR handle that <see cref="WgcCapturer"/>/<see cref="DesktopDuplicationCapturer"/>
+/// read directly, while the portable <c>RoeSnip.Core.Capture.MonitorInfo</c> deliberately has no
+/// equivalent (an opaque cross-platform <c>BackendKey</c> string instead). Unifying the two would
+/// mean refactoring this app's live monitor-enumeration/capture layer, out of scope for a
+/// recording-math extraction — see docs/PARITY.md's 04-recording-core-extraction entry. Both
+/// copies implement the exact same geometry and are independently unit-tested.</summary>
 public static class MultiMonitorRecording
 {
     /// <summary>The bounding box of every enumerated monitor's own bounds — NOT necessarily a

@@ -1,7 +1,7 @@
 using System;
 using System.Numerics;
 
-namespace RoeSnip.Recording.Gif;
+namespace RoeSnip.Core.Recording.Gif;
 
 /// <summary>Maps a BGR888 color to its nearest entry in the CURRENT palette via a 32768-entry
 /// (5 bits each of B, G, R) direct-indexed lookup table, filled lazily on miss instead of

@@ -1,7 +1,7 @@
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording.Gif;
 using Xunit;
 
-namespace RoeSnip.Tests;
+namespace RoeSnip.Core.Tests;
 
 /// <summary>Locks the exact documented per-preset <see cref="GifEncoderOptions"/> values (the
 /// spec's contract, not just "some options object comes out") and the settings-string parse

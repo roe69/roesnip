@@ -3,7 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using RoeSnip.Imaging;
 using RoeSnip.Recording;
-using RoeSnip.Recording.Gif;
+using RoeSnip.Core.Recording.Gif;
 using Vortice.MediaFoundation;
 using Xunit;
 

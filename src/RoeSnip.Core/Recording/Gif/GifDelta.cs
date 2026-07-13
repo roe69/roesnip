@@ -1,21 +1,21 @@
 using System;
-using RoeSnip.Capture;
+using RoeSnip.Core.Capture;
 
-namespace RoeSnip.Recording.Gif;
+namespace RoeSnip.Core.Recording.Gif;
 
 /// <summary>The one pixel-level pass that turns a changed bounding box into GIF palette indices,
 /// combining three things that would otherwise each need their own scan over the same pixels:
 /// deciding which pixels are close enough to the last-painted baseline to skip (mapped to the
 /// reserved transparent index instead), mapping the rest through the nearest-color LUT with a
 /// gated ordered dither, and advancing the last-painted baseline for exactly the pixels this frame
-/// actually paints (see <see cref="RoeSnip.Recording.GifEncoder"/>'s class doc for why the
+/// actually paints (see <see cref="RoeSnip.Core.Recording.GifEncoder"/>'s class doc for why the
 /// baseline must hold SOURCE values, not quantized ones).
 ///
 /// Every output buffer (<paramref name="indexScratch"/> and the baseline itself) is caller-owned
 /// and reused frame to frame — this runs at recording cadence, so nothing here allocates.
 ///
 /// LOSSY RUN-EXTENSION (quality/fps expansion workstream, <paramref name="lossyRunThresholdSq"/>
-/// on the tiers that enable it — see <see cref="RoeSnip.Recording.Gif.GifEncoderOptions.LossyRunThresholdSq"/>'s
+/// on the tiers that enable it — see <see cref="RoeSnip.Core.Recording.Gif.GifEncoderOptions.LossyRunThresholdSq"/>'s
 /// own doc comment): a gifsicle-style lever, applied per row, left to right. Every row tracks the
 /// most recently PAINTED pixel's palette index (never the transparent index — a pixel classified
 /// transparent by the tolerance test above leaves that tracker untouched, so a lossy candidate can
@@ -54,7 +54,7 @@ public static class GifDelta
     /// <paramref name="channelTolerance"/> (per-channel, Chebyshev) of the baseline is left
     /// untouched: its index is written as <paramref name="transparentIndex"/> and the baseline is
     /// NOT updated for it (the whole point of the baseline holding source values — see the class
-    /// doc — is that a pixel sitting just inside tolerance must keep comparing against the same
+    /// doc — is that a pixel sitting just inside tolerance has to keep comparing against the same
     /// reference next frame, not silently drift).</summary>
     public static void ClassifyAndPaint(
         ReadOnlySpan<byte> currentPixelsBgra,
