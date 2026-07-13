@@ -171,6 +171,13 @@ public partial class OverlayWindow : Window
         // different effective scale than the Screen did.
         Opened += (_, _) =>
         {
+            // D6 parity (WPF OverlayWindow.xaml.cs:536-555): exclude this overlay window from
+            // screen capture. The platform handle only exists once Opened fires, so this can't
+            // move any earlier. See WindowCaptureExclusion's doc comment for why permanent
+            // application is safe (this app never re-captures the screen while an overlay window
+            // is up) and for the ROESNIP_DIAG_NOEXCLUDE=1 escape hatch.
+            AppShell.WindowCaptureExclusion.Apply(this);
+
             double actual = RenderScaling;
             if (actual > 0 && (Math.Abs(actual - _scaleX) > 1e-9 || Math.Abs(actual - _scaleY) > 1e-9))
             {

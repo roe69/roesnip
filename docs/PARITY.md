@@ -24,9 +24,19 @@ existing WPF test suite is the proof.
       Mp4SizePreset intentionally NOT ported here (need new types / land with items 11 & 20).
       JsonStringEnumConverter added to SettingsStore ahead of any Core enum field so it's in
       place before one lands. No platform-specific behavior; identical on all three OSes.
-- [ ] 02-capture-exclusion: Platform capture-exclusion seam (WDA_EXCLUDEFROMCAPTURE on
+- [x] 02-capture-exclusion: Platform capture-exclusion seam (WDA_EXCLUDEFROMCAPTURE on
       Windows, documented no-op elsewhere) applied to the Avalonia OverlayWindow, honoring
       ROESNIP_DIAG_NOEXCLUDE. (M)
+      Landed src/RoeSnip.App/AppShell/WindowCaptureExclusion.cs (Apply/ClearOnOwnWindows/
+      Restore, OperatingSystem.IsWindows() runtime-guarded so the net8.0 TFM still compiles),
+      called from OverlayWindow's Opened handler once the platform handle exists. Live-verified
+      on Windows: started a standalone RoeSnip.App instance, triggered its overlay ("capture"
+      verb), confirmed every overlay HWND reports GetWindowDisplayAffinity = 0x11
+      (WDA_EXCLUDEFROMCAPTURE), then ran a second-process headless --capture and confirmed the
+      resulting PNG shows the clean desktop behind the overlay, not the overlay's own dim/
+      chrome. Linux/macOS: documented no-op (already recorded under Accepted limitations below)
+      — X11/Wayland expose no per-window capture-exclusion API and Avalonia does not surface
+      NSWindow.sharingType.
 - [ ] 03-automation-pipe: Port the --auto JSON automation pipe (protocol, server, client)
       for the overlay-only command subset; distinct pipe name so both residents coexist. (L)
 - [ ] 04-recording-core-extraction: Move the from-scratch GIF pipeline plus
