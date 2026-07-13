@@ -7,9 +7,13 @@
     <UserControl.Styles>
         <!-- All icons are inline vector Path geometries (no image assets) — the same path data
              mini-language strings as the frozen WPF ToolbarControl.xaml. Uniform stretch into a
-             14x14 box; round caps/joins. -->
+             14x14 box; round caps/joins. Stroke is the RL cream body-text color (item 16) rather
+             than a flat white — every icon stays this one color regardless of button state (ghost
+             fills/tints do the state signaling instead), except the two buttons whose rest fill is
+             itself bright orange (Copy) or orange-tinted (Save), which override Stroke locally —
+             see those buttons below. -->
         <Style Selector="Path.icon">
-            <Setter Property="Stroke" Value="#F0F0F0"/>
+            <Setter Property="Stroke" Value="{StaticResource RlTextPrimaryBrush}"/>
             <Setter Property="StrokeThickness" Value="1.6"/>
             <Setter Property="StrokeLineCap" Value="Round"/>
             <Setter Property="StrokeJoin" Value="Round"/>
@@ -24,14 +28,92 @@
         <!-- Focusable=False everywhere: clicking a toolbar button must never move keyboard focus
              off the overlay window, so Esc/Enter/Ctrl+... always reach the window's key handler.
              The size ComboBox is the one deliberate exception (see its own comment below) — typing
-             a value needs real keyboard focus, exactly like WPF's SizeComboBox. -->
+             a value needs real keyboard focus, exactly like WPF's SizeComboBox.
+
+             Quiet-until-hovered (transparent rest state), matching WPF ToolButtonStyle: hover/press
+             is a flat neutral tint (v_ghost), the active tool gets a flat orange tint PLUS a solid
+             2px inset bar along the bottom edge — structure, not a color-washed fill, carries the
+             selected state (design-no-fading-glow-accents: no gradients/glows here either). -->
         <Style Selector="ToggleButton.tool">
             <Setter Property="Width" Value="34"/>
             <Setter Property="Height" Value="28"/>
             <Setter Property="Margin" Value="2"/>
-            <Setter Property="Background" Value="#2A2A2E"/>
-            <Setter Property="Foreground" Value="#EAEAEA"/>
-            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Grid>
+                        <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6"/>
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <Border x:Name="ActiveBar" Height="2" VerticalAlignment="Bottom"
+                                Background="{StaticResource RlPrimaryGoldBrush}"
+                                CornerRadius="0,0,5,5" IsVisible="False"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="ToggleButton.tool:pointerover /template/ Border#Bg">
+            <Setter Property="Background" Value="{StaticResource RlGhostHoverBrush}"/>
+        </Style>
+        <Style Selector="ToggleButton.tool:pressed /template/ Border#Bg">
+            <Setter Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
+        </Style>
+        <Style Selector="ToggleButton.tool:checked /template/ Border#Bg">
+            <Setter Property="Background" Value="{StaticResource RlActiveTintBrush}"/>
+        </Style>
+        <Style Selector="ToggleButton.tool:checked /template/ Border#ActiveBar">
+            <Setter Property="IsVisible" Value="True"/>
+        </Style>
+
+        <!-- Quiet action (WPF QuietActionButtonStyle): the same v_ghost look as the tool buttons —
+             transparent at rest, a flat orange tint on hover/press — used for Undo/Redo/SaveHdr/
+             Share/ShareMenu, none of which is THE one primary action of the row. -->
+        <Style Selector="Button.action">
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="6">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="Button.action:pointerover /template/ Border#Bg">
+            <Setter Property="Background" Value="{StaticResource RlGhostHoverBrush}"/>
+        </Style>
+        <Style Selector="Button.action:pressed /template/ Border#Bg">
+            <Setter Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
+        </Style>
+        <Style Selector="Button.action:disabled">
+            <Setter Property="Opacity" Value="0.4"/>
+        </Style>
+
+        <!-- Primary action (WPF ActionButtonStyle): solid orange fill, dark-on-primary text/icon, a
+             solid primary-dark edge. Flat color swaps only on hover/press — no gradient, no glow.
+             Used for Copy, the single most common terminal action. -->
+        <Style Selector="Button.action-primary">
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Background" Value="{StaticResource RlPrimaryGoldBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextOnPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlGoldBorderSolidBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
@@ -40,62 +122,76 @@
                     <Border x:Name="Bg" Background="{TemplateBinding Background}"
                             BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="{TemplateBinding BorderThickness}"
-                            CornerRadius="4">
+                            CornerRadius="6">
                         <ContentPresenter Content="{TemplateBinding Content}"
                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                 </ControlTemplate>
             </Setter>
         </Style>
-        <!-- Active tool is visually obvious: solid accent fill. Hover border wins over the checked
-             border, matching the WPF trigger order. -->
-        <Style Selector="ToggleButton.tool:checked /template/ Border#Bg">
-            <Setter Property="Background" Value="#3A7CFD"/>
-            <Setter Property="BorderBrush" Value="#5C9CFF"/>
+        <Style Selector="Button.action-primary:pointerover /template/ Border#Bg">
+            <Setter Property="Background" Value="{StaticResource RlPrimaryGoldLightBrush}"/>
         </Style>
-        <Style Selector="ToggleButton.tool:pointerover /template/ Border#Bg">
-            <Setter Property="BorderBrush" Value="#8A8A92"/>
+        <Style Selector="Button.action-primary:pressed /template/ Border#Bg">
+            <Setter Property="Background" Value="{StaticResource RlGoldBorderSolidBrush}"/>
+        </Style>
+        <!-- Disabled opacity matches Button.action's icon-button 0.4, not a full-button 0.5 — Copy
+             never actually goes disabled today, but keep it consistent if that changes. -->
+        <Style Selector="Button.action-primary:disabled">
+            <Setter Property="Opacity" Value="0.5"/>
         </Style>
 
-        <Style Selector="Button.action">
+        <!-- Secondary action (WPF SecondaryActionButtonStyle): translucent orange fill + orange
+             text/icon, warming up further on hover. One weight quieter than action-primary — used
+             for Save. -->
+        <Style Selector="Button.action-secondary">
             <Setter Property="Width" Value="34"/>
             <Setter Property="Height" Value="28"/>
             <Setter Property="Margin" Value="2"/>
-            <Setter Property="Background" Value="#2A2A2E"/>
-            <Setter Property="Foreground" Value="White"/>
-            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="{StaticResource RlActiveTintBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource RlPrimaryGoldBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlSecondaryBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <ControlTemplate>
-                    <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6">
                         <ContentPresenter Content="{TemplateBinding Content}"
                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                 </ControlTemplate>
             </Setter>
         </Style>
-        <Style Selector="Button.action:pointerover">
-            <Setter Property="Opacity" Value="0.85"/>
+        <Style Selector="Button.action-secondary:pointerover /template/ Border#Bg">
+            <Setter Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
         </Style>
-        <Style Selector="Button.action:disabled">
-            <Setter Property="Opacity" Value="0.4"/>
+        <Style Selector="Button.action-secondary:pointerover">
+            <Setter Property="Foreground" Value="{StaticResource RlPrimaryGoldLightBrush}"/>
+        </Style>
+        <Style Selector="Button.action-secondary:disabled">
+            <Setter Property="Opacity" Value="0.5"/>
         </Style>
 
-        <!-- The Cancel X: quiet until hovered, then unmistakably red. Always fully closes the
-             overlay (never the staged Esc behavior). Always visible — no hover-only reveal. -->
+        <!-- The Cancel X: quiet until hovered, then unmistakably red — the admonition-danger
+             literal (RlDangerHoverBrush, #DC2626), not a softer approximation. Always fully closes
+             the overlay (never a staged Esc behavior). Always visible — no hover-only reveal. -->
         <Style Selector="Button.cancel">
             <Setter Property="Width" Value="34"/>
             <Setter Property="Height" Value="28"/>
             <Setter Property="Margin" Value="2"/>
-            <Setter Property="Background" Value="#2A2A2E"/>
-            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <ControlTemplate>
-                    <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="4">
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}" CornerRadius="6">
                         <ContentPresenter Content="{TemplateBinding Content}"
                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
@@ -103,14 +199,14 @@
             </Setter>
         </Style>
         <Style Selector="Button.cancel:pointerover /template/ Border#Bg">
-            <Setter Property="Background" Value="#C62828"/>
+            <Setter Property="Background" Value="{StaticResource RlDangerHoverBrush}"/>
         </Style>
 
         <Style Selector="ToggleButton.swatch">
             <Setter Property="Width" Value="20"/>
             <Setter Property="Height" Value="20"/>
             <Setter Property="Margin" Value="2"/>
-            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
@@ -123,13 +219,19 @@
                 </ControlTemplate>
             </Setter>
         </Style>
+        <Style Selector="ToggleButton.swatch:pointerover /template/ Border#Bg">
+            <Setter Property="BorderBrush" Value="{StaticResource RlTextMutedBrush}"/>
+        </Style>
+        <!-- Checked ring uses the SITE's brand orange (not a generic white outline), so the
+             selected swatch reads as "the brand color says yes" rather than a plain highlight. -->
         <Style Selector="ToggleButton.swatch:checked /template/ Border#Bg">
-            <Setter Property="BorderBrush" Value="White"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
             <Setter Property="BorderThickness" Value="2"/>
         </Style>
     </UserControl.Styles>
 
-    <Border Background="#EE1B1B1D" CornerRadius="6" BorderBrush="#3F3F46" BorderThickness="1">
+    <Border Background="{StaticResource RlPanelBackgroundBrush}" CornerRadius="12"
+            BorderBrush="{StaticResource RlBorderStrongBrush}" BorderThickness="1">
         <StackPanel Margin="6">
             <!-- Row 1: tools + size (left) | Undo/Redo (right), an Auto|*|Auto Grid so both rows
                  span the same width and the panel reads symmetrically — mirrors WPF's own Row 1
@@ -175,7 +277,7 @@
                         <Path Classes="icon" Data="M3,2 H13 M8,2 V14"/>
                     </ToggleButton>
 
-                    <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+                    <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
                     <!-- Numeric size input (item 08 — replaced the fixed small/medium/big stroke
                          dots): shows "Npx" (stroke width) for the drawing tools and "Npt" (font
@@ -188,7 +290,7 @@
                 </StackPanel>
 
                 <StackPanel x:Name="HistoryGroupPanel" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
-                    <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+                    <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
                     <!-- Undo/Redo sit at a FIXED spot (before the collapsible text-style row), so
                          switching to the Text tool never shoves them sideways mid-reach. Both start
@@ -205,7 +307,7 @@
                 </StackPanel>
             </Grid>
 
-            <Border Height="1" Margin="1,4" Background="#3F3F46"/>
+            <Border Height="1" Margin="1,4" Background="{StaticResource RlBorderStrongBrush}"/>
 
             <!-- Row 2: the editable palette (bottom-left) | terminal actions (bottom-right) —
                  mirrors WPF's own Row 2 layout (ToolbarControl.xaml:641-770). -->
@@ -222,30 +324,36 @@
                 <StackPanel x:Name="ColorSwatchPanel" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center"/>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
-                    <Border Width="1" Margin="8,3" Background="#3F3F46"/>
+                    <Border Width="1" Margin="8,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
-                    <Button x:Name="CopyButton" Classes="action" Background="#2E7D32" ToolTip.Tip="Copy (Ctrl+C)">
-                        <!-- Two overlapping squares -->
-                        <Path Classes="icon" Data="M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5"/>
+                    <Button x:Name="CopyButton" Classes="action-primary" ToolTip.Tip="Copy (Ctrl+C)">
+                        <!-- Two overlapping squares. Stroke overridden to the on-primary dark ink —
+                             this button's fill is bright orange, so the shared cream Path.icon
+                             default would read poorly here. -->
+                        <Path Classes="icon" Stroke="{StaticResource RlTextOnPrimaryBrush}"
+                              Data="M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5"/>
                     </Button>
-                    <Button x:Name="SaveButton" Classes="action" Background="#1565C0" ToolTip.Tip="Save (Ctrl+S)">
-                        <!-- Down-arrow into tray -->
-                        <Path Classes="icon" Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
+                    <Button x:Name="SaveButton" Classes="action-secondary" ToolTip.Tip="Save (Ctrl+S)">
+                        <!-- Down-arrow into tray. Stroke overridden to the site's primary orange so
+                             it matches this button's orange text/border (v_secondary recipe). -->
+                        <Path Classes="icon" Stroke="{StaticResource RlPrimaryGoldBrush}"
+                              Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
                     </Button>
-                    <Button x:Name="SaveHdrButton" Classes="action" Background="#6A1B9A"
+                    <Button x:Name="SaveHdrButton" Classes="action"
                             ToolTip.Tip="Save HDR original (.jxr, untouched FP16)">
                         <!-- Save glyph with a small HDR badge -->
                         <Grid>
                             <Path Classes="icon" Width="13" Height="13" Margin="0,0,7,4"
                                   Data="M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11"/>
-                            <Border Background="#D91B1B1D" CornerRadius="2" Padding="1.5,0"
+                            <Border Background="{StaticResource RlBgSecondaryBrush}" CornerRadius="2" Padding="1.5,0"
                                     HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False">
-                                <TextBlock Text="HDR" FontSize="6.5" FontWeight="Bold" Foreground="#FFD54F"/>
+                                <TextBlock Text="HDR" FontSize="6.5" FontWeight="Bold"
+                                           Foreground="{StaticResource RlPrimaryGoldBrush}"/>
                             </Border>
                         </Grid>
                     </Button>
 
-                    <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+                    <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
                     <!-- Share: uploads the current selection render to a configured Sharing/*
                          provider (item 12). A real split button (not a single-click-opens-menu
@@ -266,12 +374,12 @@
                         </Button>
                         <Button x:Name="ShareMenuButton" Classes="action" Width="16" Margin="0,2,2,2" IsEnabled="False"
                                 ToolTip.Tip="Choose a provider to share to" ToolTip.ShowOnDisabled="True">
-                            <Path Fill="#F0F0F0" Data="M0,0 L4,4 L8,0 Z" Width="8" Height="4"
+                            <Path Fill="{StaticResource RlDropdownArrowBrush}" Data="M0,0 L4,4 L8,0 Z" Width="8" Height="4"
                                   Stretch="Uniform" IsHitTestVisible="False"/>
                         </Button>
                     </StackPanel>
 
-                    <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+                    <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
                     <Button x:Name="CancelButton" Classes="cancel" ToolTip.Tip="Cancel — close without capturing">
                         <Path Classes="icon" Width="11" Height="11" Data="M2,2 L14,14 M14,2 L2,14"/>
@@ -286,14 +394,14 @@
                  ToolbarControl.axaml.cs's FontFamilyChoices); the font size itself lives in
                  SizeComboBox (pt mode for the Text tool). -->
             <StackPanel x:Name="TextStylePanel" IsVisible="False">
-                <Border Height="1" Margin="1,4" Background="#3F3F46"/>
+                <Border Height="1" Margin="1,4" Background="{StaticResource RlBorderStrongBrush}"/>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <ToggleButton x:Name="BoldToggleButton" Classes="tool" Width="26"
                                   Content="B" FontWeight="Bold" ToolTip.Tip="Bold"/>
                     <ToggleButton x:Name="ItalicToggleButton" Classes="tool" Width="26"
                                   Content="I" FontStyle="Italic" FontWeight="Bold" ToolTip.Tip="Italic"/>
 
-                    <Border Width="1" Margin="4,3" Background="#3F3F46"/>
+                    <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
                     <ComboBox x:Name="FontFamilyComboBox" Width="220" Margin="2" VerticalAlignment="Center"
                               Focusable="False"/>

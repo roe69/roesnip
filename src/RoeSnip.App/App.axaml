@@ -3,6 +3,63 @@
              x:Class="RoeSnip.App.App"
              Name="RoeSnip"
              RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <!-- App-wide design tokens (item 16), ported verbatim from the WPF reference's
+         Overlay/ToolbarControl.xaml:8-70 (same key names, same colors) so every window in this
+         port draws from one shared palette instead of each XAML file inventing its own grays.
+         Tracks roeshare's NEUTRAL token set (E:\GitHub\RoeLite\roeshare\public\css\tokens.css): a
+         cool near-black foundation with hairline WHITE-ALPHA glass borders and ONE hot accent, the
+         brand ORANGE, reserved for primary actions / the active item / focus — never a second
+         arbitrary accent color (the WPF app's old per-button blue/green/purple fills are gone).
+         Alpha-tinted colors are pre-multiplied hex (#AARRGGBB), same convention WPF brushes use.
+         Defined at Application scope (not per-window) so ToolbarControl, SettingsWindow, and
+         TrayApp's toast all reference the exact same StaticResource instances. -->
+    <SolidColorBrush x:Key="RlTextPrimaryBrush" Color="#EDEDF0"/>
+    <!-- rl-text: neutral off-white body/icon color, ~16:1 on black — never pure white. -->
+    <SolidColorBrush x:Key="RlTextMutedBrush" Color="#A2A2AB"/>
+    <!-- rl-text-muted -->
+    <SolidColorBrush x:Key="RlTextDimBrush" Color="#71717B"/>
+    <!-- rl-text-dim: disabled/label text -->
+    <SolidColorBrush x:Key="RlTextOnPrimaryBrush" Color="#180D07"/>
+    <!-- dark text placed on bright orange fills -->
+    <SolidColorBrush x:Key="RlPrimaryGoldBrush" Color="#FF6B35"/>
+    <!-- rl-primary / rl-orange-400, the ONE brand accent (primary action color; key name kept for
+         parity with the WPF resource dictionary) -->
+    <SolidColorBrush x:Key="RlPrimaryGoldLightBrush" Color="#FF8A5C"/>
+    <!-- rl-primary-light / rl-orange-300, primary-button hover fill -->
+    <SolidColorBrush x:Key="RlGoldBorderSolidBrush" Color="#E5561F"/>
+    <!-- rl-primary-dark / rl-orange-500, solid-color button edges + press fill -->
+    <SolidColorBrush x:Key="RlBgSecondaryBrush" Color="#0E0E11"/>
+    <!-- rl-bg-secondary: card fill, used for popup/menu chrome and the toolbar panel -->
+    <SolidColorBrush x:Key="RlBgElevatedBrush" Color="#18181D"/>
+    <!-- rl-bg-elevated: nested chip/input fill (also SettingsWindow's PanelBrush) -->
+    <SolidColorBrush x:Key="RlBorderBrush" Color="#12FFFFFF"/>
+    <!-- rl-border, rgba(255,255,255,.07): the workhorse hairline for inputs/menus -->
+    <SolidColorBrush x:Key="RlBorderStrongBrush" Color="#24FFFFFF"/>
+    <!-- rl-border-strong, rgba(255,255,255,.14): emphasized edges — group dividers and floating
+         panel borders that need to read clearly against arbitrary screenshot content. -->
+    <SolidColorBrush x:Key="RlSecondaryBorderBrush" Color="#2EFFFFFF"/>
+    <!-- rgba(255,255,255,.18): v_secondary button border (Save) -->
+    <SolidColorBrush x:Key="RlGhostHoverBrush" Color="#0FFFFFFF"/>
+    <!-- rgba(255,255,255,.06): v_ghost hover fill (tool buttons, quiet actions) -->
+    <SolidColorBrush x:Key="RlGhostPressedBrush" Color="#1AFFFFFF"/>
+    <!-- rgba(255,255,255,.10): v_ghost pressed fill / v_secondary hover fill / dropdown row hover -->
+    <SolidColorBrush x:Key="RlActiveTintBrush" Color="#1FFF6B35"/>
+    <!-- rgba(primary,.12): the flat background tint half of the site's active-item recipe — the
+         active tool / Save's v_secondary fill get an orange tint, not a neutral one. -->
+    <SolidColorBrush x:Key="RlSelectedItemBrush" Color="#33FF6B35"/>
+    <!-- rgba(primary,.20): a still-flat, slightly stronger orange tint for a genuinely-selected
+         dropdown row -->
+    <SolidColorBrush x:Key="RlDangerHoverBrush" Color="#DC2626"/>
+    <!-- rl-danger-600: solid hover fill for Cancel and the exact "error red" used everywhere else
+         in the product (matches WPF's ShareProviderEditWindow ErrorBrush) — NOT a softer/lighter
+         coral approximation. -->
+    <SolidColorBrush x:Key="RlPanelBackgroundBrush" Color="#EB0E0E11"/>
+    <!-- The Modal glass-card recipe (rl-bg-secondary + hairline border) pushed from 50% to ~92%
+         opacity: a floating toolbar can't be as translucent as a card sitting on the site's own
+         near-black page background. -->
+    <SolidColorBrush x:Key="RlDropdownArrowBrush" Color="#A2A2AB"/>
+  </Application.Resources>
   <Application.Styles>
     <FluentTheme />
   </Application.Styles>

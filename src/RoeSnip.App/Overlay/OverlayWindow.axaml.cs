@@ -148,6 +148,11 @@ public partial class OverlayWindow : Window
     private Color _currentColor = Colors.Red;
     private double _currentStrokeWidth = 4.0;
 
+    /// <summary>Item 16: per-tool custom cursor bitmaps (tool/color/strokeWidth-keyed), the
+    /// Avalonia port of WPF's own ToolCursorCache. One instance per window/session — disposed
+    /// alongside the preview bitmap on Closed below.</summary>
+    private readonly ToolCursorCache _toolCursorCache = new();
+
     // Last-used text-annotation style (toolbar's text-style group, item 08) — applied to new text
     // annotations and carried across overlay sessions via _liveSettings, mirroring WPF's own
     // _textFontFamily/_textFontSize/_textBold/_textItalic fields (OverlayWindow.xaml.cs:174-177).
@@ -292,6 +297,7 @@ public partial class OverlayWindow : Window
         // never actually got to fire Closed (e.g. TryPlaceOnScreen succeeded but Show() threw
         // partway through the session, or the window was closed before ever being shown).
         Closed += (_, _) => DisposePreviewBitmap();
+        Closed += (_, _) => _toolCursorCache.Dispose();
 
         // Tunnel-routed handlers are the Avalonia analog of WPF's Preview* events — they run
         // before any child control (toolbar buttons, text editor) sees the event.
@@ -1678,7 +1684,15 @@ public partial class OverlayWindow : Window
                     return;
                 }
             }
-            Cursor = new Cursor(StandardCursorType.Cross);
+            if (_currentTool == AnnotationTool.Pixelate)
+            {
+                // The blur/pixelate tool drags out a region like the area selector, so its cursor
+                // is a fixed crosshair — NOT the brush circle whose diameter tracks the block size.
+                // Scrolling the block size must not grow or shrink the crosshair.
+                Cursor = new Cursor(StandardCursorType.Cross);
+                return;
+            }
+            Cursor = _toolCursorCache.GetOrCreate(_currentTool, _currentColor, _currentStrokeWidth);
             return;
         }
 

@@ -596,9 +596,97 @@ existing WPF test suite is the proof.
         appearing) - that needs an interactive secure-desktop consent click this agent has no
         tool access to perform; the code path itself is a line-for-line port of the WPF
         reference's already-shipped, real-world-exercised ElevationManager/SettingsWindow logic.
-- [ ] 16-visual-parity: Design-token theming (near-black surfaces, one #FF6B35 accent, OLED
+- [x] 16-visual-parity: Design-token theming (near-black surfaces, one #FF6B35 accent, OLED
       black Settings background) replacing the generic dark palette, plus per-tool
       color/width-aware bitmap cursors. (L)
+      Tokens: the WPF reference's full RL* brush set (Overlay/ToolbarControl.xaml:8-70 - text/bg/
+      border/ghost/active-tint/danger/panel colors, ONE hot accent #FF6B35 for every primary
+      action or active-item tint) ported verbatim into App.axaml's Application.Resources - same
+      key names, same hex, so ToolbarControl/SettingsWindow/TrayApp all draw from one shared
+      dictionary instead of each XAML file inventing its own grays. ToolbarControl.axaml:
+      replaced the old generic palette (#1B1B1D/#3F3F46/#5C9CFF) with the tokens AND the WPF
+      style structure they imply - ToggleButton.tool went from a solid-blue-fill checked state to
+      WPF's actual recipe (transparent rest, flat ghost-tint hover/press, flat orange TINT plus a
+      solid 2px inset accent bar along the bottom edge when checked - structure, not a color-wash,
+      carries the selected state, matching design-no-fading-glow-accents); Copy/Save split into
+      Button.action-primary (solid #FF6B35 fill, dark-on-primary icon) and Button.action-secondary
+      (translucent orange tint + orange icon/border) mirroring WPF's ActionButtonStyle/
+      SecondaryActionButtonStyle exactly, with Undo/Redo/SaveHdr/Share/ShareMenu on the quiet
+      Button.action (transparent, ghost-tint hover) since WPF reserves the one hot accent for
+      exactly Copy+Save, never a third color; Cancel's hover fill and every divider/panel border
+      now route through RlDangerHoverBrush/RlBorderStrongBrush/RlPanelBackgroundBrush instead of
+      the old literal hex. SettingsWindow.axaml: Window.Background stays a literal #FF000000 (OLED,
+      matches WPF SettingsWindow.xaml:9 exactly - deliberately NOT routed through RlBgSecondaryBrush,
+      since that near-black CARD tone is for surfaces sitting ON something, not the surface itself);
+      every TextBox/ComboBox/CheckBox/Button now themes from the same App.axaml tokens, the
+      previously-undefined "accent" class (already referenced by SaveButton's Classes attribute
+      but never styled - a latent no-op) got a real local style scoped to this window's own
+      Window.Styles (solid #FF6B35 fill), and the muted/dim/error text foregrounds were corrected
+      to their EXACT WPF equivalents instead of close-but-wrong guesses: labels now
+      RlTextMutedBrush (#A2A2AB, was #9A9A9A), hint/status text now RlTextDimBrush (#71717B, was
+      also #9A9A9A), and WaylandHotkeyCaption/ValidationErrorText now RlDangerHoverBrush (#DC2626
+      - confirmed as the product's actual "error red" via WPF's own ShareProviderEditWindow
+      ErrorBrush, which is the exact same hex; the App's old #FFFF6B6B was a close-but-wrong
+      lighter coral). TrayApp's toast (no WPF equivalent to mirror pixel-for-pixel - the WPF app's
+      own notifications are native unstyled NotifyIcon balloons - so brought onto the same token
+      system instead): background Color.FromRgb(0x2A,0x2A,0x2A) -> RlBgElevatedBrush (#18181D),
+      text Brushes.White -> RlTextPrimaryBrush (#EDEDF0, "never pure white"), the info/success
+      border's arbitrary blue (0x4A9EFF) -> the one hot accent RlPrimaryGoldBrush, and the error
+      border's soft coral (0xC05050) -> the exact RlDangerHoverBrush (#DC2626) - literal Color
+      fields (not an Application.Resources lookup) since ShowToast builds its whole visual tree in
+      code, matching WPF Recording/RecordingChrome.cs's own convention for in-code color constants.
+      Cursors: new Overlay/ToolCursorCache.cs is a line-for-line design port of WPF's
+      ToolCursorCache (CursorKey's tool/color/width cache key incl. the None/Text width-zeroing
+      normalization, CircleSpec's 1:1 diameter-tracks-stroke-width sizing with the 64x64/label-cap
+      overflow rule, the halo-then-tint circle glyph for every stroke tool, the I-beam+serifs+"T"
+      glyph for Text) rebuilt on Avalonia's actual primitives instead of WPF's DrawingVisual/GDI
+      P/Invoke dance: a tiny detached Control's Render(DrawingContext) override stands in for
+      DrawingVisual.RenderOpen(), RenderTargetBitmap.Render rasterizes it (measured/arranged
+      off-screen, no live window needed), and Avalonia's own Cursor(IBitmap, PixelPoint)
+      constructor replaces WPF's manual CreateDIBSection/CreateIconIndirect/DestroyIcon interop
+      entirely - no P/Invoke in this port at all. Same LRU-48 eviction shape as WPF, disposing
+      each evicted/torn-down Cursor. Wired into OverlayWindow.UpdateCursor at the exact spot WPF's
+      UpdateToolCursor calls GetOrCreate (after the Pixelate-stays-crosshair special case, for
+      every other non-Select tool), and _toolCursorCache.Dispose() added alongside the existing
+      Closed-time preview-bitmap cleanup. Bitmap cursors are a platform capability, not guaranteed
+      on every desktop backend Avalonia might run on - GetOrCreate wraps Build() in try/catch and,
+      on first failure, permanently falls back to StandardCursorType.Cross/Ibeam for the rest of
+      the session (logged once via Console.Error, never re-attempted or re-spammed per scroll-
+      wheel tick) - same idea as WPF's design but WPF's Win32 path essentially never fails, so this
+      exact fallback has no WPF equivalent to mirror. CursorKey/CircleSpec's pure sizing/
+      normalization logic ported into new App.Tests/ToolCursorCacheTests.cs, verbatim against the
+      WPF suite's own cases (rounding, None/Text zeroing, the label-cap boundary, canvas-size cap).
+      Actually exercising Build()'s RenderTargetBitmap/Cursor construction in a unit test was
+      evaluated and dropped: the only headless-rendering package compatible with this Avalonia
+      version (Avalonia.Headless.XUnit 12.0.5) pulls in xunit.v3, which collides (CS0433 duplicate
+      Fact/Theory/InlineData types) with the xunit v2 every other test project in this solution
+      already standardizes on - forcing that migration for one new test file was judged
+      disproportionate to this item's scope, so this class of test was not added.
+      Live-verified on Windows: started a standalone --automation instance (killed after, never
+      the user's resident), triggered the overlay, made an 800x600 selection, and screenshotted
+      (includeExcluded) the toolbar at native resolution, then sampled actual pixel values (not
+      just eyeballing the PNG, which was misleadingly smudged by chat-viewer downscaling) -
+      confirmed EXACT hex matches: the checked Select tool's tint (44,26,22, i.e. #FF6B35 at
+      RlActiveTintBrush's ~12% alpha over the panel) plus a solid (255,107,53) 2px accent bar along
+      its bottom edge; Copy solid (255,107,53); Save's translucent secondary fill also exactly
+      (43,25,21), matching the same alpha-blend math; the palette row and dividers rendering in
+      the new near-black/white-alpha tokens. NOT independently screenshotted: SettingsWindow (no
+      automation-pipe entry point opens it - triggering it live would need real tray-menu/UIA
+      input this agent's hard rules forbid; the window uses the exact same proven StaticResource-
+      into-Application.Resources mechanism as ToolbarControl, just not pixel-verified on its own),
+      hover-only states (Cancel's red hover, tool-button hover/press ghost tints, swatch hover ring)
+      which need live pointer movement the automation pipe has no command for, and the actual
+      custom cursor BITMAP on screen (OS cursor overlays are not composited into a screen-capture
+      pipeline built to produce clean, cursor-free screenshots, and the automation protocol has no
+      "select annotation tool" command to even reach the AnnotationTool.None-else branch that
+      calls GetOrCreate - adding one would be automation-protocol scope, not this item's) - all
+      three are interactive-session verification gaps, same category TESTING.md and items 07/08
+      already carry for click-drag interaction. No linux/mac degradation: every change in this
+      item is portable Avalonia (styles/resources/DrawingContext/RenderTargetBitmap/Cursor), no
+      Platform.* touched, and the bitmap-cursor try/catch fallback exists specifically so a
+      backend that can't do custom cursors degrades to the system cursor instead of crashing.
+      Build + full test suite green (974 tests: 419 WPF + 358 Core + 188 App + 9 Platform.Windows
+      - +24 in App.Tests for CursorKey/CircleSpec, ported verbatim from the WPF suite).
 - [ ] 17-perf-startup-idle: Warmup-thread slice of the instant-dim architecture (pre-JIT
       capture/tonemap/encode/window type, WGC Prewarm), IdleMemoryTrimmer port with a
       Platform trim hook, TieredCompilation=false plus publish-profile tuning. (L)

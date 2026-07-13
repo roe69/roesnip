@@ -3,21 +3,62 @@
         x:Class="RoeSnip.App.AppShell.SettingsWindow"
         Title="RoeSnip Settings"
         Width="440" SizeToContent="Height" CanResize="False"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        Background="#FF000000"
+        Foreground="{StaticResource RlTextPrimaryBrush}">
+  <!-- Item 16: OLED-black window background (matches WPF SettingsWindow.xaml:9 literally, not
+       routed through RlBgSecondaryBrush — the near-black CARD tone is deliberately reserved for
+       surfaces that sit ON something, whereas this whole window IS the surface) + the shared
+       App.axaml design tokens for every input/button/accent below, replacing the old generic
+       #FF9A9A9A / #FFFF6B6B guesses with the product's real muted-text and error-red values. -->
+  <Window.Styles>
+    <Style Selector="TextBox">
+      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+      <Setter Property="CaretBrush" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="Padding" Value="6,4"/>
+    </Style>
+    <Style Selector="ComboBox">
+      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+    </Style>
+    <Style Selector="CheckBox">
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="Margin" Value="0,4"/>
+    </Style>
+    <Style Selector="Button">
+      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+      <Setter Property="Padding" Value="10,5"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <!-- Save is the one primary action in this window, so it alone gets the solid brand-orange
+         fill (WPF's AccentBrush) — every other button here (Cancel, Change..., Browse...,
+         Providers...) stays the quiet neutral panel look above; ONE hot accent, not two. -->
+    <Style Selector="Button.accent">
+      <Setter Property="Background" Value="{StaticResource RlPrimaryGoldBrush}"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextOnPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlGoldBorderSolidBrush}"/>
+    </Style>
+  </Window.Styles>
+
   <StackPanel Margin="18" Spacing="4">
     <TextBlock Text="RoeSnip Settings" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10"/>
 
-    <TextBlock Text="Hotkey" Foreground="#FF9A9A9A"/>
+    <TextBlock Text="Hotkey" Foreground="{StaticResource RlTextMutedBrush}"/>
     <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
       <TextBox x:Name="HotkeyDisplay" Grid.Column="0" IsReadOnly="True" Margin="0,0,8,0"/>
       <Button x:Name="ChangeHotkeyButton" Grid.Column="1" Content="Change..." Click="ChangeHotkeyButton_Click"/>
     </Grid>
 
-    <TextBlock x:Name="WaylandHotkeyCaption" Foreground="#FFFF6B6B" TextWrapping="Wrap"
+    <TextBlock x:Name="WaylandHotkeyCaption" Foreground="{StaticResource RlDangerHoverBrush}" TextWrapping="Wrap"
                IsVisible="False" Margin="0,0,0,8"
                Text="Global hotkeys aren't available on Wayland. Bind a keyboard shortcut to `RoeSnip capture` in your desktop settings instead."/>
 
-    <TextBlock Text="Save directory" Foreground="#FF9A9A9A"/>
+    <TextBlock Text="Save directory" Foreground="{StaticResource RlTextMutedBrush}"/>
     <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
       <TextBox x:Name="SaveDirectoryBox" Grid.Column="0" Margin="0,0,8,0"/>
       <Button x:Name="BrowseButton" Grid.Column="1" Content="Browse..." Click="BrowseButton_Click"/>
@@ -27,7 +68,7 @@
     <CheckBox x:Name="CopyOnSelectCheckBox" Content="Confirming a selection also copies it to the clipboard"/>
     <CheckBox x:Name="ColorPickerCheckBox" Content="Enable the colour picker (click to pick a colour, loupe colour codes)"/>
     <CheckBox x:Name="RunAtStartupCheckBox" Content="Start RoeSnip at login"/>
-    <TextBlock x:Name="RunAtStartupHintText" Foreground="#FF9A9A9A" FontSize="11" TextWrapping="Wrap"
+    <TextBlock x:Name="RunAtStartupHintText" Foreground="{StaticResource RlTextDimBrush}" FontSize="11" TextWrapping="Wrap"
                IsVisible="False" Margin="20,0,0,4"/>
 
     <!-- Item 15: Windows-only elevated startup. Hidden entirely (IsVisible set in code-behind's
@@ -36,12 +77,12 @@
     <StackPanel x:Name="ElevatedStartupSection" Spacing="2" Margin="0,4,0,0">
       <CheckBox x:Name="RunElevatedCheckBox" Content="Run as administrator (persists via a Scheduled Task)"
                 IsCheckedChanged="RunElevatedCheckBox_IsCheckedChanged"/>
-      <TextBlock x:Name="ElevationStatusText" Foreground="#FF9A9A9A" FontSize="11" Margin="20,0,0,0"/>
+      <TextBlock x:Name="ElevationStatusText" Foreground="{StaticResource RlTextDimBrush}" FontSize="11" Margin="20,0,0,0"/>
       <Button x:Name="RestartElevatedButton" Content="Restart elevated now" Click="RestartElevatedButton_Click"
               HorizontalAlignment="Left" Margin="20,2,0,0"/>
     </StackPanel>
 
-    <TextBlock Text="Advanced tone-map overrides (leave blank for automatic)" Margin="0,10,0,4" Foreground="#FF9A9A9A"/>
+    <TextBlock Text="Advanced tone-map overrides (leave blank for automatic)" Margin="0,10,0,4" Foreground="{StaticResource RlTextDimBrush}"/>
     <Grid ColumnDefinitions="*,12,*">
       <StackPanel Grid.Column="0" Spacing="2">
         <TextBlock Text="Knee (0-1)"/>
@@ -54,14 +95,14 @@
     </Grid>
 
     <TextBlock Text="Sharing" FontSize="16" FontWeight="SemiBold" Margin="0,20,0,10"/>
-    <TextBlock Text="Default share provider" Foreground="#FF9A9A9A"/>
+    <TextBlock Text="Default share provider" Foreground="{StaticResource RlTextMutedBrush}"/>
     <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
       <ComboBox x:Name="DefaultShareProviderCombo" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Stretch"
                 SelectionChanged="DefaultShareProviderCombo_SelectionChanged"/>
       <Button x:Name="ManageProvidersButton" Grid.Column="1" Content="Providers..." Click="ManageProvidersButton_Click"/>
     </Grid>
 
-    <TextBlock x:Name="ValidationErrorText" Foreground="#FFFF6B6B" TextWrapping="Wrap"
+    <TextBlock x:Name="ValidationErrorText" Foreground="{StaticResource RlDangerHoverBrush}" TextWrapping="Wrap"
                IsVisible="False" Margin="0,8,0,0"/>
 
     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,16,0,0">

@@ -30,6 +30,17 @@ public sealed class TrayApp : ITrayNotifier
     private const string PrintScreenRegistryKeyPath = @"Control Panel\Keyboard";
     private const string PrintScreenValueName = "PrintScreenKeyForSnippingEnabled";
 
+    // Item 16 design tokens for the toast window built below — literal Color fields rather than an
+    // App.axaml resource lookup, since ShowToast constructs its whole visual tree in code (same
+    // convention WPF's own Recording/RecordingChrome.cs uses for its in-code DangerFill/DangerSolid
+    // constants). Values mirror App.axaml's RlBgElevatedBrush/RlTextPrimaryBrush/RlPrimaryGoldBrush/
+    // RlDangerHoverBrush exactly, so a toast reads as the same near-black+orange product as every
+    // XAML surface instead of the old generic dark-gray-with-a-blue-accent look.
+    private static readonly Color ToastBackground = Color.FromRgb(0x18, 0x18, 0x1D); // RlBgElevatedBrush
+    private static readonly Color ToastText = Color.FromRgb(0xED, 0xED, 0xF0); // RlTextPrimaryBrush
+    private static readonly Color ToastAccentBorder = Color.FromRgb(0xFF, 0x6B, 0x35); // RlPrimaryGoldBrush
+    private static readonly Color ToastErrorBorder = Color.FromRgb(0xDC, 0x26, 0x26); // RlDangerHoverBrush
+
     private static TrayApp? s_current;
     private static InstanceSignal s_initialAction = InstanceSignal.None;
     private static bool s_automationEnabled;
@@ -933,17 +944,15 @@ public sealed class TrayApp : ITrayNotifier
             {
                 Text = message,
                 TextWrapping = TextWrapping.Wrap,
-                Foreground = Brushes.White,
+                Foreground = new SolidColorBrush(ToastText),
                 Margin = new Thickness(14, 10),
                 MaxLines = 3,
             };
 
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2A)),
-                BorderBrush = new SolidColorBrush(isError
-                    ? Color.FromRgb(0xC0, 0x50, 0x50)
-                    : Color.FromRgb(0x4A, 0x9E, 0xFF)),
+                Background = new SolidColorBrush(ToastBackground),
+                BorderBrush = new SolidColorBrush(isError ? ToastErrorBorder : ToastAccentBorder),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
                 Child = text,
