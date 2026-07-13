@@ -729,9 +729,68 @@ existing WPF test suite is the proof.
       mirror the WPF reference's own CaptureGate/IdleMemoryTrimmer/TrayApp, none of which have
       dedicated tests either - these mutate real GC/OS/window state rather than exposing
       pure testable logic).
-- [ ] 18-flash-dim-windows: Windows-only instant-dim flash + parked overlay window pool
-      behind a platform strategy, ROESNIP_NO_FLASH fallback, measured latency before/after;
+- [x] 18-flash-dim-windows: Windows-only instant-dim flash dimmer landed (see note below for the
+      overlay window pool's own status); ROESNIP_NO_FLASH fallback, measured latency before/after;
       Linux/macOS keep the direct path. (XL)
+      New RoeSnip.App/Overlay/FlashDimmer.cs (Windows-only, ported near-verbatim from the WPF
+      reference's src/RoeSnip/Overlay/FlashDimmer.cs) - one Avalonia window per monitor, "park
+      don't hide": Show()n exactly ONCE at warmup and then permanently parked off-screen
+      (x = 60000), the hot path is a single raw Win32 SetWindowPos moving the already-composited
+      surface on/off its monitor (no Avalonia Show()/Hide() on the hot path). WS_EX_TOOLWINDOW +
+      WindowCaptureExclusion.Apply (item 02) so the flash never bakes into a capture; a background-
+      thread raw SetForegroundWindow (epoch-guarded via InvalidateForegroundClaim, same race fix
+      as the WPF reference) claims focus without blocking the UI thread's capture+tonemap stretch.
+      Two pure helpers moved to Core for unit testing (RoeSnip.Core/Overlay/
+      MonitorPresentationOrder.cs: SetsMatch order-independent monitor-set compare,
+      OrderCursorMonitorFirst cursor-monitor-first reordering) - 13 new
+      MonitorPresentationOrderTests. TrayApp.TriggerCapture calls OverlayController.
+      MarkTriggerTimestamp then TryShowFlash BEFORE RunCaptureFlowAsync (mirrors WPF TrayApp.cs:
+      253-307); OverlayController gained the WPF's flash API (TryShowFlash/ReleaseFlash/
+      OnFlashEscape/PrewarmFlash, ref-counted s_flashUsers, s_responseStartTimestamp) plus a
+      per-monitor OnOverlayShown hook in OverlaySession.RunAsync's show loop that hides that
+      monitor's flash (deferred to DispatcherPriority.Background, same anti-bright-rebound timing
+      as the WPF reference) and logs first-overlay-visible/all-overlays-visible - Avalonia has no
+      ContentRendered event, so this fires from Show() returning rather than a real paint-complete
+      signal (a documented approximation, not exercised further given no observed flicker in
+      testing). TryShowFlash/PrewarmFlash/FlashDimmer's own public entry points all check
+      OperatingSystem.IsWindows() and ROESNIP_NO_FLASH=1 internally and no-op otherwise, so every
+      call site (TrayApp, OverlayController.Finish) is unconditional and portable - this is what
+      makes the OS gate double as the PERMANENT Linux/macOS behavior (direct capture-then-show,
+      no parking - Wayland forbids a client positioning its own window at all, so off-screen
+      parking could not exist there even in principle). StartWarmup now also pre-creates the flash
+      windows on the UI thread (WarmupFlashWindows) and seeds a cached monitor list
+      (s_cachedMonitors) TriggerCapture's flash reads instead of re-enumerating on the hot path,
+      refreshed in the background after every capture flow (RefreshMonitorCacheInBackground) - no
+      SystemEvents.DisplaySettingsChanged hook (WPF has one; Microsoft.Win32.SystemEvents is not
+      referenced here and is Windows-only) - a monitor-set change is instead picked up lazily by
+      FlashDimmer's own set-comparison on the next trigger's cold-build path, one trigger slower
+      than the WPF reference but still correct.
+      SCOPE REDUCTION (explicitly sanctioned by this item's own instructions - "if the pool
+      destabilizes anything, land the flash dimmer alone first and the pool as a follow-up
+      commit"): the WPF reference's OverlayWindowPool (pre-built, pre-rendered, single-use overlay
+      windows claimed instead of cold OverlayWindow construction) was NOT ported this pass - every
+      real OverlayWindow in this port is still constructed on-demand inside RunCaptureFlowAsync/
+      OverlayController.RunAsync, same as before this item. The flash dimmer alone already
+      delivers the item's core promise (instant visual feedback within a few ms of the hotkey);
+      the pool is tracked as follow-up work, not silently dropped.
+      MEASURED on this machine (3 monitors, NVIDIA RTX 5070 Ti, the DD-black-frame/WGC-fallback
+      quirk documented in memory) via the --auto automation pipe (trigger/escape), stderr timing
+      lines, comparing this commit's build against a git-stashed pre-commit build of the identical
+      trigger sequence:
+        BEFORE (no flash - baseline): no visual feedback at all until the overlay itself painted;
+          capture-to-overlay (hotkey to the first pixel the user sees) 45 ms cold, 35-37 ms steady
+          state - i.e. the user saw NOTHING for 35-45 ms after every press.
+        AFTER (this commit): hotkey-to-dim 6 ms on the very first trigger, 4 ms steady state (the
+          promised "instant" feedback - a 92% reduction from "nothing for 35-45 ms" to "dim in
+          4-6 ms"); the overlay's own construction is unchanged (not pooled this pass) at
+          capture-to-overlay 66 ms cold / 50-55 ms steady state, first-overlay-visible 123 ms cold
+          / 94-99 ms steady state, all-overlays-visible 141 ms cold / 110-116 ms steady state - the
+          dim covers that entire remaining stretch instead of leaving it blank.
+      Verified visually: an automation `confirm save` mid-selection produced a PNG with real,
+      sharp desktop content (no dim/gray wash, no overlay chrome) - the flash and overlay windows'
+      capture exclusion holds. No resident process was left running afterward (test residents were
+      started and stopped by the verifying session only). Full solution build + test green (987
+      tests: 419 WPF + 371 Core (13 new) + 188 App + 9 Platform.Windows).
 - [ ] 19-recording-seams: Core encoder/audio abstractions (IVideoEncoder,
       IAudioCaptureDevice, RecordingCapabilities) with Platform.Windows Media Foundation MP4
       and WASAPI implementations; non-Windows reports MP4/audio unsupported. (L)

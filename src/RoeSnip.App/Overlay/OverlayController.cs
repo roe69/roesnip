@@ -70,6 +70,141 @@ public static class OverlayController
         return session is null ? "no active overlay session" : session.ConfirmForAutomation(action, path);
     }
 
+    // ---------- Instant-response flash dimmer (item 18, Windows-only) ----------
+    //
+    // The flash API lives here (not in Program.cs's capture flow) because RunCaptureFlowAsync only
+    // hands this package already-captured frames — far too late for an instant response.
+    // TrayApp.TriggerCapture calls TryShowFlash BEFORE starting AppComposition.RunCaptureFlowAsync;
+    // each monitor's flash is then hidden as its real overlay window is shown (see RunAsync's
+    // OnOverlayShown below), and TrayApp.ObserveCaptureTask calls ReleaseFlash in a finally as the
+    // backstop that guarantees the flash never outlives the flow on any no-overlay exit path
+    // (capture failed on every monitor, CaptureGate busy, an unexpected exception). Ported from the
+    // WPF app's identical OverlayController flash API — see FlashDimmer's own doc comment for the
+    // Windows-only/park-don't-hide mechanics this wraps.
+
+    private static int s_flashUsers; // UI thread only — capture flows that showed the flash
+    private static volatile bool s_flashCancelRequested;
+    private static long s_responseStartTimestamp; // Stopwatch timestamp of the last real trigger
+
+    /// <summary>Honest trigger-based latency instrumentation (ported from the WPF app's identical
+    /// r5-latency fix): stamps the moment the user's actual trigger happened (hotkey/tray click/pipe
+    /// signal), independent of whether the flash dimmer ends up showing anything — so every
+    /// downstream latency log measures what the user really experienced, not from whenever the
+    /// flash happened to start (or didn't, if it's disabled/unavailable/fails). Must be the first
+    /// statement of TrayApp.TriggerCapture.</summary>
+    internal static void MarkTriggerTimestamp() =>
+        s_responseStartTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+
+    /// <summary>Pre-creates the per-monitor flash windows (TrayApp warmup / display-change hook;
+    /// must run on the UI thread). No-ops on non-Windows (FlashDimmer's own OS gate) and when there
+    /// are no monitors.</summary>
+    public static void PrewarmFlash(IReadOnlyList<MonitorInfo> monitors)
+    {
+        if (monitors.Count == 0 || !OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        if (s_activeSession is not null || FlashDimmer.AnyVisible)
+        {
+            return; // never recreate windows out from under a live flash/session
+        }
+        try
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            FlashDimmer.EnsureCreated(monitors);
+            Console.Error.WriteLine(
+                $"RoeSnip: flash dimmer windows ready in {watch.ElapsedMilliseconds} ms ({monitors.Count} monitors)");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: flash dimmer pre-creation failed (non-fatal): {ex.Message}");
+        }
+    }
+
+    /// <summary>Shows the flash dim on every monitor. Returns false (and shows nothing) on
+    /// non-Windows, when ROESNIP_NO_FLASH=1 is set, when an overlay session is already on screen, or
+    /// when showing failed; the caller must call <see cref="ReleaseFlash"/> exactly once iff this
+    /// returned true. UI thread only.</summary>
+    public static bool TryShowFlash(IReadOnlyList<MonitorInfo> monitors)
+    {
+        if (monitors.Count == 0 || s_activeSession is not null || !OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+        // ROESNIP_NO_FLASH=1 falls back to the direct capture-then-show path — this is also the
+        // PERMANENT behavior on Linux/macOS (the OperatingSystem.IsWindows() check above already
+        // covers that; this env var exists as a diagnostic escape hatch on Windows too, matching the
+        // WPF reference).
+        if (Environment.GetEnvironmentVariable("ROESNIP_NO_FLASH") == "1")
+        {
+            return false;
+        }
+        try
+        {
+            s_flashCancelRequested = false;
+            FlashDimmer.ShowAll(monitors);
+            s_flashUsers++;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: flash dimmer show failed (non-fatal): {ex.Message}");
+            try { FlashDimmer.HideAll(); } catch { /* best-effort */ }
+            return false;
+        }
+    }
+
+    /// <summary>Backstop pair to a successful <see cref="TryShowFlash"/>: called from
+    /// TrayApp.ObserveCaptureTask's finally once the whole capture flow has ended. Counted rather
+    /// than boolean so a second trigger that showed the (already-visible) flash and then bounced off
+    /// the CaptureGate can't hide it out from under the first flow's still-pending capture.</summary>
+    public static void ReleaseFlash()
+    {
+        if (s_flashUsers == 0)
+        {
+            return;
+        }
+        if (--s_flashUsers == 0)
+        {
+            try { FlashDimmer.HideAll(); }
+            catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
+        }
+    }
+
+    /// <summary>Esc pressed while a flash window had focus. If the real session is already up (the
+    /// keydown was queued behind the blocking capture stretch and only dispatched now), route it as
+    /// a normal stage-cancel; otherwise flag the pending flow so its session cancels the moment it
+    /// starts, and drop the dim immediately for responsiveness.</summary>
+    internal static void OnFlashEscape()
+    {
+        if (s_activeSession is not null)
+        {
+            s_activeSession.CancelStageFromFlash();
+            return;
+        }
+        s_flashCancelRequested = true;
+        try { FlashDimmer.HideAll(); }
+        catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
+    }
+
+    private static bool ConsumeFlashCancelRequest()
+    {
+        bool requested = s_flashCancelRequested;
+        s_flashCancelRequested = false;
+        return requested;
+    }
+
+    /// <summary>Consume-on-read (zeroes the field): a stale timestamp left over from a PREVIOUS
+    /// trigger must never be attributed to a later session. Falls back to "now" so a session that
+    /// was never hotkey-initiated (or whose trigger timestamp was never set) still gets a sane
+    /// relative latency log instead of a bogus multi-second figure.</summary>
+    private static long TakeResponseBaseTimestamp()
+    {
+        long triggerTimestamp = s_responseStartTimestamp;
+        s_responseStartTimestamp = 0;
+        return triggerTimestamp != 0 ? triggerTimestamp : System.Diagnostics.Stopwatch.GetTimestamp();
+    }
+
     /// <summary>One OverlayWindow per monitor; runs until the user cancels (Esc) or confirms
     /// (Enter / double-click / toolbar action). Returns null on cancel. On confirm, performs
     /// Copy/Save side effects itself (clipboard + PNG dialog) per DESIGN.md, then returns a
@@ -115,6 +250,14 @@ public static class OverlayController
         private bool _confirmInProgress;
         private int _modalDepth; // O1 audit fix — see BeginModal/EndModal
 
+        // Item 18 (flash dimmer) latency instrumentation: the Stopwatch timestamp this session's
+        // latency logs measure from (TakeResponseBaseTimestamp — the real trigger when this session
+        // was hotkey/tray/pipe-initiated, else session start), and how many of this session's own
+        // windows have been shown so far (drives the first-overlay-visible/all-overlays-visible logs
+        // and the per-monitor flash hide — see OnOverlayShown).
+        private long _responseBaseTimestamp;
+        private int _shownCount;
+
         // ---------- Cross-monitor selection (item 09) ----------
         //
         // Both null for every ordinary, single-monitor selection — the pre-existing per-window
@@ -148,6 +291,18 @@ public static class OverlayController
 
         public Task<OverlayResult?> RunAsync()
         {
+            _responseBaseTimestamp = TakeResponseBaseTimestamp();
+
+            // Item 18: Esc pressed while only the flash dimmer was up — the user already cancelled
+            // this capture before the overlay could appear. Honor it instead of flashing a full
+            // overlay set for a frame; FlashDimmer.HideAll() already ran synchronously from
+            // OnFlashEscape, so there's nothing left to hide here.
+            if (ConsumeFlashCancelRequest())
+            {
+                Finish(null);
+                return _completion.Task;
+            }
+
             // Correlate every frame to its Avalonia screen and set position/size BEFORE Show()
             // (mixed-DPI discipline, PLAN-XPLAT.md §3.3). A frame with no exactly-matching screen
             // is skipped (logged inside TryPlaceOnScreen), never guessed.
@@ -197,9 +352,16 @@ public static class OverlayController
                     window.Closed += (_, _) => Finish(null);
                     window.Show();
                     shown.Add(window);
+                    OnOverlayShown(window);
                 }
 
                 _activeWindow = _windows.FirstOrDefault(w => w.Monitor.IsPrimary) ?? _windows[0];
+                // Item 18: invalidate the flash's own best-effort foreground claim right before
+                // staking this one — without it, a flash SetForegroundWindow call delayed by
+                // thread-pool/AV interference could complete AFTER this Activate() and silently
+                // steal keyboard focus back onto a still-on-screen (until its own deferred hide)
+                // flash window. See FlashDimmer.InvalidateForegroundClaim's own doc comment.
+                FlashDimmer.InvalidateForegroundClaim();
                 _activeWindow.Activate();
             }
             catch
@@ -227,6 +389,45 @@ public static class OverlayController
 
             return _completion.Task;
         }
+
+        /// <summary>Item 18: called once per monitor right after RunAsync's Show() call for that
+        /// monitor's window. Also the source of the "first-overlay-visible"/"all-overlays-visible"
+        /// latency logs (stamped here, since Show() returning is the honest "content is on screen"
+        /// moment in this port — Avalonia has no ContentRendered event to hook the way the WPF
+        /// reference does). The actual flash-hide is deferred to Background priority so it runs
+        /// after Avalonia's own next layout/render pass has actually painted this window — hiding
+        /// early would uncover the (still-dim, but very real) desktop underneath for a beat, exactly
+        /// the bright-rebound bug the WPF reference's own OnOverlayContentRendered doc comment
+        /// documents fixing; hiding late is always invisible (the overlay is opaque and the flash is
+        /// itself capture-excluded, so a brief overlap can never leak into a screenshot).</summary>
+        private void OnOverlayShown(OverlayWindow window)
+        {
+            if (_finished)
+            {
+                return;
+            }
+
+            _shownCount++;
+            double elapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(_responseBaseTimestamp).TotalMilliseconds;
+            if (_shownCount == 1)
+            {
+                Console.Error.WriteLine(
+                    $"RoeSnip: first-overlay-visible {elapsedMs:0} ms (monitor {window.Monitor.Index})");
+            }
+            bool allShown = _shownCount == _windows.Count;
+            if (allShown)
+            {
+                Console.Error.WriteLine($"RoeSnip: all-overlays-visible {elapsedMs:0} ms");
+            }
+
+            string deviceName = window.Monitor.DeviceName;
+            Avalonia.Threading.Dispatcher.UIThread.Post(
+                () => FlashDimmer.HideForMonitor(deviceName), Avalonia.Threading.DispatcherPriority.Background);
+        }
+
+        /// <summary>Item 18: Esc pressed while a flash window had focus, but the real session has
+        /// already started by the time the key is dispatched — route it as a normal stage-cancel.</summary>
+        internal void CancelStageFromFlash() => OnCommand(OverlayCommand.CancelStage);
 
         /// <summary>Mouse-enter (or a click) on another overlay activates it, per DESIGN.md — only
         /// the OS-focused window receives keyboard input, so this is what lets Esc/Enter/Ctrl+C/
@@ -1153,6 +1354,20 @@ public static class OverlayController
             {
                 s_activeSession = null;
             }
+
+            // Item 18: belt-and-braces flash cleanup — a session that finishes before every monitor
+            // rendered (e.g. Cancel arriving mid-construction) may still have a flash window up on a
+            // monitor OnOverlayShown never reached. InvalidateForegroundClaim first for the same
+            // race-closing reason as the session-start Activate() call above: a session that
+            // finishes before ever activating must still invalidate the flash's pending foreground
+            // claim, or a delayed SetForegroundWindow could steal focus onto a now-parked flash
+            // window after everything has already torn down. (TrayApp.ObserveCaptureTask's
+            // ReleaseFlash is the separate, ref-counted backstop for the "no session was ever
+            // created" exit paths — HideAll here is a no-op once ReleaseFlash also runs, since
+            // FlashWindow.HideFlash is itself idempotent.)
+            FlashDimmer.InvalidateForegroundClaim();
+            try { FlashDimmer.HideAll(); }
+            catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
 
             _completion.TrySetResult(result);
         }

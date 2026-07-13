@@ -285,13 +285,46 @@ public sealed class TrayApp : ITrayNotifier
 
     private void TriggerCapture()
     {
+        // Honest trigger-based latency instrumentation (item 18, ported from the WPF reference):
+        // stamp the moment the ACTUAL trigger happened — before the flash, before capture, before
+        // anything else — so every downstream latency log measures what the user really
+        // experienced, not from whenever the flash happened to start (or didn't, if it's
+        // disabled/unavailable/fails). Must be the first statement in this method.
+        Overlay.OverlayController.MarkTriggerTimestamp();
+
+        // Instant-response flash (item 18, Windows only — see Overlay/FlashDimmer.cs): dim every
+        // monitor within milliseconds of the trigger, BEFORE the capture+tonemap stretch inside
+        // RunCaptureFlowAsync blocks this UI thread. TryShowFlash itself no-ops (returns false) on
+        // non-Windows and when ROESNIP_NO_FLASH=1 is set, so this is unconditionally safe to call —
+        // those cases simply fall straight through to the direct capture-then-show path, which is
+        // also the PERMANENT behavior on Linux/macOS. The ReleaseFlash in ObserveCaptureTask's
+        // finally is the backstop that guarantees the flash never outlives the flow on any exit path
+        // (capture failed on every monitor, CaptureGate busy, an unexpected exception).
+        bool flashShown = false;
+        try
+        {
+            var flashWatch = Stopwatch.StartNew();
+            var monitors = Volatile.Read(ref s_cachedMonitors) ?? new CaptureService().EnumerateMonitors();
+            flashShown = Overlay.OverlayController.TryShowFlash(monitors);
+            if (flashShown)
+            {
+                Console.Error.WriteLine($"RoeSnip: hotkey-to-dim {flashWatch.ElapsedMilliseconds} ms");
+            }
+        }
+        catch (Exception ex)
+        {
+            // The flash is a pure perceived-latency optimization — its failure must never block the
+            // actual capture.
+            Console.Error.WriteLine($"RoeSnip: flash dimmer failed (non-fatal): {ex.Message}");
+        }
+
         // Fire-and-forget from a UI event handler: RunCaptureFlowAsync reports its own failures
         // via ITrayNotifier (this) internally, but the task itself must still be observed so an
         // unexpected exception can't become an unobserved-task-exception crash later.
-        _ = ObserveCaptureTask(AppComposition.RunCaptureFlowAsync(_settings, this));
+        _ = ObserveCaptureTask(AppComposition.RunCaptureFlowAsync(_settings, this), flashShown);
     }
 
-    private async Task ObserveCaptureTask(Task captureTask)
+    private async Task ObserveCaptureTask(Task captureTask, bool flashShown)
     {
         try
         {
@@ -300,6 +333,16 @@ public sealed class TrayApp : ITrayNotifier
         catch (Exception ex)
         {
             ShowError($"Capture failed: {ex.Message}");
+        }
+        finally
+        {
+            if (flashShown)
+            {
+                Overlay.OverlayController.ReleaseFlash();
+            }
+            // Re-enumerate for the NEXT trigger's flash placement off the hot path (monitors may
+            // have changed while the overlay was up).
+            RefreshMonitorCacheInBackground();
         }
     }
 
@@ -374,20 +417,36 @@ public sealed class TrayApp : ITrayNotifier
         _lifetime.Shutdown();
     }
 
-    // ---------------- Cold-start warmup (item 17) ----------------
+    // ---------------- Cold-start warmup (items 17 + 18) ----------------
 
-    /// <summary>Pre-pays the heavy first-capture costs off the UI thread, ported from the WPF
-    /// app's TrayApp.StartWarmup/RunWarmup (TrayApp.cs:872-1145) minus the flash-dimmer/overlay-
-    /// pool steps — this port has no parked-window architecture yet (PLAN-XPLAT.md tracks that as
-    /// separate, later work; this is the sanctioned "no window parking" safe slice). What remains:
-    /// JIT of the tone-map/PNG-encode path, monitor enumeration, construction of the real
-    /// OverlayWindow type (BAML/XAML-load + layout JIT), and one REAL throwaway capture per
-    /// monitor through the exact CaptureService path a hotkey press takes (pre-provisioning
-    /// WgcCapturer's cached device on Windows via <see cref="RoeSnip.Platform.Windows.WgcCapturer.Prewarm"/>).
-    /// That throwaway capture may briefly show the OS capture border on WGC-fallback monitors —
-    /// accepted at tray startup, same as the WPF reference (no session is left running, so no
-    /// border persists). Fully try/caught and never fatal — a warmup failure just means the first
-    /// real hotkey press is as slow as it always was, not a crash.</summary>
+    /// <summary>The monitor list the instant-response flash uses (item 18) — TriggerCapture must
+    /// not pay a fresh DXGI/portal/RandR enumeration on the hot path. Seeded by warmup, refreshed in
+    /// the background after every capture flow; a stale list costs at worst one flash on outdated
+    /// bounds (the real overlay always re-enumerates via CaptureService, and FlashDimmer's own
+    /// set-comparison self-heals on the NEXT trigger once the background refresh lands).</summary>
+    private static IReadOnlyList<MonitorInfo>? s_cachedMonitors;
+
+    /// <summary>Pre-pays the heavy first-capture costs off the UI thread, ported from the WPF app's
+    /// TrayApp.StartWarmup/RunWarmup (TrayApp.cs:872-1145), now including its flash-dimmer step
+    /// (item 18 — see Overlay/FlashDimmer.cs's own doc comment for the Windows-only park-don't-hide
+    /// mechanics this pre-creates). What runs here: monitor enumeration (seeds
+    /// <see cref="s_cachedMonitors"/>), pre-creation of the per-monitor flash dimmer windows
+    /// (marshalled to the UI thread — they are Avalonia windows), JIT of the tone-map/PNG-encode
+    /// path, construction of the real OverlayWindow type (XAML-load + layout JIT), and one REAL
+    /// throwaway capture per monitor through the exact CaptureService path a hotkey press takes
+    /// (pre-provisioning WgcCapturer's cached device on Windows via
+    /// <see cref="RoeSnip.Platform.Windows.WgcCapturer.Prewarm"/>). That throwaway capture may
+    /// briefly show the OS capture border on WGC-fallback monitors — accepted at tray startup, same
+    /// as the WPF reference (no session is left running, so no border persists). Fully try/caught
+    /// and never fatal — a warmup failure just means the first real hotkey press is as slow as it
+    /// always was, not a crash.
+    ///
+    /// No parked overlay WINDOW pool yet (only the flash dimmer's own tiny parked windows) — see
+    /// docs/PARITY.md item 18's own note: the WPF reference's OverlayWindowPool (pre-built,
+    /// pre-rendered, single-use overlay windows) is explicitly optional follow-up work per that
+    /// item's own instructions ("if the pool destabilizes anything, land the flash dimmer alone
+    /// first"). Every real OverlayWindow in this port is still constructed on-demand inside
+    /// RunCaptureFlowAsync/OverlayController.RunAsync.</summary>
     private void StartWarmup()
     {
         // Cold-start CaptureGate race fix (ported from the WPF app's identical S5 comment): flag
@@ -412,7 +471,13 @@ public sealed class TrayApp : ITrayNotifier
         var stopwatch = Stopwatch.StartNew();
         try
         {
+            // Ordering mirrors the WPF reference's own RunWarmup: the flash windows ARE the instant
+            // (few-ms) response — every other step is slower and only matters once the flash is
+            // already up, so it comes right after monitor enumeration seeds s_cachedMonitors (which
+            // the flash needs before it can position itself).
             var monitors = WarmupCaptureBackendInit();
+            Volatile.Write(ref s_cachedMonitors, monitors);
+            WarmupFlashWindows(monitors);
             WarmupToneMapAndEncode();
             WarmupOverlayWindowType();
             WarmupCaptureSessions(monitors);
@@ -448,6 +513,50 @@ public sealed class TrayApp : ITrayNotifier
     /// setup cost that a hotkey press would pay for the first time.</summary>
     private static IReadOnlyList<MonitorInfo> WarmupCaptureBackendInit()
         => new CaptureService().EnumerateMonitors();
+
+    /// <summary>Item 18: marshals the flash dimmer window pre-creation onto the UI thread (Avalonia
+    /// windows must live there; the rest of warmup deliberately stays on this background thread).
+    /// PrewarmFlash itself no-ops on non-Windows and when there are no monitors, so this is safe to
+    /// call unconditionally on every OS.</summary>
+    private static void WarmupFlashWindows(IReadOnlyList<MonitorInfo> monitors)
+    {
+        if (monitors.Count == 0)
+        {
+            return;
+        }
+        try
+        {
+            Dispatcher.UIThread.Post(() => Overlay.OverlayController.PrewarmFlash(monitors));
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: flash dimmer warmup scheduling failed (non-fatal): {ex.Message}");
+        }
+    }
+
+    /// <summary>Item 18: background monitor re-enumeration for <see cref="s_cachedMonitors"/>,
+    /// called after every capture flow (ObserveCaptureTask's finally). No display-change hook yet
+    /// (unlike the WPF reference's SystemEvents.DisplaySettingsChanged subscription) — a monitor set
+    /// change is instead picked up lazily by the next trigger's own TryShowFlash/FlashDimmer.ShowAll
+    /// call, whose cold-build path (FlashDimmer.EnsureCreated's own set-comparison) already handles
+    /// a stale cached list correctly, just without the pre-warm before that one trigger. Acceptable:
+    /// docking/resolution changes are rare compared to the steady-state hot path this item optimizes
+    /// for.</summary>
+    private static void RefreshMonitorCacheInBackground()
+    {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var monitors = new CaptureService().EnumerateMonitors();
+                Volatile.Write(ref s_cachedMonitors, monitors);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: monitor cache refresh failed (non-fatal): {ex.Message}");
+            }
+        });
+    }
 
     /// <summary>Exercises the exact code path a real capture's tone-map/encode stretch runs
     /// (SdrImage.FromCapturedFrame -> ToneMapper.MapToSdr -> PngWriter.Encode) against a small
