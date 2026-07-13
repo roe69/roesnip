@@ -620,7 +620,19 @@ public partial class OverlayWindow : Window
         }
         else if (ctrl && e.Key == Key.Z)
         {
-            _annotations.Undo();
+            if ((e.KeyModifiers & KeyModifiers.Shift) != 0)
+            {
+                _annotations.Redo(); // Ctrl+Shift+Z, the other common redo binding
+            }
+            else
+            {
+                _annotations.Undo();
+            }
+            e.Handled = true;
+        }
+        else if (ctrl && e.Key == Key.Y)
+        {
+            _annotations.Redo();
             e.Handled = true;
         }
     }

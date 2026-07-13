@@ -92,8 +92,17 @@ existing WPF test suite is the proof.
       construction adapted to BackendKey/Scale) and RecordingSizeEstimatorTests moved into
       RoeSnip.Core.Tests. 714 -> 770 tests total (482 RoeSnip.Tests + 229 Core.Tests + 54
       App.Tests + 5 Platform.Windows.Tests), all green.
-- [ ] 05-annotation-history: Port AnnotationHistory (Add/Remove/Replace command model with a
-      real redo branch) and wire Undo/Redo shortcuts in the Avalonia overlay. (M)
+- [x] 05-annotation-history: Port AnnotationHistory (Add/Remove/Replace command model with a
+      real redo branch) and wire Undo/Redo shortcuts in the Avalonia overlay. (M) AnnotationHistory
+      moved into RoeSnip.Core.Overlay verbatim (WPF's own copy is left untouched — only the
+      Avalonia AnnotationLayer now shares it, to avoid touching the frozen WPF app). Avalonia
+      AnnotationLayer's placement/text-commit paths now route through history.Add instead of a
+      bare list.Add, and Undo()/Redo()/Clear() mirror WPF's (minus the Select-tool Deselect()
+      calls, since Feature B doesn't exist in the port yet — that's item 07). Ctrl+Z/Ctrl+Y/
+      Ctrl+Shift+Z wired in OverlayWindow.axaml.cs's key handler, same bindings as WPF. Redo
+      toolbar button is item 08. 19 AnnotationHistoryTests ported verbatim into
+      RoeSnip.Core.Tests (against a plain string payload, proving the class stays
+      framework-free). No linux/mac degradation — this is pure model logic.
 - [ ] 06-highlight-pixelate-magnifier: Highlight and Pixelate annotation tools (incl.
       PreviewSource wiring and the pixelate loupe UX) plus magnifier parity (wheel-adjustable
       SampleRadius, fixed footprint, click-to-copy). (L)

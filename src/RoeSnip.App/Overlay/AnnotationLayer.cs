@@ -2,6 +2,7 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using RoeSnip.Core.Overlay;
 
 namespace RoeSnip.App.Overlay;
 
@@ -36,18 +37,22 @@ public sealed class AnnotationShape
 /// kept in sync by the owning OverlayWindow from the correlated Screen's Scaling — the Avalonia
 /// analog of WPF's CompositionTarget.TransformToDevice), and separately offers
 /// <see cref="RenderForExport"/> for 1:1 physical-pixel rasterization at export time. Maintains a
-/// simple linear undo stack (Ctrl+Z pops the most recently committed shape). Ported from the
-/// frozen WPF app's src/RoeSnip/Overlay/AnnotationLayer.cs.</summary>
+/// linear undo/redo action history (<see cref="AnnotationHistory{T}"/>, shared with the WPF app via
+/// RoeSnip.Core) — Ctrl+Z pops the most recently performed action and applies its inverse; Ctrl+Y /
+/// Ctrl+Shift+Z re-applies it; a fresh action clears the redo branch. Ported from the frozen WPF
+/// app's src/RoeSnip/Overlay/AnnotationLayer.cs.</summary>
 public sealed class AnnotationLayer : Control
 {
-    private readonly List<AnnotationShape> _shapes = new();
+    private readonly AnnotationHistory<AnnotationShape> _history = new();
     private AnnotationShape? _inProgress;
 
     /// <summary>1 physical pixel == 1/DeviceScaleX (or Y) DIPs on this window's monitor.</summary>
     public double DeviceScaleX { get; set; } = 1.0;
     public double DeviceScaleY { get; set; } = 1.0;
 
-    public bool HasAnnotations => _shapes.Count > 0;
+    public bool HasAnnotations => _history.Shapes.Count > 0;
+    public bool CanUndo => _history.CanUndo;
+    public bool CanRedo => _history.CanRedo;
 
     public AnnotationLayer()
     {
@@ -104,7 +109,7 @@ public sealed class AnnotationLayer : Control
 
         if (!isDegenerate)
         {
-            _shapes.Add(_inProgress);
+            _history.Add(_inProgress);
         }
         _inProgress = null;
         InvalidateVisual();
@@ -135,23 +140,35 @@ public sealed class AnnotationLayer : Control
             Text = text,
         };
         shape.PointsPx.Add(physicalPt);
-        _shapes.Add(shape);
+        _history.Add(shape);
         InvalidateVisual();
     }
 
+    /// <summary>Undoes the most recently performed history action (Add/Remove/Replace). No-op when
+    /// there is nothing to undo.</summary>
     public void Undo()
     {
-        if (_shapes.Count == 0)
+        if (!_history.Undo())
         {
             return;
         }
-        _shapes.RemoveAt(_shapes.Count - 1);
+        InvalidateVisual();
+    }
+
+    /// <summary>Re-applies the most recently undone action (Ctrl+Y / Ctrl+Shift+Z). No-op when
+    /// nothing was undone; the redo branch empties whenever a NEW action is performed.</summary>
+    public void Redo()
+    {
+        if (!_history.Redo())
+        {
+            return;
+        }
         InvalidateVisual();
     }
 
     public void Clear()
     {
-        _shapes.Clear();
+        _history.Clear();
         _inProgress = null;
         InvalidateVisual();
     }
@@ -162,7 +179,7 @@ public sealed class AnnotationLayer : Control
         double sy = DeviceScaleY <= 0 ? 1.0 : DeviceScaleY;
         using (dc.PushTransform(Matrix.CreateScale(1.0 / sx, 1.0 / sy)))
         {
-            foreach (var shape in _shapes)
+            foreach (var shape in _history.Shapes)
             {
                 Draw(dc, shape, translateX: 0, translateY: 0);
             }
@@ -179,7 +196,7 @@ public sealed class AnnotationLayer : Control
     /// is intentionally excluded — export only ever runs after EndShape/CommitText.</summary>
     public void RenderForExport(DrawingContext dc, Point originPx)
     {
-        foreach (var shape in _shapes)
+        foreach (var shape in _history.Shapes)
         {
             Draw(dc, shape, -originPx.X, -originPx.Y);
         }
