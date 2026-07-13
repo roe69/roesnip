@@ -141,7 +141,7 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <StackPanel x:Name="ToolsGroupPanel" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <ToggleButton x:Name="SelectToolButton" Classes="tool"
                                   ToolTip.Tip="Select / move (default)" IsChecked="True">
                         <Path Classes="icon" StrokeDashArray="2.2,1.6" Data="M1,1 H15 V15 H1 Z"/>
@@ -187,7 +187,7 @@
                               ToolTip.Tip="Size: type a value or pick a preset (scroll wheel over the image also resizes)"/>
                 </StackPanel>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
+                <StackPanel x:Name="HistoryGroupPanel" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Right">
                     <Border Width="1" Margin="4,3" Background="#3F3F46"/>
 
                     <!-- Undo/Redo sit at a FIXED spot (before the collapsible text-style row), so

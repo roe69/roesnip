@@ -1,0 +1,186 @@
+using System;
+using System.Collections.Generic;
+using RoeSnip.Core.Capture;
+
+namespace RoeSnip.Core.Overlay;
+
+/// <summary>Which part of a selection rect a physical-pixel point landed on, for deciding whether a
+/// pointer-down should start a resize drag, a move drag, or a brand-new selection. Framework-free
+/// (no WPF/Avalonia dependency) so it can be shared by <see cref="SpanningSelectionMath.ApplyResize"/>
+/// and both ports' own SelectionAdorner hit-testing. Ported from the frozen WPF app's
+/// src/RoeSnip/Overlay/SelectionAdorner.cs.</summary>
+public enum SelectionHandle
+{
+    None,
+    TopLeft, Top, TopRight,
+    Right, BottomRight, Bottom,
+    BottomLeft, Left,
+    Body,
+}
+
+/// <summary>Which of a spanning selection's LOCAL (per-monitor) edges are also edges of the TRUE
+/// virtual-desktop rect, versus merely where that monitor's own screen boundary happened to cut the
+/// selection off. A corner/side resize handle only ever makes sense on a real edge — dragging a
+/// "handle" that's actually just a monitor-boundary clip would silently be dragging the wrong thing
+/// (see <see cref="SpanningSelectionMath.Distribute"/>'s doc comment for how these are computed).
+/// A SelectionAdorner's own RealEdges property defaults to <see cref="All"/>, which is exactly every
+/// ordinary (non-spanning) selection's answer — this type only ever varies while spanning. Ported
+/// from the frozen WPF app's src/RoeSnip/Overlay/SpanningSelectionMath.cs.</summary>
+[Flags]
+public enum SelectionEdges
+{
+    None = 0,
+    Left = 1,
+    Top = 2,
+    Right = 4,
+    Bottom = 8,
+    All = Left | Top | Right | Bottom,
+}
+
+/// <summary>One monitor's own slice of a spanning candidate rect, as computed by
+/// <see cref="SpanningSelectionMath.Distribute"/>: which monitor (by index into the list passed in),
+/// its local (monitor-relative) intersection rect, and which of that rect's 4 edges are real edges
+/// of the shared virtual rect rather than a clip at this monitor's own screen boundary.</summary>
+public readonly record struct SpanningHit(int MonitorIndex, RectPhysical LocalRect, SelectionEdges RealEdges);
+
+/// <summary>Result of one <see cref="SpanningSelectionMath.Distribute"/> call: the candidate rect
+/// after clamping to the virtual desktop's own bounding box, every monitor that ended up with a
+/// non-empty intersection, and whether the result counts as "spanning" (touches 2+ monitors).</summary>
+public readonly record struct SpanningDistribution(
+    RectPhysical ClampedVirtual, IReadOnlyList<SpanningHit> Hits, bool IsSpanning);
+
+/// <summary>Pure geometry for the cross-monitor ("spanning") selection feature — no UI-framework
+/// Window/Point type, no mutable session/window state, nothing here touches pixels. Ported verbatim
+/// (semantics unchanged) from the frozen WPF app's src/RoeSnip/Overlay/SpanningSelectionMath.cs so it
+/// can be shared by both ports and unit-tested directly without spinning up any window. The only
+/// deviation from the WPF original is that <see cref="ApplyResize"/> takes plain (double x, double y)
+/// instead of a WPF/Avalonia Point — this project has no UI-framework dependency at all (see
+/// RoeSnip.Core.Overlay.AnnotationGeometry for the same "plain doubles, not a framework Point"
+/// convention already established for the annotation math). See docs/DESIGN-MULTIMON-SELECTION.md.</summary>
+public static class SpanningSelectionMath
+{
+    /// <summary>The union of every monitor's own bounds — the outer box a spanning drag candidate
+    /// gets clamped to before being distributed (a drag can't select space with no monitor at all,
+    /// e.g. the gap between two non-adjacent displays, even though it CAN span the monitors on
+    /// either side of that gap).</summary>
+    public static RectPhysical ComputeVirtualDesktopBounds(IReadOnlyList<RectPhysical> monitorBounds)
+    {
+        if (monitorBounds.Count == 0)
+        {
+            return default;
+        }
+
+        int left = int.MaxValue, top = int.MaxValue, right = int.MinValue, bottom = int.MinValue;
+        foreach (var b in monitorBounds)
+        {
+            left = Math.Min(left, b.Left);
+            top = Math.Min(top, b.Top);
+            right = Math.Max(right, b.Right);
+            bottom = Math.Max(bottom, b.Bottom);
+        }
+        return new RectPhysical(left, top, right, bottom);
+    }
+
+    public static RectPhysical ClampToVirtualDesktop(RectPhysical r, RectPhysical virtualDesktopBounds) => new(
+        Math.Clamp(r.Left, virtualDesktopBounds.Left, virtualDesktopBounds.Right),
+        Math.Clamp(r.Top, virtualDesktopBounds.Top, virtualDesktopBounds.Bottom),
+        Math.Clamp(r.Right, virtualDesktopBounds.Left, virtualDesktopBounds.Right),
+        Math.Clamp(r.Bottom, virtualDesktopBounds.Top, virtualDesktopBounds.Bottom));
+
+    /// <summary>Same shape as OverlayWindow's own ClampToFrame (the single-monitor Move drag's
+    /// clamp): slides <paramref name="r"/> back inside <paramref name="bounds"/> by moving its
+    /// ORIGIN only, preserving width/height, rather than clamping each of its 4 edges independently
+    /// the way <see cref="ClampToVirtualDesktop"/> (used by Resize/NewSelection, where only one or
+    /// two edges move per gesture and stopping just that edge at the boundary is the correct,
+    /// expected behavior) does. A SpanningMove candidate needs THIS instead: independently clamping
+    /// opposite edges that are both out of bounds by different amounts shrinks the rect, which reads
+    /// as the selection silently losing size mid-drag instead of sliding to a stop at the edge, like
+    /// every other drag in this app already does. Only shrinks the rect (down to `bounds`' own size)
+    /// in the degenerate case where it doesn't even fit — never grows it.</summary>
+    public static RectPhysical SlideToBounds(RectPhysical r, RectPhysical bounds)
+    {
+        var n = r.Normalized();
+        int w = Math.Min(n.Width, bounds.Width);
+        int h = Math.Min(n.Height, bounds.Height);
+        int left = Math.Clamp(n.Left, bounds.Left, bounds.Left + Math.Max(0, bounds.Width - w));
+        int top = Math.Clamp(n.Top, bounds.Top, bounds.Top + Math.Max(0, bounds.Height - h));
+        return RectPhysical.FromSize(left, top, w, h);
+    }
+
+    private static RectPhysical IntersectRects(RectPhysical a, RectPhysical b) => new(
+        Math.Max(a.Left, b.Left), Math.Max(a.Top, b.Top),
+        Math.Min(a.Right, b.Right), Math.Min(a.Bottom, b.Bottom));
+
+    /// <summary>The one primitive that makes both a fresh drag AND a resize/move of an already-placed
+    /// spanning selection correct (see OverlayWindow's NewSelection/SpanningResize/SpanningMove
+    /// handlers, which all funnel their candidate rect through here rather than any window's own
+    /// local frame): clamps <paramref name="candidateVirtual"/> to the virtual desktop's own bounding
+    /// box, intersects the result against every monitor in <paramref name="monitorBounds"/>, and for
+    /// each non-empty intersection also works out which of that monitor's own 4 local edges are REAL
+    /// edges of the (clamped) candidate rather than just where this monitor's screen happened to cut
+    /// it off — an edge is real iff the intersection didn't have to move it inward from the clamped
+    /// candidate's own edge, i.e. <c>intersection.Left == clamped.Left</c> and so on for the other 3.
+    /// This is exactly the same comparison <see cref="IntersectRects"/> makes internally, just
+    /// surfaced so the caller (and the Adorner, transitively) knows which handles are meaningful to
+    /// offer: a handle on a clipped edge would resize based on this window's own visible slice, which
+    /// silently desyncs from the true rect the moment the selection is redrawn. Degenerates to the
+    /// plain single-monitor case whenever the candidate only ever touches one monitor (IsSpanning
+    /// stays false, that monitor's RealEdges is always <see cref="SelectionEdges.All"/> since nothing
+    /// else can clip it away from itself).</summary>
+    public static SpanningDistribution Distribute(
+        RectPhysical candidateVirtual, RectPhysical virtualDesktopBounds, IReadOnlyList<RectPhysical> monitorBounds)
+    {
+        var clamped = ClampToVirtualDesktop(candidateVirtual.Normalized(), virtualDesktopBounds);
+
+        var hits = new List<SpanningHit>(monitorBounds.Count);
+        for (int i = 0; i < monitorBounds.Count; i++)
+        {
+            var bounds = monitorBounds[i];
+            var intersection = IntersectRects(clamped, bounds);
+            if (intersection.Width <= 0 || intersection.Height <= 0)
+            {
+                continue;
+            }
+
+            var edges = SelectionEdges.None;
+            if (intersection.Left == clamped.Left) edges |= SelectionEdges.Left;
+            if (intersection.Top == clamped.Top) edges |= SelectionEdges.Top;
+            if (intersection.Right == clamped.Right) edges |= SelectionEdges.Right;
+            if (intersection.Bottom == clamped.Bottom) edges |= SelectionEdges.Bottom;
+
+            var localRect = new RectPhysical(
+                intersection.Left - bounds.Left, intersection.Top - bounds.Top,
+                intersection.Right - bounds.Left, intersection.Bottom - bounds.Top);
+            hits.Add(new SpanningHit(i, localRect, edges));
+        }
+
+        return new SpanningDistribution(clamped, hits, hits.Count >= 2);
+    }
+
+    /// <summary>Applies one resize handle's delta to <paramref name="start"/>, replacing the edge(s)
+    /// that handle owns with (<paramref name="x"/>, <paramref name="y"/>)'s coordinates — a pure
+    /// function of (start rect, handle, pointer position), so it works identically whether "pointer
+    /// position" is a window's own local physical pixels (the plain single-monitor Resize drag) or a
+    /// virtual-desktop physical position (SpanningResize). Normalizes the result so a handle dragged
+    /// past its opposite edge (e.g. dragging Right left of Left) flips into a valid, non-negative-size
+    /// rect instead of staying inverted.</summary>
+    public static RectPhysical ApplyResize(RectPhysical start, SelectionHandle handle, double x, double y)
+    {
+        int left = start.Left, top = start.Top, right = start.Right, bottom = start.Bottom;
+        int ix = (int)x, iy = (int)y;
+
+        switch (handle)
+        {
+            case SelectionHandle.TopLeft: left = ix; top = iy; break;
+            case SelectionHandle.Top: top = iy; break;
+            case SelectionHandle.TopRight: right = ix; top = iy; break;
+            case SelectionHandle.Right: right = ix; break;
+            case SelectionHandle.BottomRight: right = ix; bottom = iy; break;
+            case SelectionHandle.Bottom: bottom = iy; break;
+            case SelectionHandle.BottomLeft: left = ix; bottom = iy; break;
+            case SelectionHandle.Left: left = ix; break;
+        }
+
+        return new RectPhysical(left, top, right, bottom).Normalized();
+    }
+}

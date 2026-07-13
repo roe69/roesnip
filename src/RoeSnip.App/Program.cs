@@ -21,7 +21,22 @@ public sealed record OverlayResult(
     CapturedFrame SourceFrame,       // original (uncropped) frame for this monitor — for HDR export
     bool CopyPerformed,              // true if Overlay already wrote the image to the clipboard
     string? SavedPngPath,            // non-null if the user used Save and it succeeded
-    bool SaveHdrRequested            // true if the user clicked "Save HDR" (independent of settings.AutoSaveHdrCopy)
+    bool SaveHdrRequested,           // true if the user clicked "Save HDR" (independent of settings.AutoSaveHdrCopy)
+    // Cross-monitor selection (item 09): non-null when RenderedImage is a byte composite stitched
+    // from multiple monitors' own already-tone-mapped crops (OverlaySession.RenderSpanningSelection),
+    // in which case Monitor/SelectionPx/SourceFrame above describe only the PRIMARY monitor
+    // (whichever held the drag-end cursor) — they exist purely to satisfy this record's non-nullable
+    // shape and must not be used for anything beyond that when this is set. Virtual-desktop physical
+    // pixels. Mirrors the WPF app's OverlayResult.SpanningVirtualSelectionPx.
+    RectPhysical? SpanningVirtualSelectionPx = null,
+    // Cross-monitor selection HDR save: every contributing monitor's own raw-frame crop geometry
+    // (RoeSnip.Core.Capture.SpanningFrameCrop — a Core type, not an App one, so both this project
+    // and Platform.Windows's JxrWriter.WriteSpanning can reference it without Platform.Windows
+    // taking a dependency on App), non-null exactly when SpanningVirtualSelectionPx is — populated
+    // unconditionally on a spanning result (not just when SaveHdrRequested is true), mirroring how
+    // SourceFrame/SelectionPx above are always populated regardless of what the user clicked, so
+    // settings.AutoSaveHdrCopy works the same way for a spanning result as for a plain one.
+    IReadOnlyList<SpanningFrameCrop>? SpanningFrameCrops = null
 );
 
 /// <summary>Implemented by AppShell/TrayApp.cs (WP-X2). Passed into
@@ -144,6 +159,13 @@ public static class AppComposition
     // Wired by Program.RegisterPlatformHooks on Windows builds — null on non-Windows builds/RIDs,
     // exactly like the WPF app's WriteJxr being null before WP-C landed.
     public static Action<string, CapturedFrame, RectPhysical>? WriteHdrExport { get; set; }
+
+    // Cross-monitor selection (item 09) HDR save: the spanning twin of WriteHdrExport, wired
+    // alongside it by Program.RegisterPlatformHooks — null on non-Windows builds/RIDs (spanning HDR
+    // save stays reported-unsupported there, same as the single-monitor path). Mirrors the WPF app's
+    // AppComposition.WriteJxrSpanning; see RoeSnip.Platform.Windows.JxrWriter.WriteSpanning's own
+    // doc comment for why stitching raw scRGB crops from different monitors is well-defined.
+    public static Action<string, RectPhysical, IReadOnlyList<SpanningFrameCrop>>? WriteHdrExportSpanning { get; set; }
 
     // Set by AppShell/TrayApp.cs (WP-X2) via [ModuleInitializer].
     public static Func<string[], int>? RunTrayApp { get; set; }
@@ -452,7 +474,39 @@ public static class AppComposition
                     return; // user cancelled
                 }
 
-                if (result.SaveHdrRequested || settings.AutoSaveHdrCopy)
+                if (result.SpanningVirtualSelectionPx is { } spanningVirtualPx)
+                {
+                    // Cross-monitor selection (item 09) HDR save: stitching raw scRGB crops from
+                    // multiple monitors IS well-defined (see JxrWriter.WriteSpanning's own doc
+                    // comment) — the "no defined operation" reasoning that used to gate this only
+                    // ever applied to combining already-TONE-MAPPED crops, an unrelated code path
+                    // (RenderSpanningSelection, used for Copy/Save-PNG) that this never touches.
+                    if (result.SaveHdrRequested || settings.AutoSaveHdrCopy)
+                    {
+                        if (WriteHdrExportSpanning is not null && captureService.SupportsHdrExport
+                            && result.SpanningFrameCrops is { Count: > 0 } crops)
+                        {
+                            try
+                            {
+                                string hdrPath = BuildHdrPath(settings, result.SavedPngPath);
+                                WriteHdrExportSpanning(hdrPath, spanningVirtualPx, crops);
+                            }
+                            catch (Exception ex)
+                            {
+                                notifier?.ShowError($"Failed to save HDR copy: {ex.Message}");
+                            }
+                        }
+                        else if (result.SaveHdrRequested)
+                        {
+                            // Only surface this when the user explicitly asked for it; a silent
+                            // auto-save setting shouldn't nag on every capture on a platform whose
+                            // backend has no HDR export path, or on the (should-never-happen) case
+                            // of a spanning result with an empty crop list.
+                            notifier?.ShowError("HDR export is not available on this platform/build.");
+                        }
+                    }
+                }
+                else if (result.SaveHdrRequested || settings.AutoSaveHdrCopy)
                 {
                     if (WriteHdrExport is not null && captureService.SupportsHdrExport)
                     {
@@ -687,6 +741,8 @@ public static class Program
         // vice versa), so the App wires the hook on the windows TFM instead. Compiled only when
         // Platform.Windows is referenced (windows TFM, win/empty RID).
         AppComposition.WriteHdrExport = RoeSnip.Platform.Windows.JxrWriter.Write;
+        // Cross-monitor selection (item 09) HDR save — see WriteHdrExportSpanning's own doc comment.
+        AppComposition.WriteHdrExportSpanning = RoeSnip.Platform.Windows.JxrWriter.WriteSpanning;
 #endif
     }
 

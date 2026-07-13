@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Media;
 using RoeSnip.App.Overlay;
+using RoeSnip.Core.Overlay;
 using Xunit;
 
 namespace RoeSnip.App.Tests;

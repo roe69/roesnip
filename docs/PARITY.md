@@ -260,8 +260,52 @@ existing WPF test suite is the proof.
       degradation — this is pure UI/rendering/model logic with no OS-specific behavior; the font
       list naturally differs per OS (FontManager.Current.SystemFonts enumerates whatever's actually
       installed there), which is correct behavior, not a gap.
-- [ ] 09-spanning-selection: Multi-monitor spanning selection (SpanningSelectionMath to Core,
+- [x] 09-spanning-selection: Multi-monitor spanning selection (SpanningSelectionMath to Core,
       per-window distribution, real-edge handles) plus the spanning HDR .jxr export. (XL)
+      SpanningSelectionMath.cs ported verbatim (Distribute/ComputeVirtualDesktopBounds/
+      ClampToVirtualDesktop/SlideToBounds/ApplyResize + SelectionEdges/SpanningHit/
+      SpanningDistribution) into RoeSnip.Core.Overlay, with SelectionHandle moved there too (was
+      App-only) so both ports' adorners and the shared resize math reference one enum; 20 unit
+      tests ported into RoeSnip.Core.Tests, all passing with no WPF Window involved. Reworked
+      OverlayController.OverlaySession off the one-monitor model: session-level `_spanningVirtual`/
+      `_spanningPrimaryWindow`, `OnSpanningCandidate` (the shared distribute+redistribute primitive
+      every NewSelection/SpanningResize/SpanningMove drag funnels through), `FinalizeNewSelectionDrag`,
+      `RenderSpanningSelection` (byte-composite of already-tone-mapped per-window crops, opaque-black
+      gap fill), `ConfirmSpanningAsync`, spanning-aware `GetSelectionForAutomation`/
+      `SetSelectionForAutomation`/`ConfirmSaveForAutomation`. OverlayWindow gained `SpanningResize`/
+      `SpanningMove` drag modes (hit-tested through `SelectionAdorner.HitTestHandle`, gated by
+      `RealEdges` so a handle only appears on a genuine selection edge, never a monitor-boundary
+      clip), `SetSpanningLocalSelection`/`NotifySpanningDragEnded`, toolbar suppression during a live
+      spanning drag on non-owner windows. `SelectionAdorner` gained `RealEdges`/`SuppressBadge`/
+      `OverrideSizeLabel`. `ToolbarControl.SetSpanningMode` collapses the tool/undo-redo/palette rows
+      while spanning (Copy/Save/Save HDR/Cancel stay live). HDR: `JxrWriter.WriteSpanning`/
+      `BuildSpanningFloatBuffer` ported into RoeSnip.Platform.Windows (stitches each contributing
+      monitor's raw scRGB crop via `ReadPixelScRgb`, linear-black gap fill, same WIC 128bppRGBAFloat
+      encode `Write` uses), a new `RoeSnip.Core.Capture.SpanningFrameCrop` type (Core, not App, so
+      Platform.Windows can reference it without depending on App), `AppComposition.
+      WriteHdrExportSpanning` hook wired in `Program.RegisterPlatformHooks` alongside the existing
+      single-monitor hook, and the HDR-export branch in `RunCaptureFlowAsync` now branches on
+      `OverlayResult.SpanningVirtualSelectionPx`. 4 new WIC round-trip tests
+      (`JxrSpanningRoundTripTests.cs`, ported into `RoeSnip.Platform.Windows.Tests`) cover headroom
+      survival across two monitors' offsets, the gap fill, a degenerate Bgra8Srgb crop, and the
+      out-of-bounds-crop throw. Build + full solution test suite green (887 tests: 482 WPF +
+      280 Core + 116 App + 9 Platform.Windows). Live-verified on Windows via the automation pipe
+      against this machine's real 3-monitor HDR layout (a standalone `--automation` instance started
+      and killed by this item's own session): `select` with a rect straddling the portrait DISPLAY1/
+      landscape DISPLAY3 seam echoed back the full unclipped virtual rect (not a per-window slice),
+      `confirm copy`/`confirm save` produced a correctly-dimensioned (600x400) stitched PNG, and
+      (after restarting the standalone instance with `AutoSaveHdrCopy` temporarily flipped in its own
+      settings.json, then restored byte-for-byte afterward) a spanning `.jxr` was written alongside
+      the PNG confirming the HDR hook fires end to end. Record (MP4/GIF) for a spanning selection was
+      NOT ported — RoeSnip.App has no Recording subsystem at all yet (a separate, not-yet-landed
+      item), so there is nothing for a spanning selection to integrate with; this mirrors the WPF
+      app's own history where spanning-record required its own separate `spanning-recording` work
+      track. Non-Windows (linux/mac net8.0 TFM): spanning SDR selection/render/Copy/Save all build
+      and run identically (no OS-specific code in the distribute/render path); spanning HDR save
+      stays reported "not available on this platform/build" via the existing `WriteHdrExportSpanning
+      is null` branch, exactly as the single-monitor HDR path already degrades — no new gap
+      introduced. Mixed-DPI is untested (this machine is all-96-DPI), matching the WPF reference's
+      own documented v1 cut.
 - [ ] 10-capture-hot-path-perf: WGC capturer pre-provisioning/caching/keepalive/Prewarm in
       Platform.Windows plus the ToneMapper LUT + AVX2 fast path (with reuseOutput) in Core,
       byte-identical to the scalar reference. (L)

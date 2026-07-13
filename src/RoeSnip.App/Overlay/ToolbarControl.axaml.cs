@@ -50,6 +50,8 @@ public partial class ToolbarControl : UserControl
     private readonly ToggleButton _selectToolButton;
     private readonly ToggleButton[] _toolButtons;
     private readonly StackPanel _colorSwatchPanel;
+    private readonly StackPanel _toolsGroupPanel;
+    private readonly StackPanel _historyGroupPanel;
     private readonly Button _saveHdrButton;
     private readonly Button _undoButton;
     private readonly Button _redoButton;
@@ -116,6 +118,8 @@ public partial class ToolbarControl : UserControl
         var pixelateToolButton = Find<ToggleButton>("PixelateToolButton");
         var textToolButton = Find<ToggleButton>("TextToolButton");
         _colorSwatchPanel = Find<StackPanel>("ColorSwatchPanel");
+        _toolsGroupPanel = Find<StackPanel>("ToolsGroupPanel");
+        _historyGroupPanel = Find<StackPanel>("HistoryGroupPanel");
         _saveHdrButton = Find<Button>("SaveHdrButton");
         _undoButton = Find<Button>("UndoButton");
         _redoButton = Find<Button>("RedoButton");
@@ -176,6 +180,22 @@ public partial class ToolbarControl : UserControl
     /// button elsewhere)" — the owning OverlayWindow sets this from the composition root's
     /// WriteHdrExport hook being non-null.</summary>
     public void SetSaveHdrVisible(bool visible) => _saveHdrButton.IsVisible = visible;
+
+    /// <summary>Cross-monitor selection (item 09): while the current selection spans multiple
+    /// monitors, annotations stay off (see docs/DESIGN-MULTIMON-SELECTION.md) — collapses the
+    /// annotation-tool groups (tools, undo/redo, palette) down to Copy/Save/Save HDR/Cancel, which
+    /// stay visible and functional exactly as for an ordinary selection (RenderSpanningSelection/
+    /// JxrWriter.WriteSpanning already produce the byte composite those buttons act on). Called by
+    /// OverlayWindow.ShowToolbar every time the toolbar is shown, so it can never go stale across a
+    /// spanning/non-spanning transition on the same reused instance. Mirrors the WPF app's
+    /// ToolbarControl.SetSpanningMode.</summary>
+    public void SetSpanningMode(bool spanning)
+    {
+        bool visible = !spanning;
+        _toolsGroupPanel.IsVisible = visible;
+        _historyGroupPanel.IsVisible = visible;
+        _colorSwatchPanel.IsVisible = visible;
+    }
 
     // ---------- Editable swatch palette (item 08) ----------
 

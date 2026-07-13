@@ -1,6 +1,7 @@
 using Avalonia.Platform.Storage;
 using RoeSnip.Core.Capture;
 using RoeSnip.Core.Imaging;
+using RoeSnip.Core.Overlay;
 using RoeSnip.Core.Settings;
 
 namespace RoeSnip.App.Overlay;
@@ -31,9 +32,8 @@ public static class OverlayController
 {
     // ---------- Automation hooks (AppShell/AutomationServer.cs) — UI thread only, mirroring the
     // WPF app's OverlayController.s_activeSession/IsSessionActive/*ForAutomation wrappers. Only
-    // ONE overlay session can ever be active at a time (RunAsync below is the sole entry point and
-    // this port has no spanning-selection concept yet — item 09), so a single static reference is
-    // enough; no stack/collection needed. ----------
+    // ONE overlay session can ever be active at a time (RunAsync below is the sole entry point),
+    // so a single static reference is enough; no stack/collection needed. ----------
 
     private static OverlaySession? s_activeSession; // UI thread only
 
@@ -99,15 +99,33 @@ public static class OverlayController
         private bool _confirmInProgress;
         private int _modalDepth; // O1 audit fix — see BeginModal/EndModal
 
+        // ---------- Cross-monitor selection (item 09) ----------
+        //
+        // Both null for every ordinary, single-monitor selection — the pre-existing per-window
+        // _selectionPx-based code paths (Confirm/GetSelectionForAutomation's own
+        // _windows.FirstOrDefault(w => w.SelectionPx is not null)) are what run in that case,
+        // completely unchanged. These two fields are only ever non-null while a NewSelection,
+        // SpanningResize, or SpanningMove drag's candidate rect has been distributed across ≥2
+        // monitors — see OnSpanningCandidate. See docs/DESIGN-MULTIMON-SELECTION.md for the full
+        // design.
+        private RectPhysical? _spanningVirtual;
+        private OverlayWindow? _spanningPrimaryWindow;
+        private readonly RectPhysical _virtualDesktopBounds;
+
         public OverlaySession(IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors, RoeSnipSettings settings)
         {
             _settings = settings;
 
+            var monitorBoundsForVdb = new List<RectPhysical>(monitors.Count);
             foreach (var (frame, preview) in monitors)
             {
-                var window = new OverlayWindow(frame, preview, settings, OnActivatedByMouse, OnSelectionStarted, OnCommand);
+                var window = new OverlayWindow(
+                    frame, preview, settings, OnActivatedByMouse, OnSelectionStarted,
+                    OnSpanningCandidate, FinalizeNewSelectionDrag, OnCommand);
                 _windows.Add(window);
+                monitorBoundsForVdb.Add(frame.Monitor.BoundsPx);
             }
+            _virtualDesktopBounds = SpanningSelectionMath.ComputeVirtualDesktopBounds(monitorBoundsForVdb);
         }
 
         public Task<OverlayResult?> RunAsync()
@@ -216,7 +234,11 @@ public static class OverlayController
         }
 
         /// <summary>Selection lives on exactly one monitor at a time: starting a drag on monitor A
-        /// clears any selection on B (and every other monitor).</summary>
+        /// clears any selection on B (and every other monitor). This still holds even for a
+        /// spanning selection: it's a momentary reset at the START of a fresh NewSelection drag
+        /// (before the click-vs-drag threshold is crossed) — the drag's very next OnSpanningCandidate
+        /// call immediately redistributes the new candidate back out to every monitor it actually
+        /// touches, so this never leaves a spanning selection's other windows stuck cleared.</summary>
         private void OnSelectionStarted(OverlayWindow window)
         {
             foreach (var other in _windows)
@@ -224,6 +246,273 @@ public static class OverlayController
                 if (!ReferenceEquals(other, window))
                 {
                     other.ClearSelection();
+                }
+            }
+        }
+
+        // ---------- Cross-monitor selection (item 09) ----------
+
+        /// <summary>The one primitive that makes both a fresh drag AND a resize/move of an
+        /// already-placed spanning selection correct (see OverlayWindow's NewSelection/
+        /// SpanningResize/SpanningMove handlers, which all funnel their candidate rect through here
+        /// rather than any window's own local frame): delegates the actual clamp/intersect/real-edge
+        /// math to SpanningSelectionMath.Distribute (pure, unit-tested) and only does the
+        /// WINDOW-touching side effect here — pushing each monitor's own intersection (or null) into
+        /// that window via SetSpanningLocalSelection, the SAME dim-mask/adorner/toolbar-placement
+        /// pipeline every ordinary single-monitor selection already used, just fed a different rect.
+        /// Degrades to exactly the old per-window behavior whenever the candidate only ever touches
+        /// one monitor (the common case): <see cref="_spanningVirtual"/> stays null, and that one
+        /// window's own SetSpanningLocalSelection call is functionally identical to the old direct
+        /// SetSelection call it replaced. <paramref name="preserveSize"/> is true only for a
+        /// SpanningMove candidate — a move drag shifts every edge by the same delta, so a candidate
+        /// that needs pulling back inside the virtual desktop must SLIDE (keep its width/height),
+        /// never get clamped edge-by-edge the way a resize correctly does (see
+        /// SpanningSelectionMath.SlideToBounds's own doc comment for why the two gestures need
+        /// different clamp strategies).</summary>
+        private void OnSpanningCandidate(OverlayWindow owner, RectPhysical candidateVirtual, bool preserveSize)
+        {
+            var monitorBounds = new List<RectPhysical>(_windows.Count);
+            foreach (var w in _windows)
+            {
+                monitorBounds.Add(w.Monitor.BoundsPx);
+            }
+
+            var clampInput = preserveSize
+                ? SpanningSelectionMath.SlideToBounds(candidateVirtual.Normalized(), _virtualDesktopBounds)
+                : candidateVirtual;
+            var distribution = SpanningSelectionMath.Distribute(clampInput, _virtualDesktopBounds, monitorBounds);
+
+            // A Move drag must never delete an already-placed spanning selection out from under the
+            // user with no way to undo it via the very gesture that caused it. SlideToBounds only
+            // guarantees the candidate stays inside the virtual desktop's own bounding BOX — with
+            // non-adjacent monitors (a gap between them), a same-size rect can still land entirely in
+            // that gap and intersect nothing, which would otherwise zero out every window's slice
+            // mid-drag. When that happens during a preserveSize (Move) candidate and a spanning
+            // selection was already in place, ignore this candidate outright and keep the drag's last
+            // valid state instead of collapsing it.
+            if (preserveSize && distribution.Hits.Count == 0 && _spanningVirtual is not null)
+            {
+                return;
+            }
+
+            // The owner's own monitor can stop intersecting the candidate entirely while the
+            // selection still spans ≥2 OTHER monitors (drag the left edge of a 3-monitor span
+            // rightward past the leftmost monitor's own boundary, for instance) — the owner is who
+            // most recently drove the drag, but it is no longer guaranteed to hold a slice. Falling
+            // back to "no window is primary" in that case would hide the toolbar and the true-size
+            // badge on EVERY window, even though the selection is perfectly valid and just as
+            // reachable as any other spanning selection — so fall back to the lowest-indexed monitor
+            // that still holds a slice, a deterministic choice that's stable across repeated calls
+            // with the same distribution (Hits is built in monitor-index order, so Hits[0] is always
+            // that monitor).
+            int ownerIndex = _windows.IndexOf(owner);
+            int primaryIndex = -1;
+            if (distribution.IsSpanning)
+            {
+                primaryIndex = distribution.Hits.Any(h => h.MonitorIndex == ownerIndex)
+                    ? ownerIndex
+                    : distribution.Hits[0].MonitorIndex;
+            }
+
+            for (int i = 0; i < _windows.Count; i++)
+            {
+                var w = _windows[i];
+                RectPhysical? localRect = null;
+                var realEdges = SelectionEdges.All;
+                foreach (var hit in distribution.Hits)
+                {
+                    if (hit.MonitorIndex == i)
+                    {
+                        localRect = hit.LocalRect;
+                        realEdges = hit.RealEdges;
+                        break;
+                    }
+                }
+                bool isPrimary = i == primaryIndex;
+                // dragInProgress: true — this call only ever runs while a NewSelection/SpanningResize/
+                // SpanningMove drag's pointer-move is live, including for every non-owner window; see
+                // OverlayWindow._suppressToolbarForSpanningDrag's own doc comment for why that matters.
+                w.SetSpanningLocalSelection(
+                    localRect, distribution.IsSpanning, isPrimary,
+                    distribution.IsSpanning ? distribution.ClampedVirtual : null, realEdges,
+                    dragInProgress: true);
+                if (isPrimary)
+                {
+                    _spanningPrimaryWindow = w;
+                }
+            }
+
+            _spanningVirtual = distribution.IsSpanning ? distribution.ClampedVirtual : null;
+            if (!distribution.IsSpanning)
+            {
+                _spanningPrimaryWindow = null;
+            }
+        }
+
+        /// <summary>Pointer-up (or the `select` automation command) finalizing a NewSelection drag —
+        /// or a SpanningResize/SpanningMove drag too; all three feed OnSpanningCandidate on every
+        /// move and land here on release, so this method never needs to change to support the other
+        /// two. Applies the existing "&lt;2px on either axis = cancel, not a real selection" rule
+        /// against the TRUE selection size: the shared virtual rect while spanning, or else the
+        /// single owning window's own local rect exactly as the pre-existing code did. (Judging the
+        /// rule against just the calling window's own local slice would be wrong while spanning —
+        /// that slice can legitimately be a couple of pixels wide right at a monitor seam even though
+        /// the overall selection is large.) Every window's own SetSpanningLocalSelection call from
+        /// the drag's last OnSpanningCandidate already left correct state in place; this only needs
+        /// to act when the result must be discarded as too small.</summary>
+        internal void FinalizeNewSelectionDrag(OverlayWindow owner)
+        {
+            if (_spanningVirtual is { } v)
+            {
+                if (v.Width < 2 || v.Height < 2)
+                {
+                    ClearSpanningSelection();
+                }
+            }
+            else if (owner.SelectionPx is { } sel && (sel.Width < 2 || sel.Height < 2))
+            {
+                owner.SetSpanningLocalSelection(null, isSpanning: false, isPrimary: false, virtualRectForLabel: null);
+            }
+
+            // Every window took part in the drag's distribute step (see OnSpanningCandidate), not
+            // just the owner or, while spanning, just the primary — each one picked up
+            // dragInProgress:true on every pointer-move and needs it cleared now that the drag has
+            // genuinely ended, or a non-owner window's toolbar would stay suppressed forever (see
+            // OverlayWindow._suppressToolbarForSpanningDrag's own doc comment). Harmless/no-op for
+            // any window whose flag ClearSpanningSelection's own SetSpanningLocalSelection calls
+            // (dragInProgress defaults false) already cleared above.
+            foreach (var w in _windows)
+            {
+                w.NotifySpanningDragEnded();
+            }
+        }
+
+        private void ClearSpanningSelection()
+        {
+            foreach (var w in _windows)
+            {
+                w.SetSpanningLocalSelection(null, isSpanning: false, isPrimary: false, virtualRectForLabel: null);
+            }
+            _spanningVirtual = null;
+            _spanningPrimaryWindow = null;
+        }
+
+        /// <summary>One window's contribution to a spanning composite: which window, its own local
+        /// (monitor-relative) selection rect, and where that slice lands in the composite canvas
+        /// (top-left-relative to the virtual selection rect's own origin). Computed once and consumed
+        /// by BOTH the SDR (BGRA8, RenderSpanningSelection) and HDR (raw FP16,
+        /// BuildSpanningFrameCropsForHdr) composites — same geometry, two different pixel sources, so
+        /// the offset math lives in exactly one place.</summary>
+        private readonly record struct SpanningCropGeometry(OverlayWindow Window, RectPhysical CropLocal, int DestX, int DestY);
+
+        private List<SpanningCropGeometry> ComputeSpanningCropGeometry(RectPhysical virtualRect)
+        {
+            var n = virtualRect.Normalized();
+            var list = new List<SpanningCropGeometry>(_windows.Count);
+            foreach (var w in _windows)
+            {
+                if (w.SelectionPx is not { } localSel)
+                {
+                    continue;
+                }
+                var cropLocal = localSel.Normalized();
+                if (cropLocal.Width <= 0 || cropLocal.Height <= 0)
+                {
+                    continue;
+                }
+                var monitorOrigin = w.Monitor.BoundsPx;
+                int destX = monitorOrigin.Left + cropLocal.Left - n.Left;
+                int destY = monitorOrigin.Top + cropLocal.Top - n.Top;
+                list.Add(new SpanningCropGeometry(w, cropLocal, destX, destY));
+            }
+            return list;
+        }
+
+        /// <summary>Byte-composites the final spanning selection: crops each intersecting window's
+        /// own ALREADY tone-mapped preview (SdrImage.Crop — the same crop every single-monitor render
+        /// already does) and copies it into a canvas sized to the virtual selection rect, at that
+        /// window's own virtual-desktop-relative offset. Never touches FP16/tone-mapping — this only
+        /// ever combines bytes each window's own OverlayWindow.Preview already tone-mapped with ITS
+        /// OWN monitor's photometrics, per the hard constraint. Gaps (no captured monitor covers part
+        /// of the rect) are left OPAQUE BLACK — a deliberate, documented choice (see
+        /// docs/DESIGN-MULTIMON-SELECTION.md), not an accidental default. Annotations are never
+        /// burned in here: a spanning selection can never have any (see OverlayWindow.
+        /// SetSpanningLocalSelection), so this is a plain array composite, not a render-target pass.</summary>
+        private SdrImage RenderSpanningSelection(RectPhysical virtualRect)
+        {
+            var n = virtualRect.Normalized();
+            int width = Math.Max(1, n.Width);
+            int height = Math.Max(1, n.Height);
+            var pixels = new byte[width * 4 * height];
+            for (int i = 3; i < pixels.Length; i += 4)
+            {
+                pixels[i] = 255; // opaque black canvas — see the doc comment above for why
+            }
+
+            foreach (var geo in ComputeSpanningCropGeometry(virtualRect))
+            {
+                SdrImage crop;
+                try
+                {
+                    crop = geo.Window.Preview.Crop(geo.CropLocal);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(
+                        $"RoeSnip: spanning-selection crop failed for monitor {geo.Window.Monitor.DeviceName} (non-fatal, that slice stays black): {ex.Message}");
+                    continue;
+                }
+
+                CompositeInto(pixels, width, height, crop, geo.DestX, geo.DestY);
+            }
+
+            return new SdrImage(width, height, pixels);
+        }
+
+        /// <summary>HDR save for a spanning selection: packages each contributing window's own RAW
+        /// CapturedFrame (untouched FP16 scRGB, or Bgra8Srgb for a degenerate SDR-only monitor —
+        /// JxrWriter.WriteSpanning decodes either uniformly via CapturedFrame.ReadPixelScRgb, exactly
+        /// like the single-monitor JxrWriter.Write already does) with the SAME crop-local-rect/dest-
+        /// offset geometry ComputeSpanningCropGeometry hands the SDR composite above — the two
+        /// composites are geometrically identical, only the pixel source and the sink (BGRA8 canvas
+        /// vs. a WIC 128bppRGBAFloat encode) differ. Program.cs calls this via
+        /// OverlayResult.SpanningFrameCrops + the AppComposition.WriteHdrExportSpanning hook,
+        /// mirroring how the non-spanning path already threads SourceFrame/SelectionPx through for
+        /// AppComposition.WriteHdrExport.</summary>
+        private List<SpanningFrameCrop> BuildSpanningFrameCropsForHdr(RectPhysical virtualRect)
+        {
+            var list = new List<SpanningFrameCrop>();
+            foreach (var geo in ComputeSpanningCropGeometry(virtualRect))
+            {
+                list.Add(new SpanningFrameCrop(geo.Window.Frame, geo.CropLocal, geo.DestX, geo.DestY));
+            }
+            return list;
+        }
+
+        private static void CompositeInto(byte[] dest, int destWidth, int destHeight, SdrImage src, int destX, int destY)
+        {
+            for (int y = 0; y < src.Height; y++)
+            {
+                int dy = destY + y;
+                if (dy < 0 || dy >= destHeight)
+                {
+                    continue;
+                }
+                int srcRowOffset = y * src.Stride;
+                int destRowOffset = dy * destWidth * 4;
+                for (int x = 0; x < src.Width; x++)
+                {
+                    int dx = destX + x;
+                    if (dx < 0 || dx >= destWidth)
+                    {
+                        continue;
+                    }
+                    int so = srcRowOffset + x * 4;
+                    int doff = destRowOffset + dx * 4;
+                    dest[doff + 0] = src.Pixels[so + 0];
+                    dest[doff + 1] = src.Pixels[so + 1];
+                    dest[doff + 2] = src.Pixels[so + 2];
+                    dest[doff + 3] = 255;
                 }
             }
         }
@@ -307,6 +596,11 @@ public static class OverlayController
                     clearedSnip = true;
                 }
             }
+            // Cross-monitor selection: the shared spanning state is session-level, not any one
+            // window's — clear it unconditionally alongside every window's own ClearSelection above
+            // (a harmless no-op when nothing was spanning).
+            _spanningVirtual = null;
+            _spanningPrimaryWindow = null;
             if (!clearedSnip)
             {
                 Finish(null);
@@ -322,6 +616,12 @@ public static class OverlayController
         {
             if (_finished || _confirmInProgress)
             {
+                return;
+            }
+
+            if (_spanningVirtual is { } spanningRect && _spanningPrimaryWindow is { } primary)
+            {
+                await ConfirmSpanningAsync(spanningRect, primary, copy, save, saveHdr);
                 return;
             }
 
@@ -441,6 +741,107 @@ public static class OverlayController
             }
         }
 
+        /// <summary>Cross-monitor selection's own Confirm path (item 09): Copy/Save/Save-HDR.
+        /// Mirrors the non-spanning ConfirmAsync above (same clipboard/save-picker/write calls, same
+        /// stay-open-on-cancelled-dialog behavior) but renders via RenderSpanningSelection's byte
+        /// composite instead of a single window's annotated crop, and packages the result with
+        /// OverlayResult.SpanningVirtualSelectionPx/SpanningFrameCrops set — SpanningFrameCrops is
+        /// populated unconditionally (not just when saveHdr is true), same as the non-spanning path
+        /// always carries SourceFrame/SelectionPx regardless of what the user clicked, so
+        /// settings.AutoSaveHdrCopy works identically for a spanning result too.</summary>
+        private async Task ConfirmSpanningAsync(RectPhysical virtualRect, OverlayWindow primary, bool copy, bool save, bool saveHdr)
+        {
+            SdrImage rendered;
+            try
+            {
+                rendered = RenderSpanningSelection(virtualRect);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: spanning-selection render failed: {ex.Message}");
+                return;
+            }
+
+            var selectionAtRenderTime = virtualRect;
+
+            _confirmInProgress = true;
+            try
+            {
+                bool copyPerformed = false;
+                if (copy)
+                {
+                    try
+                    {
+                        await ClipboardService.CopyImageAsync(primary, rendered);
+                        copyPerformed = true;
+                        primary.ShowShutterFlash();
+                    }
+                    catch (Exception)
+                    {
+                        // Same non-fatal reasoning as the single-monitor path above.
+                    }
+                }
+
+                string? savedPath = null;
+                if (save)
+                {
+                    BeginModal();
+                    try
+                    {
+                        savedPath = await TryPickSavePathAsync(primary);
+                    }
+                    finally
+                    {
+                        EndModal();
+                    }
+                    if (savedPath is null)
+                    {
+                        return; // user cancelled the Save dialog — stay open, same as the single-monitor path
+                    }
+
+                    if (_finished || _spanningVirtual != selectionAtRenderTime)
+                    {
+                        return; // the session/spanning selection changed while the picker's await was pending
+                    }
+
+                    try
+                    {
+                        PngWriter.WriteFile(savedPath, rendered);
+                    }
+                    catch (Exception)
+                    {
+                        savedPath = null;
+                    }
+                }
+
+                if (_finished || _spanningVirtual is not { } finalVirtual)
+                {
+                    return; // overlay was closed/cleared externally while an await was pending
+                }
+
+                var result = new OverlayResult(
+                    primary.Monitor,
+                    primary.SelectionPx ?? default,
+                    rendered,
+                    primary.Frame,
+                    copyPerformed,
+                    savedPath,
+                    SaveHdrRequested: saveHdr,
+                    SpanningVirtualSelectionPx: finalVirtual,
+                    SpanningFrameCrops: BuildSpanningFrameCropsForHdr(finalVirtual));
+
+                Finish(result);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: overlay confirm failed: {ex.Message}");
+            }
+            finally
+            {
+                _confirmInProgress = false;
+            }
+        }
+
         /// <summary>Suspends every window's own key/pointer input handling while the (only
         /// owner-modal) save picker is open (O1 audit fix). Reentrant via a depth counter since
         /// nothing here strictly prevents nested modal sections in principle.</summary>
@@ -532,12 +933,19 @@ public static class OverlayController
 
         // ---------- Automation hooks (AppShell/AutomationServer.cs) — see OverlayController's own
         // wrapper methods for why these exist on this private nested class instead of being called
-        // directly. Ported from the WPF app's OverlayController.OverlaySession, minus the
-        // cross-monitor spanning-selection branch (item 09, not yet in this port) and the "share"
-        // action (no Sharing/* subsystem yet). ----------
+        // directly. Ported from the WPF app's OverlayController.OverlaySession, minus the "share"
+        // action (no Sharing/* subsystem in this port). ----------
 
         internal RectPhysical? GetSelectionForAutomation()
         {
+            // Cross-monitor selection (item 09): the shared virtual rect IS already virtual-desktop
+            // physical pixels (the wire protocol's own convention), so it's returned as-is — no
+            // per-window origin math needed, unlike the non-spanning fallback below.
+            if (_spanningVirtual is { } v)
+            {
+                return v;
+            }
+
             var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
             if (window is null)
             {
@@ -548,10 +956,11 @@ public static class OverlayController
             return new RectPhysical(b.Left + sel.Left, b.Top + sel.Top, b.Left + sel.Right, b.Top + sel.Bottom);
         }
 
-        /// <summary>Applies a virtual-desktop-pixel rect through the exact same
-        /// OnSelectionStarted/SetSelection path a real drag-and-release on the target monitor takes
-        /// (never a parallel implementation) — see OverlayWindow.SetSelectionForAutomation's own
-        /// doc comment for the too-small-cancel/clamp behavior that mirrors a real mouse-up.</summary>
+        /// <summary>Cross-monitor selection (item 09): the `select` automation command's own lever
+        /// for spanning rects — routes through the EXACT same OnSpanningCandidate/
+        /// FinalizeNewSelectionDrag functions a real drag uses, never a separate implementation. The
+        /// owning/"primary" window is chosen the same way the pre-existing single-monitor automation
+        /// path already did: whichever monitor contains the rect's top-left corner.</summary>
         internal string? SetSelectionForAutomation(RectPhysical virtualDesktopPx)
         {
             var normalized = virtualDesktopPx.Normalized();
@@ -575,12 +984,8 @@ public static class OverlayController
                 _activeWindow = window;
                 window.Activate();
             }
-
-            var bounds = window.Monitor.BoundsPx;
-            var localPx = new RectPhysical(
-                normalized.Left - bounds.Left, normalized.Top - bounds.Top,
-                normalized.Right - bounds.Left, normalized.Bottom - bounds.Top);
-            window.SetSelectionForAutomation(localPx);
+            OnSpanningCandidate(window, normalized, preserveSize: false);
+            FinalizeNewSelectionDrag(window); // applies the same too-small-cancel rule a real pointer-up would
             return null;
         }
 
@@ -592,7 +997,7 @@ public static class OverlayController
 
         /// <summary>See OverlayController.ConfirmForAutomation's own doc comment for why "save"
         /// requires an explicit path (never the interactive dialog) and exists at all. Only
-        /// copy|save are supported (no Sharing/* subsystem in this port yet).</summary>
+        /// copy|save are supported (no Sharing/* subsystem in this port).</summary>
         internal string? ConfirmForAutomation(string action, string? path)
         {
             switch (action)
@@ -622,15 +1027,52 @@ public static class OverlayController
             }
         }
 
-        /// <summary>Save's automation path: the same render + PngWriter.WriteFile calls ConfirmAsync
-        /// already makes, just writing straight to <paramref name="path"/> instead of awaiting the
-        /// interactive save picker. Fully synchronous (no dialog, no clipboard) so — unlike
-        /// ConfirmAsync — it needs no fire-and-forget wrapper; any failure is caught and logged here
-        /// directly.</summary>
+        /// <summary>Save's automation path: the same render + PngWriter.WriteFile calls ConfirmAsync/
+        /// ConfirmSpanningAsync already make, just writing straight to <paramref name="path"/>
+        /// instead of awaiting the interactive save picker. Fully synchronous (no dialog, no
+        /// clipboard) so — unlike ConfirmAsync — it needs no fire-and-forget wrapper; any failure is
+        /// caught and logged here directly.</summary>
         private void ConfirmSaveForAutomation(string path)
         {
             if (_finished || _confirmInProgress)
             {
+                return;
+            }
+
+            if (_spanningVirtual is { } spanningRect && _spanningPrimaryWindow is { } primary)
+            {
+                SdrImage renderedSpanning;
+                try
+                {
+                    renderedSpanning = RenderSpanningSelection(spanningRect);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"RoeSnip: spanning-selection render failed: {ex.Message}");
+                    return;
+                }
+
+                try
+                {
+                    PngWriter.WriteFile(path, renderedSpanning);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"RoeSnip: automation save failed: {ex.Message}");
+                    return;
+                }
+
+                var spanningResult = new OverlayResult(
+                    primary.Monitor, primary.SelectionPx ?? default, renderedSpanning, primary.Frame,
+                    CopyPerformed: false, SavedPngPath: path, SaveHdrRequested: false,
+                    SpanningVirtualSelectionPx: spanningRect,
+                    // Automation's "save" action is PNG-only (see this method's own doc comment /
+                    // ConfirmForAutomation's), same as SaveHdrRequested staying false above — but
+                    // SpanningFrameCrops is still populated so settings.AutoSaveHdrCopy (independent
+                    // of what this particular call asked for) keeps working for an automation-driven
+                    // spanning save exactly like it does for an interactive one.
+                    SpanningFrameCrops: BuildSpanningFrameCropsForHdr(spanningRect));
+                Finish(spanningResult);
                 return;
             }
 
