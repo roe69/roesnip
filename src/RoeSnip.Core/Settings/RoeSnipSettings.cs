@@ -36,6 +36,16 @@ public sealed record RoeSnipSettings
     public bool ColorFormatShowHsv { get; init; } = false;
     public bool ColorFormatShowCmyk { get; init; } = false;
 
+    /// <summary>The ordered color-format list shown by BOTH readout surfaces (the standalone
+    /// eyedropper's rows and the magnifier loupe's value lines, item 22), managed from the
+    /// eyedropper's gear popover: toggle, reorder, and add/edit/delete custom entries. Each entry's
+    /// Format is a <see cref="Color.ColorFormatTemplate"/> string ("%Re"/"%Hu"/... parameters).
+    /// Empty (the default) means "not migrated yet": consumers seed from
+    /// <see cref="Color.ColorFormatCatalog.BuiltIns"/> with the legacy ColorFormatShow* bools
+    /// applied (see <see cref="Color.ColorFormatCatalog.EffectiveFormats"/>), and only persist the
+    /// list once the user first edits it (same contract as <see cref="PaletteColors"/>).</summary>
+    public List<Color.ColorFormatEntry> ColorFormats { get; init; } = new();
+
     /// <summary>Magnifier loupe zoom: how many source pixels the FIXED-size loupe shows — a
     /// (2r+1)x(2r+1) block around the cursor, so a SMALLER radius means fewer, bigger pixels (more
     /// zoomed in) inside the same widget footprint. Adjusted live by scrolling the wheel while the

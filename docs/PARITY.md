@@ -1041,8 +1041,58 @@ existing WPF test suite is the proof.
       item's new chrome/PrtScr/Share/automation layers, which are all portable Avalonia/Core code with
       zero OS-specific branches outside RegionOutline itself; only the region-boundary visual/drag UI
       is missing there.
-- [ ] 22-color-picker: Standalone eyedropper (ColorPickerWindow, format catalog, shade
+- [x] 22-color-picker: Standalone eyedropper (ColorPickerWindow, format catalog, shade
       strip, recent colors, magnifier format-driven value lines, Esc-closes-picker fix). (XL)
+      Landed src/RoeSnip.Core/Color/{ColorFormatting,ColorFormatTemplate,ColorNames,
+      BoundedColorList,PickedColorInfo,ColorFormatEntry,ColorFormatCatalog}.cs — the WPF app's own
+      Overlay/* copies (same names) ported verbatim/adapted into Core (PickedColorInfo's
+      System.Windows.Point became two plain doubles, ScreenPxX/ScreenPxY — Core has no UI-framework
+      point type to spend on it), WPF's own files left untouched. RoeSnipSettings.ColorFormats added
+      (empty = not-migrated sentinel, same pattern as PaletteColors). Ported the three WPF test files
+      (ColorFormattingTests/ColorFormatTemplateTests/BoundedColorListTests) into RoeSnip.Core.Tests
+      and extended SettingsTests' round-trip coverage to ColorFormats — 770 -> 1091 tests total
+      across all four suites (197 App.Tests + 15 Platform.Windows.Tests + 460 Core.Tests + 419 WPF
+      Tests, all green).
+      App: new src/RoeSnip.App/Overlay/ColorPickerWindow.axaml(.cs) — same layout as WPF's XAML
+      (custom title bar/BeginMoveDrag, Pick/recents/gear row, swatch+shades, format rows), rebuilt
+      with Avalonia idioms (a real Popup instead of WPF's, Button-based swatches instead of raw
+      Border+mouse-event wiring, a nested code-built CustomFormatDialog with Enter/Escape handled
+      locally since Avalonia's Button has no IsDefault/IsCancel). Both DELIBERATE behaviors called
+      out in the item brief are carried: Esc closes the FormatsPopup first if open else closes the
+      window WITHOUT touching OverlayController/any active session (self-contained handler, no
+      shared-state reach-over — this is what caused the original WPF bug), and item 02's capture
+      exclusion is applied via the same AppShell.WindowCaptureExclusion.Apply(this) every other
+      Avalonia window in this app uses.
+      OverlayWindow: added the pick-only-mode field/callback (_pickOnlyMode/_onColorPicked) and
+      TriggerColorPick, threaded through OverlaySession/OverlayController the same way WPF does
+      (onColorPicked wired into EVERY session, not just pick-only ones, since a plain click on an
+      ordinary session's overlay also triggers a pick when ColorPickerEnabled). This RETIRES the
+      Avalonia port's old click-to-inspect color-info panel (ShowColorInfo/DismissColorInfo, and the
+      Esc two-stage dismiss-panel-first logic) entirely — that panel was itself the pre-round-2 WPF
+      behavior the frozen WPF app has since fully replaced with this same standalone-window flow, so
+      removing it is a straight parity fix, not a feature cut. OverlayController gained
+      OnColorPicked (singleton window management) and TriggerPickModeCapture/RunPickModeCaptureAsync
+      (the "Pick" button's re-capture flow), sharing AppShell.CaptureGate with the normal hotkey/
+      tray/pipe flow exactly like the WPF app's OverlayController/RecordingController do.
+      Magnifier: replaced the old hard-coded hex/RGB/nits triplet with the ordered, ColorFormats-
+      driven value lines (ActiveFormats = enabled+InLoupe subset), finishing item 06's own deferral
+      note ("a future standalone eyedropper window, item 22").
+      Screenshot-verified via a throwaway off-repo harness (a minimal standalone Avalonia
+      Application, never RoeSnip.App's own App/TrayApp — no single-instance/hotkey machinery
+      touched, no resident process involved): showed ColorPickerWindow briefly with
+      ROESNIP_DIAG_NOEXCLUDE=1 (the same escape hatch WindowCaptureExclusion documents for exactly
+      this), GDI-screenshotted the default view and the gear popover, confirmed swatch/shades/
+      format-rows/recent-colors/popover reorder controls all render correctly, then closed the
+      window and exited. One real mistake caught and fixed during this pass: the harness initially
+      called the real (internal, via reflection) ApplyPick, which persists RecentPickedColors via
+      SettingsStore.Save — writing to this dev machine's actual RoeSnip.App settings.json. Caught
+      from the screenshot review, the harness was changed to set the private display fields directly
+      (no persistence path), and the one stray entry it had written was reverted by hand before
+      moving on.
+      No platform limitation: the whole subsystem (Core catalog/template engine, ColorPickerWindow,
+      Magnifier's format lines, pick-only overlay mode) is portable Avalonia/Core code with zero
+      OS-specific branches outside the already-existing WindowCaptureExclusion seam (which already
+      degrades to a documented no-op on Linux/macOS per item 02).
 
 ## Platform limitations (accepted)
 

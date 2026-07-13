@@ -5,16 +5,20 @@ using Avalonia.Input;
 using Avalonia.Media;
 using RoeSnip.Core.Capture;
 using RoeSnip.Core.Imaging;
+using RoeSnip.Core.Settings;
+using ColorFormatCatalog = RoeSnip.Core.Color.ColorFormatCatalog;
+using ColorFormatEntry = RoeSnip.Core.Color.ColorFormatEntry;
+using ColorFormatTemplate = RoeSnip.Core.Color.ColorFormatTemplate;
 
 namespace RoeSnip.App.Overlay;
 
-/// <summary>Zoom loupe near the cursor with hex/RGB (sampled from the tone-mapped preview — what
-/// the user "sees") and a nits readout (sampled from the raw CapturedFrame via
+/// <summary>Zoom loupe near the cursor with a nits readout (sampled from the raw CapturedFrame via
 /// <see cref="CapturedFrame.ReadPixelNits"/>) — RoeSnip's signature feature: it can reveal an HDR
-/// highlight even when the hex value reads as plain white. Click anywhere on the loupe widget to
-/// copy the current hex string to the clipboard as plain text — the SAME gesture WPF's Magnifier
-/// uses (its OnMouseLeftButtonDown); the separate click-color-inspector (OverlayWindow.ShowColorInfo)
-/// remains the richer swatch/panel readout for a plain background click. Ported from the frozen WPF
+/// highlight even when the hex value reads as plain white — plus the ordered, user-managed
+/// <see cref="Formats"/> value lines (item 22, finishing this class's own item-06 deferral: it
+/// used to render a hard-coded hex/RGB/nits triplet instead of the real ColorFormats list). Click
+/// anywhere on the loupe widget to copy the current hex string to the clipboard as plain text —
+/// the SAME gesture WPF's Magnifier uses (its OnMouseLeftButtonDown). Ported from the frozen WPF
 /// app's src/RoeSnip/Overlay/Magnifier.cs.</summary>
 public sealed class Magnifier : Control
 {
@@ -61,6 +65,32 @@ public sealed class Magnifier : Control
 
     public double DeviceScaleX { get; set; } = 1.0;
     public double DeviceScaleY { get; set; } = 1.0;
+
+    /// <summary>Which value lines the loupe shows below the pixel grid — the same ordered
+    /// ColorFormats list the eyedropper's gear popover manages, so configuring the formats once
+    /// configures both readouts. Set once from OverlayWindow's constructor (mirrors WPF's own
+    /// MagnifierControl.Formats = settings); the widget sizes itself to exactly the enabled lines.</summary>
+    public RoeSnipSettings Formats { get; set; } = RoeSnipSettings.Default;
+
+    // The enabled+in-loupe subset of Formats' color-format list, derived lazily and cached by
+    // settings reference — Render runs per pointer move, so it must not re-run the catalog merge
+    // every time.
+    private RoeSnipSettings? _activeFormatsSource;
+    private List<ColorFormatEntry> _activeFormats = new();
+
+    private List<ColorFormatEntry> ActiveFormats
+    {
+        get
+        {
+            if (!ReferenceEquals(_activeFormatsSource, Formats))
+            {
+                _activeFormatsSource = Formats;
+                _activeFormats = ColorFormatCatalog.EffectiveFormats(Formats)
+                    .FindAll(e => e.Enabled && e.InLoupe);
+            }
+            return _activeFormats;
+        }
+    }
 
     public string CurrentHex { get; private set; } = string.Empty;
 
@@ -116,38 +146,43 @@ public sealed class Magnifier : Control
         double loupeSize = LoupeDip;
         double swatchDip = LoupeDip / (_sampleRadius * 2 + 1);
 
-        // Value lines below the pixel grid — suppressed entirely (ShowColorReadout=false) by the
-        // Pixelate tool, which wants the same placement loupe with no color being "picked".
-        bool isHighlight = nits > 250.0;
+        // Value lines below the pixel grid — the loupe-enabled subset of the same ordered,
+        // user-managed format list the eyedropper shows (see ActiveFormats), each expanded by
+        // ColorFormatTemplate. ONE consistent style for every line (same face, size, and color);
+        // the single deliberate exception is a STATE signal, not a styling one: a nits-bearing
+        // line turns amber when the pixel is brighter than a typical SDR white. Suppressed
+        // entirely (ShowColorReadout=false) by the Pixelate tool, which wants the same placement
+        // loupe with no color being "picked".
         var monoFace = new Typeface(OverlayFonts.Mono, FontStyle.Normal, FontWeight.SemiBold);
-        FormattedText? hexText = null, rgbText = null, nitsText = null;
+        const double LineFontSize = 12.0;
+        bool isHighlight = nits > 250.0;
+        var amber = new SolidColorBrush(Color.FromRgb(0xFF, 0xD5, 0x4F));
+        var lines = new List<FormattedText>();
         if (ShowColorReadout)
         {
-            hexText = new FormattedText(CurrentHex, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, monoFace, 14.0, Brushes.White);
-            rgbText = new FormattedText(
-                string.Create(CultureInfo.InvariantCulture, $"R{r} G{g} B{b}"),
-                CultureInfo.InvariantCulture, FlowDirection.LeftToRight, monoFace, 12.0, Brushes.LightGray);
-            // The nits readout is the killer feature — largest, boldest, most prominent line, and
-            // called out in amber whenever it exceeds a typical SDR white level (same >250-nits
-            // threshold as the WPF app and the click color inspector).
-            var nitsBrush = isHighlight ? new SolidColorBrush(Color.FromRgb(0xFF, 0xD5, 0x4F)) : (IBrush)Brushes.White;
-            nitsText = new FormattedText(
-                string.Create(CultureInfo.InvariantCulture, $"{nits:0.#} nits"),
-                CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-                new Typeface(OverlayFonts.Mono, FontStyle.Normal, FontWeight.Bold),
-                19.0, nitsBrush);
+            foreach (var entry in ActiveFormats)
+            {
+                string value = ColorFormatTemplate.Format(entry.Format, r, g, b, nits);
+                bool isNitsLine = entry.Format.Contains("%Nt", StringComparison.Ordinal);
+                lines.Add(new FormattedText(
+                    value, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, monoFace, LineFontSize,
+                    isNitsLine && isHighlight ? amber : Brushes.White));
+            }
         }
 
-        const double PadDip = 6.0;
+        // Fixed-footprint loupe: the widget's total size hugs exactly the enabled value lines
+        // (compact: no reserved space for hidden formats), growing wider only if a long line
+        // (cmyk) needs it.
+        const double PadDip = 6.0, LineGapDip = 2.0;
         double textBlockHeight = 0;
         double maxLineWidth = 0;
-        if (hexText is not null && rgbText is not null && nitsText is not null)
+        foreach (var line in lines)
         {
-            textBlockHeight = hexText.Height + 2.0 + rgbText.Height + 5.0 + nitsText.Height;
-            maxLineWidth = Math.Max(hexText.Width, Math.Max(rgbText.Width, nitsText.Width));
+            textBlockHeight += line.Height + LineGapDip;
+            maxLineWidth = Math.Max(maxLineWidth, line.Width);
         }
         double widgetWidth = Math.Max(loupeSize + PadDip * 2, maxLineWidth + PadDip * 2 + 4);
-        double widgetHeight = PadDip + loupeSize + (textBlockHeight > 0 ? 6.0 + textBlockHeight : 0) + PadDip;
+        double widgetHeight = PadDip + loupeSize + (textBlockHeight > 0 ? 5.0 + textBlockHeight : 0) + PadDip;
 
         double actualWidth = Bounds.Width;
         double actualHeight = Bounds.Height;
@@ -187,13 +222,12 @@ public sealed class Magnifier : Control
         var crossPen = new Pen(Brushes.White, 1.0);
         dc.DrawRectangle(null, crossPen, new Rect(centerX - swatchDip / 2, centerY - swatchDip / 2, swatchDip, swatchDip));
 
-        if (hexText is not null && rgbText is not null && nitsText is not null)
+        double textX = x + PadDip + 2;
+        double textY = loupeTop + loupeSize + 5.0;
+        foreach (var line in lines)
         {
-            double textX = x + PadDip + 2;
-            double textY = loupeTop + loupeSize + 6.0;
-            dc.DrawText(hexText, new Point(textX, textY));
-            dc.DrawText(rgbText, new Point(textX, textY + hexText.Height + 2.0));
-            dc.DrawText(nitsText, new Point(textX, textY + hexText.Height + rgbText.Height + 5.0));
+            dc.DrawText(line, new Point(textX, textY));
+            textY += line.Height + LineGapDip;
         }
     }
 

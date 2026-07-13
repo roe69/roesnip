@@ -17,6 +17,7 @@ using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Overlay;
 using RoeSnip.Core.Settings;
 using Path = Avalonia.Controls.Shapes.Path;
+using PickedColorInfo = RoeSnip.Core.Color.PickedColorInfo;
 
 namespace RoeSnip.App.Overlay;
 
@@ -74,9 +75,20 @@ public partial class OverlayWindow : Window
 
     /// <summary>Sharing/* subsystem (item 12): the dropdown's per-provider pick carries a payload
     /// OverlayCommand can't, so it goes through its own dedicated callback instead of _onCommand —
-    /// same reason onColorPicked (if this port had one) would bypass the enum too. Mirrors the WPF
-    /// app's own OverlayWindow._onShareToProvider.</summary>
+    /// same reason onColorPicked (below) bypasses the enum too. Mirrors the WPF app's own
+    /// OverlayWindow._onShareToProvider.</summary>
     private readonly Action<string> _onShareToProvider;
+
+    /// <summary>Item 22 (standalone eyedropper): hands a click's sampled color up to
+    /// OverlayController's ColorPickerWindow singleton — see TriggerColorPick. Mirrors the WPF
+    /// app's own OverlayWindow._onColorPicked.</summary>
+    private readonly Action<PickedColorInfo> _onColorPicked;
+
+    /// <summary>Item 22: true for the ad-hoc, toolbar/selection-free overlay OverlayController's
+    /// ColorPickerWindow "Pick" button re-launches — every click immediately samples the color
+    /// under the cursor and closes this session (see OnPreviewPointerPressed's pick-only branch
+    /// and TriggerColorPick). Mirrors the WPF app's own OverlayWindow._pickOnlyMode.</summary>
+    private readonly bool _pickOnlyMode;
 
     private readonly Image _previewImage;
     private readonly Path _dimPath;
@@ -126,7 +138,6 @@ public partial class OverlayWindow : Window
     // different, window-local vs. virtual-desktop, depending on the caller).
     private RectPhysical _dragStartVirtualRect;
 
-    private Border? _colorInfoPanel;
     private IPointer? _capturedPointer;
 
     /// <summary>Feature B: the selected shape's own rect at the start of a SelectedResize drag — the
@@ -255,6 +266,7 @@ public partial class OverlayWindow : Window
         _onFinalizeNewSelection = null!;
         _onCommand = null!;
         _onShareToProvider = null!;
+        _onColorPicked = null!;
         _textFontFamily = "Segoe UI";
     }
 
@@ -267,7 +279,9 @@ public partial class OverlayWindow : Window
         Action<OverlayWindow, RectPhysical, bool> onSpanningCandidate,
         Action<OverlayWindow> onFinalizeNewSelection,
         Action<OverlayCommand> onCommand,
-        Action<string> onShareToProvider)
+        Action<string> onShareToProvider,
+        Action<PickedColorInfo> onColorPicked,
+        bool pickOnlyMode = false)
         : this()
     {
         _frame = frame;
@@ -279,6 +293,8 @@ public partial class OverlayWindow : Window
         _onFinalizeNewSelection = onFinalizeNewSelection;
         _onCommand = onCommand;
         _onShareToProvider = onShareToProvider;
+        _onColorPicked = onColorPicked;
+        _pickOnlyMode = pickOnlyMode;
         _textFontFamily = settings.TextFontFamily;
         _textFontSize = settings.TextFontSize;
         _textBold = settings.TextBold;
@@ -291,6 +307,7 @@ public partial class OverlayWindow : Window
         _previewImage.Source = _previewBitmap;
         _annotations.PreviewSource = preview; // Pixelate tool mosaics these pixels (raw SdrImage, not the Avalonia bitmap)
         _magnifier.SampleRadius = settings.MagnifierSampleRadius;
+        _magnifier.Formats = settings; // item 22: ordered ColorFormats-driven loupe value lines
 
         // O4 audit fix: free the preview bitmap on every path this window stops being used —
         // the normal Closed path, AND CloseOverlay() below covers windows that were placed but
@@ -480,6 +497,18 @@ public partial class OverlayWindow : Window
         var px = ToPhysical(dip);
         _lastKeyModifiers = e.KeyModifiers;
 
+        if (_pickOnlyMode)
+        {
+            // Pick-only mode (the eyedropper's "Pick" button): no selection/toolbar/annotation
+            // concept at all — every click immediately picks the color under the cursor and closes
+            // this ad-hoc overlay session. No drag-threshold gating (unlike normal mode's plain
+            // click), since there's nothing else a click could mean here.
+            _onActivatedByMouse(this);
+            TriggerColorPick(px, dip);
+            e.Handled = true;
+            return;
+        }
+
         if (_activeTextEditor is not null && !IsWithin(_activeTextEditor, e.Source))
         {
             CommitActiveTextEditor();
@@ -488,10 +517,6 @@ public partial class OverlayWindow : Window
         {
             return; // click inside the active editor: let the TextBox place its own caret
         }
-
-        // Any real click (i.e. not on the toolbar, handled above) dismisses an open color-info
-        // panel — a background click may then open a fresh one at the new spot on mouse-up.
-        DismissColorInfo();
 
         _onActivatedByMouse(this);
 
@@ -871,10 +896,17 @@ public partial class OverlayWindow : Window
             case DragMode.NewSelection:
                 if (_newSelectionPending)
                 {
-                    // Mouse never travelled far enough to become a drag: this was a click —
-                    // inspect the clicked pixel's color instead of touching the selection.
+                    // Mouse never travelled far enough to become a drag: this is a plain click —
+                    // per the round-2 spec this cancels the whole snip (like Esc) and opens the
+                    // standalone eyedropper window with the clicked pixel's color. A plain click
+                    // opens the color picker only when it is enabled (Settings) — with it off, a
+                    // plain click does nothing at all: no pick, and it does not drop the snip, so
+                    // a mis-click can't open a picker or cancel the capture.
                     _newSelectionPending = false;
-                    ShowColorInfo(_dragAnchorPx, _dragAnchorDip);
+                    if (_liveSettings.ColorPickerEnabled)
+                    {
+                        TriggerColorPick(_dragAnchorPx, _dragAnchorDip);
+                    }
                 }
                 else
                 {
@@ -1212,14 +1244,14 @@ public partial class OverlayWindow : Window
 
         if (e.Key == Key.Escape)
         {
-            // Two-stage Esc, innermost thing first. An active text edit was already consumed
-            // above; next comes this window's color-info panel; everything beyond that (clear
-            // the snip on whichever monitor holds it, else close the whole overlay) needs the
-            // session's cross-monitor view, so it escalates as CancelStage.
-            if (!DismissColorInfo())
-            {
-                _onCommand(OverlayCommand.CancelStage);
-            }
+            // The session's cross-monitor two-stage Esc (clear an in-progress snip on whichever
+            // monitor holds it, else close the whole overlay) needs the session's view, so it
+            // always escalates to CancelStage — an active text edit and a selected annotation (the
+            // only other local Esc stages) were already consumed above. (There is no color-info
+            // panel stage here: a plain click either opens the standalone eyedropper window, which
+            // immediately cancels this whole session, or — with the picker disabled — does nothing
+            // at all, so there's nothing local left for Esc to dismiss first.)
+            _onCommand(OverlayCommand.CancelStage);
             e.Handled = true;
         }
         else if (e.Key == Key.Enter)
@@ -1277,7 +1309,6 @@ public partial class OverlayWindow : Window
             _newSelectionPending = false;
             ReleasePointer();
         }
-        DismissColorInfo();
         CancelActiveTextEditor();
         _annotations.Clear();
         SetSpanningLocalSelection(null, isSpanning: false, isPrimary: false, virtualRectForLabel: null);
@@ -1812,17 +1843,23 @@ public partial class OverlayWindow : Window
         return CursorForHandle(cropHandle); // Body -> Hand, None -> Cross
     }
 
-    // ---------- Click-to-inspect color info panel ----------
+    // ---------- Click-to-pick: standalone eyedropper window (item 22) ----------
 
-    /// <summary>Small floating panel opened by a plain click (no drag): color swatch, hex, R/G/B
-    /// bytes sampled from the tone-mapped preview (what the user sees), and the HDR nits value
-    /// read from the raw CapturedFrame — the signature feature. The hex string is auto-copied
-    /// to the clipboard. Dismissed by the next click, by starting a drag, or by Esc (stage 1 of
-    /// the two-stage Esc); it never confirms or closes the overlay.</summary>
-    private void ShowColorInfo(Point clickPx, Point clickDip)
+    /// <summary>A plain click (normal mode, only when ColorPickerEnabled) or any click (pick-only
+    /// mode) samples the clicked pixel's color from the tone-mapped preview (what the user sees)
+    /// and its HDR nits value from the raw CapturedFrame, auto-copies the hex to the clipboard
+    /// (existing behavior, kept), hands the snapshot up to OverlayController's standalone
+    /// eyedropper window singleton, and cancels this session — the whole overlay closes, exactly
+    /// like Esc. The Cancel is deferred via Dispatcher.UIThread.Post rather than called inline:
+    /// Cancel synchronously closes every window in the session (including this one, from inside
+    /// its own pointer-event handler), and deferring it to the next dispatcher pass avoids
+    /// touching a window that's already mid-teardown. Mirrors the WPF app's own
+    /// OverlayWindow.TriggerColorPick (OverlayWindow.xaml.cs:2041-2060) — this replaces the old
+    /// click-to-inspect color-info panel this window used to show here (that panel was itself
+    /// modeled on the WPF app's own pre-round-2 behavior, which the WPF app has since fully
+    /// retired in favor of this standalone-window flow).</summary>
+    private void TriggerColorPick(Point clickPx, Point clickDip)
     {
-        DismissColorInfo();
-
         int sx = Math.Clamp((int)clickPx.X, 0, _preview.Width - 1);
         int sy = Math.Clamp((int)clickPx.Y, 0, _preview.Height - 1);
         int o = sy * _preview.Stride + sx * 4;
@@ -1834,135 +1871,28 @@ public partial class OverlayWindow : Window
             Math.Clamp(sy, 0, _frame.Height - 1));
 
         string hex = string.Create(CultureInfo.InvariantCulture, $"#{r:X2}{g:X2}{b:X2}");
-        var copyTask = ClipboardService.TryCopyTextAsync(this, hex);
+        _ = TryCopyHexAsync(hex);
 
-        var swatch = new Border
-        {
-            Width = 30,
-            Height = 30,
-            CornerRadius = new CornerRadius(4),
-            Background = new SolidColorBrush(Color.FromRgb(r, g, b)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(0x66, 0xFF, 0xFF, 0xFF)),
-            BorderThickness = new Thickness(1),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
+        double screenPxX = _frame.Monitor.BoundsPx.Left + clickPx.X;
+        double screenPxY = _frame.Monitor.BoundsPx.Top + clickPx.Y;
+        var info = new PickedColorInfo(r, g, b, nits, screenPxX, screenPxY, _frame.Monitor.DpiX, _frame.Monitor.DpiY);
+        _onColorPicked(info);
 
-        var hexText = new TextBlock
-        {
-            Text = hex,
-            FontFamily = OverlayFonts.Mono,
-            FontSize = 15,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = Brushes.White,
-        };
-        var rgbText = new TextBlock
-        {
-            Text = string.Create(CultureInfo.InvariantCulture, $"R{r} G{g} B{b}"),
-            FontFamily = OverlayFonts.Mono,
-            FontSize = 11.5,
-            Foreground = Brushes.LightGray,
-            Margin = new Thickness(0, 1, 0, 0),
-        };
-        var textColumn = new StackPanel { Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        textColumn.Children.Add(hexText);
-        textColumn.Children.Add(rgbText);
-
-        var topRow = new StackPanel { Orientation = Orientation.Horizontal };
-        topRow.Children.Add(swatch);
-        topRow.Children.Add(textColumn);
-
-        // Same >250-nits "this is an HDR highlight" emphasis rule as the magnifier readout.
-        bool isHighlight = nits > 250.0;
-        var nitsText = new TextBlock
-        {
-            Text = string.Create(CultureInfo.InvariantCulture, $"{nits:0.#} nits"),
-            FontFamily = OverlayFonts.Mono,
-            FontSize = 15,
-            FontWeight = FontWeight.Bold,
-            Foreground = isHighlight ? new SolidColorBrush(Color.FromRgb(0xFF, 0xD5, 0x4F)) : Brushes.White,
-            Margin = new Thickness(0, 7, 0, 0),
-        };
-        var copiedText = new TextBlock
-        {
-            Text = "copying…",
-            FontSize = 10.5,
-            Foreground = Brushes.LightGray,
-            Margin = new Thickness(0, 4, 0, 0),
-        };
-        _ = UpdateCopiedLabelAsync(copyTask, copiedText);
-
-        var stack = new StackPanel();
-        stack.Children.Add(topRow);
-        stack.Children.Add(nitsText);
-        stack.Children.Add(copiedText);
-
-        var panel = new Border
-        {
-            Background = new SolidColorBrush(Color.FromArgb(0xEC, 0x14, 0x14, 0x16)),
-            BorderBrush = Brushes.DimGray,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(11, 9, 11, 8),
-            Child = stack,
-            // Clicks must pass through: the next click anywhere dismisses this panel (and may
-            // open a new one at that spot) rather than interacting with the panel itself.
-            IsHitTestVisible = false,
-        };
-
-        panel.Measure(Size.Infinity);
-        double w = panel.DesiredSize.Width;
-        double h = panel.DesiredSize.Height;
-
-        const double offsetDip = 16.0;
-        double x = clickDip.X + offsetDip;
-        double y = clickDip.Y + offsetDip;
-        double actualWidth = ClientSize.Width, actualHeight = ClientSize.Height;
-        if (actualWidth > 0 && x + w > actualWidth)
-        {
-            x = Math.Max(0, clickDip.X - offsetDip - w);
-        }
-        if (actualHeight > 0 && y + h > actualHeight)
-        {
-            y = Math.Max(0, clickDip.Y - offsetDip - h);
-        }
-
-        Canvas.SetLeft(panel, x);
-        Canvas.SetTop(panel, y);
-        _overlayCanvas.Children.Add(panel); // appended last => renders above magnifier/toolbar
-        _colorInfoPanel = panel;
+        Dispatcher.UIThread.Post(() => _onCommand(OverlayCommand.Cancel));
     }
 
-    private static async Task UpdateCopiedLabelAsync(Task<bool> copyTask, TextBlock label)
+    private async Task TryCopyHexAsync(string hex)
     {
-        bool copied;
         try
         {
-            copied = await copyTask;
+            await ClipboardService.TryCopyTextAsync(this, hex);
         }
         catch (Exception)
         {
-            copied = false;
+            // Clipboard transiently locked by another process — auto-copy on pick is a
+            // convenience, never worth surfacing an error over (matches the eyedropper window's
+            // own per-row Copy button tolerance).
         }
-        // On Windows the P/Invoke copy completes synchronously, so this runs before the panel is
-        // even rendered — the user only ever sees the final state, same as the WPF app.
-        label.Text = copied ? "copied" : "copy failed (clipboard busy)";
-        label.Foreground = copied
-            ? new SolidColorBrush(Color.FromRgb(0x7F, 0xD8, 0x8A))
-            : new SolidColorBrush(Color.FromRgb(0xE0, 0x9A, 0x9A));
-    }
-
-    /// <summary>Removes the color-info panel if one is open. Returns whether anything was
-    /// dismissed — Esc uses that to decide whether this press was consumed (stage 1) or should
-    /// escalate to CancelStage.</summary>
-    internal bool DismissColorInfo()
-    {
-        if (_colorInfoPanel is not { } panel)
-        {
-            return false;
-        }
-        _overlayCanvas.Children.Remove(panel);
-        _colorInfoPanel = null;
-        return true;
     }
 
     // ---------- Inline text annotation (cuttable per PLAN.md §3.2 if it endangers the milestone) ----------

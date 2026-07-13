@@ -3,6 +3,7 @@ using RoeSnip.Core.Capture;
 using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Overlay;
 using RoeSnip.Core.Settings;
+using PickedColorInfo = RoeSnip.Core.Color.PickedColorInfo;
 
 namespace RoeSnip.App.Overlay;
 
@@ -243,6 +244,115 @@ public static class OverlayController
         return session.RunAsync();
     }
 
+    // ---------- Standalone eyedropper window (item 22) ----------
+
+    private static ColorPickerWindow? s_colorPickerWindow;
+
+    /// <summary>A plain click on the overlay (not a drag, not on the toolbar/handles/selection)
+    /// cancels the whole snip and opens/updates this singleton window with the picked color, per
+    /// the round-2 spec. Recreated on demand — its Closed handler nulls this out — rather than
+    /// Hide()-and-reuse, since its own persisted state (recents, format visibility) already lives
+    /// in settings, so a fresh instance picks up exactly where the old one left off. Mirrors the
+    /// WPF app's own OverlayController.OnColorPicked; unlike that version, there is no
+    /// EnsureApplication dance to do first — Avalonia's Application.Current already exists by the
+    /// time any overlay session can run (see RunAsync's own doc comment).</summary>
+    private static void OnColorPicked(PickedColorInfo info)
+    {
+        if (s_colorPickerWindow is null)
+        {
+            var window = new ColorPickerWindow(TriggerPickModeCapture);
+            window.Closed += (_, _) =>
+            {
+                if (ReferenceEquals(s_colorPickerWindow, window))
+                {
+                    s_colorPickerWindow = null;
+                }
+            };
+            s_colorPickerWindow = window;
+        }
+
+        bool wasVisible = s_colorPickerWindow.IsVisible;
+        s_colorPickerWindow.ApplyPick(info);
+        if (!wasVisible)
+        {
+            s_colorPickerWindow.Show();
+        }
+        s_colorPickerWindow.Activate();
+    }
+
+    // Reentrancy: pick-mode shares the single process-wide AppShell.CaptureGate with the hotkey/
+    // tray/pipe capture flow (Program.cs's AppComposition.RunCaptureFlowAsync), so a hotkey press
+    // can't stack an overlay set over a pick-mode session (or vice versa) — two overlay stacks
+    // would screenshot each other's UI.
+
+    /// <summary>Re-launches the capture overlay in pick-only mode so the user's next click picks a
+    /// new color into the same eyedropper window. Deliberately implemented here rather than reused
+    /// via AppComposition.RunCaptureFlowAsync: that hook's signature has no notion of pick-only
+    /// mode, and pick mode never produces a Copy/Save/HDR-export OverlayResult to route back
+    /// through it anyway — it only ever ends via OnColorPicked (a pick) or a plain cancel (Esc).
+    /// Mirrors the WPF app's own OverlayController.TriggerPickModeCapture/RunPickModeCaptureAsync.</summary>
+    private static void TriggerPickModeCapture()
+    {
+        if (!AppShell.CaptureGate.TryEnter())
+        {
+            Console.Error.WriteLine("RoeSnip: a capture is already in progress; ignoring pick request.");
+            return;
+        }
+
+        _ = RunPickModeCaptureAsync();
+    }
+
+    private static async Task RunPickModeCaptureAsync()
+    {
+        try
+        {
+            var settings = AppComposition.LoadSettingsOrDefault();
+
+            var captureService = new CaptureService();
+            var frames = captureService.CaptureAll();
+            if (frames.Count == 0)
+            {
+                Console.Error.WriteLine("RoeSnip: pick-mode capture failed on every monitor.");
+                return;
+            }
+
+            try
+            {
+                var toneMapOpts = new RoeSnip.Core.Color.ToneMapOptions(
+                    Knee: settings.ToneMapKneeOverride ?? 0.90,
+                    PeakOverride: settings.ToneMapPeakOverride);
+
+                var monitorsWithPreview = new List<(CapturedFrame Frame, SdrImage Preview)>(frames.Count);
+                foreach (var frame in frames)
+                {
+                    monitorsWithPreview.Add((frame, SdrImage.FromCapturedFrame(frame, toneMapOpts)));
+                }
+
+                var session = new OverlaySession(monitorsWithPreview, settings, notifier: null, pickOnlyMode: true);
+                s_activeSession = session;
+                await session.RunAsync();
+            }
+            finally
+            {
+                foreach (var frame in frames)
+                {
+                    frame.Dispose();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: pick-mode capture failed: {ex.Message}");
+        }
+        finally
+        {
+            AppShell.CaptureGate.Exit();
+            // Pick-mode never goes through Program.cs's own RunCaptureFlowAsync finally, so it
+            // schedules its own post-flow memory trim (same ApplicationIdle deferral).
+            IdleMemoryTrimmer.Schedule();
+        }
+    }
+
     /// <summary>Owns the windows and state for a single overlay session (one hotkey press / tray
     /// "Capture" click).</summary>
     private sealed class OverlaySession
@@ -287,18 +397,35 @@ public static class OverlayController
         private OverlayWindow? _spanningPrimaryWindow;
         private readonly RectPhysical _virtualDesktopBounds;
 
+        /// <summary>Item 22 (standalone eyedropper): true for the ad-hoc, toolbar/selection-free
+        /// session <see cref="TriggerPickModeCapture"/> re-launches from the eyedropper's own
+        /// "Pick" button — every window in a pick-only session intercepts every click as an
+        /// immediate color sample (see OverlayWindow's pick-only branch), never a drag/selection.
+        /// False for every ordinary hotkey/tray/pipe-triggered session (the public RunAsync
+        /// entry).</summary>
+        private readonly bool _pickOnlyMode;
+
         public OverlaySession(
-            IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors, RoeSnipSettings settings, ITrayNotifier? notifier = null)
+            IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> monitors, RoeSnipSettings settings,
+            ITrayNotifier? notifier = null, bool pickOnlyMode = false)
         {
             _settings = settings;
             _notifier = notifier;
+            _pickOnlyMode = pickOnlyMode;
 
             var monitorBoundsForVdb = new List<RectPhysical>(monitors.Count);
             foreach (var (frame, preview) in monitors)
             {
+                // OnColorPicked is threaded into EVERY session, not just pick-only ones: a plain
+                // click on an ordinary (non-pick-only) session's overlay, when
+                // settings.ColorPickerEnabled, also routes through here (see OverlayWindow's
+                // TriggerColorPick) — pickOnlyMode only changes whether EVERY click (vs. only a
+                // plain, non-drag one) triggers it. Mirrors the WPF app's own OverlayController,
+                // which threads OnColorPicked into every OverlaySession the same way.
                 var window = new OverlayWindow(
                     frame, preview, settings, OnActivatedByMouse, OnSelectionStarted,
-                    OnSpanningCandidate, FinalizeNewSelectionDrag, OnCommand, ShareToSpecificProvider);
+                    OnSpanningCandidate, FinalizeNewSelectionDrag, OnCommand, ShareToSpecificProvider,
+                    OverlayController.OnColorPicked, pickOnlyMode);
                 _windows.Add(window);
                 monitorBoundsForVdb.Add(frame.Monitor.BoundsPx);
             }
@@ -454,17 +581,6 @@ public static class OverlayController
             {
                 _activeWindow = window;
                 window.Activate();
-
-                // A color-info panel belongs to where the user is working: when attention moves
-                // to another monitor, dismiss any panel left open elsewhere (also guarantees at
-                // most one panel exists across the whole session).
-                foreach (var other in _windows)
-                {
-                    if (!ReferenceEquals(other, window))
-                    {
-                        other.DismissColorInfo();
-                    }
-                }
             }
         }
 
@@ -1072,21 +1188,12 @@ public static class OverlayController
 
         /// <summary>Esc's two-stage behavior, decided here because only the session can see every
         /// monitor: the selection may live on a different window than the one that has keyboard
-        /// focus. Stage 1 dismisses any open color-info panel; stage 2 clears the in-progress snip
-        /// (selection + annotations, back to the crosshair state); stage 3 — nothing active at all
-        /// — closes the whole overlay. Each Esc press performs exactly one stage.</summary>
+        /// focus. Stage 1 clears the in-progress snip (selection + annotations, back to the
+        /// crosshair state); stage 2 — nothing active at all — closes the whole overlay (which, in
+        /// a pick-only session, is every press: pick-only windows never have a snip in progress).
+        /// Each Esc press performs exactly one stage.</summary>
         private void CancelStage()
         {
-            bool dismissedInfo = false;
-            foreach (var window in _windows)
-            {
-                dismissedInfo |= window.DismissColorInfo();
-            }
-            if (dismissedInfo)
-            {
-                return;
-            }
-
             bool clearedSnip = false;
             foreach (var window in _windows)
             {

@@ -125,6 +125,11 @@ public class SettingsTests : IDisposable
             ColorFormatShowNits = true,
             ColorFormatShowHsv = true,
             ColorFormatShowCmyk = true,
+            ColorFormats = new List<Color.ColorFormatEntry>
+            {
+                new() { Name = "HEX", Format = "%Rex%Grx%Blx", Enabled = true, IsCustom = false, InLoupe = true },
+                new() { Name = "Mine", Format = "%Re/%Gr/%Bl", Enabled = false, IsCustom = true, InLoupe = false },
+            },
             MagnifierSampleRadius = 9,
             TextFontFamily = "Consolas",
             TextFontSize = 32.0,
@@ -156,12 +161,14 @@ public class SettingsTests : IDisposable
         Assert.Equal(original.CustomColors, loaded.CustomColors);
         Assert.Equal(original.PaletteColors, loaded.PaletteColors);
         Assert.Equal(original.ShareProviders, loaded.ShareProviders);
+        Assert.Equal(original.ColorFormats, loaded.ColorFormats);
         var originalWithLoadedLists = original with
         {
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
             PaletteColors = loaded.PaletteColors,
             ShareProviders = loaded.ShareProviders,
+            ColorFormats = loaded.ColorFormats,
         };
         Assert.Equal(originalWithLoadedLists, loaded);
     }
@@ -189,12 +196,14 @@ public class SettingsTests : IDisposable
         Assert.Equal(original.CustomColors, loaded.CustomColors);
         Assert.Equal(original.PaletteColors, loaded.PaletteColors);
         Assert.Equal(original.ShareProviders, loaded.ShareProviders);
+        Assert.Equal(original.ColorFormats, loaded.ColorFormats);
         var originalWithLoadedLists = original with
         {
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
             PaletteColors = loaded.PaletteColors,
             ShareProviders = loaded.ShareProviders,
+            ColorFormats = loaded.ColorFormats,
         };
         Assert.Equal(originalWithLoadedLists, loaded);
     }

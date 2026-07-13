@@ -1,0 +1,73 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="RoeSnip.App.Overlay.ColorPickerWindow"
+        Title="Color Picker"
+        WindowDecorations="None"
+        CanResize="False"
+        ShowInTaskbar="False"
+        Topmost="True"
+        WindowStartupLocation="Manual"
+        SizeToContent="Height"
+        Width="268"
+        Background="#FF0E0E11"
+        Foreground="#FFEDEDF0"
+        FontFamily="Segoe UI,Inter,Liberation Sans,DejaVu Sans"
+        FontSize="12"
+        UseLayoutRounding="True">
+    <Border BorderBrush="#24FFFFFF" BorderThickness="1">
+        <StackPanel>
+            <!-- Custom title bar: draggable, "Color Picker" + close X -->
+            <Grid x:Name="TitleBar" Height="28" Background="#FF08080A">
+                <TextBlock Text="Color Picker" VerticalAlignment="Center" Margin="10,0,0,0" FontWeight="SemiBold" FontSize="12"/>
+                <Button x:Name="CloseButton" Content="&#x2715;" Width="28" Height="28"
+                        HorizontalAlignment="Right" VerticalAlignment="Center"
+                        Background="Transparent" Foreground="#FFA2A2AB" BorderThickness="0"
+                        Cursor="Hand" Focusable="False"/>
+            </Grid>
+
+            <!-- Pick / recents / settings row -->
+            <Grid Margin="8,8,8,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button x:Name="PickButton" Grid.Column="0" Content="Pick" Padding="10,3"
+                        Background="#FF6B35" Foreground="#180D07" FontWeight="SemiBold"
+                        BorderThickness="0" Cursor="Hand" Focusable="False"
+                        ToolTip.Tip="Capture the screen again and click to pick a new color into this window"/>
+
+                <StackPanel x:Name="RecentColorsPanel" Grid.Column="1" Orientation="Horizontal"
+                            HorizontalAlignment="Right" VerticalAlignment="Center" Margin="6,0,6,0"/>
+
+                <Button x:Name="GearButton" Grid.Column="2" Content="&#x2699;" Width="24" Height="24"
+                        Background="#FF18181D" Foreground="#FFEDEDF0" BorderThickness="1" BorderBrush="#24FFFFFF"
+                        Cursor="Hand" Focusable="False" ToolTip.Tip="Choose which formats to show"/>
+
+                <Popup x:Name="FormatsPopup" Grid.Column="2" Placement="Bottom" IsLightDismissEnabled="True">
+                    <Border Background="#FF18181D" BorderBrush="#24FFFFFF" BorderThickness="1" CornerRadius="4" Padding="8">
+                        <StackPanel x:Name="FormatsPopupPanel" MinWidth="190"/>
+                    </Border>
+                </Popup>
+            </Grid>
+
+            <!-- Swatch + lightness shades -->
+            <Grid Margin="8,0,8,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="6"/>
+                    <ColumnDefinition Width="24"/>
+                </Grid.ColumnDefinitions>
+
+                <Border x:Name="MainSwatch" Grid.Column="0" Height="48" CornerRadius="4"
+                        BorderBrush="#24FFFFFF" BorderThickness="1"/>
+
+                <StackPanel x:Name="ShadesPanel" Grid.Column="2"/>
+            </Grid>
+
+            <!-- Format rows (per the gear popover's toggles) -->
+            <StackPanel x:Name="FormatRowsPanel" Margin="8,0,8,8"/>
+        </StackPanel>
+    </Border>
+</Window>
