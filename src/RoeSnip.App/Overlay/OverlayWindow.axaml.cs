@@ -34,7 +34,12 @@ public partial class OverlayWindow : Window
 
     private readonly CapturedFrame _frame;
     private readonly SdrImage _preview;
-    private readonly RoeSnipSettings _settings;
+
+    // Not readonly (unlike _frame/_preview above): the magnifier wheel-zoom handler below persists
+    // a dialed MagnifierSampleRadius back into this live copy (same "_liveSettings with { ... };
+    // TrySaveLiveSettings()" pattern as the frozen WPF app's OverlayWindow), so later sessions in
+    // this same tray-app process pick up the new default without a restart.
+    private RoeSnipSettings _liveSettings;
     private readonly Action<OverlayWindow> _onActivatedByMouse;
     private readonly Action<OverlayWindow> _onSelectionStarted;
     private readonly Action<OverlayCommand> _onCommand;
@@ -116,7 +121,7 @@ public partial class OverlayWindow : Window
 
         _frame = null!;
         _preview = null!;
-        _settings = null!;
+        _liveSettings = null!;
         _onActivatedByMouse = null!;
         _onSelectionStarted = null!;
         _onCommand = null!;
@@ -133,7 +138,7 @@ public partial class OverlayWindow : Window
     {
         _frame = frame;
         _preview = preview;
-        _settings = settings;
+        _liveSettings = settings;
         _onActivatedByMouse = onActivatedByMouse;
         _onSelectionStarted = onSelectionStarted;
         _onCommand = onCommand;
@@ -143,6 +148,8 @@ public partial class OverlayWindow : Window
         RenderOptions.SetBitmapInterpolationMode(_previewImage, BitmapInterpolationMode.None);
         _previewBitmap = preview.ToAvaloniaBitmap();
         _previewImage.Source = _previewBitmap;
+        _annotations.PreviewSource = preview; // Pixelate tool mosaics these pixels (raw SdrImage, not the Avalonia bitmap)
+        _magnifier.SampleRadius = settings.MagnifierSampleRadius;
 
         // O4 audit fix: free the preview bitmap on every path this window stops being used —
         // the normal Closed path, AND CloseOverlay() below covers windows that were placed but
@@ -155,6 +162,7 @@ public partial class OverlayWindow : Window
         AddHandler(PointerPressedEvent, OnPreviewPointerPressed, RoutingStrategies.Tunnel);
         AddHandler(PointerMovedEvent, OnPreviewPointerMoved, RoutingStrategies.Tunnel);
         AddHandler(PointerReleasedEvent, OnPreviewPointerReleased, RoutingStrategies.Tunnel);
+        AddHandler(PointerWheelChangedEvent, OnPreviewPointerWheelChanged, RoutingStrategies.Tunnel);
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         PointerEntered += OnPointerEnteredWindow;
 
@@ -384,6 +392,9 @@ public partial class OverlayWindow : Window
         var px = ToPhysical(dip);
         _lastHoverPx = px;
 
+        // Color codes only when the color picker is enabled AND not the Pixelate tool — otherwise
+        // the loupe is a pure placement/zoom aid with no color readout (WPF OverlayWindow.xaml.cs:1056).
+        _magnifier.ShowColorReadout = _liveSettings.ColorPickerEnabled && _currentTool != AnnotationTool.Pixelate;
         _magnifier.Update(_preview, _frame, dip, px);
 
         switch (_dragMode)
@@ -488,6 +499,61 @@ public partial class OverlayWindow : Window
             // selection — re-evaluate now so the cursor shows that handle's resize arrow immediately
             // instead of keeping the drag's crosshair until the next pointer jitter.
             UpdateCursor();
+        }
+    }
+
+    // ---------- Scroll-wheel loupe zoom ----------
+
+    /// <summary>Item 06 lands only the loupe-zoom slice of WPF's much larger wheel handler
+    /// (OverlayWindow.xaml.cs:2253-2394, which also resizes an in-progress/selected shape's stroke
+    /// or font — none of that exists in this port yet, that's item 07's Feature B select/edit
+    /// subsystem): with the Pixelate tool active, or with no tool active at all (the eventual Select
+    /// tool with nothing selected — there is no selection-of-a-placed-shape concept yet either), the
+    /// wheel zooms the magnifier loupe (SampleRadius) instead of resizing anything, mirroring WPF's
+    /// own Pixelate-tool and nothing-selected branches (OverlayWindow.xaml.cs:2340-2394). The dialed
+    /// radius persists immediately into <see cref="_liveSettings"/> so it is the default for every
+    /// later session, same pattern as WPF's own TrySaveLiveSettings calls.</summary>
+    private void OnPreviewPointerWheelChanged(object? sender, PointerWheelEventArgs e)
+    {
+        if (SessionInputSuspended)
+        {
+            return;
+        }
+
+        if (IsWithin(_toolbar, e.Source))
+        {
+            return; // scrolling a toolbar control (future size box / palette) must scroll THAT, not the loupe
+        }
+
+        int notches = (int)Math.Round(e.Delta.Y);
+        if (notches == 0)
+        {
+            return;
+        }
+
+        if (_currentTool is AnnotationTool.Pixelate or AnnotationTool.None)
+        {
+            int newRadius = Math.Clamp(
+                _magnifier.SampleRadius - notches, Magnifier.MinSampleRadius, Magnifier.MaxSampleRadius);
+            if (newRadius != _magnifier.SampleRadius)
+            {
+                _magnifier.SampleRadius = newRadius;
+                _liveSettings = _liveSettings with { MagnifierSampleRadius = newRadius };
+                TrySaveLiveSettings();
+            }
+            e.Handled = true;
+        }
+    }
+
+    private void TrySaveLiveSettings()
+    {
+        try
+        {
+            SettingsStore.Save(_liveSettings);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: failed to save live overlay settings: {ex.Message}");
         }
     }
 

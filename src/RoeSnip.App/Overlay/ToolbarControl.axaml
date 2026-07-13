@@ -170,6 +170,16 @@
             <ToggleButton x:Name="FreehandToolButton" Classes="tool" ToolTip.Tip="Freehand">
                 <Path Classes="icon" Data="M1,13 C3,4 6,4 8,9 C10,14 13,13 15,4"/>
             </ToggleButton>
+            <ToggleButton x:Name="HighlightToolButton" Classes="tool"
+                          ToolTip.Tip="Highlighter: translucent marker (scroll wheel adjusts width)">
+                <!-- Chisel-tip marker: angled body with a flat tip stroke at the paper line -->
+                <Path Classes="icon" Data="M4,9 L9,4 L12,7 L7,12 Z M7,12 L4,9 M2,14 H7"/>
+            </ToggleButton>
+            <ToggleButton x:Name="PixelateToolButton" Classes="tool"
+                          ToolTip.Tip="Pixelate: censor a region (scroll wheel adjusts block size)">
+                <!-- Mosaic grid -->
+                <Path Classes="icon" StrokeThickness="1.2" Data="M2,2 H14 V14 H2 Z M6,2 V14 M10,2 V14 M2,6 H14 M2,10 H14"/>
+            </ToggleButton>
             <ToggleButton x:Name="TextToolButton" Classes="tool" ToolTip.Tip="Text">
                 <Path Classes="icon" Data="M3,2 H13 M8,2 V14"/>
             </ToggleButton>

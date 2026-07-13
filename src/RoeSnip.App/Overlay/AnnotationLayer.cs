@@ -2,13 +2,15 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Overlay;
 
 namespace RoeSnip.App.Overlay;
 
 /// <summary>Annotation tool kinds. Text is implemented but is the lowest-priority / most cuttable
 /// tool per PLAN.md §3.2 (allowance restated by PLAN-XPLAT.md §3.3) — the other five
-/// (Rectangle/Ellipse/Arrow/Line/Freehand) must work regardless of whether Text makes it in.</summary>
+/// (Rectangle/Ellipse/Arrow/Line/Freehand) must work regardless of whether Text makes it in.
+/// Mirrors the WPF enum at src/RoeSnip/Overlay/AnnotationLayer.cs:31-45.</summary>
 public enum AnnotationTool
 {
     None,
@@ -18,6 +20,11 @@ public enum AnnotationTool
     Line,
     Freehand,
     Text,
+    /// <summary>Translucent wide marker stroke (freehand gesture).</summary>
+    Highlight,
+    /// <summary>Censor rectangle: mosaics the preview pixels under it. StrokeWidthPx doubles as
+    /// the mosaic block size (same scroll-wheel/size-box plumbing as the stroke tools).</summary>
+    Pixelate,
 }
 
 /// <summary>One committed (or in-progress) annotation shape. All points are physical pixels,
@@ -49,6 +56,16 @@ public sealed class AnnotationLayer : Control
     /// <summary>1 physical pixel == 1/DeviceScaleX (or Y) DIPs on this window's monitor.</summary>
     public double DeviceScaleX { get; set; } = 1.0;
     public double DeviceScaleY { get; set; } = 1.0;
+
+    /// <summary>The frozen tone-mapped preview backing the owning OverlayWindow's own preview
+    /// image — the Pixelate tool mosaics THESE pixels (see <see cref="DrawPixelate"/>), so it works
+    /// identically on screen and at export (both draw from the same source, just at different
+    /// scales/origins). Set once by OverlayWindow right after it builds its own preview bitmap; null
+    /// only for the inert XAML-infrastructure constructor. Mirrors WPF's
+    /// AnnotationLayer.PreviewSource (a BitmapSource there); Avalonia has no CroppedBitmap/
+    /// TransformedBitmap to lean on, so this stays the raw SdrImage and PixelateMosaic (RoeSnip.Core)
+    /// does the shrink/average math directly instead.</summary>
+    public SdrImage? PreviewSource { get; set; }
 
     public bool HasAnnotations => _history.Shapes.Count > 0;
     public bool CanUndo => _history.CanUndo;
@@ -208,7 +225,7 @@ public sealed class AnnotationLayer : Control
         return dx * dx + dy * dy;
     }
 
-    private static void Draw(DrawingContext dc, AnnotationShape shape, double translateX, double translateY)
+    private void Draw(DrawingContext dc, AnnotationShape shape, double translateX, double translateY)
     {
         var pen = new Pen(
             new SolidColorBrush(shape.StrokeColor),
@@ -252,8 +269,23 @@ public sealed class AnnotationLayer : Control
                 break;
 
             case AnnotationTool.Freehand:
+            case AnnotationTool.Highlight:
                 if (shape.PointsPx.Count >= 2)
                 {
+                    if (shape.Tool == AnnotationTool.Highlight)
+                    {
+                        // Marker ink: same polyline as Freehand but translucent and much wider than
+                        // the nominal stroke width (a highlighter's whole point is a broad band),
+                        // with a flat cap so overlapping strokes read as one swipe rather than dots.
+                        // Mirrors WPF's Highlight branch (AnnotationLayer.cs:985-997); Avalonia's Pen
+                        // has one LineCap (not separate Start/End caps like WPF), applied to both ends.
+                        var ink = Color.FromArgb(0x5A, shape.StrokeColor.R, shape.StrokeColor.G, shape.StrokeColor.B); // ~35% — text under it must stay legible
+                        pen = new Pen(
+                            new SolidColorBrush(ink),
+                            Math.Max(6.0, shape.StrokeWidthPx * 3.0),
+                            lineCap: PenLineCap.Flat,
+                            lineJoin: PenLineJoin.Round);
+                    }
                     var geometry = new StreamGeometry();
                     using (var ctx = geometry.Open())
                     {
@@ -265,6 +297,13 @@ public sealed class AnnotationLayer : Control
                         ctx.EndFigure(false);
                     }
                     dc.DrawGeometry(null, pen, geometry);
+                }
+                break;
+
+            case AnnotationTool.Pixelate:
+                if (shape.PointsPx.Count >= 2)
+                {
+                    DrawPixelate(dc, shape, translateX, translateY);
                 }
                 break;
 
@@ -282,6 +321,42 @@ public sealed class AnnotationLayer : Control
                     dc.DrawText(formatted, P(0));
                 }
                 break;
+        }
+    }
+
+    /// <summary>Mosaics the preview pixels under the shape's rect: crops the region out of
+    /// <see cref="PreviewSource"/> and draws it back as a grid of flat-colored blocks computed by
+    /// <see cref="RoeSnip.Core.Overlay.PixelateMosaic"/> — the Core equivalent of WPF's
+    /// CroppedBitmap+TransformedBitmap(1/block)+NearestNeighbor pipeline (see that type's doc
+    /// comment for why Avalonia takes this route instead). Because the source is the frozen preview,
+    /// this works identically on screen (Render, DIP transform already pushed) and at export
+    /// (RenderForExport, 1:1) — both draw the same blocks at the same physical rect. StrokeWidthPx
+    /// is the block size (min 3 px so it always censors).</summary>
+    private void DrawPixelate(DrawingContext dc, AnnotationShape shape, double translateX, double translateY)
+    {
+        if (PreviewSource is not { } preview)
+        {
+            return;
+        }
+
+        double left = Math.Min(shape.PointsPx[0].X, shape.PointsPx[1].X);
+        double top = Math.Min(shape.PointsPx[0].Y, shape.PointsPx[1].Y);
+        double right = Math.Max(shape.PointsPx[0].X, shape.PointsPx[1].X);
+        double bottom = Math.Max(shape.PointsPx[0].Y, shape.PointsPx[1].Y);
+
+        int x = (int)Math.Clamp(left, 0, preview.Width);
+        int y = (int)Math.Clamp(top, 0, preview.Height);
+        int right2 = (int)Math.Clamp(right, 0, preview.Width);
+        int bottom2 = (int)Math.Clamp(bottom, 0, preview.Height);
+        int w = right2 - x, h = bottom2 - y;
+
+        var blocks = PixelateMosaic.ComputeBlocks(preview, x, y, w, h, shape.StrokeWidthPx);
+        foreach (var block in blocks)
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(block.R, block.G, block.B));
+            var rect = new Rect(
+                block.X + translateX, block.Y + translateY, block.Width, block.Height);
+            dc.DrawRectangle(brush, null, rect);
         }
     }
 

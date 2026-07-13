@@ -103,9 +103,52 @@ existing WPF test suite is the proof.
       toolbar button is item 08. 19 AnnotationHistoryTests ported verbatim into
       RoeSnip.Core.Tests (against a plain string payload, proving the class stays
       framework-free). No linux/mac degradation — this is pure model logic.
-- [ ] 06-highlight-pixelate-magnifier: Highlight and Pixelate annotation tools (incl.
+- [x] 06-highlight-pixelate-magnifier: Highlight and Pixelate annotation tools (incl.
       PreviewSource wiring and the pixelate loupe UX) plus magnifier parity (wheel-adjustable
       SampleRadius, fixed footprint, click-to-copy). (L)
+      Avalonia AnnotationTool gained Highlight (Freehand polyline, ~35% alpha, 3x width, flat
+      caps — Avalonia's Pen has one LineCap for both ends, unlike WPF's separate Start/End, so
+      both just get Flat) and Pixelate. AnnotationLayer.PreviewSource now holds the raw frozen
+      SdrImage (set once by OverlayWindow right after it builds its own preview bitmap); Pixelate
+      rendering is a new RoeSnip.Core.Overlay.PixelateMosaic (box-average shrink + implicit
+      nearest-neighbor upscale as flat-colored block rectangles, computed directly rather than
+      through WPF's CroppedBitmap+TransformedBitmap+BitmapScalingMode.NearestNeighbor pipeline,
+      which Avalonia has no equivalent for) — pure, unit-tested (5 new RoeSnip.Core.Tests),
+      identical on screen and at export since both draw through the same AnnotationLayer.Draw.
+      ToolbarControl gained Highlight/Pixelate buttons in WPF's exact order (after Freehand,
+      before Text), same Focusable=false/always-visible pattern as every other tool button.
+      Magnifier: SampleRadius is now wheel-adjustable (1..15, clamped, seeded from
+      RoeSnipSettings.MagnifierSampleRadius at OverlayWindow construction) with a genuinely
+      FIXED loupe footprint (154 DIP, matching WPF's historical fixed size) — the per-swatch
+      size scales instead of the widget; ShowColorReadout suppresses the hex/RGB/nits lines
+      (kept as the existing 3 lines; format-catalog-driven lines are item 22) down to just the
+      pixel grid, wired to `ColorPickerEnabled && tool != Pixelate` at OverlayWindow's own
+      pointer-move handler (WPF OverlayWindow.xaml.cs:1056) — click-to-copy is a Magnifier
+      OnPointerPressed override, matching WPF's own OnMouseLeftButtonDown mechanism exactly
+      (including its reachability: the window's own tunnel-routed pointer handler pre-handles
+      most clicks before they'd reach this, same as WPF's Preview/Bubble split — it's here for
+      the cases that fall through, and for the future standalone eyedropper, item 22). Added
+      OverlayWindow's first PointerWheelChanged handler (tunnel-routed), deliberately scoped to
+      ONLY the loupe-zoom half of WPF's 140-line wheel handler (OverlayWindow.xaml.cs:2253-2394):
+      Pixelate tool or no tool active zooms SampleRadius and persists it via a new mutable
+      _liveSettings field (renamed from the old readonly _settings) + TrySaveLiveSettings,
+      mirroring WPF's own pattern. In-progress/selected-shape stroke and font resizing is
+      explicitly NOT ported here — there is no selected-shape or in-progress-stroke-resize
+      concept in the port yet (Feature B, item 07) — the wheel handler's doc comment says so
+      and item 07 is expected to extend this same handler rather than add a second one.
+      Deliberately NOT changed: WPF's drag-based magnifier show/hide gating (IsMagnifierActive,
+      OverlayWindow.xaml.cs:287-295) was never ported to Avalonia in an earlier item — the
+      Avalonia magnifier already updates unconditionally on every pointer move regardless of
+      drag state, which trivially satisfies "visible while dragging a Pixelate region" (it's
+      visible during every drag, a strict superset of WPF's narrower rule) without needing new
+      gating logic; a full port of WPF's per-drag-mode hide/show belongs with item 07's Feature B
+      selection system, which is what actually introduces most of those drag modes. No
+      linux/mac degradation — this is pure rendering/model logic, no OS-specific behavior.
+      Build + full test suite green (791 tests: 482 WPF + 250 Core + 54 App + 5 Platform.Windows).
+      Live-verified on Windows: started a standalone --automation instance (never the user's
+      resident, killed after), triggered the overlay, selected a region, and screenshotted the
+      desktop (includeExcluded) to confirm the toolbar renders Select/Rect/Ellipse/Arrow/Line/
+      Freehand/Highlight/Pixelate/Text in that exact order with the correct icons.
 - [ ] 07-select-edit: The whole Feature B select/edit subsystem: selection with same-tool
       gate, hit-testing, move/resize/endpoint drag, delete, text re-edit, wheel resize,
       selection chrome with the luminance-based handle fill contrast rule. (XL)

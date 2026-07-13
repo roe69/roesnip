@@ -62,6 +62,8 @@ public partial class ToolbarControl : UserControl
         var arrowToolButton = Find<ToggleButton>("ArrowToolButton");
         var lineToolButton = Find<ToggleButton>("LineToolButton");
         var freehandToolButton = Find<ToggleButton>("FreehandToolButton");
+        var highlightToolButton = Find<ToggleButton>("HighlightToolButton");
+        var pixelateToolButton = Find<ToggleButton>("PixelateToolButton");
         var textToolButton = Find<ToggleButton>("TextToolButton");
         _colorSwatchPanel = Find<StackPanel>("ColorSwatchPanel");
         _strokeWidthPanel = Find<StackPanel>("StrokeWidthPanel");
@@ -69,8 +71,8 @@ public partial class ToolbarControl : UserControl
 
         _toolButtons = new[]
         {
-            _selectToolButton, rectToolButton, ellipseToolButton,
-            arrowToolButton, lineToolButton, freehandToolButton, textToolButton,
+            _selectToolButton, rectToolButton, ellipseToolButton, arrowToolButton, lineToolButton,
+            freehandToolButton, highlightToolButton, pixelateToolButton, textToolButton,
         };
 
         _selectToolButton.Click += (_, _) => SelectTool(_selectToolButton, AnnotationTool.None);
@@ -79,6 +81,8 @@ public partial class ToolbarControl : UserControl
         arrowToolButton.Click += (_, _) => SelectTool(arrowToolButton, AnnotationTool.Arrow);
         lineToolButton.Click += (_, _) => SelectTool(lineToolButton, AnnotationTool.Line);
         freehandToolButton.Click += (_, _) => SelectTool(freehandToolButton, AnnotationTool.Freehand);
+        highlightToolButton.Click += (_, _) => SelectTool(highlightToolButton, AnnotationTool.Highlight);
+        pixelateToolButton.Click += (_, _) => SelectTool(pixelateToolButton, AnnotationTool.Pixelate);
         textToolButton.Click += (_, _) => SelectTool(textToolButton, AnnotationTool.Text);
 
         Find<Button>("UndoButton").Click += (_, _) => UndoClicked?.Invoke();
