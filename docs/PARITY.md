@@ -306,9 +306,35 @@ existing WPF test suite is the proof.
       is null` branch, exactly as the single-monitor HDR path already degrades — no new gap
       introduced. Mixed-DPI is untested (this machine is all-96-DPI), matching the WPF reference's
       own documented v1 cut.
-- [ ] 10-capture-hot-path-perf: WGC capturer pre-provisioning/caching/keepalive/Prewarm in
+- [x] 10-capture-hot-path-perf: WGC capturer pre-provisioning/caching/keepalive/Prewarm in
       Platform.Windows plus the ToneMapper LUT + AVX2 fast path (with reuseOutput) in Core,
       byte-identical to the scalar reference. (L)
+      Platform.Windows/WgcCapturer.cs ported verbatim from src/RoeSnip/Capture/WgcCapturer.cs:
+      per-monitor MonitorSlot cache (device + GraphicsCaptureItem reused, session/framepool
+      created fresh per capture so the yellow border never persists), retry-once-on-failure
+      against freshly provisioned resources, a 10s background keepalive timer that proactively
+      re-provisions a TDR-dead cached device off the hot path, `Prewarm(monitor, throwawayFrame)`
+      and `TrimCachedDeviceMemory()` static hooks for item 17's warmup/IdleMemoryTrimmer to call
+      once landed. Mechanical adaptation only: HMONITOR comes from
+      `MonitorEnumerator.ParseHMonitor` (Core's MonitorInfo carries BackendKey, not a raw handle)
+      instead of being stored directly. Windows-only file (Platform.Windows) — no linux/mac
+      degradation to note; WGC/DXGI have no equivalent on those OSes and their own capturers are
+      unaffected.
+      Core/Color/ToneMapper.cs ported verbatim from src/RoeSnip/Color/ToneMapper.cs: per-scale
+      65536-entry LUTs (Linear/Encoded), AVX2-vectorized frame-max scan with an exact FP16->FP32
+      widening and scalar NaN-block fallback, and the `reuseOutput` overload for item 20's
+      recording cadence. One behavioral generalization carried over from the existing Core port:
+      the scale step reads `1.0 / frame.SdrWhiteInBufferUnits` instead of the WPF app's hardcoded
+      `80.0 / Monitor.SdrWhiteNits` (algebraically identical on Windows, correct for macOS EDR).
+      The AVX2 path now runtime-checks both `Avx2.IsSupported` and
+      `Vector256.IsHardwareAccelerated` (WPF only checked the former) so the scalar MaxScalarPixels
+      loop is what actually ships on the arm64 macOS target; MapToSdrScalar stays byte-identical
+      on every platform since it has no SIMD in it. New ToneMapperEquivalenceTests.cs in
+      RoeSnip.Core.Tests (ported from tests/RoeSnip.Tests/ToneMapperEquivalenceTests.cs, plus one
+      new EDR-convention case and one reuseOutput case) proves optimized == scalar byte-for-byte
+      across pass-through, shoulder, adversarial bit-pattern, and full 1440p frames; all green on
+      this (x64) machine, and structurally correct (pure runtime IsSupported branching, no
+      platform-conditional compilation) for the arm64 fallback.
 - [ ] 11-sharing-core: Move the Sharing subsystem (ProviderSpec, ShareManager, catalog,
       template/url extraction) into RoeSnip.Core, rewrite ShareTestImage without
       System.Drawing, retarget WPF, add the settings fields. (L)
