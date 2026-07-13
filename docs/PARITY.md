@@ -553,9 +553,49 @@ existing WPF test suite is the proof.
         (tests/RoeSnip.App.Tests/HotkeyDisplayFormatTests.cs) plus code review against the WPF
         reference this was ported from line-for-line - same precedent TESTING.md's item-12
         entry already set for windows outside the automation pipe's reach.
-- [ ] 15-elevated-startup: Port ElevationManager (schtasks run-at-logon task via one-time
+- [x] 15-elevated-startup: Port ElevationManager (schtasks run-at-logon task via one-time
       UAC, error relay file, Settings checkbox + status text, hidden CLI verbs); hidden
       entirely on non-Windows. (L)
+      - AppShell/ElevationManager.cs: token-elevation check, schtasks /create /delete /query,
+        the cross-process error-relay temp file, and the two hidden CLI verbs
+        (RunEnableElevatedStartupCli/RunDisableElevatedStartupCli), ported line-for-line from
+        src/RoeSnip/App/ElevationManager.cs. DELIBERATE deviation: TaskName is "RoeSnip.App"
+        (not the WPF app's "RoeSnip") and the relay file is "RoeSnip.App-elevate-error.txt" -
+        same per-app-identity split as StartupManager's Run-key value name and UpdateManager's
+        install dir, so both apps' Scheduled Tasks/UAC round-trips can never collide.
+      - Program.cs intercepts --enable-elevated-startup/--disable-elevated-startup directly in
+        Main, before any single-instance machinery - same placement as the WPF app's own
+        Program.cs - so a runas-relaunched child never gets routed through CliOptions.Parse or
+        RunTray's own hidden-flag allowlist (that allowlist is for tray-launch-compatible flags
+        like --automation; these two are one-shot verbs that must exit immediately instead).
+      - The elevated exe path prefers UpdateManager.InstalledExePath when item 13's install
+        exists, else Environment.ProcessPath (ElevationManager.ResolveTargetExePath, unit
+        tested - the one pure/portable slice of this class, everything else code-reviewed
+        rather than unit-tested per the same call StartupManager's own doc comment already
+        makes).
+      - SettingsWindow: "Run as administrator" checkbox (in-process toggle when already
+        elevated, else a runas relaunch with the matching hidden verb, awaited via
+        Process.WaitForExitAsync), elevation status text, and a "Restart elevated now" button
+        - plus the WPF app's own post-enable "restart now?" prompt, reusing TrayApp's
+        ShowYesNoDialogAsync (made internal for this). Avalonia's CheckBox has one
+        IsCheckedChanged event instead of WPF's separate Checked/Unchecked, so the two WPF
+        handlers collapse into one. The Run-key/task interplay (task installed -> Run key
+        stays cleared, "Start with Windows" shown checked+disabled with a hint) is ported
+        unchanged, including SaveButton_Click's own re-check of IsElevatedTaskInstalled.
+      - Linux/macOS: ElevatedStartupSection.IsVisible is set in code-behind based on
+        OperatingSystem.IsWindows() - the whole section is HIDDEN, not just disabled, since
+        Scheduled Tasks and UIPI have no portable equivalent. Accepted limitation.
+      - Verified live on this machine: `dotnet build`/`dotnet test` green (whole solution,
+        including the untouched WPF app); `schtasks /query /tn "RoeSnip.App"` confirmed absent
+        before and after; running the built RoeSnip.exe directly with
+        --enable-elevated-startup and --disable-elevated-startup (both unelevated, no UAC
+        accepted) exercised the real hidden-verb dispatch end to end - each correctly refused
+        with the "must be run elevated" message, on both stderr AND the error-relay temp file
+        (which was then deleted), and neither call touched the Scheduled Task. NOT verified
+        live: the actual UAC-accepted round-trip (schtasks /create succeeding and the task
+        appearing) - that needs an interactive secure-desktop consent click this agent has no
+        tool access to perform; the code path itself is a line-for-line port of the WPF
+        reference's already-shipped, real-world-exercised ElevationManager/SettingsWindow logic.
 - [ ] 16-visual-parity: Design-token theming (near-black surfaces, one #FF6B35 accent, OLED
       black Settings background) replacing the generic dark palette, plus per-tool
       color/width-aware bitmap cursors. (L)

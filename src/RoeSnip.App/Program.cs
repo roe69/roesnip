@@ -180,6 +180,14 @@ public static class AppComposition
     // doc comment for why stitching raw scRGB crops from different monitors is well-defined.
     public static Action<string, RectPhysical, IReadOnlyList<SpanningFrameCrop>>? WriteHdrExportSpanning { get; set; }
 
+    // Set by AppShell/ElevationManager.cs (item 15) via [ModuleInitializer]. Hidden CLI verbs used
+    // only for the UAC round-trip when SettingsWindow's "Run as administrator" checkbox is toggled
+    // from a non-elevated process — see Program.Main. Both require the process to already be
+    // elevated (Verb=runas got it there) and print a result instead of showing any UI. Mirrors the
+    // WPF app's own AppComposition.RunEnableElevatedStartupCli/RunDisableElevatedStartupCli.
+    public static Func<int>? RunEnableElevatedStartupCli { get; set; }
+    public static Func<int>? RunDisableElevatedStartupCli { get; set; }
+
     // Set by AppShell/TrayApp.cs (WP-X2) via [ModuleInitializer].
     public static Func<string[], int>? RunTrayApp { get; set; }
 
@@ -704,6 +712,20 @@ public static class Program
                 return 1;
             }
             return AppShell.AutomationClient.Run(args[1]);
+        }
+
+        // Hidden verbs (deliberately undocumented — not in CliOptions/PrintUsage): the target of
+        // the single UAC round-trip SettingsWindow performs when the "Run as administrator"
+        // checkbox is toggled from a non-elevated process (item 15). Never invoked unattended.
+        // Handled here, before any single-instance machinery, mirroring the WPF app's Program.cs
+        // (which intercepts these two verbs in exactly the same spot, right after --auto).
+        if (args.Length == 1 && args[0] == "--enable-elevated-startup")
+        {
+            return AppComposition.RunEnableElevatedStartupCli?.Invoke() ?? 1;
+        }
+        if (args.Length == 1 && args[0] == "--disable-elevated-startup")
+        {
+            return AppComposition.RunDisableElevatedStartupCli?.Invoke() ?? 1;
         }
 
         // Platform assemblies self-register their ICaptureBackend via [ModuleInitializer], which

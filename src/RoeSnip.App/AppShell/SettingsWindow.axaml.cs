@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -47,15 +48,27 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     private uint _pendingModifiers;
     private uint _pendingVirtualKey;
 
+    // Item 15: the "Restart elevated now" flow needs to exit this WHOLE app (releasing the
+    // single-instance lock) so the elevated task can take over — mirrors the WPF app's own
+    // RestartElevatedNow exiting its WinForms message loop. TrayApp supplies this the same way it
+    // supplies suspendGlobalHotkey/resumeGlobalHotkey above.
+    private readonly Action _exitApplication;
+
+    // Guards RunElevatedCheckBox.IsChecked assignments that must NOT re-enter
+    // RunElevatedCheckBox_Checked/Unchecked (initial load, and reconciling the checkbox back to the
+    // real task state after a toggle). Mirrors the WPF app's own _loadingElevationState.
+    private bool _loadingElevationState;
+
     // Parameterless ctor for the XAML loader/previewer only.
-    public SettingsWindow() : this(RoeSnipSettings.Default, hotkeyUnavailableOnWayland: false, _ => { }, () => { }, () => { }) { }
+    public SettingsWindow() : this(RoeSnipSettings.Default, hotkeyUnavailableOnWayland: false, _ => { }, () => { }, () => { }, () => { }) { }
 
     public SettingsWindow(
         RoeSnipSettings settings,
         bool hotkeyUnavailableOnWayland,
         Action<RoeSnipSettings> onSaved,
         Action suspendGlobalHotkey,
-        Action resumeGlobalHotkey)
+        Action resumeGlobalHotkey,
+        Action exitApplication)
     {
         InitializeComponent();
 
@@ -65,6 +78,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         _onSaved = onSaved;
         _suspendGlobalHotkey = suspendGlobalHotkey;
         _resumeGlobalHotkey = resumeGlobalHotkey;
+        _exitApplication = exitApplication;
         _pendingModifiers = settings.HotkeyModifiers;
         _pendingVirtualKey = settings.HotkeyVirtualKey;
 
@@ -90,17 +104,298 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         KneeOverrideBox.Text = _original.ToneMapKneeOverride?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
         PeakOverrideBox.Text = _original.ToneMapPeakOverride?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
 
+        // Item 15: the elevated-startup section is Windows-only (Scheduled Tasks / UIPI have no
+        // portable equivalent) - HIDE it entirely on Linux/macOS rather than showing a
+        // permanently-disabled control with no explanation (DESIGN-XPLAT.md's degrade-gracefully
+        // rule; accepted limitation, docs/PARITY.md).
+        bool elevatedSectionSupported = OperatingSystem.IsWindows();
+        ElevatedStartupSection.IsVisible = elevatedSectionSupported;
+
+        bool elevatedTaskInstalled = elevatedSectionSupported && ElevationManager.IsElevatedTaskInstalled();
+
         try
         {
-            RunAtStartupCheckBox.IsChecked = StartupManager.IsRunAtStartupEnabled();
+            // Bug 6 (WPF SettingsWindow.xaml.cs:104-109): "Start with Windows" represents "starts at
+            // login by ANY mechanism", not just the Run key. When the elevated task is installed its
+            // own onlogon trigger is what starts RoeSnip at login (the Run key is deliberately kept
+            // cleared - see StartupManager's doc comment), so reading the Run key alone would falsely
+            // uncheck this box on every reopen while the task owned startup.
+            RunAtStartupCheckBox.IsChecked = StartupManager.IsRunAtStartupEnabled() || elevatedTaskInstalled;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"RoeSnip: could not read run-at-startup state: {ex.Message}");
-            RunAtStartupCheckBox.IsChecked = _original.RunAtStartup;
+            RunAtStartupCheckBox.IsChecked = _original.RunAtStartup || elevatedTaskInstalled;
+        }
+
+        if (elevatedSectionSupported)
+        {
+            ApplyRunAtStartupLockState(elevatedTaskInstalled);
+
+            _loadingElevationState = true;
+            try
+            {
+                RunElevatedCheckBox.IsChecked = elevatedTaskInstalled;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"RoeSnip: could not read elevated-startup task state: {ex.Message}");
+                RunElevatedCheckBox.IsChecked = false;
+            }
+            finally
+            {
+                _loadingElevationState = false;
+            }
+
+            RefreshElevationStatusText();
         }
 
         RefreshShareProvidersUi();
+    }
+
+    // ---------- Elevated startup (item 15) ----------
+
+    /// <summary>Bug 6 UX (WPF SettingsWindow.xaml.cs:234-249): while the elevated task is installed,
+    /// "Start with Windows" is CHECKED and DISABLED (you cannot have admin-startup without
+    /// login-startup - the task's onlogon trigger implies it), with a hint explaining why instead of
+    /// a mysteriously locked box.</summary>
+    private void ApplyRunAtStartupLockState(bool elevatedTaskInstalled)
+    {
+        RunAtStartupCheckBox.IsEnabled = !elevatedTaskInstalled;
+        if (elevatedTaskInstalled)
+        {
+            RunAtStartupCheckBox.IsChecked = true;
+        }
+
+        RunAtStartupHintText.Text = elevatedTaskInstalled
+            ? "Implied by \"Run as administrator\" below - its scheduled task starts RoeSnip at login."
+            : string.Empty;
+        RunAtStartupHintText.IsVisible = elevatedTaskInstalled;
+    }
+
+    private void RefreshElevationStatusText()
+    {
+        bool elevatedNow;
+        try
+        {
+            elevatedNow = ElevationManager.IsProcessElevated();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: could not read process elevation state: {ex.Message}");
+            elevatedNow = false;
+        }
+
+        ElevationStatusText.Text = $"Currently running as administrator: {(elevatedNow ? "yes" : "no")}";
+        RestartElevatedButton.IsEnabled = !elevatedNow && ElevationManager.IsElevatedTaskInstalled();
+    }
+
+    // Avalonia's CheckBox (Avalonia.Controls.Primitives.ToggleButton) has no separate Checked/
+    // Unchecked routed events the way WPF's does — one IsCheckedChanged event covers both, so the
+    // WPF app's two handlers (RunElevatedCheckBox_Checked/_Unchecked) collapse into this one.
+    private void RunElevatedCheckBox_IsCheckedChanged(object? sender, RoutedEventArgs e) =>
+        ToggleElevatedStartup(enable: RunElevatedCheckBox.IsChecked == true);
+
+    /// <summary>Drives the "Run as administrator" checkbox (WPF SettingsWindow.xaml.cs:358-422). If
+    /// this process is already elevated, the task is created/deleted in-process - no UAC needed.
+    /// Otherwise a second RoeSnip is launched with Verb=runas and the matching hidden
+    /// --enable/--disable-elevated-startup verb (ONE UAC prompt), and this window waits for it to
+    /// finish before re-querying the real state and reflecting it back onto the checkbox - so the
+    /// checkbox always ends up showing what actually happened, not what the user clicked (it reverts
+    /// on a cancelled UAC prompt, a failed schtasks call, etc).</summary>
+    private async void ToggleElevatedStartup(bool enable)
+    {
+        if (_loadingElevationState)
+        {
+            return;
+        }
+
+        bool wasInstalled;
+        try
+        {
+            wasInstalled = ElevationManager.IsElevatedTaskInstalled();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: could not read elevated-startup task state: {ex.Message}");
+            wasInstalled = !enable; // assume the toggle is meaningful; proceed
+        }
+
+        if (enable == wasInstalled)
+        {
+            return; // already in the desired state (e.g. the reconciliation below re-set IsChecked)
+        }
+
+        if (ElevationManager.IsProcessElevated())
+        {
+            ApplyElevatedStartupChange(enable);
+        }
+        else
+        {
+            await RunElevatedViaUacAsync(enable);
+        }
+
+        bool nowInstalled;
+        try
+        {
+            nowInstalled = ElevationManager.IsElevatedTaskInstalled();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: could not re-read elevated-startup task state: {ex.Message}");
+            nowInstalled = wasInstalled;
+        }
+
+        if (nowInstalled != (RunElevatedCheckBox.IsChecked == true))
+        {
+            _loadingElevationState = true;
+            RunElevatedCheckBox.IsChecked = nowInstalled;
+            _loadingElevationState = false;
+        }
+
+        ApplyRunAtStartupLockState(nowInstalled);
+        RefreshElevationStatusText();
+
+        if (enable && nowInstalled && !wasInstalled)
+        {
+            bool? restart = await TrayApp.ShowYesNoDialogAsync(
+                "RoeSnip", "Elevated startup is enabled. Restart RoeSnip as administrator now?");
+            if (restart == true)
+            {
+                RestartElevatedNow();
+            }
+        }
+    }
+
+    /// <summary>In-process path (this window's process is already elevated): create/delete the task
+    /// directly, then apply the same HKCU-Run-key interplay the CLI verbs apply (see
+    /// StartupManager's doc comment) using the live checkbox state, since settings.json may not yet
+    /// reflect an unsaved change to RunAtStartupCheckBox in this dialog session.</summary>
+    private void ApplyElevatedStartupChange(bool enable)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return; // defensive: ElevatedStartupSection is hidden on non-Windows, so this is unreachable via the UI
+        }
+
+        try
+        {
+            if (enable)
+            {
+                string exePath = ElevationManager.ResolveTargetExePath(
+                    UpdateManager.InstallExists,
+                    UpdateManager.InstalledExePath,
+                    Environment.ProcessPath ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName);
+                ElevationManager.EnableElevatedStartup(exePath);
+                StartupManager.SetRunAtStartup(false);
+            }
+            else
+            {
+                ElevationManager.DisableElevatedStartup();
+                StartupManager.SetRunAtStartup(RunAtStartupCheckBox.IsChecked == true);
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowValidationError($"Failed to update elevated startup: {ex.Message}");
+        }
+    }
+
+    /// <summary>Non-elevated path: relaunch RoeSnip elevated (one UAC prompt) with the matching
+    /// hidden verb, wait for it, and surface any failure. A cancelled UAC prompt raises
+    /// Win32Exception 1223 - that's treated as a silent no-op (the checkbox reverts via the re-query
+    /// in the caller), not an error message, since the user made an explicit choice.</summary>
+    private async Task RunElevatedViaUacAsync(bool enable)
+    {
+        try
+        {
+            string exePath = ElevationManager.ResolveTargetExePath(
+                UpdateManager.InstallExists,
+                UpdateManager.InstalledExePath,
+                Environment.ProcessPath ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName);
+
+            // Drain any stale error left by a PREVIOUS attempt before launching, so a failure this
+            // time can't be misattributed to (or masked by) leftover content from an earlier session.
+            _ = ElevationManager.ConsumeLastError();
+
+            var psi = new System.Diagnostics.ProcessStartInfo(exePath)
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+            };
+            psi.ArgumentList.Add(enable ? "--enable-elevated-startup" : "--disable-elevated-startup");
+
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process is not null)
+            {
+                await process.WaitForExitAsync();
+            }
+
+            if (process is null || process.ExitCode != 0)
+            {
+                // UseShellExecute=true (required for the runas verb) cannot redirect the elevated
+                // child's stdout/stderr, and this is a console-less WinExe, so the real schtasks
+                // failure would otherwise be completely invisible - the checkbox would just silently
+                // revert. The elevated verb (ElevationManager.RunEnableElevatedStartupCli /
+                // RunDisableElevatedStartupCli) relays its failure reason through a temp file for
+                // exactly this case.
+                string? detail = ElevationManager.ConsumeLastError();
+                string baseMessage = enable
+                    ? "Failed to enable elevated startup."
+                    : "Failed to disable elevated startup.";
+                ShowValidationError(detail is null ? baseMessage : $"{baseMessage} {detail}");
+            }
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            // User clicked "No" on the UAC prompt - nothing changed; the checkbox reverts silently.
+        }
+        catch (Exception ex)
+        {
+            ShowValidationError($"Failed to update elevated startup: {ex.Message}");
+        }
+    }
+
+    private void RestartElevatedButton_Click(object? sender, RoutedEventArgs e) => RestartElevatedNow();
+
+    /// <summary>Restarts RoeSnip elevated after enabling the task (WPF SettingsWindow.xaml.cs:
+    /// 511-561): spawns a detached helper that waits a beat then runs the task, so the mutex/pipe
+    /// used for single-instance enforcement is free by the time the elevated instance starts (this
+    /// window's process is exiting right after, not waiting around to hand off the mutex
+    /// itself).</summary>
+    private void RestartElevatedNow()
+    {
+        if (!ElevationManager.IsElevatedTaskInstalled())
+        {
+            ShowValidationError("Cannot restart elevated: the scheduled task is not installed.");
+            return;
+        }
+
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("cmd.exe")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                // Same two fixes as the WPF app's own RestartElevatedNow, ported verbatim:
+                // (1) a RAW Arguments string, not ArgumentList - a single ArgumentList entry holding
+                //     this compound command (it contains & and >) gets wrapped in quotes, which then
+                //     breaks cmd.exe's own quote handling for the chained command after "&".
+                // (2) "ping -n 2 127.0.0.1 >nul" for the ~1s settle delay (lets this exiting instance
+                //     release its single-instance mutex/pipe before the elevated one starts), not
+                //     "timeout" - timeout reads the console and aborts under CreateNoWindow (no
+                //     console), short-circuiting "&&". "&" runs schtasks regardless of ping's exit code.
+                Arguments = $"/c ping -n 2 127.0.0.1 >nul & schtasks /run /tn \"{ElevationManager.TaskName}\"",
+            };
+            System.Diagnostics.Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            ShowValidationError($"Failed to restart RoeSnip elevated: {ex.Message}");
+            return;
+        }
+
+        _exitApplication();
     }
 
     // ---------- Sharing/* subsystem (item 12) ----------
@@ -354,7 +649,13 @@ public partial class SettingsWindow : Avalonia.Controls.Window
 
         try
         {
-            StartupManager.SetRunAtStartup(runAtStartup);
+            // Item 15 (WPF SettingsWindow.xaml.cs:618-624): when the elevated task is installed, its
+            // own onlogon trigger owns startup (see StartupManager's doc comment) - keep the Run key
+            // clear rather than writing the checkbox's raw value, regardless of what
+            // RunAtStartupCheckBox shows. IsElevatedTaskInstalled() is always false when the section
+            // is hidden (non-Windows), so this collapses to the plain runAtStartup write there.
+            bool elevatedTaskInstalled = ElevationManager.IsElevatedTaskInstalled();
+            StartupManager.SetRunAtStartup(elevatedTaskInstalled ? false : runAtStartup);
         }
         catch (Exception ex)
         {

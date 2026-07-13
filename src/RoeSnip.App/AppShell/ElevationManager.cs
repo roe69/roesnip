@@ -1,0 +1,382 @@
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+using RoeSnip.Core.Settings;
+
+namespace RoeSnip.App.AppShell;
+
+/// <summary>Persistent elevation via a Windows Scheduled Task, opt-in from Settings (item 15, ported
+/// from src/RoeSnip/App/ElevationManager.cs). Why this exists: when an elevated window has
+/// foreground focus, UIPI blocks a non-elevated RoeSnip from receiving the global hotkey, taking
+/// foreground, or overlaying interaction on top of it — so the snip hotkey and overlay silently stop
+/// working around admin apps. The standard fix for a tray app is a Scheduled Task with
+/// RunLevel=Highest and an onlogon trigger: Windows starts the task elevated at login with no
+/// per-launch UAC prompt, because the user already consented once when the task itself was
+/// created/registered (which does require elevation).
+///
+/// RoeSnip stays asInvoker by default (app.manifest) — this is opt-in only, toggled from
+/// SettingsWindow, which round-trips through exactly one UAC prompt (Program.cs's
+/// --enable-elevated-startup / --disable-elevated-startup hidden verbs) to create or delete the
+/// task. Nothing here ever silently elevates anything.
+///
+/// DELIBERATE deviation from the WPF app's task name ("RoeSnip"): both apps may be installed side
+/// by side and each owns its own Scheduled Task, exactly like each owning its own Run-key value
+/// name (StartupManager's "RoeSnip.App" vs the WPF app's "RoeSnip" — see that class's own doc
+/// comment) — sharing a task name would make toggling one app's checkbox silently create/delete/
+/// replace the OTHER app's task, and worse, whichever app's task ran last at logon would win the
+/// single Run-key-suppression side effect for both.
+///
+/// Linux/macOS: this whole feature is HIDDEN (not merely disabled) from Settings — see
+/// SettingsWindow.axaml's ElevatedStartupSection.IsVisible. UIPI and Scheduled Tasks are both
+/// Windows-only concepts; there is no portable equivalent to degrade to. Accepted limitation,
+/// tracked in docs/PARITY.md.</summary>
+public static class ElevationManager
+{
+    public const string TaskName = "RoeSnip.App";
+
+    // ---------------- Token elevation check ----------------
+
+    private const uint TOKEN_QUERY = 0x0008;
+    private const int TokenElevation = 20; // TOKEN_INFORMATION_CLASS.TokenElevation
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(
+        IntPtr tokenHandle,
+        int tokenInformationClass,
+        IntPtr tokenInformation,
+        uint tokenInformationLength,
+        out uint returnLength);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    /// <summary>True if THIS process is running with an elevated token — distinct from merely being
+    /// a member of the Administrators group (a split admin token under UAC is NOT elevated until the
+    /// user actually consents, which is exactly the distinction this feature cares about). Always
+    /// false on non-Windows — there is no elevated-token concept to report.</summary>
+    public static bool IsProcessElevated()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+        return IsProcessElevatedWindows();
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool IsProcessElevatedWindows()
+    {
+        IntPtr token = IntPtr.Zero;
+        try
+        {
+            if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, out token))
+            {
+                return false;
+            }
+
+            int size = sizeof(int); // TOKEN_ELEVATION is a single DWORD (TokenIsElevated)
+            IntPtr buffer = Marshal.AllocHGlobal(size);
+            try
+            {
+                if (!GetTokenInformation(token, TokenElevation, buffer, (uint)size, out _))
+                {
+                    return false;
+                }
+                return Marshal.ReadInt32(buffer) != 0;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (token != IntPtr.Zero)
+            {
+                CloseHandle(token);
+            }
+        }
+    }
+
+    // ---------------- Scheduled task management (schtasks.exe) ----------------
+
+    /// <summary>True if the "RoeSnip.App" scheduled task exists. Querying a task you own does not
+    /// require elevation. Always false on non-Windows.</summary>
+    public static bool IsElevatedTaskInstalled()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        var (exitCode, _, _) = RunSchtasks("/query", "/tn", TaskName);
+        return exitCode == 0;
+    }
+
+    /// <summary>Creates (or replaces, via /f) the "RoeSnip.App" scheduled task: run
+    /// <paramref name="exePath"/> at the current user's logon with the highest available
+    /// privileges. Registering a task with RunLevel=Highest itself requires THIS process to already
+    /// be elevated — Windows will not let a non-elevated process silently grant a task admin rights,
+    /// which is exactly the round-trip Program.cs's --enable-elevated-startup verb exists to
+    /// satisfy. The /tr value must carry its own embedded quotes (schtasks' own parser, not just
+    /// argv splitting, needs them to tell a spaces-containing path apart from trailing
+    /// arguments).</summary>
+    [SupportedOSPlatform("windows")]
+    public static void EnableElevatedStartup(string exePath)
+    {
+        var (exitCode, stdout, stderr) = RunSchtasks(
+            "/create", "/tn", TaskName, "/tr", $"\"{exePath}\"", "/sc", "onlogon", "/rl", "highest", "/f");
+
+        if (exitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"schtasks /create failed (exit {exitCode}): {FirstNonEmpty(stderr, stdout)}");
+        }
+    }
+
+    /// <summary>Deletes the "RoeSnip.App" scheduled task. A no-op if it isn't installed.</summary>
+    [SupportedOSPlatform("windows")]
+    public static void DisableElevatedStartup()
+    {
+        if (!IsElevatedTaskInstalled())
+        {
+            return;
+        }
+
+        var (exitCode, stdout, stderr) = RunSchtasks("/delete", "/tn", TaskName, "/f");
+        if (exitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"schtasks /delete failed (exit {exitCode}): {FirstNonEmpty(stderr, stdout)}");
+        }
+    }
+
+    private static string FirstNonEmpty(string primary, string fallback) =>
+        string.IsNullOrWhiteSpace(primary) ? fallback.Trim() : primary.Trim();
+
+    /// <summary>Picks the exe path a newly-created/updated elevated task should point at: the
+    /// installed copy if item 13's install exists (matching what UpdateManager.InstallExists/
+    /// InstalledExePath report — the task must keep working after this dev/portable process exits),
+    /// else the currently-running process's own path — the same fallback StartupManager.
+    /// SetRunAtStartup uses for the plain Run key. Pure/testable: takes the already-resolved
+    /// installed-path info as parameters instead of reaching into UpdateManager/Environment
+    /// itself.</summary>
+    public static string ResolveTargetExePath(bool installExists, string installedExePath, string? processPath)
+    {
+        if (installExists)
+        {
+            return installedExePath;
+        }
+
+        return processPath
+            ?? throw new InvalidOperationException("Could not determine the current executable path.");
+    }
+
+    // ---------------- Cross-process error relay ----------------
+
+    /// <summary>SettingsWindow's non-elevated path relaunches RoeSnip.exe elevated with
+    /// Process.Start(UseShellExecute=true, Verb="runas") to reach RunEnableElevatedStartupCli /
+    /// RunDisableElevatedStartupCli in a SEPARATE process. UseShellExecute=true (required for the
+    /// runas verb) cannot redirect that child's stdout/stderr, and this app is a console-less
+    /// WinExe besides, so a real schtasks failure inside the elevated verb would otherwise be
+    /// completely invisible to the user - the checkbox would just silently revert with no
+    /// explanation. The elevated verb writes its failure message here before returning a nonzero
+    /// exit code; the caller drains any stale content before launching, then reads it back after a
+    /// failed exit code to show the real reason instead of a generic "failed" message. Ported
+    /// verbatim from the WPF app's own relay (App/ElevationManager.cs), but under a distinct file
+    /// name so the two apps' concurrent UAC round-trips can never clobber each other's message.</summary>
+    private static readonly string LastErrorFilePath =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "RoeSnip.App-elevate-error.txt");
+
+    public static string? ConsumeLastError()
+    {
+        try
+        {
+            if (!System.IO.File.Exists(LastErrorFilePath))
+            {
+                return null;
+            }
+            string text = System.IO.File.ReadAllText(LastErrorFilePath).Trim();
+            System.IO.File.Delete(LastErrorFilePath);
+            return text.Length == 0 ? null : text;
+        }
+        catch
+        {
+            return null; // best-effort relay; the caller still sees the nonzero exit code either way
+        }
+    }
+
+    private static void WriteLastError(string message)
+    {
+        try
+        {
+            System.IO.File.WriteAllText(LastErrorFilePath, message);
+        }
+        catch
+        {
+            // Best-effort; the caller still sees SOME failure (nonzero exit / generic message).
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static (int ExitCode, string StdOut, string StdErr) RunSchtasks(params string[] arguments)
+    {
+        var psi = new ProcessStartInfo("schtasks.exe")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        foreach (string arg in arguments)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start schtasks.exe.");
+        string stdout = process.StandardOutput.ReadToEnd();
+        string stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return (process.ExitCode, stdout, stderr);
+    }
+
+    // ---------------- Hidden CLI verbs (Program.cs) ----------------
+
+    /// <summary>Handles --enable-elevated-startup: must be invoked already elevated (Program.cs's
+    /// caller is the one relaunched via Verb=runas). Creates the task, then applies the startup
+    /// interplay documented on <see cref="StartupManager"/>: the task's onlogon trigger replaces
+    /// the HKCU Run key, so any existing Run entry is removed regardless of the persisted
+    /// RunAtStartup value (there is nothing left for the Run key to usefully do once the task owns
+    /// startup).</summary>
+    public static int RunEnableElevatedStartupCli()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            const string message = "RoeSnip: elevated startup is only available on Windows.";
+            Console.Error.WriteLine(message);
+            WriteLastError(message);
+            return 1;
+        }
+
+        if (!IsProcessElevated())
+        {
+            const string message = "RoeSnip: --enable-elevated-startup must be run elevated (the UAC prompt may have been declined).";
+            Console.Error.WriteLine(message);
+            WriteLastError(message);
+            return 1;
+        }
+
+        string exePath;
+        try
+        {
+            exePath = ResolveTargetExePath(
+                UpdateManager.InstallExists,
+                UpdateManager.InstalledExePath,
+                Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: {ex.Message}");
+            WriteLastError(ex.Message);
+            return 1;
+        }
+
+        try
+        {
+            EnableElevatedStartup(exePath);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: failed to create the elevated startup task: {ex.Message}");
+            WriteLastError(ex.Message);
+            return 1;
+        }
+
+        try
+        {
+            StartupManager.SetRunAtStartup(false);
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: the task itself was created successfully, which is the operation that
+            // matters. A stray Run key entry alongside it just means the second-instance
+            // signalling (SingleInstance) hands off to the elevated task's own capture flow at the
+            // next logon — harmless double-launch race, not silent breakage.
+            Console.Error.WriteLine($"RoeSnip: warning: failed to remove the HKCU Run key: {ex.Message}");
+        }
+
+        Console.WriteLine("RoeSnip: elevated startup task installed.");
+        return 0;
+    }
+
+    /// <summary>Handles --disable-elevated-startup: must be invoked already elevated. Deletes the
+    /// task, then restores the HKCU Run key to match the persisted RunAtStartup setting (see
+    /// <see cref="StartupManager"/>).</summary>
+    public static int RunDisableElevatedStartupCli()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            const string message = "RoeSnip: elevated startup is only available on Windows.";
+            Console.Error.WriteLine(message);
+            WriteLastError(message);
+            return 1;
+        }
+
+        if (!IsProcessElevated())
+        {
+            const string message = "RoeSnip: --disable-elevated-startup must be run elevated (the UAC prompt may have been declined).";
+            Console.Error.WriteLine(message);
+            WriteLastError(message);
+            return 1;
+        }
+
+        try
+        {
+            DisableElevatedStartup();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: failed to remove the elevated startup task: {ex.Message}");
+            WriteLastError(ex.Message);
+            return 1;
+        }
+
+        try
+        {
+            var settings = SettingsStore.Load();
+            StartupManager.SetRunAtStartup(settings.RunAtStartup);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: warning: failed to restore the HKCU Run key: {ex.Message}");
+        }
+
+        Console.WriteLine("RoeSnip: elevated startup task removed.");
+        return 0;
+    }
+}
+
+file static class ElevationManagerModuleInit
+{
+#pragma warning disable CA2255 // App assembly, not a general-purpose library — the Phase 1 pattern.
+    [System.Runtime.CompilerServices.ModuleInitializer]
+#pragma warning restore CA2255
+    internal static void Init()
+    {
+        AppComposition.RunEnableElevatedStartupCli = ElevationManager.RunEnableElevatedStartupCli;
+        AppComposition.RunDisableElevatedStartupCli = ElevationManager.RunDisableElevatedStartupCli;
+    }
+}

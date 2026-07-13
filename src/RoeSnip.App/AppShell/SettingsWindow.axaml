@@ -27,6 +27,19 @@
     <CheckBox x:Name="CopyOnSelectCheckBox" Content="Confirming a selection also copies it to the clipboard"/>
     <CheckBox x:Name="ColorPickerCheckBox" Content="Enable the colour picker (click to pick a colour, loupe colour codes)"/>
     <CheckBox x:Name="RunAtStartupCheckBox" Content="Start RoeSnip at login"/>
+    <TextBlock x:Name="RunAtStartupHintText" Foreground="#FF9A9A9A" FontSize="11" TextWrapping="Wrap"
+               IsVisible="False" Margin="20,0,0,4"/>
+
+    <!-- Item 15: Windows-only elevated startup. Hidden entirely (IsVisible set in code-behind's
+         LoadFromSettings, not just disabled) on Linux/macOS — Scheduled Tasks and UIPI have no
+         portable equivalent, so there is nothing sensible to show here on those OSes. -->
+    <StackPanel x:Name="ElevatedStartupSection" Spacing="2" Margin="0,4,0,0">
+      <CheckBox x:Name="RunElevatedCheckBox" Content="Run as administrator (persists via a Scheduled Task)"
+                IsCheckedChanged="RunElevatedCheckBox_IsCheckedChanged"/>
+      <TextBlock x:Name="ElevationStatusText" Foreground="#FF9A9A9A" FontSize="11" Margin="20,0,0,0"/>
+      <Button x:Name="RestartElevatedButton" Content="Restart elevated now" Click="RestartElevatedButton_Click"
+              HorizontalAlignment="Left" Margin="20,2,0,0"/>
+    </StackPanel>
 
     <TextBlock Text="Advanced tone-map overrides (leave blank for automatic)" Margin="0,10,0,4" Foreground="#FF9A9A9A"/>
     <Grid ColumnDefinitions="*,12,*">

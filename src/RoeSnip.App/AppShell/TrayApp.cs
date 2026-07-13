@@ -302,7 +302,12 @@ public sealed class TrayApp : ITrayNotifier
             // for the (brief) span it is actively capturing a new combination; Unregister/Register
             // (not Dispose) so the SAME HotkeyManager instance/hook keeps running underneath.
             suspendGlobalHotkey: () => _hotkeyManager?.Unregister(),
-            resumeGlobalHotkey: () => _hotkeyManager?.Register(_settings));
+            resumeGlobalHotkey: () => _hotkeyManager?.Register(_settings),
+            // Item 15's "Restart elevated now": mirrors the WPF app's RestartElevatedNow exiting
+            // its WinForms message loop so the elevated task can take over the single-instance
+            // lock — this app's equivalent full teardown is ExitApplication (same path the tray
+            // menu's Exit item and a replace-on-run signal already use).
+            exitApplication: ExitApplication);
         window.Icon = AppIcon;
         window.Closed += (_, _) => _openSettingsWindow = null;
         _openSettingsWindow = window;
@@ -770,8 +775,11 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>Minimal ownerless Yes/No dialog (Avalonia has no MessageBox). Returns true for
-    /// Yes, false for No, null if closed without answering.</summary>
-    private static Task<bool?> ShowYesNoDialogAsync(string title, string message)
+    /// Yes, false for No, null if closed without answering. Internal (not private) so SettingsWindow
+    /// can reuse it for item 15's "elevated startup enabled — restart now?" prompt, matching the WPF
+    /// app's own SettingsWindow using the same System.Windows.MessageBox.Show it already used
+    /// everywhere else, rather than inventing a second dialog implementation.</summary>
+    internal static Task<bool?> ShowYesNoDialogAsync(string title, string message)
     {
         var tcs = new TaskCompletionSource<bool?>();
         bool? answer = null;
