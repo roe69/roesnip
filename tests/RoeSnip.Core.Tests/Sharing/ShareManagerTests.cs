@@ -4,11 +4,10 @@ using System.IO;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
-using RoeSnip;
-using RoeSnip.Sharing;
+using RoeSnip.Core.Sharing;
 using Xunit;
 
-namespace RoeSnip.Tests.Sharing;
+namespace RoeSnip.Core.Tests.Sharing;
 
 public class ShareManagerTests
 {
@@ -35,15 +34,13 @@ public class ShareManagerTests
     [Fact]
     public void ResolveDefault_NoProvidersConfigured_ReturnsNull()
     {
-        var settings = RoeSnipSettings.Default;
-        Assert.Null(ShareManager.ResolveDefault(settings));
+        Assert.Null(ShareManager.ResolveDefault(new List<ShareProviderConfig>(), defaultProviderId: null));
     }
 
     [Fact]
     public void ResolveDefault_OneEnabledProvider_NoExplicitDefault_ReturnsIt()
     {
-        var settings = RoeSnipSettings.Default with { ShareProviders = new List<ShareProviderConfig> { ConfiguredRoeShare } };
-        var resolved = ShareManager.ResolveDefault(settings);
+        var resolved = ShareManager.ResolveDefault(new List<ShareProviderConfig> { ConfiguredRoeShare }, defaultProviderId: null);
         Assert.NotNull(resolved);
         Assert.Equal("roeshare", resolved!.Id);
     }
@@ -51,12 +48,8 @@ public class ShareManagerTests
     [Fact]
     public void ResolveDefault_ExplicitDefaultId_Wins()
     {
-        var settings = RoeSnipSettings.Default with
-        {
-            ShareProviders = new List<ShareProviderConfig> { ConfiguredRoeShare, ConfiguredImgur },
-            DefaultShareProviderId = "imgur",
-        };
-        var resolved = ShareManager.ResolveDefault(settings);
+        var resolved = ShareManager.ResolveDefault(
+            new List<ShareProviderConfig> { ConfiguredRoeShare, ConfiguredImgur }, defaultProviderId: "imgur");
         Assert.Equal("imgur", resolved!.Id);
     }
 
@@ -64,35 +57,25 @@ public class ShareManagerTests
     public void ResolveDefault_ExplicitDefaultId_ButDisabled_FallsBackToFirstEnabled()
     {
         var disabledImgur = ConfiguredImgur with { Enabled = false };
-        var settings = RoeSnipSettings.Default with
-        {
-            ShareProviders = new List<ShareProviderConfig> { ConfiguredRoeShare, disabledImgur },
-            DefaultShareProviderId = "imgur",
-        };
-        var resolved = ShareManager.ResolveDefault(settings);
+        var resolved = ShareManager.ResolveDefault(
+            new List<ShareProviderConfig> { ConfiguredRoeShare, disabledImgur }, defaultProviderId: "imgur");
         Assert.Equal("roeshare", resolved!.Id);
     }
 
     [Fact]
     public void ResolveDefault_ExplicitDefaultId_UnknownId_FallsBackToFirstEnabled()
     {
-        var settings = RoeSnipSettings.Default with
-        {
-            ShareProviders = new List<ShareProviderConfig> { ConfiguredRoeShare },
-            DefaultShareProviderId = "not-configured",
-        };
-        var resolved = ShareManager.ResolveDefault(settings);
+        var resolved = ShareManager.ResolveDefault(
+            new List<ShareProviderConfig> { ConfiguredRoeShare }, defaultProviderId: "not-configured");
         Assert.Equal("roeshare", resolved!.Id);
     }
 
     [Fact]
     public void ResolveDefault_NothingEnabled_ReturnsNullEvenIfConfigured()
     {
-        var settings = RoeSnipSettings.Default with
-        {
-            ShareProviders = new List<ShareProviderConfig> { ConfiguredRoeShare with { Enabled = false } },
-        };
-        Assert.Null(ShareManager.ResolveDefault(settings));
+        var resolved = ShareManager.ResolveDefault(
+            new List<ShareProviderConfig> { ConfiguredRoeShare with { Enabled = false } }, defaultProviderId: null);
+        Assert.Null(resolved);
     }
 
     // ---------- EffectiveConfigs passthrough ----------
@@ -100,8 +83,7 @@ public class ShareManagerTests
     [Fact]
     public void EffectiveConfigs_DelegatesToShareProviderCatalog()
     {
-        var settings = RoeSnipSettings.Default with { ShareProviders = new List<ShareProviderConfig> { ConfiguredRoeShare } };
-        var effective = ShareManager.EffectiveConfigs(settings);
+        var effective = ShareManager.EffectiveConfigs(new List<ShareProviderConfig> { ConfiguredRoeShare });
         Assert.Contains(effective, c => c.Id == "roeshare" && c.Enabled);
         Assert.Equal(ShareProviderCatalog.BuiltIns.Count, effective.Count);
     }

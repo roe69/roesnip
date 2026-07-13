@@ -3,7 +3,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using RoeSnip.Sharing;
+using RoeSnip.Core.Sharing;
 
 namespace RoeSnip.App;
 
@@ -44,7 +44,7 @@ public partial class ShareProvidersWindow : Window
     {
         ProvidersListPanel.Children.Clear();
 
-        foreach (var config in ShareManager.EffectiveConfigs(settings))
+        foreach (var config in ShareManager.EffectiveConfigs(settings.ShareProviders))
         {
             ProvidersListPanel.Children.Add(BuildRow(config));
         }

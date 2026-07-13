@@ -6,7 +6,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace RoeSnip.Sharing;
+namespace RoeSnip.Core.Sharing;
 
 /// <summary>The convenience facade every UI-facing caller (ToolbarControl's Share split-button,
 /// RecordingChrome's Reviewing-state Share button, SettingsWindow's Test button) is meant to go
@@ -15,19 +15,16 @@ namespace RoeSnip.Sharing;
 /// network call, and runs the upload against one process-wide HttpClient (never one-per-call - same
 /// convention App/UpdateManager.cs already uses for its own GitHub calls).
 ///
-/// Wiring state (integration pass, 2026-07; dropdown wiring added in a later senior-review fix
-/// pass): every live UI caller is now wired. The toolbar's plain Share button calls this via
-/// OverlaySession.ShareCurrentSelection (Overlay/OverlayController.cs), which resolves the current
-/// selection's rendered bytes through the same render path Copy already uses; the toolbar's Share
-/// dropdown (a specific provider, not the default) calls this via the sibling
-/// OverlaySession.ShareToSpecificProvider, same render path, different config. The recording
-/// chrome's Reviewing-state Share button calls this via RecordingSession.RequestShare
-/// (Recording/RecordingController.cs), which owns the finished take's temp file path - see that
-/// method's own doc comment for the hard-stop/upload/re-arm design (Share triggers the same hard
-/// stop Save uses, then uploads the temp file WITHOUT moving it). Unit tests (ShareManagerTests)
-/// still exercise this facade only against a mock HttpMessageHandler - no test here opens a real
-/// socket; see TESTING.md's "Sharing/upload subsystem" section for what has and hasn't been verified
-/// against a real provider.</summary>
+/// Deliberately takes the provider list / default id as plain parameters rather than a whole
+/// RoeSnipSettings object: the WPF app and RoeSnip.Core.Settings.RoeSnipSettings are two distinct
+/// settings records by design (see RoeSnip.Core.Settings.RoeSnipSettings' own doc comment for why
+/// the two settings files stay separate), so a shared Core facade can't take a dependency on either
+/// one's full shape - callers on both sides just pass their own settings' ShareProviders/
+/// DefaultShareProviderId fields straight through.
+///
+/// Unit tests (ShareManagerTests) exercise this facade only against a mock HttpMessageHandler - no
+/// test here opens a real socket; see TESTING.md's "Sharing/upload subsystem" section for what has
+/// and hasn't been verified against a real provider.</summary>
 public static class ShareManager
 {
     private static readonly Lazy<HttpClient> SharedClient = new(CreateHttpClient);
@@ -49,17 +46,17 @@ public static class ShareManager
     /// <summary>Every provider the settings UI / picker should show: persisted configs (built-in,
     /// touched-or-not, plus every custom one) with a seeded placeholder for any BuiltIns entry the
     /// user has never configured - see ShareProviderCatalog.EffectiveConfigs.</summary>
-    public static IReadOnlyList<ShareProviderConfig> EffectiveConfigs(RoeSnipSettings settings) =>
-        ShareProviderCatalog.EffectiveConfigs(settings.ShareProviders);
+    public static IReadOnlyList<ShareProviderConfig> EffectiveConfigs(IReadOnlyList<ShareProviderConfig> providers) =>
+        ShareProviderCatalog.EffectiveConfigs(providers);
 
     /// <summary>The provider a plain (non-dropdown) Share click should upload to: the configured
     /// default if it still resolves to an enabled config, else the first enabled config in list
     /// order, else null (nothing configured yet - callers surface that as "no share provider is set
     /// up" rather than silently no-op'ing).</summary>
-    public static ShareProviderConfig? ResolveDefault(RoeSnipSettings settings)
+    public static ShareProviderConfig? ResolveDefault(IReadOnlyList<ShareProviderConfig> providers, string? defaultProviderId)
     {
-        var effective = EffectiveConfigs(settings);
-        if (settings.DefaultShareProviderId is { } defaultId)
+        var effective = EffectiveConfigs(providers);
+        if (defaultProviderId is { } defaultId)
         {
             var match = effective.FirstOrDefault(c => c.Enabled && string.Equals(c.Id, defaultId, StringComparison.Ordinal));
             if (match is not null)

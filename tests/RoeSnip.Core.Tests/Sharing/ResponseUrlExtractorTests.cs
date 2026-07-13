@@ -1,7 +1,7 @@
-using RoeSnip.Sharing;
+using RoeSnip.Core.Sharing;
 using Xunit;
 
-namespace RoeSnip.Tests.Sharing;
+namespace RoeSnip.Core.Tests.Sharing;
 
 public class ResponseUrlExtractorTests
 {

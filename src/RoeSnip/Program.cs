@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using RoeSnip.Core.Sharing;
 
 namespace RoeSnip;
 
@@ -198,7 +199,7 @@ public sealed record RoeSnipSettings
     /// asked for. Stored PLAINTEXT like every other RoeSnipSettings field, INCLUDING each config's
     /// API keys/tokens (Sharing/ShareProviderConfig.Values) - the settings UI says so explicitly next
     /// to any secret field.</summary>
-    public List<Sharing.ShareProviderConfig> ShareProviders { get; init; } = new();
+    public List<ShareProviderConfig> ShareProviders { get; init; } = new();
 
     /// <summary>Which configured provider (by Sharing/ShareProviderConfig.Id) a plain Share click
     /// uploads to. Null, or a stale/disabled id, falls back to the first enabled configured provider

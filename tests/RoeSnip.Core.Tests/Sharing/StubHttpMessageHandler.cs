@@ -3,7 +3,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace RoeSnip.Tests.Sharing;
+namespace RoeSnip.Core.Tests.Sharing;
 
 /// <summary>The one mock HttpMessageHandler every ProviderSpecShareProvider/ShareManager test in
 /// this file wires an HttpClient to (per the track brief: "a mock HttpMessageHandler for the

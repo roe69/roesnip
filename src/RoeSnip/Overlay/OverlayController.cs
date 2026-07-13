@@ -1353,7 +1353,8 @@ public static class OverlayController
             // from (toolbarWindow.LiveSettings), not this session's own separately-snapshotted
             // _settings field — see OverlayWindow.LiveSettings' own doc comment for why the two used
             // to be able to disagree.
-            var config = RoeSnip.Sharing.ShareManager.ResolveDefault(toolbarWindow!.LiveSettings);
+            var config = RoeSnip.Core.Sharing.ShareManager.ResolveDefault(
+                toolbarWindow!.LiveSettings.ShareProviders, toolbarWindow!.LiveSettings.DefaultShareProviderId);
             if (config is null)
             {
                 // ShareButton is only ever enabled once ToolbarControl.SetShareProviders was given at
@@ -1380,7 +1381,7 @@ public static class OverlayController
                 return;
             }
 
-            var config = RoeSnip.Sharing.ShareManager.EffectiveConfigs(toolbarWindow!.LiveSettings)
+            var config = RoeSnip.Core.Sharing.ShareManager.EffectiveConfigs(toolbarWindow!.LiveSettings.ShareProviders)
                 .FirstOrDefault(c => c.Enabled && string.Equals(c.Id, providerId, StringComparison.Ordinal));
             if (config is null)
             {
@@ -1454,7 +1455,7 @@ public static class OverlayController
             return true;
         }
 
-        private void StartShareUpload(OverlayWindow toolbarWindow, RoeSnip.Sharing.ShareProviderConfig config, byte[] pngBytes)
+        private void StartShareUpload(OverlayWindow toolbarWindow, RoeSnip.Core.Sharing.ShareProviderConfig config, byte[] pngBytes)
         {
             toolbarWindow.SetShareBusy(true);
             string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}.png";
@@ -1469,20 +1470,20 @@ public static class OverlayController
         /// here is belt-and-braces for the PNG stream/HTTP plumbing around that call, matching every
         /// other "fire and forget from a UI click" handler's own contract in this codebase.</summary>
         private static async Task UploadShareAsync(
-            RoeSnip.Sharing.ShareProviderConfig config, byte[] pngBytes, string fileName,
+            RoeSnip.Core.Sharing.ShareProviderConfig config, byte[] pngBytes, string fileName,
             OverlayWindow toolbarWindow, System.Windows.Threading.Dispatcher dispatcher, ITrayNotifier? notifier)
         {
-            RoeSnip.Sharing.ShareUploadResult result;
+            RoeSnip.Core.Sharing.ShareUploadResult result;
             try
             {
                 using var stream = new System.IO.MemoryStream(pngBytes, writable: false);
-                result = await RoeSnip.Sharing.ShareManager
+                result = await RoeSnip.Core.Sharing.ShareManager
                     .UploadAsync(config, stream, fileName, "image/png", CancellationToken.None)
                     .ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                result = new RoeSnip.Sharing.ShareUploadResult(false, null, $"Upload failed: {ex.Message}");
+                result = new RoeSnip.Core.Sharing.ShareUploadResult(false, null, $"Upload failed: {ex.Message}");
             }
 
             // Discarded: DispatcherOperation is awaitable, but there is nothing further to do once

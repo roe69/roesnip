@@ -139,21 +139,23 @@ public class SettingsTests : IDisposable
 
         var loaded = SettingsStore.Load(settingsPath);
 
-        // RoeSnipSettings.RecentPickedColors/CustomColors/PaletteColors are List<string>, whose
-        // default (reference) equality means a freshly-deserialized instance never == the original
-        // list instance even with identical content — assert their contents explicitly (xUnit's
-        // Assert.Equal does a structural/sequence compare for IEnumerable<T>), then neutralize them
-        // to the same reference before the whole-record equality check below so it isn't tripped up
-        // by that same reference-equality quirk on the remaining (scalar) fields. Mirrors the WPF
-        // app's own RoeSnip.Tests/SettingsTests.cs treatment of the same fields.
+        // RoeSnipSettings.RecentPickedColors/CustomColors/PaletteColors/ShareProviders are all
+        // List<T>, whose default (reference) equality means a freshly-deserialized instance never ==
+        // the original list instance even with identical content — assert their contents explicitly
+        // (xUnit's Assert.Equal does a structural/sequence compare for IEnumerable<T>), then
+        // neutralize them to the same reference before the whole-record equality check below so it
+        // isn't tripped up by that same reference-equality quirk on the remaining (scalar) fields.
+        // Mirrors the WPF app's own RoeSnip.Tests/SettingsTests.cs treatment of the same fields.
         Assert.Equal(original.RecentPickedColors, loaded.RecentPickedColors);
         Assert.Equal(original.CustomColors, loaded.CustomColors);
         Assert.Equal(original.PaletteColors, loaded.PaletteColors);
+        Assert.Equal(original.ShareProviders, loaded.ShareProviders);
         var originalWithLoadedLists = original with
         {
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
             PaletteColors = loaded.PaletteColors,
+            ShareProviders = loaded.ShareProviders,
         };
         Assert.Equal(originalWithLoadedLists, loaded);
     }
@@ -180,11 +182,13 @@ public class SettingsTests : IDisposable
         Assert.Equal(original.RecentPickedColors, loaded.RecentPickedColors);
         Assert.Equal(original.CustomColors, loaded.CustomColors);
         Assert.Equal(original.PaletteColors, loaded.PaletteColors);
+        Assert.Equal(original.ShareProviders, loaded.ShareProviders);
         var originalWithLoadedLists = original with
         {
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
             PaletteColors = loaded.PaletteColors,
+            ShareProviders = loaded.ShareProviders,
         };
         Assert.Equal(originalWithLoadedLists, loaded);
     }

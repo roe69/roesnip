@@ -1,15 +1,17 @@
 using System.Collections.Generic;
 
-namespace RoeSnip.Sharing;
+namespace RoeSnip.Core.Sharing;
 
-/// <summary>One configured provider INSTANCE - persisted in <see cref="RoeSnipSettings.ShareProviders"/>.
-/// For a built-in provider this is just "which spec (<see cref="SpecId"/>) plus which credential/URL
-/// values the user typed in"; the spec's own request shape (endpoint, headers, field names, response
-/// extraction) is never duplicated here, it's looked up fresh from ShareProviderCatalog.BuiltIns
-/// every time (ShareProviderCatalog.ResolveSpec) - so a future RoeSnip build that fixes a built-in
-/// spec's endpoint automatically applies without touching the user's settings.json. A Custom entry
-/// instead carries its own whole <see cref="CustomSpec"/> inline, since there is no catalog entry for
-/// it to reference.</summary>
+/// <summary>One configured provider INSTANCE - persisted in a settings record's own ShareProviders
+/// list (RoeSnip.Core.Settings.RoeSnipSettings on this port; the WPF app's own RoeSnipSettings record
+/// carries the same field independently - see that record's own doc comment for why the two settings
+/// files stay separate). For a built-in provider this is just "which spec (<see cref="SpecId"/>)
+/// plus which credential/URL values the user typed in"; the spec's own request shape (endpoint,
+/// headers, field names, response extraction) is never duplicated here, it's looked up fresh from
+/// ShareProviderCatalog.BuiltIns every time (ShareProviderCatalog.ResolveSpec) - so a future RoeSnip
+/// build that fixes a built-in spec's endpoint automatically applies without touching the user's
+/// settings.json. A Custom entry instead carries its own whole <see cref="CustomSpec"/> inline, since
+/// there is no catalog entry for it to reference.</summary>
 public sealed record ShareProviderConfig
 {
     /// <summary>Stable identity within the settings list. Built-in configs use their spec's own Id
@@ -35,9 +37,9 @@ public sealed record ShareProviderConfig
 
     /// <summary>Template variable values keyed by ShareConfigField.Key (e.g. "ApiKey", "BaseUrl",
     /// "Time") - substituted into the resolved spec's Endpoint/Headers/ExtraFields templates by
-    /// TemplateExpander at upload time. Stored PLAINTEXT, same as every other RoeSnipSettings field
-    /// (see RoeSnipSettings' own JSON persistence contract) - the settings UI says so explicitly
-    /// next to any secret field rather than implying a protection this build doesn't actually apply.</summary>
+    /// TemplateExpander at upload time. Stored PLAINTEXT, same as every other settings field -
+    /// the settings UI says so explicitly next to any secret field rather than implying a protection
+    /// this build doesn't actually apply.</summary>
     public Dictionary<string, string> Values { get; init; } = new();
 
     /// <summary>Whether this provider is offered as an upload target at all (toolbar/chrome picker,

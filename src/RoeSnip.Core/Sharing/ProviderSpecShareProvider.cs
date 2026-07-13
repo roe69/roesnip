@@ -7,7 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace RoeSnip.Sharing;
+namespace RoeSnip.Core.Sharing;
 
 /// <summary>The one piece of code that executes ANY <see cref="ProviderSpec"/> - built-in or custom,
 /// multipart or raw-body. Every built-in provider's own quirk (RoeShare's raw-body + X-Filename

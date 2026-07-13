@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace RoeSnip.Sharing;
+namespace RoeSnip.Core.Sharing;
 
 /// <summary>The built-in provider specs, plus the small amount of logic that layers a user's
 /// persisted <see cref="ShareProviderConfig"/> list on top of them. "It's just web requests" is the

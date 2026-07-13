@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace RoeSnip.Sharing;
+namespace RoeSnip.Core.Sharing;
 
 /// <summary>How the file bytes travel to the provider. Every built-in provider researched for this
 /// feature is one of these two shapes ("it's just web requests" - see the Sharing package's own

@@ -1,7 +1,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace RoeSnip.Sharing;
+namespace RoeSnip.Core.Sharing;
 
 /// <summary>The one abstraction every share target implements. In practice there is exactly one
 /// concrete implementation (<see cref="ProviderSpecShareProvider"/>) that executes a declarative

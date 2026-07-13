@@ -1,6 +1,6 @@
 using System.IO;
 
-namespace RoeSnip.Sharing;
+namespace RoeSnip.Core.Sharing;
 
 /// <summary>Data-only description of one file to upload. Content is a seekable <see cref="Stream"/>
 /// (a MemoryStream for a rendered PNG, or a FileStream over a finished recording's already-saved-to-

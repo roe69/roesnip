@@ -1394,11 +1394,12 @@ internal sealed class RecordingSession
     /// cref="SettingsStore.Load()"/>, not this session's own <see cref="_liveSettings"/> snapshot)
     /// matters here specifically: a provider configured via the tray's Settings window while a take
     /// sits in Reviewing must be picked up without needing a new take.</summary>
-    private static RoeSnip.Sharing.ShareProviderConfig? ResolveFreshDefaultShareProvider()
+    private static RoeSnip.Core.Sharing.ShareProviderConfig? ResolveFreshDefaultShareProvider()
     {
         try
         {
-            return RoeSnip.Sharing.ShareManager.ResolveDefault(SettingsStore.Load());
+            var settings = SettingsStore.Load();
+            return RoeSnip.Core.Sharing.ShareManager.ResolveDefault(settings.ShareProviders, settings.DefaultShareProviderId);
         }
         catch (Exception ex)
         {
@@ -1647,21 +1648,21 @@ internal sealed class RecordingSession
     /// RecordingController's own OnRecorderFaulted/RequestForceStopAndSave already apply via this
     /// exact _uiDispatcher.BeginInvoke pattern elsewhere in this file.</summary>
     private static async Task UploadSharedTakeAsync(
-        string tempPath, string fileName, string contentType, RoeSnip.Sharing.ShareProviderConfig config,
+        string tempPath, string fileName, string contentType, RoeSnip.Core.Sharing.ShareProviderConfig config,
         ITrayNotifier? notifier, Dispatcher? dispatcher)
     {
-        RoeSnip.Sharing.ShareUploadResult result;
+        RoeSnip.Core.Sharing.ShareUploadResult result;
         try
         {
             await using var stream = new FileStream(
                 tempPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16, useAsync: true);
-            result = await RoeSnip.Sharing.ShareManager
+            result = await RoeSnip.Core.Sharing.ShareManager
                 .UploadAsync(config, stream, fileName, contentType, CancellationToken.None)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            result = new RoeSnip.Sharing.ShareUploadResult(false, null, $"Recording share upload failed: {ex.Message}");
+            result = new RoeSnip.Core.Sharing.ShareUploadResult(false, null, $"Recording share upload failed: {ex.Message}");
         }
 
         // Senior-review fix (HIGH, data loss): delete the temp file ONLY on a successful upload —

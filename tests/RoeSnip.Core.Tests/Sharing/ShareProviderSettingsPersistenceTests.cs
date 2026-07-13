@@ -1,24 +1,23 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using RoeSnip;
-using RoeSnip.App;
-using RoeSnip.Sharing;
+using RoeSnip.Core.Settings;
+using RoeSnip.Core.Sharing;
 using Xunit;
 
-namespace RoeSnip.Tests.Sharing;
+namespace RoeSnip.Core.Tests.Sharing;
 
-/// <summary>ShareProviders/DefaultShareProviderId are additive RoeSnipSettings fields (per the track
-/// brief) - this exercises SettingsStore's existing JSON round-trip contract against them
-/// specifically, including a built-in config's Values and a full inline Custom ProviderSpec, the
-/// same isolated-temp-path convention SettingsTests.cs already uses.</summary>
+/// <summary>ShareProviders/DefaultShareProviderId are additive RoeSnipSettings fields - this
+/// exercises SettingsStore's existing JSON round-trip contract against them specifically, including a
+/// built-in config's Values and a full inline Custom ProviderSpec, the same isolated-temp-path
+/// convention SettingsTests.cs already uses.</summary>
 public class ShareProviderSettingsPersistenceTests : IDisposable
 {
     private readonly string _tempDir;
 
     public ShareProviderSettingsPersistenceTests()
     {
-        _tempDir = Path.Combine(Path.GetTempPath(), $"roesnip_share_settings_test_{Guid.NewGuid():N}");
+        _tempDir = Path.Combine(Path.GetTempPath(), $"roesnip_core_share_settings_test_{Guid.NewGuid():N}");
     }
 
     public void Dispose()

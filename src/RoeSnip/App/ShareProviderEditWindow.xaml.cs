@@ -7,7 +7,7 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using RoeSnip.Sharing;
+using RoeSnip.Core.Sharing;
 
 namespace RoeSnip.App;
 

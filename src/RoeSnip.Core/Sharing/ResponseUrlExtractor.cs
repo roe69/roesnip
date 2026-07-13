@@ -2,7 +2,7 @@ using System;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace RoeSnip.Sharing;
+namespace RoeSnip.Core.Sharing;
 
 /// <summary>Pulls the uploaded file's public URL out of a provider's successful response body, per
 /// the spec's own <see cref="ProviderSpec.ResponseMode"/>. The three modes cover every built-in

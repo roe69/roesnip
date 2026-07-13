@@ -335,9 +335,51 @@ existing WPF test suite is the proof.
       across pass-through, shoulder, adversarial bit-pattern, and full 1440p frames; all green on
       this (x64) machine, and structurally correct (pure runtime IsSupported branching, no
       platform-conditional compilation) for the arm64 fallback.
-- [ ] 11-sharing-core: Move the Sharing subsystem (ProviderSpec, ShareManager, catalog,
+- [x] 11-sharing-core: Move the Sharing subsystem (ProviderSpec, ShareManager, catalog,
       template/url extraction) into RoeSnip.Core, rewrite ShareTestImage without
       System.Drawing, retarget WPF, add the settings fields. (L)
+      Moved all 9 src/RoeSnip/Sharing/*.cs files into RoeSnip.Core/Sharing (namespace
+      RoeSnip.Core.Sharing, mirroring the Capture/Color/Imaging extraction pattern), deleted the
+      WPF originals, and retargeted every WPF call site (Program.cs, App/SettingsWindow.xaml.cs,
+      App/ShareProvidersWindow.xaml.cs, App/ShareProviderEditWindow.xaml.cs,
+      Overlay/OverlayController.cs, Overlay/OverlayWindow.xaml.cs,
+      Recording/RecordingController.cs) onto the Core copies — one implementation, zero
+      duplication. One deliberate API change while porting: ShareManager.EffectiveConfigs/
+      ResolveDefault now take the ShareProviders list / DefaultShareProviderId directly instead
+      of a whole RoeSnipSettings object — a shared Core facade can't depend on either app's own
+      settings record shape (the WPF RoeSnipSettings in Program.cs and RoeSnip.Core.Settings.
+      RoeSnipSettings are two distinct records by design, per the two-settings-files split), so
+      every call site now passes settings.ShareProviders/settings.DefaultShareProviderId
+      explicitly; behavior (default-resolution order, fallback rules) is unchanged. ShareTestImage
+      was rewritten against Core's own SdrImage + SkiaSharp PngWriter (a per-pixel diagonal
+      gradient) instead of System.Drawing/GDI+ (Windows-only since .NET 7, incompatible with
+      Core's portable net8.0 TFM) — not pixel-identical to the old GDI+ output, but produces the
+      same 32x32 fully-opaque gradient PNG shape the Test button's real upload pipeline needs; a
+      valid decodable PNG is the only actual contract (see that class' own doc comment). Added
+      ShareProviders (List<Sharing.ShareProviderConfig>) and DefaultShareProviderId to
+      RoeSnip.Core.Settings.RoeSnipSettings — item 01's JsonStringEnumConverter (added ahead of
+      time for exactly this) makes ShareUploadKind/ResponseUrlMode persist as JSON strings, same
+      as the WPF settings file. The WPF RoeSnipSettings record itself (Program.cs) was left
+      untouched apart from retargeting its ShareProviders field's element type from the
+      now-deleted RoeSnip.Sharing.ShareProviderConfig to RoeSnip.Core.Sharing.ShareProviderConfig
+      — an unavoidable consequence of deleting the duplicate, not a settings-shape/schema change;
+      the two apps' settings.json files remain fully independent. Ported all 6 WPF Sharing test
+      files (63 test methods: ProviderSpecShareProviderTests, ResponseUrlExtractorTests,
+      ShareManagerTests, ShareProviderCatalogTests, ShareProviderSettingsPersistenceTests,
+      TemplateExpanderTests) into RoeSnip.Core.Tests/Sharing verbatim except ShareManagerTests
+      (rewritten against the new list/id-based ShareManager signature) and
+      ShareProviderSettingsPersistenceTests (now round-trips RoeSnip.Core.Settings.RoeSnipSettings
+      via Core's own SettingsStore instead of the WPF one); added ShareTestImageTests (2 new
+      tests: decodable 32x32 PNG, opaque + genuinely gradiented) — 65 Sharing tests total now
+      live in RoeSnip.Core.Tests/Sharing. SettingsTests.cs's two whole-record round-trip tests
+      were extended to neutralize the new ShareProviders list field the same way they already do
+      for RecentPickedColors/CustomColors/PaletteColors (List<T> reference-equality quirk, not a
+      regression). Build + full solution test suite green (902 tests: 419 RoeSnip.Tests + 358
+      Core.Tests + 116 App.Tests + 9 Platform.Windows.Tests). No linux/mac degradation: the whole
+      Sharing subsystem is pure BCL (HttpClient,
+      System.Text.Json, System.Text.RegularExpressions) plus Core's own portable SkiaSharp-backed
+      imaging — it already builds and behaves identically on every OS RoeSnip.Core targets. No UI
+      wiring changed in RoeSnip.App (still has no Sharing surface) — that is item 12's job.
 - [ ] 12-sharing-ui: Provider management windows, Settings entry point, and the overlay
       Share split button + per-provider dropdown wired into OverlayController upload
       flows. (M)

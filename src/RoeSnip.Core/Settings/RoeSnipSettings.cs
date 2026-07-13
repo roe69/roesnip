@@ -64,6 +64,25 @@ public sealed record RoeSnipSettings
     /// <see cref="CustomColors"/> and only persist the list once the user first edits it.</summary>
     public List<string> PaletteColors { get; init; } = new();
 
+    // ---------- Sharing/upload subsystem (Sharing/*) ----------
+
+    /// <summary>Configured share-upload provider instances: built-in providers the user has touched
+    /// (credentials/enabled state), plus every "Custom..." one they've added. Never carries a
+    /// not-yet-configured built-in's row - see Sharing/ShareProviderCatalog.EffectiveConfigs, which
+    /// layers a fresh disabled placeholder for every untouched built-in on top of this list at read
+    /// time so this stays empty on a fresh install rather than pre-populating seven rows nobody
+    /// asked for. Stored PLAINTEXT like every other RoeSnipSettings field, INCLUDING each config's
+    /// API keys/tokens (Sharing/ShareProviderConfig.Values) - the settings UI says so explicitly next
+    /// to any secret field. Mirrors the WPF app's own independent ShareProviders field byte-for-byte
+    /// in shape (both apps' settings.json stay separate files by design - see SettingsStore's own
+    /// doc comment).</summary>
+    public List<Sharing.ShareProviderConfig> ShareProviders { get; init; } = new();
+
+    /// <summary>Which configured provider (by Sharing/ShareProviderConfig.Id) a plain Share click
+    /// uploads to. Null, or a stale/disabled id, falls back to the first enabled configured provider
+    /// - see Sharing/ShareManager.ResolveDefault.</summary>
+    public string? DefaultShareProviderId { get; init; } = null;
+
     public static RoeSnipSettings Default { get; } = new();
 
     private static string DefaultSaveDirectory() =>

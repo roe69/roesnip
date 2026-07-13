@@ -5,8 +5,8 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using RoeSnip.Core.Sharing;
 using RoeSnip.Interop;
-using RoeSnip.Sharing;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
 namespace RoeSnip.App;
@@ -149,7 +149,7 @@ public partial class SettingsWindow : Window
         {
             DefaultShareProviderCombo.Items.Clear();
 
-            var enabledProviders = ShareManager.EffectiveConfigs(_current)
+            var enabledProviders = ShareManager.EffectiveConfigs(_current.ShareProviders)
                 .Where(c => c.Enabled)
                 .ToList();
 

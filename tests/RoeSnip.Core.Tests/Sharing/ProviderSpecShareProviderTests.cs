@@ -6,10 +6,10 @@ using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using RoeSnip.Sharing;
+using RoeSnip.Core.Sharing;
 using Xunit;
 
-namespace RoeSnip.Tests.Sharing;
+namespace RoeSnip.Core.Tests.Sharing;
 
 /// <summary>Exercises ProviderSpecShareProvider end-to-end against a StubHttpMessageHandler - real
 /// spec objects (several lifted straight from ShareProviderCatalog's own built-ins), zero network

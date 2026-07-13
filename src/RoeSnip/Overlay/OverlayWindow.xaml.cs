@@ -1803,7 +1803,7 @@ public partial class OverlayWindow : Window
         // (ShareProviderCatalog.DefaultConfigFor) and must not appear as a clickable-but-broken
         // picker entry.
         _toolbar.SetShareProviders(
-            RoeSnip.Sharing.ShareManager.EffectiveConfigs(_liveSettings)
+            RoeSnip.Core.Sharing.ShareManager.EffectiveConfigs(_liveSettings.ShareProviders)
                 .Where(c => c.Enabled)
                 .Select(c => (c.Id, c.DisplayName))
                 .ToList(),

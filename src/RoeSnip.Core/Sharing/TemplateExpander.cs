@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
-namespace RoeSnip.Sharing;
+namespace RoeSnip.Core.Sharing;
 
 /// <summary>Expands <c>{VarName}</c> tokens in a ProviderSpec's Endpoint/Headers/ExtraFields
 /// templates against a per-upload value set (a provider config's saved credential/URL values, plus
