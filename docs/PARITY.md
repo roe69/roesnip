@@ -816,9 +816,115 @@ existing WPF test suite is the proof.
       output) plus RecordingCapabilitiesRegistry select/skip mechanics (RoeSnip.Core.Tests), and
       a Windows registration + MP4 orientation-regression re-port (RoeSnip.Platform.Windows.Tests).
       Whole-solution suite green: 419 WPF + 379 Core (+8) + 188 App + 14 Platform.Windows (+5).
-- [ ] 20-recording-engine: RegionRecorder/RecordingController port: schedule throttle,
+- [x] 20-recording-engine: RegionRecorder/RecordingController port: schedule throttle,
       patch-behind delta, pause clock, RawFramesEqual dedupe, LOH-avoidance buffer reuse,
       ROESNIP_RECORD_AUTOSAVE hook, Windows staging-ring readback behind Platform. (XL)
+      Landed a new Core seam (RoeSnip.Core.Recording.IRegionCaptureSource/RegionCaptureFrame/
+      RegionCaptureSourceRegistry - same [ModuleInitializer] registration pattern as
+      CaptureBackendRegistry/Mp4VideoEncoderRegistry/AudioCaptureDeviceRegistry) so RoeSnip.App's
+      own RegionRecorder.cs (App/Recording, new) stays a thin, fully portable wrapper with NO
+      `#if WINDOWS` of its own even though the App project multi-targets a plain net8.0 TFM that
+      cannot reference Platform.Windows at all: RoeSnip.Platform.Windows/WindowsRegionCaptureSource.cs
+      (new) is a near-verbatim port of the WPF app's RegionRecorder onto that interface - the same
+      3-slot D3D11 staging ring (StagingRingSize=3, copies into slot N while mapping slot N-1, so
+      Map never blocks on a copy the GPU is still finishing), the same schedule-based throttle
+      (advance a due-time by the interval per accepted frame rather than gating on since-last-
+      forward, so a 50fps target against a 60Hz WGC source doesn't alias to 30fps), and the same
+      WgcCapturer.CreateResources-owned private device (never WgcCapturer's own ephemeral per-shot
+      cache). Non-Windows gets RoeSnip.Core.Recording.PolledRegionCaptureSource (new, portable): a
+      background thread polling ICaptureBackend.CaptureAll at the SAME RecordingSchedule cadence and
+      cropping in managed code - correct, but pays a full one-shot capture round trip per accepted
+      frame instead of a persistent GPU session (documented accepted limitation below, not a
+      functional gap - both share the identical throttle math via a new pure
+      RoeSnip.Core.Recording.RecordingSchedule struct, unit-tested directly).
+      RoeSnip.App/Recording/RecordingController.cs (new) ports the WPF app's RecordingController/
+      RecordingSession orchestration for the single-monitor case (spanning/multi-monitor recording
+      is a separate, not-yet-ported track, same as the WPF app's own project history and item 09's
+      precedent note): the Setup/Capturing/Reviewing three-phase state machine, BeginCapture wiring
+      RegionRecorder to whichever RoeSnip.Core.Recording.IVideoEncoder item 19 registered
+      (GifVideoEncoder everywhere, Mp4VideoEncoderRegistry.Create where supported) plus
+      AudioCaptureDeviceRegistry.TryStart for MP4's optional mic/system-audio track, the encoder
+      thread's EncoderLoop (schedule-throttled frames off RegionRecorder.Frames, RawFrameEquality.
+      RawFramesEqual pre-tonemap dedupe, GIF's patch-behind delta delay via GifEncoder.AddFrame's own
+      timestamped overload unchanged from item 04, DrainAudio's pause-aware audio timestamp mapping),
+      and the single accumulating _paused/_pausedTicks/_pauseStartTicks clock (Pause/Resume AND
+      StopCaptureToReview's own soft-stop-into-review bookkeeping all fold into this ONE accumulator,
+      ported verbatim from the WPF reference's ~1344 area - frames drop pre-readback during a pause
+      because IRegionCaptureSource.Paused gates BEFORE any GPU/backend work, so the encoder thread
+      only ever needs to correct for the GAP a pause leaves in later timestamps, never anything
+      captured during it). LOH-avoidance buffer reuse: SdrImage.FromCapturedFrame gained a
+      reuseOutput byte[] overload (extending item 10's ToneMapper.MapToSdr reuseOutput param, which
+      only covered the Fp16 tone-mapped branch, to the Bgra8Srgb passthrough branch too - a recording
+      can target an SDR-only monitor), and EncoderLoop alternates two persistent canvas-sized target
+      buffers (gifTonemapA/B) across frames at up to 50fps, exactly mirroring the WPF reference's own
+      discipline. ROESNIP_RECORD_AUTOSAVE: RecordingSession.Save's own SaveOutput honors the env var
+      exactly like the WPF reference's SaveOutput (:1752-1761) - this port has no native save-file
+      dialog yet (that arrives with item 21's chrome), so a caller with neither an explicit path nor
+      the env var gets a clean null result instead of a dialog, documented on Save's own doc comment.
+      RoeSnip.Core.Settings.RoeSnipSettings gained RecordMicrophone/RecordSystemAudio/GifSizePreset/
+      Mp4SizePreset/GifFps/Mp4Fps, ported verbatim (same defaults, same fail-safe-at-use-time Parse/
+      ClampFps conventions, same Max/High/Medium/Low/Min label persistence under the old enum member
+      names) from the WPF app's own RoeSnipSettings fields.
+      "Temporary internal start/stop hook for testing" (this item's own brief, chrome is item 21):
+      RoeSnip.App/Recording/RecordingSmokeTest.cs (new) is a hidden `--record-smoketest gif|mp4
+      [seconds]` CLI verb (dispatched in Program.Main after platform-hook registration, undocumented,
+      not in CliOptions/PrintUsage) that drives RecordingController.StartNew -> BeginCapture ->
+      StopCaptureToReview -> Save end to end against a real monitor with no chrome UI at all - the
+      file's own doc comment marks it for deletion once item 21's real chrome + automation commands
+      supersede it. RecordingController/RecordingSession/RoundDownToEven are public (this codebase's
+      "testable slice becomes public, not an InternalsVisibleTo edit" convention) so item 21 can call
+      them directly with no shape change.
+      New tests: RecordingScheduleTests, RawFrameEqualityTests, GifRegionDownsampleTests (extracted
+      pure math: ScaledCanvasDimension/BoxDownsample, the Compact/Minimal GIF downscale levers),
+      PolledRegionCaptureSourceTests (crop-correctness/pause/origin-clamp/fault-propagation/
+      channel-completion against a fake ICaptureBackend, no real capture involved) in
+      RoeSnip.Core.Tests; RegionCaptureSourceRegistrationTests in RoeSnip.Platform.Windows.Tests
+      (mirrors BackendRegistrationTests/RecordingSeamsRegistrationTests - proves the
+      [ModuleInitializer] actually ran and Create() returns a genuine WindowsRegionCaptureSource
+      against a REAL enumerated monitor, since unlike CaptureBackendRegistry's cheap wrapper
+      construction this constructor eagerly builds a real D3D11 device); RecordingControllerTests
+      (RoundDownToEven's H.264-parity even-floor/normalize/minimum-2px cases) in RoeSnip.App.Tests;
+      SettingsTests' whole-record round-trip extended to cover all six new fields. Build + full
+      solution test suite green (1026 tests: 419 WPF + 400 Core (+21) + 192 App (+4) + 15
+      Platform.Windows (+1)).
+      LIVE-VERIFIED on Windows exactly as this item's own brief asked: built the real win-x64
+      exe and ran `RoeSnip.exe --record-smoketest gif 4` / `mp4 4` against a real 400x300 region of
+      this machine's primary monitor with ROESNIP_RECORD_AUTOSAVE pointed at a temp dir, moving the
+      mouse cursor around the recorded region throughout each take (cursor capture is on, so this
+      produces genuine per-frame pixel motion) - the GIF take produced an 80-frame animated GIF
+      decoded back with System.Drawing.Image.GetFrameCount (a real GIF decoder, not this codebase's
+      own), confirming the schedule throttle/patch-behind delay/dedupe pipeline round-trips
+      correctly; the MP4 take produced a valid ISO-BMFF file (ftyp/moov/mdat/avc1 boxes present) that
+      Vortice.MediaFoundation's real SourceReader decoded back 109 real video samples from (a
+      throwaway decode-check test, run once against the live smoketest output then deleted - not
+      part of the committed suite, since the encoder's own committed Mp4EncoderTests already
+      MF-decode files from this identical Mp4Encoder class on every test run). A static (no cursor
+      movement)
+      control take confirmed the OTHER end of the same dedupe pipeline: a mostly-unchanging region
+      correctly collapsed to a single emitted GIF frame instead of paying tone-map/encode cost for
+      50 identical ones. No RoeSnip process was left running afterward (each smoketest run is a
+      one-shot CLI process with no tray/pipe/hotkey/mutex surface - it never touches the user's
+      resident WPF or Avalonia instances, and none were running before or after).
+      Deliberate scope reductions from a literal WPF port, all documented on the relevant class's own
+      doc comment: (1) spanning/multi-monitor recording is NOT ported here - single-RegionRecorder
+      takes only, matching item 09's own precedent that spanning recording is a separate work track;
+      (2) the Windows ring's raw readback buffers are plain `new byte[]`, not an ArrayPool rental -
+      Core's CapturedFrame has no pooled-buffer-return-on-Dispose contract anywhere in this port
+      (WgcCapturer's own one-shot Capture() already follows the same plain-allocation convention), so
+      the LOH-avoidance requirement is satisfied where it actually matters at recording cadence - the
+      tone-mapped SdrImage output buffer reuse in RecordingController's own encoder loop - rather than
+      at the raw-capture layer; (3) no chrome/outline UI, display-change safety net, or CaptureGate
+      integration - all explicitly item 21's job per this item's own brief ("no user-facing UI in
+      this item beyond a temporary internal start/stop hook").
+      Non-Windows (linux/mac net8.0 TFM): builds cleanly (verified via `dotnet build -f net8.0`, no
+      RID) - RecordingController/RecordingSession/RegionRecorder/RecordingSmokeTest are all portable
+      code with zero Platform.Windows reference, and RegionCaptureSourceRegistry.Create falls back to
+      PolledRegionCaptureSource automatically. Recording itself degrades exactly as item 19 already
+      documented and this item's own PolledRegionCaptureSource doc comment repeats: GIF-only (no MP4/
+      audio candidates registered on those OSes), correct output but a plain per-frame capture round
+      trip instead of the Windows ring's persistent low-latency GPU session - cannot be measured live
+      without Linux/macOS hardware, tracked as an accepted limitation below, not silently glossed
+      over.
 - [ ] 21-recording-chrome: 3-state RecordingChrome UI, RegionOutline click-through,
       PrtScr stop-and-save state machine, recording Share integration (temp file kept on
       failed upload), automation record/preset/fps/chrome commands. (XL)

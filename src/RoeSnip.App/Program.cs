@@ -774,6 +774,16 @@ public static class Program
         EnsurePlatformAssembliesLoaded();
         RegisterPlatformHooks();
 
+        // TEMPORARY (item 20's own "internal start/stop hook for testing" - see
+        // Recording/RecordingSmokeTest.cs's class doc comment for removal plan): deliberately
+        // undocumented, not in CliOptions/PrintUsage, needs platform hooks/capture backends already
+        // registered above so it must be dispatched here rather than alongside the elevated-startup
+        // verbs further up.
+        if (args.Length > 0 && args[0] == "--record-smoketest")
+        {
+            return Recording.RecordingSmokeTest.Run(args);
+        }
+
         var cli = CliOptions.Parse(args);
         return cli.Mode switch
         {

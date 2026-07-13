@@ -132,6 +132,12 @@ public class SettingsTests : IDisposable
             TextItalic = true,
             CustomColors = new List<string> { "#FF00FF", "#00FFAA" },
             PaletteColors = new List<string> { "#E53935", "#123456", "#654321" },
+            RecordMicrophone = true,
+            RecordSystemAudio = true,
+            GifSizePreset = "Compact",
+            Mp4SizePreset = "Max",
+            GifFps = 42,
+            Mp4Fps = 15,
         };
 
         SettingsStore.Save(original, settingsPath);

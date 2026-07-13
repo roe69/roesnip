@@ -35,15 +35,26 @@ public sealed class SdrImage
     /// DESIGN.md ("BGRA8-source frames bypass the tone-mapper entirely"), so no call site needs
     /// to know or duplicate that branch.</summary>
     public static SdrImage FromCapturedFrame(CapturedFrame frame, Color.ToneMapOptions opts) =>
-        frame.Format == FrameFormat.Fp16ScRgb
-            ? Color.ToneMapper.MapToSdr(frame, opts)
-            : FromBgra8Passthrough(frame);
+        FromCapturedFrame(frame, opts, reuseOutput: null);
 
-    private static SdrImage FromBgra8Passthrough(CapturedFrame frame)
+    /// <summary><paramref name="reuseOutput"/>: recording-cadence call sites (up to 50fps - item 20)
+    /// pass a persistent, exactly-frame-sized buffer here to avoid a fresh (LOH-sized) allocation per
+    /// captured frame - mirrors <see cref="Color.ToneMapper.MapToSdr(CapturedFrame,Color.ToneMapOptions,byte[]?)"/>'s
+    /// own reuseOutput contract, extended to the Bgra8Srgb passthrough branch too (item 10 only added
+    /// it to the tone-mapped path, since that is the only branch its own recording-cadence caller at
+    /// the time exercised; item 20 needs both, since a recording can target an SDR-only monitor).
+    /// Must already be sized <c>width*4*height</c> when non-null - same "caller's own scratch buffer,
+    /// never allocated here" contract every other reuse-buffer parameter in this codebase uses.</summary>
+    public static SdrImage FromCapturedFrame(CapturedFrame frame, Color.ToneMapOptions opts, byte[]? reuseOutput) =>
+        frame.Format == FrameFormat.Fp16ScRgb
+            ? Color.ToneMapper.MapToSdr(frame, opts, reuseOutput)
+            : FromBgra8Passthrough(frame, reuseOutput);
+
+    private static SdrImage FromBgra8Passthrough(CapturedFrame frame, byte[]? reuseOutput = null)
     {
         int width = frame.Width;
         int height = frame.Height;
-        var output = new byte[width * 4 * height];
+        var output = reuseOutput ?? new byte[width * 4 * height];
         for (int y = 0; y < height; y++)
         {
             var row = frame.Row(y);
