@@ -355,6 +355,20 @@
 
                     <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
+                    <!-- Record: left-click opens the format menu (item 21 - unlike Save's
+                         right-click-only HDR menu, Record has no single default format to pick for
+                         a plain click). Picking a format closes the overlay and hands off to
+                         RecordingOrchestrator (Setup/Recording/Reviewing chrome next to the
+                         recorded region) - see OverlayController.OverlaySession.Record. -->
+                    <Button x:Name="RecordButton" Classes="action" ToolTip.Tip="Record as MP4 or GIF">
+                        <Grid IsHitTestVisible="False">
+                            <Ellipse Width="13" Height="13" Stroke="{StaticResource RlTextPrimaryBrush}" StrokeThickness="1.5"/>
+                            <Ellipse Width="6" Height="6" Fill="#DC4646"/>
+                        </Grid>
+                    </Button>
+
+                    <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
+
                     <!-- Share: uploads the current selection render to a configured Sharing/*
                          provider (item 12). A real split button (not a single-click-opens-menu
                          pattern): ShareButton's own click uploads straight to the DEFAULT provider

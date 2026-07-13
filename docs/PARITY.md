@@ -925,9 +925,122 @@ existing WPF test suite is the proof.
       trip instead of the Windows ring's persistent low-latency GPU session - cannot be measured live
       without Linux/macOS hardware, tracked as an accepted limitation below, not silently glossed
       over.
-- [ ] 21-recording-chrome: 3-state RecordingChrome UI, RegionOutline click-through,
+- [x] 21-recording-chrome: 3-state RecordingChrome UI, RegionOutline click-through,
       PrtScr stop-and-save state machine, recording Share integration (temp file kept on
       failed upload), automation record/preset/fps/chrome commands. (XL)
+      RecordingChrome.cs (new, code-built like the WPF reference and this port's own FlashDimmer -
+      no .axaml) ports the Setup/Recording/Reviewing state machine, Start/Stop toggle, Pause/Resume,
+      inline Restart confirm swap, mic/system-audio toggles (disabled + captioned, never hidden, when
+      RoeSnip.Core.Recording.RecordingCapabilitiesRegistry reports them unsupported), the Quality/FPS
+      rows with a live RecordingSizeEstimator readout, and Save/Share gating (SetShareAvailable, a
+      fresh per-Reviewing-entry check) verbatim from the WPF reference. DELIBERATE simplification:
+      buttons/toggles are plain Avalonia Button/ToggleButton with literal Background/Foreground colors
+      instead of the WPF reference's hand-built ControlTemplate+Trigger recipe - Avalonia's Fluent
+      theme supplies hover/press chrome, so the exact hover recipe is lost but the at-rest on/off
+      legibility (solid orange = on, dim ghost = off) the WPF doc comment calls out as the important
+      part is kept. Positioning uses Avalonia's own Position(PixelPoint)/Width/Height(DIP) the same
+      way OverlayWindow already does, not FlashDimmer's latency-critical raw SetWindowPos (this window
+      repositions only on a drag/state change, an ordinary case Avalonia's window API already handles
+      correctly - ROESNIP_DIAG_NOEXCLUDE/WDA_EXCLUDEFROMCAPTURE reused verbatim via item 02's own
+      WindowCaptureExclusion.Apply, called from Opened).
+      RegionOutline.cs (new) is a genuine MECHANISM deviation from the WPF reference, documented on
+      the class's own doc comment: WPF achieves cross-process click-through via a real alpha-0
+      WS_EX_LAYERED pixel plus a subclassed WM_NCHITTEST; this port has no safe way to subclass
+      Avalonia's own Win32 window procedure, so it instead toggles the WS_EX_TRANSPARENT extended
+      style bit on/off via a 16ms poll (GetCursorPos + GetAsyncKeyState(VK_LBUTTON/SHIFT/CONTROL), no
+      window-message hook at all) - band/modifier-held-inner/active-drag clears WS_EX_TRANSPARENT
+      (this window receives ordinary Avalonia pointer input there), a plain click-through inner sets
+      it (real OS-level cross-process click-through, the same well-established Win32 mechanism many
+      overlay apps use). Functionally equivalent contract (interior click-through, band/handles
+      hit-testable, Setup=resize/Capturing+Reviewing=move-only), same ZoneAt/ApplyDrag math ported
+      verbatim, same even-dimension/min-size/single-clamp rules - just no genuine per-pixel alpha
+      semantics to replicate. Windows-only: RecordingOrchestrator only constructs it when
+      OperatingSystem.IsWindows() is true; non-Windows recordings proceed with NO region boundary
+      marker and no drag-to-move/resize UI (the take itself is unaffected - GIF-only per item
+      19/20's own degrade), a new accepted limitation (see below).
+      RecordingController.cs (item 20's file) gained PhaseChanged/PausedChanged/Ended events, a
+      public RecordingSessionPhase mirror of the private Phase enum, Monitor/SelectionPx/Format/
+      Elapsed properties, Restart() (WPF's RestartTake - hard-stop, discard, back to Setup WITHOUT
+      tearing the session down) and BeginShareHandoff()/RecordingShareHandoff (hard-stop + rearm,
+      returns the temp path/format/filename/content-type for the caller's own upload - mirrors
+      RequestShare's hard-stop-then-rearm half exactly, with provider resolution/upload left to the
+      new orchestration layer, which has no reference to Sharing/ShareManager itself). New
+      Recording/RecordingOrchestrator.cs owns the whole UI layer of one recording: builds
+      RecordingChrome + (Windows-only) RegionOutline, wires chrome events to session methods and
+      session PhaseChanged/PausedChanged/Ended back onto chrome/outline, runs the 250ms elapsed-time
+      ticker, and implements RequestShare VERBATIM against the WPF reference's 422e87a contract -
+      resolve the provider from a FRESH SettingsStore.Load() and check it BEFORE the session's
+      irreversible hard-stop (a no-op with the take untouched if nothing resolves), temp file deleted
+      ONLY on a successful upload, kept with its full path named in the error balloon on failure, the
+      Share gate re-checked every time Reviewing is (re-)entered. Live-verified this exact contract
+      (see TESTING.md's own item 21 section): `chrome share` with no provider configured left a
+      Reviewing take completely untouched and logged the exact expected message.
+      PrtScr state machine (item 21d): TrayApp.TriggerCapture now checks
+      RecordingOrchestrator.IsActive and calls RequestPrtScrAction() BEFORE MarkTriggerTimestamp/the
+      flash/anything else (mirrors the WPF reference's TrayApp.cs:255-260 exactly, including the
+      "not a new capture trigger" comment) - RecordingOrchestrator.AdvanceOnPrtScr maps
+      Setup->BeginCapture, Capturing->StopCaptureToReview, Reviewing->Save, same as the WPF
+      reference's AdvanceOnPrtScr. CaptureGate hand-off: AppComposition.RunCaptureFlowAsync no longer
+      unconditionally exits CaptureGate/schedules the idle trim in its own finally - a
+      RecordingRequested result skips both (handedOffToRecording), and RecordingOrchestrator.OnEnded
+      is what eventually releases the gate once the WHOLE recording (however it ends) is truly over,
+      mirroring the WPF reference's "CaptureGate is held by RecordingController across all three
+      phases" design.
+      Toolbar/overlay wiring (item 21c): ToolbarControl gained a Record button (a MenuFlyout with
+      "Record MP4"/"Record GIF", left-click-opens-menu like the WPF reference's ContextMenu) between
+      the Save-HDR and Share groups. OverlayController gained OverlayCommand.RecordMp4/RecordGif and
+      OverlaySession.Record (packages Monitor/SelectionPx/RenderSelectionWithAnnotations onto a new
+      OverlayResult.RecordingRequested field and Finish()es the overlay exactly like Copy/Save/
+      SaveHdr, WITH a spanning-selection guard - "select a region on one monitor" - since spanning
+      recording is a separate, not-yet-ported track per item 20's own note) plus RecordForAutomation.
+      Program.cs's OverlayResult gained RecordingRequested (a new optional trailing field, existing
+      positional constructors unaffected) and AppComposition gained the StartRecording hook, set by
+      RecordingOrchestrator.Init via [ModuleInitializer] exactly like OverlayController.Init sets
+      RunOverlay.
+      Automation (item 21f): AutomationServer's record/preset/fps/chrome commands are now LIVE
+      (HandleRecord polls for "setup" rather than treating a transient "idle" hand-off gap as settled,
+      mirroring the WPF reference's own HandleRecord doc comment exactly), select routes to
+      RecordingOrchestrator.SetSelectionForAutomation (monitor-relative<->virtual-desktop-absolute
+      conversion, single-monitor only) when a recording is active, escape routes to
+      RecordingOrchestrator's own "cancel" chrome action first, and GetStateSnapshot's recording
+      branch mirrors the WPF reference's mode/format/preset/estimate/fps/fpsRange shape exactly.
+      TESTING.md's own item 21 section replaces the old "not yet supported" stub with the full command
+      reference plus a live-verified worked example.
+      Tests: 5 new RecordingSessionSetupPhaseTests (tests/RoeSnip.App.Tests/RecordingControllerTests.cs)
+      cover the Setup-phase guard clauses new to this item (Restart/BeginShareHandoff no-op when
+      nothing has been captured yet, Elapsed==Zero at Setup, the full Setup->CancelAndDiscard->Ended
+      teardown path, StartNew's already-active guard) - scoped to what's testable without a real
+      capture backend/encoder, same precedent this file's own pre-existing RoundDownToEven tests set;
+      BeginCapture's own real pipeline is exercised live instead (see below), matching item 20's own
+      documented "mutates real GC/OS/window state" precedent for the untestable slice. Build + full
+      solution test suite green (1031 tests: 419 WPF + 400 Core + 197 App (+5) + 15 Platform.Windows).
+      Deliberate scope reductions, all documented on the relevant class's own doc comment: (1)
+      SpanningCanvasCompositor was NOT ported - recording itself is single-monitor-only in this port
+      per item 20's own scope note (spanning recording is a separate, not-yet-landed track for BOTH
+      apps' history), so there is nothing for a spanning selection to composite; Record on a spanning
+      selection surfaces an honest error instead of silently recording one monitor. (2) No native
+      save-file dialog - Save without an explicit path only succeeds via ROESNIP_RECORD_AUTOSAVE
+      (unchanged from item 20's own documented gap; a real Avalonia save dialog is future work). (3)
+      RegionOutline is Windows-only (see above).
+      LIVE-VERIFIED on Windows (this machine, standalone `--automation` instance with
+      ROESNIP_RECORD_AUTOSAVE set to a scratch dir, started and killed by this item's own session,
+      never the user's real resident): the full trigger->select->record gif->three PrtScr-simulating
+      `trigger` presses (Setup->Capturing->Reviewing->Save-and-rearm)->preset/fps changes->cancel
+      cycle end to end; the produced GIF decoded via a REAL decoder (System.Drawing.Image,
+      GetFrameCount) at the exact requested 400x300 dimensions; `chrome share` with no provider
+      configured left the session in Reviewing untouched (fail-closed contract verified) and logged
+      the exact expected stderr message; a screenshot (includeExcluded) of a fresh MP4 Setup session
+      confirmed RecordingChrome renders correctly (audio toggles, Quality row, FPS slider, live
+      estimate, correct Setup-phase button enable states) anchored below RegionOutline's dotted
+      boundary around the selected region. NOT verified live: RegionOutline's own band drag/resize
+      (needs live mouse input, same interactive-session gap items 07/08 already carry) and MP4 mic/
+      system-audio capture (item 19's own Mp4Encoder/AudioCapture tests already cover that path; this
+      pass didn't re-exercise real WASAPI devices).
+      No linux/mac degradation beyond what's documented above and in Accepted limitations: GIF
+      recording (item 19/20's own existing degrade) works identically end-to-end including this
+      item's new chrome/PrtScr/Share/automation layers, which are all portable Avalonia/Core code with
+      zero OS-specific branches outside RegionOutline itself; only the region-boundary visual/drag UI
+      is missing there.
 - [ ] 22-color-picker: Standalone eyedropper (ColorPickerWindow, format catalog, shade
       strip, recent colors, magnifier format-driven value lines, Esc-closes-picker fix). (XL)
 
@@ -956,6 +1069,12 @@ because a correct implementation needs live hardware this repo cannot exercise.
   tested live.
 - Windows staging-ring GPU readback (item 20) has no Linux/macOS equivalent; non-Windows
   recording pays plain per-frame readback cost.
+- RegionOutline's click-through region-boundary marker (item 21) is Windows-only: it needs
+  WS_EX_TRANSPARENT-style OS-level click-through with no portable equivalent (X11/Wayland have
+  no comparable mechanism through Avalonia, and Wayland forbids a client positioning its own
+  window at all, same as FlashDimmer's own parking gap). Non-Windows recordings proceed with no
+  visual boundary and no drag-to-move/resize UI; RecordingChrome and the recording pipeline
+  itself (GIF-only, per the existing item 19/20 degrade) are unaffected.
 - PrintScreen/Snipping Tool consent, WM_SETTINGCHANGE broadcast, HKCU Run key: Windows-only
   registry/shell concepts, already correctly gated to Windows.
 - Tray activation: Avalonia's TrayIcon exposes Clicked only (no DoubleClick), so a single

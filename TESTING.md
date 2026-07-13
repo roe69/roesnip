@@ -635,9 +635,9 @@ RoeSnip.exe --auto '{"cmd":"state"}'      # equivalent
 ### Commands implemented in this port
 
 Same wire shape as the WPF app's `state` response (see that section above for the full field
-reference) — `mode` here is only ever `idle` or `overlay` (this port has no recording session, so
-`setup`/`capturing`/`reviewing` never appear, and `recordingFormat`/`preset`/`estimateText`/`fps`/
-`fpsRange` stay `null`).
+reference) — `mode` is `idle`/`overlay` while no recording is active, and `setup`/`capturing`/
+`reviewing` (with `recordingFormat`/`preset`/`estimateText`/`fps`/`fpsRange` populated) while one is
+— see the recording section below.
 
 - **`state`** — current mode/selection/monitor list.
 - **`trigger`** — opens the capture overlay (same action as the tray icon / hotkey / the bare
@@ -670,20 +670,55 @@ reference) — `mode` here is only ever `idle` or `overlay` (this port has no re
   the upload's own result — success or failure — arrives later via the tray balloon, same as a
   real click). Requires an active overlay session with a selection; errors otherwise.
 
-### Not yet supported: `record` / `preset` / `fps` / `chrome`
+### `record` / `preset` / `fps` / `chrome` (item 21 — recording)
 
-Recording (`RecordingController`/`RecordingChrome`/`RecordingSession`) has not been ported to
-RoeSnip.App yet (tracked separately). These four commands are still parsed and validated with the
-SAME shape as the WPF app's wire protocol (so a future recording port only has to swap the live
-handlers, never the on-wire contract), but their live handlers return a structured error instead
-of dispatching to anything — e.g.:
+Live, same wire shape as the WPF app's own protocol section above (`mode` becomes `setup`/
+`capturing`/`reviewing` while a recording is active; `recordingFormat`/`preset`/`estimateText`/
+`fps`/`fpsRange` populate accordingly):
 
-```
-RoeSnip.exe --auto "{\"cmd\":\"record\",\"format\":\"gif\"}"
-:: {"ok":false,"error":"\"record\" is unsupported until recording is ported to RoeSnip.App (tracked separately)"}
-```
+- **`record`** — `{"cmd":"record","format":"gif"}` or `"mp4"`. Closes the overlay (same as a
+  toolbar Record menu pick) and opens a recording session in `setup`. Requires an active overlay
+  session with a selection; a multi-monitor (spanning) selection errors instead of silently
+  recording one monitor (spanning recording is not ported — single-monitor takes only).
+- **`preset`** / **`fps`** — Setup-only, same tier/range validation as the WPF wire contract.
+- **`chrome`** — `{"cmd":"chrome","action":"start"}` (also `stop`/`pause`/`resume`/`save`/`share`/
+  `cancel`). Drives the exact same button handler a real chrome click would; an action invalid for
+  the current phase errors instead of silently no-opping. `save` with no explicit path (this port
+  has no save-file dialog) only succeeds when `ROESNIP_RECORD_AUTOSAVE` is set on the resident's own
+  environment — otherwise the take stays in `reviewing` and the failure is logged to stderr, never
+  silently swallowed. `share` with no configured provider is a fail-closed no-op (the take stays
+  exactly as it was, still soft-stopped, still Resumable) — see RecordingOrchestrator.RequestShare's
+  own doc comment for the full contract (ported verbatim from the WPF reference's 422e87a fix).
+- **`select`** while a recording is active moves/resizes the (Windows-only) RegionOutline instead of
+  the overlay selection — size-locked (move-only) once Capturing/Reviewing, same as a real band drag.
+- **PrtScr / `trigger` while a recording is active**: TrayApp.TriggerCapture checks
+  `RecordingOrchestrator.IsActive` BEFORE its own overlay-trigger bookkeeping — a `trigger` call (the
+  same entry point a real PrtScr press uses) advances the chrome state machine instead of opening a
+  new overlay: `setup` → BeginCapture, `capturing` → StopCaptureToReview, `reviewing` → Save. This is
+  the actual, most-representative way to E2E the PrtScr contract via the automation pipe (rather than
+  the `chrome` command, which drives the same handlers but not through TriggerCapture's own dispatch).
 
-Never `"unknown command"` — the command name is valid on the wire, just not live yet.
+**Verified 2026-07-14** (this machine, standalone `--automation` instance with
+`ROESNIP_RECORD_AUTOSAVE` set to a scratch directory, started and killed by this item's own session,
+never the user's real resident): `trigger` → `select` → `record gif` → `setup` (estimate/preset/fps
+all populated); three successive `trigger` calls (simulating three PrtScr presses) advanced
+`setup` → `capturing` → `reviewing` → (`save` via the autosave env var) → back to `setup` with the
+SAME region re-armed — the produced file (`roesnip_<timestamp>.gif`) decoded via a REAL GIF decoder
+(`System.Drawing.Image.GetFrameCount`, not this codebase's own) at the exact requested 400x300
+dimensions. `chrome share` with no provider configured left the session in `reviewing` untouched
+(fail-closed verified) and logged the exact "configure a share provider in Settings first" message
+to stderr. `preset`/`fps` commands changed the live estimate text. A screenshot
+(`includeExcluded:true`) of a fresh MP4 Setup session showed RecordingChrome rendering correctly
+(Mic off/System audio off pills, Quality row with High selected, FPS slider at 30, live estimate,
+Start/Restart/Save/Share/Cancel with the correct Setup-phase enable states) anchored below the
+RegionOutline's dotted boundary around the selected region. `chrome cancel` tore the whole session
+down back to `idle` and released CaptureGate (confirmed by a following ordinary `trigger`/`escape`
+cycle still working). No RoeSnip process was left running afterward, and the standalone instance's
+own `%APPDATA%\RoeSnip.App` (freshly created by this test, nothing there before) was removed.
+NOT verified live: the RegionOutline band drag/resize interaction itself (needs live mouse input,
+same interactive-session gap this file's own item 07/08 notes already carry) and MP4 mic/system-audio
+capture (this machine's WASAPI devices were not exercised by this pass — item 19's own Mp4Encoder/
+AudioCapture tests already cover that path).
 
 ### Worked example
 

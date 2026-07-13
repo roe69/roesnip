@@ -53,6 +53,7 @@ public partial class ToolbarControl : UserControl
     private readonly StackPanel _toolsGroupPanel;
     private readonly StackPanel _historyGroupPanel;
     private readonly Button _saveHdrButton;
+    private readonly Button _recordButton;
     private readonly Button _shareButton;
     private readonly Button _shareMenuButton;
     private readonly Button _undoButton;
@@ -86,6 +87,11 @@ public partial class ToolbarControl : UserControl
     public event Action? SaveHdrClicked;
     public event Action? CancelClicked;
 
+    /// <summary>Record button's format menu (item 21c) - left-click opens a two-item MenuFlyout
+    /// (Record MP4 / Record GIF), mirroring the WPF app's own RecordButton.ContextMenu.</summary>
+    public event Action? RecordMp4Clicked;
+    public event Action? RecordGifClicked;
+
     // ---------- Share split-button (Sharing/* subsystem, item 12) ----------
     //
     // This control only ever RAISES these events / exposes these setters — it never touches
@@ -113,6 +119,7 @@ public partial class ToolbarControl : UserControl
     /// parity with the WPF control's own event shape.</summary>
     public event Action? ManageProvidersRequested;
 
+    private readonly MenuFlyout _recordMenuFlyout;
     private readonly MenuFlyout _shareProviderMenuFlyout = new();
     private readonly List<MenuItem> _shareProviderMenuItems = new();
     private bool _shareHasProviders;
@@ -164,6 +171,7 @@ public partial class ToolbarControl : UserControl
         _toolsGroupPanel = Find<StackPanel>("ToolsGroupPanel");
         _historyGroupPanel = Find<StackPanel>("HistoryGroupPanel");
         _saveHdrButton = Find<Button>("SaveHdrButton");
+        _recordButton = Find<Button>("RecordButton");
         _shareButton = Find<Button>("ShareButton");
         _shareMenuButton = Find<Button>("ShareMenuButton");
         _undoButton = Find<Button>("UndoButton");
@@ -195,6 +203,7 @@ public partial class ToolbarControl : UserControl
         Find<Button>("CopyButton").Click += (_, _) => CopyClicked?.Invoke();
         Find<Button>("SaveButton").Click += (_, _) => SaveClicked?.Invoke();
         _saveHdrButton.Click += (_, _) => SaveHdrClicked?.Invoke();
+        _recordButton.Click += OnRecordClick;
         _shareButton.Click += (_, _) => ShareClicked?.Invoke();
         _shareMenuButton.Click += OnShareMenuClick;
         Find<Button>("CancelButton").Click += (_, _) => CancelClicked?.Invoke();
@@ -217,6 +226,12 @@ public partial class ToolbarControl : UserControl
         _boldToggleButton.Click += OnBoldToggleClick;
         _italicToggleButton.Click += OnItalicToggleClick;
         _fontFamilyComboBox.SelectionChanged += OnFontFamilyChanged;
+
+        var recordMp4Item = new MenuItem { Header = "Record MP4" };
+        recordMp4Item.Click += (_, _) => RecordMp4Clicked?.Invoke();
+        var recordGifItem = new MenuItem { Header = "Record GIF" };
+        recordGifItem.Click += (_, _) => RecordGifClicked?.Invoke();
+        _recordMenuFlyout = new MenuFlyout { Items = { recordMp4Item, recordGifItem } };
 
         BuildFontFamilyChoices();
         RefreshSizeCombo();
@@ -295,6 +310,8 @@ public partial class ToolbarControl : UserControl
             ? "Sharing..."
             : (_shareHasProviders ? "Share: upload to your default provider" : "Share: no provider configured yet — set one up in Settings"));
     }
+
+    private void OnRecordClick(object? sender, RoutedEventArgs e) => _recordMenuFlyout.ShowAt(_recordButton);
 
     private void OnShareMenuClick(object? sender, RoutedEventArgs e)
     {

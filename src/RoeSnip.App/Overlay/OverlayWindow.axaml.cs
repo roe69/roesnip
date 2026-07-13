@@ -1480,6 +1480,10 @@ public partial class OverlayWindow : Window
             // can never fire from a live click — no clickable-but-dead UI results.
             _toolbar.ShareClicked += () => _onCommand(OverlayCommand.Share);
             _toolbar.ShareToProviderRequested += providerId => _onShareToProvider(providerId);
+            // Record (item 21): the toolbar's format menu closes the overlay exactly like Copy/Save/
+            // SaveHdr - see OverlayController.OverlaySession.Record's own doc comment.
+            _toolbar.RecordMp4Clicked += () => _onCommand(OverlayCommand.RecordMp4);
+            _toolbar.RecordGifClicked += () => _onCommand(OverlayCommand.RecordGif);
             // The toolbar's X button always closes the whole overlay outright — deliberately NOT
             // the staged CancelStage semantics Esc has.
             _toolbar.CancelClicked += () => _onCommand(OverlayCommand.Cancel);

@@ -32,6 +32,14 @@ public enum OverlayCommand
     /// this enum can't, so it bypasses OverlayCommand entirely - see OverlayWindow's own
     /// onShareToProvider callback.</summary>
     Share,
+
+    /// <summary>Toolbar Record button's format menu (item 21). Unlike Copy/Save/SaveHdr this
+    /// performs no clipboard/PNG/HDR I/O itself - it packages (Monitor, SelectionPx, Format) onto
+    /// the OverlayResult and closes the overlay normally; RoeSnip.App.Recording.RecordingOrchestrator
+    /// takes it from there via AppComposition.StartRecording. See OverlaySession.Record's own doc
+    /// comment.</summary>
+    RecordMp4,
+    RecordGif,
 }
 
 public static class OverlayController
@@ -68,6 +76,14 @@ public static class OverlayController
     {
         var session = s_activeSession;
         return session is null ? "no active overlay session" : session.ConfirmForAutomation(action, path);
+    }
+
+    /// <summary>AutomationServer's `record` command (item 21f) — same null-coalescing-collapse
+    /// pitfall as every other wrapper here.</summary>
+    internal static string? RecordForAutomation(RoeSnip.Core.Recording.RecordingFormat format)
+    {
+        var session = s_activeSession;
+        return session is null ? "no active overlay session" : session.RecordForAutomation(format);
     }
 
     // ---------- Instant-response flash dimmer (item 18, Windows-only) ----------
@@ -778,7 +794,64 @@ public static class OverlayController
                     // stay open for the whole upload.
                     ShareCurrentSelection();
                     break;
+
+                case OverlayCommand.RecordMp4:
+                    Record(RoeSnip.Core.Recording.RecordingFormat.Mp4);
+                    break;
+
+                case OverlayCommand.RecordGif:
+                    Record(RoeSnip.Core.Recording.RecordingFormat.Gif);
+                    break;
             }
+        }
+
+        /// <summary>Record MP4/GIF (item 21) - a single-monitor selection only (spanning/multi-
+        /// monitor recording is a separate, not-yet-ported track - see docs/PARITY.md item 20's own
+        /// note); a spanning selection surfaces an honest error instead of silently recording just
+        /// one of the contributing monitors. Performs no clipboard/PNG/HDR I/O itself - packages
+        /// (Monitor, SelectionPx, Format) onto the OverlayResult and closes the overlay normally, same
+        /// shape as SaveHdr's own "the actual write happens back in AppComposition" split. The actual
+        /// RegionRecorder/encoder pipeline starts back in AppComposition.RunCaptureFlowAsync via the
+        /// StartRecording hook.</summary>
+        private void Record(RoeSnip.Core.Recording.RecordingFormat format)
+        {
+            if (_spanningVirtual is not null)
+            {
+                _notifier?.ShowError("Recording a multi-monitor selection is not supported yet - select a region on one monitor.");
+                return;
+            }
+
+            var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
+            if (window is null)
+            {
+                return; // no-op until something is selected, same guard as ConfirmAsync
+            }
+
+            SdrImage rendered;
+            try
+            {
+                rendered = window.RenderSelectionWithAnnotations();
+            }
+            catch (InvalidOperationException)
+            {
+                return;
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                return; // O8 audit fix precedent — see ConfirmAsync's own identical catch
+            }
+
+            var result = new OverlayResult(
+                window.Monitor,
+                window.SelectionPx!.Value,
+                rendered,
+                window.Frame,
+                CopyPerformed: false,
+                SavedPngPath: null,
+                SaveHdrRequested: false,
+                RecordingRequested: new RecordingRequest(format));
+
+            Finish(result);
         }
 
         /// <summary>Toolbar Share button (Sharing/* subsystem, item 12 — default-provider path only;
@@ -1432,6 +1505,24 @@ public static class OverlayController
         internal string? CancelForAutomation()
         {
             OnCommand(OverlayCommand.Cancel);
+            return null;
+        }
+
+        /// <summary>AutomationServer's `record` command (item 21f) — raises the exact
+        /// OverlayCommand.RecordMp4/RecordGif a toolbar menu pick would (same spanning/no-selection
+        /// guards as <see cref="Record"/> itself, pre-checked here so automation gets an explicit
+        /// error instead of that method's own silent no-op).</summary>
+        internal string? RecordForAutomation(RoeSnip.Core.Recording.RecordingFormat format)
+        {
+            if (_spanningVirtual is not null)
+            {
+                return "recording a multi-monitor selection is not supported yet";
+            }
+            if (_windows.All(w => w.SelectionPx is null))
+            {
+                return "record requires an active overlay session with a selection";
+            }
+            OnCommand(format == RoeSnip.Core.Recording.RecordingFormat.Gif ? OverlayCommand.RecordGif : OverlayCommand.RecordMp4);
             return null;
         }
 

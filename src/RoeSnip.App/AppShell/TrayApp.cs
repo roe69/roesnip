@@ -285,6 +285,16 @@ public sealed class TrayApp : ITrayNotifier
 
     private void TriggerCapture()
     {
+        // A recording is live: PrtScr stops+saves it instead of starting a new capture flow (item
+        // 21d, WPF reference TrayApp.cs:255-260). Deliberately BEFORE MarkTriggerTimestamp below: a
+        // stop-triggering PrtScr is not a new capture trigger and must not stamp latency
+        // instrumentation or touch the flash.
+        if (Recording.RecordingOrchestrator.IsActive)
+        {
+            Recording.RecordingOrchestrator.RequestPrtScrAction();
+            return;
+        }
+
         // Honest trigger-based latency instrumentation (item 18, ported from the WPF reference):
         // stamp the moment the ACTUAL trigger happened — before the flash, before capture, before
         // anything else — so every downstream latency log measures what the user really

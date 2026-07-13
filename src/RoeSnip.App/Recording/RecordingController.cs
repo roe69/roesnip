@@ -63,6 +63,11 @@ public static class RecordingController
     }
 }
 
+/// <summary>Result of <see cref="RecordingSession.BeginShareHandoff"/> - the finished take's temp
+/// file plus everything the orchestration layer's own upload needs (Sharing/ShareManager.UploadAsync
+/// takes a stream, a file name and a content type, none of which this class needs to know about).</summary>
+public sealed record RecordingShareHandoff(string TempPath, RecordingFormat Format, string FileName, string ContentType);
+
 /// <summary>One in-progress recording flow - a three-phase state machine mirroring the WPF app's own
 /// RecordingSession (Recording/RecordingController.cs):
 ///   Setup     - nothing is being captured yet. BeginCapture() (chrome's Start button, item 21) moves
@@ -80,6 +85,28 @@ public static class RecordingController
 public sealed class RecordingSession
 {
     private enum Phase { Setup, Capturing, Reviewing }
+
+    /// <summary>Public mirror of the private <see cref="Phase"/> enum (item 21) - the chrome/outline
+    /// orchestration layer (RoeSnip.App.Recording.RecordingOrchestrator) lives outside this class and
+    /// needs a phase it can react to without this class exposing its own private enum.</summary>
+    public enum RecordingSessionPhase { Setup, Capturing, Reviewing }
+
+    /// <summary>Fires every time <see cref="_phase"/> actually changes (never on a stray re-entry
+    /// into the same phase) - item 21's RecordingOrchestrator drives RecordingChrome's
+    /// EnterSetup/EnterRecording/EnterReviewing off this instead of polling, so it can never miss a
+    /// transition that originates from inside this class itself (e.g. OnRecorderFaulted's own
+    /// StopCaptureToReview call, not just an explicit chrome-button-driven one).</summary>
+    public event Action<RecordingSessionPhase>? PhaseChanged;
+
+    /// <summary>Fires from Pause()/Resume() after <see cref="_paused"/> is updated.</summary>
+    public event Action<bool>? PausedChanged;
+
+    /// <summary>Fires exactly once, from <see cref="TeardownSession"/> - the orchestrator's own
+    /// signal to close the chrome/outline windows and release CaptureGate (item 21;
+    /// AppComposition.RunCaptureFlowAsync hands the gate to a recording instead of exiting it itself
+    /// once <see cref="Program.OverlayResult.RecordingRequested"/> is set - see that call site's own
+    /// comment).</summary>
+    public event Action? Ended;
 
     private readonly MonitorInfo _monitor;
     private RectPhysical _selectionPx; // monitor-relative physical pixels, fixed size, position can slide (SetOrigin)
@@ -126,6 +153,7 @@ public sealed class RecordingSession
     private long _pauseStartTicks;  // Stopwatch.GetTimestamp() when the current pause began (valid only while _paused)
     private bool _audioTrackEnabled; // this take's MP4 has an AAC track (fixed at BeginCapture)
     private bool _saving; // reentrancy guard against a double Save()/CancelAndDiscard() race
+    private long _captureStartTicks; // Stopwatch.GetTimestamp() at the first BeginCapture of this take - RecordingOrchestrator's elapsed-time HUD reads Elapsed off this
 
     public RecordingSession(
         MonitorInfo monitor, RectPhysical selectionPx, RecordingFormat format,
@@ -138,9 +166,50 @@ public sealed class RecordingSession
         _notifier = notifier;
     }
 
+    public bool IsSetup => _phase == Phase.Setup;
     public bool IsCapturing => _phase == Phase.Capturing;
     public bool IsReviewing => _phase == Phase.Reviewing;
     public bool IsPaused => _paused;
+
+    /// <summary>Exposed for item 21's RecordingChrome/RegionOutline construction and repositioning -
+    /// this class itself never reads these back from the orchestration layer.</summary>
+    public MonitorInfo Monitor => _monitor;
+    public RectPhysical SelectionPx => _selectionPx;
+    public RecordingFormat Format => _format;
+
+    /// <summary>Wall-clock time actually recorded so far (pause/review spans excluded, same
+    /// accumulator EncoderLoop's own timestamps use) - RecordingOrchestrator's HUD timer reads this
+    /// on a UI-thread poll rather than this class raising a tick event itself, mirroring the WPF
+    /// reference's own System.Threading.Timer + RecordingChrome.SetElapsed poll shape.</summary>
+    public TimeSpan Elapsed
+    {
+        get
+        {
+            if (_phase == Phase.Setup)
+            {
+                return TimeSpan.Zero;
+            }
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            long paused = Volatile.Read(ref _pausedTicks) + (_paused ? now - _pauseStartTicks : 0);
+            long elapsedTicks = now - _captureStartTicks - paused;
+            return TimeSpan.FromSeconds(Math.Max(0, elapsedTicks) / (double)System.Diagnostics.Stopwatch.Frequency);
+        }
+    }
+
+    private void SetPhase(Phase phase)
+    {
+        if (_phase == phase)
+        {
+            return;
+        }
+        _phase = phase;
+        PhaseChanged?.Invoke(phase switch
+        {
+            Phase.Capturing => RecordingSessionPhase.Capturing,
+            Phase.Reviewing => RecordingSessionPhase.Reviewing,
+            _ => RecordingSessionPhase.Setup,
+        });
+    }
 
     /// <summary>UI thread only. Opens the Setup phase: seeds live audio-toggle/preset state and
     /// computes the fixed tone-map options (used by whichever take eventually gets captured). No
@@ -296,7 +365,8 @@ public sealed class RecordingSession
             };
             _encoderThread.Start();
 
-            _phase = Phase.Capturing;
+            _captureStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+            SetPhase(Phase.Capturing);
             Console.Error.WriteLine($"RoeSnip: recording capture started ({_format}, {_selectionPx.Width}x{_selectionPx.Height}, {_targetFps}fps)");
         }
         catch (Exception ex)
@@ -334,6 +404,7 @@ public sealed class RecordingSession
         _pauseStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
         _paused = true;
         if (_recorder is not null) _recorder.Paused = true;
+        PausedChanged?.Invoke(true);
     }
 
     /// <summary>Folds the just-ended pause into the running total BEFORE flipping _paused/
@@ -351,6 +422,7 @@ public sealed class RecordingSession
         _pausedTicks += System.Diagnostics.Stopwatch.GetTimestamp() - _pauseStartTicks;
         _paused = false;
         if (_recorder is not null) _recorder.Paused = false;
+        PausedChanged?.Invoke(false);
 
         if (_phase == Phase.Reviewing)
         {
@@ -362,7 +434,7 @@ public sealed class RecordingSession
                     _notifier?.ShowError("Audio capture unavailable; resuming video only.");
                 }
             }
-            _phase = Phase.Capturing;
+            SetPhase(Phase.Capturing);
         }
     }
 
@@ -436,7 +508,7 @@ public sealed class RecordingSession
         // Resume re-creates the engine; the hard stop disposes again (idempotent).
         _audio?.Dispose();
 
-        _phase = Phase.Reviewing;
+        SetPhase(Phase.Reviewing);
     }
 
     /// <summary>Chrome's Save button (or the smoke-test hook) - only valid once a take has actually
@@ -533,7 +605,7 @@ public sealed class RecordingSession
     private void RearmForAnotherTake()
     {
         _tempPath = null;
-        _phase = Phase.Setup;
+        SetPhase(Phase.Setup);
     }
 
     public void CancelAndDiscard()
@@ -544,6 +616,75 @@ public sealed class RecordingSession
             CleanupTempFile();
         }
         TeardownSession(finalPath: null, encoderAbandoned: !joined);
+    }
+
+    /// <summary>Chrome's confirmed Restart (item 21 - the inline "discard and start over?" prompt
+    /// itself lives in RecordingChrome). Discards whatever the current take is - mid-capture or
+    /// already stopped and under review - and re-arms for a fresh <see cref="BeginCapture"/> with a
+    /// new temp file, WITHOUT tearing the session down (same region, same session identity - mirrors
+    /// the WPF reference's RestartTake). A hard-stop failure (wedged encoder) is handled exactly like
+    /// <see cref="Save"/>'s own failure branch: error balloon, tear the whole session down.</summary>
+    public void Restart()
+    {
+        if (_phase == Phase.Setup)
+        {
+            return; // nothing captured yet - Restart is a no-op until something has been recorded
+        }
+
+        bool joined = HardStopCaptureIfNeeded();
+        if (!joined)
+        {
+            _notifier?.ShowError("Could not restart: the recording did not stop in time.");
+            TeardownSession(finalPath: null, encoderAbandoned: true);
+            return;
+        }
+
+        CleanupTempFile();
+        _tempPath = null;
+        SetPhase(Phase.Setup);
+    }
+
+    /// <summary>Reviewing-state Share handoff (item 21, RequestShare contract ported verbatim from
+    /// the WPF reference's Recording/RecordingController.cs, commit 422e87a). The CALLER (item 21's
+    /// RecordingOrchestrator, which owns Sharing/ShareManager/ITrayNotifier/SettingsStore - this
+    /// class has none of those) is responsible for resolving a share provider from a FRESH settings
+    /// read and rejecting the whole request BEFORE ever calling this method: this method's own job
+    /// starts only once a provider is already known to resolve, exactly like RequestShare's WPF
+    /// original hard-stops only after that same check. Hard-stops the still-alive pipeline (same
+    /// irreversible join <see cref="Save"/> uses) and, on success, rearms for another take (mirrors
+    /// Save's own successful-save branch) - the caller then uploads the returned temp file path
+    /// completely independently of this session (which may already be recording a brand-new take by
+    /// the time the upload finishes). Returns null (with the session already torn down and the error
+    /// balloon already shown) only when the encoder failed to stop in time; the reentrancy guard
+    /// mirrors <see cref="Save"/>'s own <see cref="_saving"/> check (this port's Save has no modal
+    /// save-dialog nested pump, unlike the WPF reference, so one shared flag is enough - no separate
+    /// _sharing flag is needed here).</summary>
+    public RecordingShareHandoff? BeginShareHandoff()
+    {
+        if (_phase != Phase.Reviewing || _saving)
+        {
+            return null;
+        }
+        _saving = true;
+
+        bool joined = HardStopCaptureIfNeeded();
+        if (!joined)
+        {
+            _saving = false;
+            _notifier?.ShowError("Recording could not be shared: the encoder did not stop in time.");
+            TeardownSession(finalPath: null, encoderAbandoned: true);
+            return null;
+        }
+
+        string tempPath = _tempPath!;
+        string ext = _format == RecordingFormat.Mp4 ? ".mp4" : ".gif";
+        string contentType = _format == RecordingFormat.Mp4 ? "video/mp4" : "image/gif";
+        string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}{ext}";
+
+        _saving = false;
+        RearmForAnotherTake(); // chrome is back in Setup from here - mirrors RequestShare's own doc comment
+
+        return new RecordingShareHandoff(tempPath, _format, fileName, contentType);
     }
 
     private void CleanupTempFile()
@@ -582,6 +723,7 @@ public sealed class RecordingSession
         }
 
         RecordingController.OnSessionEnded(this);
+        Ended?.Invoke();
     }
 
     // ---------- Encoder thread ----------

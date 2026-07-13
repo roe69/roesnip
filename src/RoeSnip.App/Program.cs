@@ -35,8 +35,18 @@ public sealed record OverlayResult(
     // unconditionally on a spanning result (not just when SaveHdrRequested is true), mirroring how
     // SourceFrame/SelectionPx above are always populated regardless of what the user clicked, so
     // settings.AutoSaveHdrCopy works the same way for a spanning result as for a plain one.
-    IReadOnlyList<SpanningFrameCrop>? SpanningFrameCrops = null
+    IReadOnlyList<SpanningFrameCrop>? SpanningFrameCrops = null,
+    // Item 21: the toolbar's Record MP4/GIF menu closes the overlay exactly like Copy/Save/SaveHdr
+    // (same OverlayResult, same Finish() path — see OverlayController.OverlaySession.Record's own
+    // doc comment) but carries no clipboard/PNG/HDR I/O of its own; RunCaptureFlowAsync hands off to
+    // AppComposition.StartRecording instead of the ordinary post-overlay follow-ups below. Mirrors
+    // the WPF app's own OverlayResult.RecordingRequested.
+    RecordingRequest? RecordingRequested = null
 );
+
+/// <summary>Payload of <see cref="OverlayResult.RecordingRequested"/> - just the chosen format; the
+/// selection/monitor/rendered-preview fields above already carry everything else a recording needs.</summary>
+public sealed record RecordingRequest(RoeSnip.Core.Recording.RecordingFormat Format);
 
 /// <summary>Implemented by AppShell/TrayApp.cs (WP-X2). Passed into
 /// <see cref="AppComposition.RunCaptureFlowAsync"/> so the interactive flow can surface
@@ -178,6 +188,12 @@ public static class AppComposition
     // AppComposition.WriteJxrSpanning; see RoeSnip.Platform.Windows.JxrWriter.WriteSpanning's own
     // doc comment for why stitching raw scRGB crops from different monitors is well-defined.
     public static Action<string, RectPhysical, IReadOnlyList<SpanningFrameCrop>>? WriteHdrExportSpanning { get; set; }
+
+    // Set by Recording/RecordingOrchestrator.cs (item 21) via [ModuleInitializer]. Null when the
+    // Recording package isn't present in this build (mirrors every other optional hook here) - a
+    // Record request against a null hook surfaces as an ordinary error balloon rather than a crash,
+    // same as RunOverlay being null.
+    public static Action<MonitorInfo, RectPhysical, RoeSnip.Core.Recording.RecordingFormat, RoeSnipSettings, ITrayNotifier?>? StartRecording { get; set; }
 
     // Set by AppShell/ElevationManager.cs (item 15) via [ModuleInitializer]. Hidden CLI verbs used
     // only for the UAC round-trip when SettingsWindow's "Run as administrator" checkbox is toggled
@@ -462,6 +478,13 @@ public static class AppComposition
             }
         }
 
+        // Item 21: a recording hand-off keeps CaptureGate held for the whole Setup-through-Reviewing
+        // lifetime instead of releasing it in this method's own finally below (mirrors the WPF
+        // reference's own RecordingController-holds-the-gate design, referenced in this method's own
+        // IsCaptureBusy doc comment above) - RecordingOrchestrator.OnEnded is what eventually calls
+        // CaptureGate.Exit()/IdleMemoryTrimmer.Schedule() once the whole recording is truly over.
+        bool handedOffToRecording = false;
+
         bool entered = AppShell.CaptureGate.TryEnter();
         if (!entered && AppShell.CaptureGate.HeldByWarmup)
         {
@@ -533,6 +556,20 @@ public static class AppComposition
                 if (result is null)
                 {
                     return; // user cancelled
+                }
+
+                if (result.RecordingRequested is { } rec)
+                {
+                    if (StartRecording is not null)
+                    {
+                        StartRecording(result.Monitor, result.SelectionPx, rec.Format, settings, notifier);
+                        handedOffToRecording = true;
+                    }
+                    else
+                    {
+                        notifier?.ShowError("Recording is unavailable in this build.");
+                    }
+                    return;
                 }
 
                 if (result.SpanningVirtualSelectionPx is { } spanningVirtualPx)
@@ -612,14 +649,17 @@ public static class AppComposition
         }
         finally
         {
-            AppShell.CaptureGate.Exit();
-            // Idle-memory trim (item 17): every capture flow, successful or not, is a full-scale
-            // allocation burst (per-monitor FP16 frame buffers + SDR previews). Schedule() itself
-            // defers the actual collect to ApplicationIdle via Dispatcher.UIThread.Post, which is
-            // safe to call from any thread (this finally can run on a background/threadpool
-            // continuation, not necessarily the UI thread) — see IdleMemoryTrimmer's own doc
-            // comment for the full rationale.
-            IdleMemoryTrimmer.Schedule();
+            if (!handedOffToRecording)
+            {
+                AppShell.CaptureGate.Exit();
+                // Idle-memory trim (item 17): every capture flow, successful or not, is a full-scale
+                // allocation burst (per-monitor FP16 frame buffers + SDR previews). Schedule() itself
+                // defers the actual collect to ApplicationIdle via Dispatcher.UIThread.Post, which is
+                // safe to call from any thread (this finally can run on a background/threadpool
+                // continuation, not necessarily the UI thread) — see IdleMemoryTrimmer's own doc
+                // comment for the full rationale.
+                IdleMemoryTrimmer.Schedule();
+            }
         }
     }
 

@@ -11,7 +11,10 @@ using System.Threading.Tasks;
 using Avalonia.Threading;
 using RoeSnip.Core.Capture;
 using RoeSnip.Core.Imaging;
+using RoeSnip.Core.Recording;
+using RoeSnip.Core.Recording.Gif;
 using RoeSnip.App.Overlay;
+using RoeSnip.App.Recording;
 
 namespace RoeSnip.App.AppShell;
 
@@ -288,10 +291,9 @@ public static class AutomationProtocol
 /// runs: OverlayWindow's own SetSelection/OnCommand via the `*ForAutomation` hooks on
 /// OverlayController/OverlayWindow. Nothing here re-implements that logic.
 ///
-/// Recording (RecordingController/RecordingChrome/RecordingSession) has not been ported to
-/// RoeSnip.App yet — "record"/"preset"/"fps"/"chrome" are still parsed and validated (see
-/// AutomationProtocol's own doc comment) but their live handlers return a structured
-/// "not supported yet" error rather than dispatching to anything, and never "unknown command".</summary>
+/// Recording (item 21) is live: "record"/"preset"/"fps"/"chrome" dispatch to
+/// OverlayController.RecordForAutomation / RecordingOrchestrator's own automation surface exactly
+/// like the WPF app's own AutomationServer does against its RecordingController.</summary>
 internal sealed class AutomationServer
 {
     private static readonly TimeSpan UiTimeout = TimeSpan.FromSeconds(10);
@@ -402,13 +404,13 @@ internal sealed class AutomationServer
                 "state" => HandleState(),
                 "trigger" => HandleTrigger(),
                 "select" => HandleSelect(request),
+                "record" => HandleRecord(request),
+                "preset" => HandlePreset(request),
+                "fps" => HandleFps(request),
+                "chrome" => HandleChrome(request),
                 "escape" => HandleEscape(),
                 "screenshot" => HandleScreenshot(request),
                 "confirm" => HandleConfirm(request),
-                // Recording has not been ported to RoeSnip.App yet (tracked separately) — a
-                // structured error, never "unknown command", since these ARE known/valid commands
-                // on the wire (AutomationProtocol.ValidateArgs already accepted them above).
-                "record" or "preset" or "fps" or "chrome" => UnsupportedRecordingError(cmd),
                 _ => AutomationProtocol.BuildError($"unknown command \"{cmd}\""), // unreachable, ValidateArgs already rejected it
             };
         }
@@ -417,9 +419,6 @@ internal sealed class AutomationServer
             return AutomationProtocol.BuildError($"command \"{cmd}\" failed: {ex.Message}");
         }
     }
-
-    private static string UnsupportedRecordingError(string cmd) => AutomationProtocol.BuildError(
-        $"\"{cmd}\" is unsupported until recording is ported to RoeSnip.App (tracked separately)");
 
     // ---------- Command handlers ----------
 
@@ -444,19 +443,98 @@ internal sealed class AutomationServer
             AutomationProtocol.GetInt(request, "x"), AutomationProtocol.GetInt(request, "y"),
             AutomationProtocol.GetInt(request, "w"), AutomationProtocol.GetInt(request, "h"));
 
-        string? error = InvokeOnUi<string?>(() => OverlayController.IsSessionActive
-            ? OverlayController.SetSelectionForAutomation(rect)
-            : "idle: nothing to select (use trigger first)");
+        string? error = InvokeOnUi<string?>(() =>
+        {
+            if (RecordingOrchestrator.IsActive)
+            {
+                return RecordingOrchestrator.SetSelectionForAutomation(rect);
+            }
+            if (OverlayController.IsSessionActive)
+            {
+                return OverlayController.SetSelectionForAutomation(rect);
+            }
+            return "idle: nothing to select (use trigger first)";
+        });
         return error is not null
             ? AutomationProtocol.BuildError(error)
             : AutomationProtocol.SerializeState(InvokeOnUi(GetStateSnapshot));
     }
 
+    /// <summary>Item 21f. Closes the overlay (RecordForAutomation raises the exact
+    /// OverlayCommand.RecordMp4/RecordGif a toolbar menu pick would) and hands off to
+    /// RecordingOrchestrator - polls for "setup" (a freshly opened recording session) rather than
+    /// treating "idle" as settled, since there is a real timing gap between the overlay session's own
+    /// completion and RecordingOrchestrator.Start actually assigning its active instance (both hop
+    /// through the UI dispatcher independently) - mirrors the WPF reference's own HandleRecord.</summary>
+    private string HandleRecord(JsonObject request)
+    {
+        var format = ((string)request["format"]!) == "gif" ? RecordingFormat.Gif : RecordingFormat.Mp4;
+
+        string? error = InvokeOnUi<string?>(() => OverlayController.IsSessionActive
+            ? OverlayController.RecordForAutomation(format)
+            : "record requires an active overlay session with a selection");
+        if (error is not null)
+        {
+            return AutomationProtocol.BuildError(error);
+        }
+        return AutomationProtocol.SerializeState(PollUntil(s => s.Mode == "setup"));
+    }
+
+    private string HandlePreset(JsonObject request)
+    {
+        var preset = ParsePreset((string)request["tier"]!);
+
+        string? error = InvokeOnUi<string?>(() => RecordingOrchestrator.IsActive
+            ? RecordingOrchestrator.SetSizePresetForAutomation(preset)
+            : "preset requires an active recording session in Setup");
+        return error is not null
+            ? AutomationProtocol.BuildError(error)
+            : AutomationProtocol.SerializeState(InvokeOnUi(GetStateSnapshot));
+    }
+
+    private string HandleFps(JsonObject request)
+    {
+        int fps = AutomationProtocol.GetInt(request, "value");
+
+        string? error = InvokeOnUi<string?>(() => RecordingOrchestrator.IsActive
+            ? RecordingOrchestrator.SetFpsForAutomation(fps)
+            : "fps requires an active recording session in Setup");
+        return error is not null
+            ? AutomationProtocol.BuildError(error)
+            : AutomationProtocol.SerializeState(InvokeOnUi(GetStateSnapshot));
+    }
+
+    private string HandleChrome(JsonObject request)
+    {
+        string action = (string)request["action"]!;
+
+        string? error = InvokeOnUi<string?>(() => RecordingOrchestrator.IsActive
+            ? RecordingOrchestrator.InvokeChromeAction(action)
+            : $"chrome \"{action}\" requires an active recording session");
+        return error is not null
+            ? AutomationProtocol.BuildError(error)
+            : AutomationProtocol.SerializeState(InvokeOnUi(GetStateSnapshot));
+    }
+
+    private static GifSizePreset ParsePreset(string tier) => tier switch
+    {
+        "max" => GifSizePreset.Max,
+        "quality" => GifSizePreset.Quality,
+        "balanced" => GifSizePreset.Balanced,
+        "compact" => GifSizePreset.Compact,
+        "minimal" => GifSizePreset.Minimal,
+        _ => throw new ArgumentOutOfRangeException(nameof(tier), tier, "unreachable: ValidateArgs already rejected this"),
+    };
+
     private string HandleEscape()
     {
         InvokeOnUi(() =>
         {
-            if (OverlayController.IsSessionActive)
+            if (RecordingOrchestrator.IsActive)
+            {
+                RecordingOrchestrator.InvokeChromeAction("cancel");
+            }
+            else if (OverlayController.IsSessionActive)
             {
                 OverlayController.CancelForAutomation();
             }
@@ -500,6 +578,30 @@ internal sealed class AutomationServer
             .Select(m => new AutomationProtocol.MonitorDto(
                 m.DeviceName, m.BoundsPx.Left, m.BoundsPx.Top, m.BoundsPx.Right, m.BoundsPx.Bottom, m.IsPrimary))
             .ToList();
+
+        if (RecordingOrchestrator.GetAutomationSnapshot() is { } snapshot)
+        {
+            string mode = snapshot.Phase switch
+            {
+                "Setup" => "setup",
+                "Capturing" => "capturing",
+                "Reviewing" => "reviewing",
+                _ => snapshot.Phase.ToLowerInvariant(),
+            };
+            var sel = snapshot.SelectionVirtualDesktopPx;
+            var fpsRange = snapshot.Format == RecordingFormat.Gif
+                ? new AutomationProtocol.FpsRangeDto(RecordingSizeEstimator.GifMinFps, RecordingSizeEstimator.GifMaxFps)
+                : new AutomationProtocol.FpsRangeDto(RecordingSizeEstimator.Mp4MinFps, RecordingSizeEstimator.Mp4MaxFps);
+            return new AutomationProtocol.StateSnapshot(
+                mode,
+                new AutomationProtocol.SelectionDto(sel.Left, sel.Top, sel.Width, sel.Height),
+                snapshot.Format == RecordingFormat.Gif ? "gif" : "mp4",
+                snapshot.Preset.ToString().ToLowerInvariant(),
+                snapshot.EstimateText,
+                snapshot.Fps,
+                fpsRange,
+                monitors);
+        }
 
         if (OverlayController.IsSessionActive)
         {
