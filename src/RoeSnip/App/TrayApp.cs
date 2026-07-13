@@ -197,8 +197,10 @@ public sealed class TrayApp : ITrayNotifier
         // Self-update (CHANGE 2): best-effort cleanup of any leftover .old/.new from a prior
         // install/update swap, then - only when this IS the installed copy (a portable/dev run has
         // nothing sensible to update itself into) - a silent background check for a newer GitHub
-        // release. Fire-and-forget: CheckForUpdateAsync never throws and this must never delay
-        // startup or block the UI thread.
+        // release that, if found, downloads and applies it automatically (no click required; see
+        // CheckForUpdatesOnStartupAsync for the idle-wait guard on the relaunch that follows).
+        // Fire-and-forget: CheckForUpdateAsync never throws and this must never delay startup or
+        // block the UI thread.
         UpdateManager.CleanupStaleUpdateFiles();
         // Background cleanup that may need a bounded retry (a still-locked file must never stall
         // startup): the source exe a prior Install() "move" left behind (pending-source-cleanup
@@ -650,8 +652,14 @@ public sealed class TrayApp : ITrayNotifier
     /// <summary>Silent startup update check (only called when <see cref="UpdateManager.IsInstalled"/>
     /// is true - see that property's doc comment). Says nothing when there is nothing to offer (no
     /// update, no network, private-repo 404 - CheckForUpdateAsync already swallows all of that and
-    /// returns null); shows the click-to-update balloon only when a newer release actually
-    /// exists. Never blocks startup: this is fire-and-forget from RunInstance.</summary>
+    /// returns null). When a newer release does exist, applies it automatically - no click required
+    /// - but the beforeLaunch delegate passed to ApplyUpdateAsync holds the actual relaunch (and the
+    /// replace-on-run kill that follows it) until CaptureGate and RecordingController both report
+    /// idle, so an update landing mid-snip or mid-recording can never yank the app out from under
+    /// the user; the download itself is allowed to proceed regardless since it does not touch
+    /// anything live. Falls back to the old click-to-update balloon if the auto-apply throws, so a
+    /// download/swap failure still leaves the user a way to update by hand. Never blocks startup:
+    /// this is fire-and-forget from RunInstance.</summary>
     private async Task CheckForUpdatesOnStartupAsync()
     {
         UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
@@ -659,7 +667,29 @@ public sealed class TrayApp : ITrayNotifier
         {
             return;
         }
-        _uiThreadMarshal?.BeginInvoke(new Action(() => ShowUpdateAvailableBalloon(update)));
+
+        Console.Error.WriteLine($"RoeSnip: auto-updating {UpdateManager.CurrentVersion} -> {update.Version}...");
+        try
+        {
+            await UpdateManager.ApplyUpdateAsync(update, WaitForIdleAsync).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: auto-update to {update.Version} failed: {ex.Message}");
+            _uiThreadMarshal?.BeginInvoke(new Action(() => ShowUpdateAvailableBalloon(update)));
+        }
+
+        // Polled rather than event-driven: capture/recording sessions are short-lived (seconds to a
+        // few minutes) and CaptureGate/RecordingController expose no completion signal, so a coarse
+        // poll is the simplest thing that cannot miss a state change. The interval only needs to be
+        // short relative to session length, not tight - the download already took far longer.
+        static async Task WaitForIdleAsync()
+        {
+            while (CaptureGate.IsBusy || RoeSnip.Recording.RecordingController.IsActive)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <summary>The "Check for updates" context-menu item: unlike the silent startup check, this
@@ -719,10 +749,11 @@ public sealed class TrayApp : ITrayNotifier
         }));
     }
 
-    /// <summary>Shows the click-to-update balloon (must already be on the UI thread). Deliberately
-    /// never applies the update on its own - the click IS the whole UX (spec: "avoid surprise
-    /// restarts"). Uses the same DetachActiveBalloonHandler/_activeBalloonClickHandler pattern as
-    /// ShowSavedBalloon.</summary>
+    /// <summary>Shows the click-to-update balloon (must already be on the UI thread). Startup checks
+    /// now apply updates automatically without asking (see CheckForUpdatesOnStartupAsync); this
+    /// balloon is only reached as its failure fallback, so the user still has a way to update by
+    /// hand if the automatic download/swap failed. Uses the same
+    /// DetachActiveBalloonHandler/_activeBalloonClickHandler pattern as ShowSavedBalloon.</summary>
     private void ShowUpdateAvailableBalloon(UpdateManager.UpdateInfo info)
     {
         if (_notifyIcon is null) return;

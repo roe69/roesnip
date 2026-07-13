@@ -38,6 +38,15 @@ public static class UpdateManager
     // exhaustion guidance) with the User-Agent GitHub's API mandates and rejects requests without.
     private static readonly HttpClient HttpClient = CreateHttpClient();
 
+    // Serializes ApplyUpdateAsync across callers: the silent startup auto-update can be parked in
+    // its beforeLaunch idle-wait for minutes with the new exe already swapped in, and without this
+    // a concurrent manual "Check for updates" click would download into the same DownloadingExePath
+    // (IOException) and, worse, launch (and kill this process via replace-on-run) with no idle check
+    // of its own - defeating the whole point of the startup path's guard. Queueing here means a
+    // manual click during that window simply waits; it completes only after the parked call's own
+    // launch has already ended the process.
+    private static readonly SemaphoreSlim ApplyUpdateLock = new(1, 1);
+
     public static string InstallDir { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RoeSnip");
 
@@ -424,12 +433,34 @@ public static class UpdateManager
     }
 
     /// <summary>Downloads the release exe, swaps it in for <see cref="InstalledExePath"/>, and
-    /// launches it - the new build then takes over via replace-on-run. A truncated/failed download
-    /// never touches the installed exe; a failure partway through the swap rolls back to the
-    /// previous exe (from the ".old" it just renamed) so the install is never left without a
-    /// runnable copy. Rethrows on failure so the caller (tray menu / balloon click) can surface it
-    /// to the user - this method never leaves an exception unswallowed on its own.</summary>
-    public static async Task ApplyUpdateAsync(UpdateInfo info)
+    /// launches it - the new build then takes over via replace-on-run, which kills this process. A
+    /// truncated/failed download never touches the installed exe; a failure partway through the swap
+    /// rolls back to the previous exe (from the ".old" it just renamed) so the install is never left
+    /// without a runnable copy. <paramref name="beforeLaunch"/> is awaited after the swap-in
+    /// succeeds and right before Process.Start - the swap itself is safe to do while the app is busy
+    /// (a running exe can be renamed out from under it), but the launch is not: replace-on-run would
+    /// kill this instance mid-snip or mid-recording. Callers driven by an explicit user click
+    /// (menu Yes, balloon click, --self-update-now) pass null and apply as soon as it is their turn;
+    /// the silent startup auto-update passes a delegate that waits for the app to go idle first.
+    /// Calls are serialized on <see cref="ApplyUpdateLock"/> so a manual click landing while the
+    /// startup path is parked in its idle-wait cannot download into the same in-progress file or
+    /// launch (and kill this process) ahead of that guard - it queues behind it instead. Rethrows on
+    /// failure so the caller can surface it to the user - this method never leaves an exception
+    /// unswallowed on its own.</summary>
+    public static async Task ApplyUpdateAsync(UpdateInfo info, Func<Task>? beforeLaunch = null)
+    {
+        await ApplyUpdateLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await ApplyUpdateCoreAsync(info, beforeLaunch).ConfigureAwait(false);
+        }
+        finally
+        {
+            ApplyUpdateLock.Release();
+        }
+    }
+
+    private static async Task ApplyUpdateCoreAsync(UpdateInfo info, Func<Task>? beforeLaunch)
     {
         string downloadPath = DownloadingExePath;
         try
@@ -478,6 +509,11 @@ public static class UpdateManager
                 }
 
                 throw;
+            }
+
+            if (beforeLaunch is not null)
+            {
+                await beforeLaunch().ConfigureAwait(false);
             }
 
             Process.Start(new ProcessStartInfo(InstalledExePath) { UseShellExecute = true });
