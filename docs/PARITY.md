@@ -149,9 +149,57 @@ existing WPF test suite is the proof.
       resident, killed after), triggered the overlay, selected a region, and screenshotted the
       desktop (includeExcluded) to confirm the toolbar renders Select/Rect/Ellipse/Arrow/Line/
       Freehand/Highlight/Pixelate/Text in that exact order with the correct icons.
-- [ ] 07-select-edit: The whole Feature B select/edit subsystem: selection with same-tool
+- [x] 07-select-edit: The whole Feature B select/edit subsystem: selection with same-tool
       gate, hit-testing, move/resize/endpoint drag, delete, text re-edit, wheel resize,
       selection chrome with the luminance-based handle fill contrast rule. (XL)
+      Ported WPF's AnnotationLayer.cs:308-921 wholesale into the Avalonia AnnotationLayer:
+      IsEditable/IsRectResizable/IsClickEditableTool, EditableBounds, HitsShapeBody (with the
+      Shift/Ctrl interiorGrab relaxation), HitTestEditable (restrictToTool same-tool gate),
+      HitTestSelectedHandle (8 rect handles) and HitTestSelectedEndpoint (Line/Arrow), Select/
+      Deselect, BeginDragSelected/EndDragSelected/CommitPendingDrag (snapshot-diff-into-one-
+      Replace gesture model — unit-tested proving a 3-notch wheel gesture collapses into ONE
+      undo step, not three), TranslateSelected (frame-bounds clamped), SetSelectedRect/
+      SetSelectedEndpoint/SetSelectedStrokeWidth/SetSelectedPixelateBlock/SetSelectedFontSize,
+      DeleteSelected, ReplaceShape (text re-edit), plus the selection chrome (dashed gold
+      outline, flat square handles) and the pixelate gray-dotted placement chrome WPF keeps
+      right next to it (806-831) — item 06 hadn't landed that half yet, so it's included here;
+      both stay screen-only, excluded from RenderForExport exactly like WPF. The pure geometry/
+      color-math slice with zero UI-framework dependency (DistanceToSegment, WCAG
+      RelativeLuminance, the near-mid-gray inverse-fill fallback rule) moved into a new
+      RoeSnip.Core.Overlay.AnnotationGeometry, unit-tested directly (9 new RoeSnip.Core.Tests);
+      the WPF app keeps its own inline copy of this same math untouched. AnnotationShape's
+      StrokeWidthPx is now a mutable setter (was init-only) and gained Clone(), mirroring WPF's
+      own field exactly — Feature B's snapshot-before/diff-after gesture model needs both.
+      OverlayWindow.axaml.cs: DragMode gained SelectedMove/SelectedResize/SelectedEndpoint
+      (WPF's Spanning* modes have no port yet, item 09); the pointer-pressed click-priority
+      chain, pointer-move drag routing, and pointer-released gesture-end handling all mirror
+      WPF's (modifier-grab via PointerEventArgs.KeyModifiers — Avalonia's direct analog of
+      WPF's Keyboard.Modifiers). Delete/Back deletes a selection, Esc deselects before
+      escalating to CancelStage, double-click on a Text shape reopens the inline editor as a
+      Replace (BeginTextReEdit, reusing BeginTextEditor's machinery with an editingExisting
+      param). The wheel handler now covers the full WPF range (2253-2345): active-text-editor
+      font resize, mid-drag SetInProgressStrokeWidth, and the selected-shape branch funneled
+      through BeginDragSelected/CommitPendingDrag, falling through to the existing loupe-zoom
+      only when none of those apply. Toolbar's ToolSelected handler now commits any open text
+      editor first and drops a tool-mismatched selection on a drawing-tool switch, matching
+      WPF's ShowToolbar wiring. Two deliberate degradations from the cursor vocabulary gap
+      (both Windows/Linux/macOS-uniform, not OS-specific): Avalonia's StandardCursorType has no
+      generic diagonal resize cursor, so the Line/Arrow endpoint cursor's diagonal buckets reuse
+      TopLeftCorner/TopRightCorner instead of dedicated SizeNWSE/SizeNESW glyphs; and there is
+      no ToolCursorCache-style custom per-tool brush cursor bitmap in this port (a drawing tool
+      still shows a plain crosshair, same as before this item), so only the hand/handle/endpoint
+      affordance over an already-placed shape was added on top of it. SizeInput's numeric clamp
+      ranges (1-32px stroke, 6-96pt font) are duplicated as local consts pending item 08's actual
+      SizeInput port. Live-verified on Windows: standalone --automation instance (killed after),
+      triggered the overlay, made a selection, screenshotted (includeExcluded) confirming the
+      toolbar (Select tool checked) and crop-selection adorner render cleanly with the new
+      AnnotationLayer/OverlayWindow code in the render/input path; full click-drag annotation
+      interaction (placing/selecting/resizing a shape) has no automation-pipe surface to drive
+      it and remains an interactive-session verification gap, same category as TESTING.md's
+      existing "Overlay parity A/B against the frozen WPF app" item. No linux/mac degradation —
+      this is pure pointer/keyboard/rendering logic with no OS-specific behavior; the two cursor-
+      vocabulary approximations above apply identically on every OS.
+      Build + full test suite green (817 tests: 482 WPF + 260 Core + 70 App + 5 Platform.Windows).
 - [ ] 08-toolbar-parity: Popup-safe toolbar hit routing first, then the 10-slot persisted
       palette with right-click Replace, numeric size ComboBox (SizeInput), text style row
       (Bold/Italic + font family on the shape model), and the Redo button. (L)

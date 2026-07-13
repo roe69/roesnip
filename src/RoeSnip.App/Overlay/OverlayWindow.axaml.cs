@@ -30,7 +30,17 @@ namespace RoeSnip.App.Overlay;
 /// identical, including the 4px click-vs-drag threshold and the Esc staging.</summary>
 public partial class OverlayWindow : Window
 {
-    private enum DragMode { None, NewSelection, Resize, Move, Annotation }
+    // SelectedMove/SelectedResize/SelectedEndpoint (Feature B, additive) are the Select-tool drags
+    // on a picked annotation itself — distinct from NewSelection/Resize/Move (the CROP selection)
+    // and from Annotation (drawing a brand-new shape with a tool active). SelectedEndpoint is
+    // Line/Arrow's analogue of SelectedResize: there's no rect to grow/shrink, so dragging
+    // repositions one endpoint (see _dragEndpointIndex) instead. Mirrors WPF's DragMode
+    // (src/RoeSnip/Overlay/OverlayWindow.xaml.cs:54-58) minus the Spanning* modes, which have no
+    // port yet (item 09).
+    private enum DragMode
+    {
+        None, NewSelection, Resize, Move, Annotation, SelectedMove, SelectedResize, SelectedEndpoint,
+    }
 
     private readonly CapturedFrame _frame;
     private readonly SdrImage _preview;
@@ -75,9 +85,35 @@ public partial class OverlayWindow : Window
     /// kept around so <see cref="UpdateCursor"/> can re-hit-test the same spot when it's invoked
     /// from a non-pointer-move trigger (a tool change), where there's no fresh position to hand it.</summary>
     private Point _lastHoverPx;
+
+    /// <summary>Last KeyModifiers seen on a pointer event — kept around so <see cref="UpdateCursor"/>
+    /// and the modifier-grab hit test can re-evaluate "is Shift/Ctrl held" when invoked from a
+    /// non-pointer trigger (a tool change), mirroring how <see cref="_lastHoverPx"/> is reused for
+    /// the same reason. WPF reads a live global (Keyboard.Modifiers) instead; Avalonia has no direct
+    /// analog wired into this app, so this is the nearest equivalent.</summary>
+    private KeyModifiers _lastKeyModifiers;
+
     private RectPhysical _dragStartRect;
     private Border? _colorInfoPanel;
     private IPointer? _capturedPointer;
+
+    /// <summary>Feature B: the selected shape's own rect at the start of a SelectedResize drag — the
+    /// ApplyResize/ClampToFrame math below is reused verbatim from the crop-selection resize, just
+    /// fed this rect instead of _dragStartRect.</summary>
+    private RectPhysical _dragStartShapeRect;
+
+    /// <summary>Which endpoint (0 = P0, 1 = P1) a DragMode.SelectedEndpoint drag is repositioning —
+    /// set once at pointer-down from AnnotationLayer.HitTestSelectedEndpoint, read on every
+    /// subsequent pointer-move until pointer-up ends the gesture.</summary>
+    private int _dragEndpointIndex;
+
+    /// <summary>The ORIGINAL shape being re-edited via double-click, so CommitActiveTextEditor knows
+    /// to Replace it instead of adding a new shape, and CancelActiveTextEditor knows to leave it
+    /// untouched. Null for a brand-new text placement.</summary>
+    private AnnotationShape? _textEditReplacing;
+
+    private const double MinStrokePx = 1.0, MaxStrokePx = 32.0; // mirrors WPF's SizeInput ranges (item 08 ports SizeInput itself)
+    private const double MinFontPt = 6.0, MaxFontPt = 96.0;
 
     private AnnotationTool _currentTool = AnnotationTool.None;
     private Color _currentColor = Colors.Red;
@@ -100,7 +136,8 @@ public partial class OverlayWindow : Window
     /// <summary>True while this window has anything worth cancelling short of closing the whole
     /// overlay — used by OverlayController's two-stage Esc (stage: clear snip, stay open).</summary>
     internal bool HasSnipInProgress =>
-        _selectionPx is not null || _annotations.HasAnnotations || _dragMode != DragMode.None;
+        _selectionPx is not null || _annotations.HasAnnotations || _dragMode != DragMode.None
+        || _annotations.SelectedShape is not null;
 
     /// <summary>XAML-infrastructure-only constructor (satisfies the XAML compiler's public-ctor
     /// expectation, AVLN3001) — RoeSnip's own code always uses the internal data-taking overload
@@ -291,6 +328,21 @@ public partial class OverlayWindow : Window
 
     private Point ToPhysical(Point dip) => new(dip.X * _scaleX, dip.Y * _scaleY);
 
+    /// <summary>Gates HitTestEditable to the active drawing tool: only shapes of the SAME tool are
+    /// selectable/editable while a drawing tool is active (blur only grabs blurs, line only grabs
+    /// lines, etc.). The Select tool (AnnotationTool.None) passes null through, so it still grabs
+    /// any editable shape.</summary>
+    private AnnotationShape? HitEditableForTool(Point px, bool interiorGrab = false) =>
+        _annotations.HitTestEditable(px, interiorGrab, _currentTool == AnnotationTool.None ? null : _currentTool);
+
+    /// <summary>True while Shift or Ctrl is held — the modifier-grab chord: a click grabs the drawn
+    /// object under the cursor, hit-testing outline interiors too, regardless of the active tool.</summary>
+    private static bool IsGrabModifierHeld(KeyModifiers modifiers) =>
+        (modifiers & (KeyModifiers.Shift | KeyModifiers.Control)) != 0;
+
+    private static RectPhysical RectFromPoints(Point a, Point b) =>
+        new RectPhysical((int)a.X, (int)a.Y, (int)b.X, (int)b.Y).Normalized();
+
     private void OnPointerEnteredWindow(object? sender, PointerEventArgs e) => _onActivatedByMouse(this);
 
     private void OnPreviewPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -312,6 +364,7 @@ public partial class OverlayWindow : Window
 
         var dip = e.GetPosition(this);
         var px = ToPhysical(dip);
+        _lastKeyModifiers = e.KeyModifiers;
 
         if (_activeTextEditor is not null && !IsWithin(_activeTextEditor, e.Source))
         {
@@ -328,6 +381,20 @@ public partial class OverlayWindow : Window
 
         _onActivatedByMouse(this);
 
+        // Feature B: double-clicking a placed TEXT annotation reopens its inline editor, prefilled —
+        // and this must win over the confirm-snip double-click check right below, or a double-click
+        // meant to re-edit text would just confirm the whole snip instead. A SINGLE click on the
+        // same text is handled further down (selects + starts a move drag); this ClickCount>=2
+        // branch only ever fires on the second click of a double-click, so it doesn't fight that
+        // gesture.
+        if (e.ClickCount >= 2 && HitEditableForTool(px) is { Tool: AnnotationTool.Text } textHit)
+        {
+            _annotations.Select(textHit);
+            BeginTextReEdit(textHit, dip);
+            e.Handled = true;
+            return;
+        }
+
         if (e.ClickCount >= 2 && _selectionPx is { } existing && RectContains(existing, px))
         {
             _onCommand(OverlayCommand.ConfirmPlain);
@@ -335,8 +402,38 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        if (_currentTool != AnnotationTool.None)
+        // Modifier-grab: Shift/Ctrl + click is an explicit "grab whatever drawn object is under the
+        // cursor" that beats every tool behavior. Hit-tests GENEROUSLY (interiorGrab): the middle of
+        // a rectangle/ellipse counts, not just the stroke ring plain clicks use — so a box drawn
+        // around content can be repositioned from anywhere inside it. The grab is always a move;
+        // handles/endpoints still resize via plain clicks once the shape is selected.
+        if (IsGrabModifierHeld(e.KeyModifiers) && HitEditableForTool(px, interiorGrab: true) is { } grabbed)
         {
+            _annotations.Select(grabbed);
+            _dragMode = DragMode.SelectedMove;
+            _dragAnchorPx = px;
+            _annotations.BeginDragSelected();
+            CapturePointer(e.Pointer);
+            UpdateCursor();
+            e.Handled = true;
+            return;
+        }
+
+        // With a drawing tool active, a click that lands on an ALREADY-PLACED shape of THAT SAME
+        // TOOL (the selected one's resize handles or endpoints, or any same-tool shape's body) edits
+        // that shape instead of starting a new one on top of it. Shapes of a DIFFERENT tool are not
+        // selectable here — a press anywhere else still draws as before, so overlapping shapes stay
+        // reachable.
+        bool editsExistingShape =
+            _annotations.HitTestSelectedHandle(px) != SelectionHandle.None
+            || _annotations.HitTestSelectedEndpoint(px) >= 0
+            || HitEditableForTool(px) is not null;
+
+        if (_currentTool != AnnotationTool.None && !editsExistingShape)
+        {
+            // Starting a drawing/text gesture is one of the "any other gesture" cases that
+            // deselects a leftover annotation selection.
+            _annotations.Deselect();
             if (_currentTool == AnnotationTool.Text)
             {
                 BeginTextEditor(px, dip);
@@ -351,33 +448,105 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        var handle = _adorner.HitTestHandle(px);
-        if (handle == SelectionHandle.Body)
+        // Select tool (or a drawing tool clicking an already-placed shape of that tool): a selected
+        // annotation's own resize handles/endpoints beat clicking an (unselected or already-selected)
+        // annotation's body, which beats the crop selection's own handle/body, which beats starting a
+        // brand-new crop-selection drag.
+        var selectedHandle = _annotations.SelectedShape is not null
+            ? _annotations.HitTestSelectedHandle(px)
+            : SelectionHandle.None;
+        // Line/Arrow's endpoint handles are this predicate's Line/Arrow analogue — mutually
+        // exclusive with selectedHandle in practice, but checked as its own branch, ABOVE the plain
+        // body-move hit test below, so grabbing an endpoint always resizes rather than moving the
+        // whole segment.
+        int selectedEndpoint = _annotations.SelectedShape is not null
+            ? _annotations.HitTestSelectedEndpoint(px)
+            : -1;
+
+        if (selectedHandle != SelectionHandle.None)
         {
-            _dragMode = DragMode.Move;
-            _activeHandle = handle;
+            _dragStartShapeRect = RectFromPoints(
+                _annotations.SelectedShape!.PointsPx[0], _annotations.SelectedShape!.PointsPx[1]);
+            _dragMode = DragMode.SelectedResize;
+            _activeHandle = selectedHandle;
             _dragAnchorPx = px;
-            _dragStartRect = _selectionPx!.Value;
+            _annotations.BeginDragSelected();
         }
-        else if (handle != SelectionHandle.None)
+        else if (selectedEndpoint >= 0)
         {
-            _dragMode = DragMode.Resize;
-            _activeHandle = handle;
+            _dragMode = DragMode.SelectedEndpoint;
+            _dragEndpointIndex = selectedEndpoint;
             _dragAnchorPx = px;
-            _dragStartRect = _selectionPx!.Value;
+            _annotations.BeginDragSelected();
         }
         else
         {
-            // Don't start (or clear) any selection yet: below ClickDragThresholdPx of travel this
-            // is a color-inspection click, not a drag. The selection work happens in
-            // OnPreviewPointerMoved once the threshold is crossed.
-            _dragMode = DragMode.NewSelection;
-            _newSelectionPending = true;
-            _dragAnchorPx = px;
-            _dragAnchorDip = dip;
+            var handle = _adorner.HitTestHandle(px);
+            if (handle != SelectionHandle.None && handle != SelectionHandle.Body)
+            {
+                _annotations.Deselect();
+                _dragMode = DragMode.Resize;
+                _activeHandle = handle;
+                _dragAnchorPx = px;
+                _dragStartRect = _selectionPx!.Value;
+            }
+            else
+            {
+                var hitShape = HitEditableForTool(px);
+                if (hitShape is not null)
+                {
+                    // Click-selects AND immediately starts a drag in the same gesture. After
+                    // selecting, re-run the handle/endpoint hit tests (they only answer for the
+                    // CURRENT selection, which just changed): a first click landing exactly on what
+                    // is now a corner handle or a segment endpoint starts that resize directly
+                    // instead of degrading to a whole-shape move.
+                    _annotations.Select(hitShape);
+                    var freshHandle = _annotations.HitTestSelectedHandle(px);
+                    int freshEndpoint = freshHandle == SelectionHandle.None
+                        ? _annotations.HitTestSelectedEndpoint(px)
+                        : -1;
+                    if (freshHandle != SelectionHandle.None)
+                    {
+                        _dragStartShapeRect = RectFromPoints(hitShape.PointsPx[0], hitShape.PointsPx[1]);
+                        _dragMode = DragMode.SelectedResize;
+                        _activeHandle = freshHandle;
+                    }
+                    else if (freshEndpoint >= 0)
+                    {
+                        _dragMode = DragMode.SelectedEndpoint;
+                        _dragEndpointIndex = freshEndpoint;
+                    }
+                    else
+                    {
+                        _dragMode = DragMode.SelectedMove;
+                    }
+                    _dragAnchorPx = px;
+                    _annotations.BeginDragSelected();
+                }
+                else if (handle == SelectionHandle.Body)
+                {
+                    _annotations.Deselect();
+                    _dragMode = DragMode.Move;
+                    _activeHandle = handle;
+                    _dragAnchorPx = px;
+                    _dragStartRect = _selectionPx!.Value;
+                }
+                else
+                {
+                    _annotations.Deselect();
+                    // Don't start (or clear) any selection yet: below ClickDragThresholdPx of
+                    // travel this is a color-inspection click, not a drag. The selection work
+                    // happens in OnPreviewPointerMoved once the threshold is crossed.
+                    _dragMode = DragMode.NewSelection;
+                    _newSelectionPending = true;
+                    _dragAnchorPx = px;
+                    _dragAnchorDip = dip;
+                }
+            }
         }
 
         CapturePointer(e.Pointer);
+        UpdateCursor();
         e.Handled = true;
     }
 
@@ -391,6 +560,7 @@ public partial class OverlayWindow : Window
         var dip = e.GetPosition(this);
         var px = ToPhysical(dip);
         _lastHoverPx = px;
+        _lastKeyModifiers = e.KeyModifiers;
 
         // Color codes only when the color picker is enabled AND not the Pixelate tool — otherwise
         // the loupe is a pure placement/zoom aid with no color readout (WPF OverlayWindow.xaml.cs:1056).
@@ -434,6 +604,32 @@ public partial class OverlayWindow : Window
             case DragMode.Annotation:
                 _annotations.UpdateShape(px);
                 break;
+
+            case DragMode.SelectedMove:
+                // Avalonia's Point - Point returns a Point (not a Vector like WPF's) — build the
+                // Vector TranslateSelected expects explicitly.
+                _annotations.TranslateSelected(
+                    new Vector(px.X - _dragAnchorPx.X, px.Y - _dragAnchorPx.Y), new Size(_frame.Width, _frame.Height));
+                break;
+
+            case DragMode.SelectedResize:
+            {
+                // Byte-for-byte the same corner/edge math the crop selection's own resize uses.
+                var resized = ClampToFrame(ApplyResize(_dragStartShapeRect, _activeHandle, px));
+                _annotations.SetSelectedRect(
+                    new Point(resized.Left, resized.Top), new Point(resized.Right, resized.Bottom));
+                break;
+            }
+
+            case DragMode.SelectedEndpoint:
+            {
+                // Reposition just the dragged endpoint, clamped into the frame the same way every
+                // other selected-shape drag is (SelectedMove/SelectedResize both clamp too).
+                var clamped = new Point(
+                    Math.Clamp(px.X, 0, _frame.Width), Math.Clamp(px.Y, 0, _frame.Height));
+                _annotations.SetSelectedEndpoint(_dragEndpointIndex, clamped);
+                break;
+            }
         }
 
         UpdateCursor();
@@ -476,14 +672,36 @@ public partial class OverlayWindow : Window
                 break;
 
             case DragMode.Annotation:
-                _annotations.EndShape();
+                // A just-placed click-editable shape (Pixelate/Rectangle/Ellipse/Line/Arrow) is
+                // auto-selected: its chrome (and handles, where applicable) appears right away, so
+                // move/resize/wheel-adjust are discoverable without the Select tool, and the wheel
+                // immediately adjusts THIS shape rather than the next one's.
+                var committed = _annotations.EndShape();
+                if (committed is not null && AnnotationLayer.IsClickEditableTool(committed.Tool))
+                {
+                    _annotations.Select(committed);
+                }
+                break;
+
+            case DragMode.SelectedMove:
+            case DragMode.SelectedResize:
+            case DragMode.SelectedEndpoint:
+                _annotations.EndDragSelected();
                 break;
         }
 
         bool wasAreaDrag = _dragMode is DragMode.NewSelection or DragMode.Move or DragMode.Resize;
+        bool wasSelectedDrag = _dragMode is DragMode.SelectedMove or DragMode.SelectedResize or DragMode.SelectedEndpoint;
         _dragMode = DragMode.None;
         _activeHandle = SelectionHandle.None;
         ReleasePointer();
+
+        if (wasSelectedDrag)
+        {
+            // Mirrors the NewSelection-drag re-evaluation below: the release point may now sit over
+            // a different handle (or the plain body) than the one that was being dragged.
+            UpdateCursor();
+        }
 
         if (wasAreaDrag)
         {
@@ -504,15 +722,13 @@ public partial class OverlayWindow : Window
 
     // ---------- Scroll-wheel loupe zoom ----------
 
-    /// <summary>Item 06 lands only the loupe-zoom slice of WPF's much larger wheel handler
-    /// (OverlayWindow.xaml.cs:2253-2394, which also resizes an in-progress/selected shape's stroke
-    /// or font — none of that exists in this port yet, that's item 07's Feature B select/edit
-    /// subsystem): with the Pixelate tool active, or with no tool active at all (the eventual Select
-    /// tool with nothing selected — there is no selection-of-a-placed-shape concept yet either), the
-    /// wheel zooms the magnifier loupe (SampleRadius) instead of resizing anything, mirroring WPF's
-    /// own Pixelate-tool and nothing-selected branches (OverlayWindow.xaml.cs:2340-2394). The dialed
-    /// radius persists immediately into <see cref="_liveSettings"/> so it is the default for every
-    /// later session, same pattern as WPF's own TrySaveLiveSettings calls.</summary>
+    /// <summary>Extends item 06's loupe-zoom-only handler with the rest of WPF's wheel logic
+    /// (OverlayWindow.xaml.cs:2253-2345): while typing, the wheel resizes the active text editor's
+    /// font size directly; mid-drag, it resizes the in-progress shape's stroke width in place; over
+    /// a selected shape it routes to SetSelectedPixelateBlock/StrokeWidth/FontSize, each funneled
+    /// through BeginDragSelected/CommitPendingDrag so one wheel session (however many notches) ends
+    /// up as one Replace history action. Falls through to the loupe-zoom behavior only when none of
+    /// those apply, exactly like WPF's own fall-through order.</summary>
     private void OnPreviewPointerWheelChanged(object? sender, PointerWheelEventArgs e)
     {
         if (SessionInputSuspended)
@@ -531,8 +747,67 @@ public partial class OverlayWindow : Window
             return;
         }
 
+        if (_activeTextEditor is not null)
+        {
+            _activeTextEditor.FontSize = Math.Clamp(_activeTextEditor.FontSize + notches * 2.0, MinFontPt, MaxFontPt);
+            e.Handled = true;
+            return;
+        }
+
+        // A shape is half-drawn (pointer held, not yet released): the wheel resizes THAT shape's
+        // stroke width in place rather than only the next one, and adopts the size as the current
+        // tool size so it carries to the following shape. Pixelate is excluded — the blur tool's
+        // wheel zooms its placement loupe instead (handled below).
+        if (_annotations.InProgressTool is { } drawingTool && drawingTool != AnnotationTool.Pixelate)
+        {
+            double newSize = Math.Clamp(_currentStrokeWidth + notches, MinStrokePx, MaxStrokePx);
+            _annotations.SetInProgressStrokeWidth(newSize);
+            _currentStrokeWidth = newSize;
+            e.Handled = true;
+            return;
+        }
+
+        // A selected rect-resizable/segment/text shape owns the wheel — under the Select tool AND
+        // under the shape's own drawing tool (a just-placed shape is auto-selected, so "place, then
+        // scroll to tune it" works in one flow): Pixelate scrolls its mosaic block size,
+        // Rectangle/Ellipse/Line/Arrow their stroke width, Text its own font size.
+        if (_annotations.SelectedShape is { } selectedShape
+            && (_currentTool == AnnotationTool.None || _currentTool == selectedShape.Tool))
+        {
+            if (selectedShape.Tool == AnnotationTool.Pixelate)
+            {
+                _annotations.BeginDragSelected(); // no-op if a gesture from an earlier notch is still open
+                double newBlock = Math.Clamp(selectedShape.StrokeWidthPx + notches * 2.0, 3.0, MaxStrokePx);
+                _annotations.SetSelectedPixelateBlock(newBlock);
+                // Resize ONLY the selected blur's mosaic block — do NOT sync it to the current tool
+                // size. A blur's coarseness is a per-shape edit, not the tool default.
+                e.Handled = true;
+                return;
+            }
+            if (selectedShape.Tool is AnnotationTool.Rectangle or AnnotationTool.Ellipse
+                                   or AnnotationTool.Line or AnnotationTool.Arrow)
+            {
+                _annotations.BeginDragSelected();
+                double newWidth = Math.Clamp(selectedShape.StrokeWidthPx + notches, MinStrokePx, MaxStrokePx);
+                _annotations.SetSelectedStrokeWidth(newWidth);
+                _currentStrokeWidth = newWidth;
+                e.Handled = true;
+                return;
+            }
+            if (selectedShape.Tool == AnnotationTool.Text)
+            {
+                _annotations.BeginDragSelected(); // no-op if a gesture from an earlier notch is still open
+                double resizedFont = Math.Clamp(selectedShape.StrokeWidthPx + notches * 2.0, MinFontPt, MaxFontPt);
+                _annotations.SetSelectedFontSize(resizedFont);
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (_currentTool is AnnotationTool.Pixelate or AnnotationTool.None)
         {
+            // A SELECTED blur is handled by the selected-shape branch above (still resizes its
+            // block); this only runs when nothing is selected.
             int newRadius = Math.Clamp(
                 _magnifier.SampleRadius - notches, Magnifier.MinSampleRadius, Magnifier.MaxSampleRadius);
             if (newRadius != _magnifier.SampleRadius)
@@ -648,6 +923,24 @@ public partial class OverlayWindow : Window
                 e.Handled = true;
             }
             return; // don't let Esc/Enter fall through to session-level handling while typing
+        }
+
+        // Feature B: Delete/Back removes a selected annotation; Esc deselects it. Both are a new
+        // stage strictly INNER than the color-info-panel/CancelStage escalation below — an active
+        // text edit (the only other local stage) was already consumed above, and this must run
+        // before it so Esc never eats a whole snip-clear just because a leftover selection happened
+        // to still be checked.
+        if ((e.Key == Key.Delete || e.Key == Key.Back) && _annotations.SelectedShape is not null)
+        {
+            _annotations.DeleteSelected();
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Escape && _annotations.SelectedShape is not null)
+        {
+            _annotations.Deselect();
+            e.Handled = true;
+            return;
         }
 
         // Meta is accepted alongside Control so Cmd+C/Cmd+S/Cmd+Z work naturally on macOS — but
@@ -831,7 +1124,27 @@ public partial class OverlayWindow : Window
         if (_toolbar is null)
         {
             _toolbar = new ToolbarControl();
-            _toolbar.ToolSelected += tool => { _currentTool = tool; UpdateCursor(); };
+            _toolbar.ToolSelected += tool =>
+            {
+                // Commit any still-open inline text editor FIRST, before evaluating the tool-scoped
+                // deselect check below — a toolbar tool click never routes through the canvas's own
+                // commit-on-click, so without this an editor left open across a tool switch has
+                // nothing selected yet at switch time.
+                CommitActiveTextEditor();
+                _currentTool = tool;
+                // Feature B: selection is tool-scoped — switching to a DIFFERENT drawing tool than
+                // the currently selected shape's own kind drops that selection (chrome/handles
+                // disappear). Switching TO the Select tool (None) is exempt — that's the tool
+                // selections are FOR, so it always keeps whatever is selected. Deselect() commits
+                // any pending wheel gesture first, so a mid-resize wheel tweak is never silently
+                // dropped by a tool switch.
+                if (tool != AnnotationTool.None
+                    && _annotations.SelectedShape is { } selected && selected.Tool != tool)
+                {
+                    _annotations.Deselect();
+                }
+                UpdateCursor();
+            };
             _toolbar.ColorSelected += color => _currentColor = color;
             _toolbar.StrokeWidthSelected += width => _currentStrokeWidth = width;
             _toolbar.UndoClicked += () => _annotations.Undo();
@@ -868,44 +1181,160 @@ public partial class OverlayWindow : Window
         UpdateCursor();
     }
 
-    /// <summary>Keeps the pointer cursor honest about what a click would do right now. A drawing
-    /// tool being active always wins (crosshair, same as this window's default) — otherwise, with
-    /// the Select tool active, hovering the selection body shows a grab cursor and hovering a
-    /// resize handle shows the matching directional resize cursor, so an already-placed selection
-    /// doesn't keep looking like a fresh crosshair-drag target. Re-run on every pointer move (using
-    /// the live drag/hit-test state) and whenever _currentTool changes.</summary>
+    /// <summary>Keeps the pointer cursor honest about what a click would do right now. Re-run on
+    /// every pointer move (using the live drag/hit-test state) and whenever _currentTool or the
+    /// selection changes. For the Select tool (AnnotationTool.None) this mirrors WPF's
+    /// UpdateToolCursor exactly: the selected shape's own handles/endpoints beat the crop
+    /// selection's, which beat hovering an editable annotation body (Hand), which beat the crop's
+    /// own body/handle mapping. A drawing tool being active advertises the same Hand/handle/endpoint
+    /// affordance over an already-placed same-tool shape (so a placed shape stays discoverably
+    /// grabbable no matter which tool is active), falling back to a plain crosshair.</summary>
     private void UpdateCursor()
     {
         if (_currentTool != AnnotationTool.None)
         {
+            if (_dragMode == DragMode.SelectedMove)
+            {
+                Cursor = new Cursor(StandardCursorType.Hand);
+                return;
+            }
+            if (_dragMode == DragMode.SelectedResize)
+            {
+                Cursor = CursorForHandle(_activeHandle);
+                return;
+            }
+            if (_dragMode == DragMode.SelectedEndpoint)
+            {
+                Cursor = CursorForSegmentEndpoint(_annotations.SelectedShape);
+                return;
+            }
+            if (_dragMode == DragMode.None)
+            {
+                var hoverHandle = _annotations.HitTestSelectedHandle(_lastHoverPx);
+                if (hoverHandle != SelectionHandle.None)
+                {
+                    Cursor = CursorForHandle(hoverHandle);
+                    return;
+                }
+                if (_annotations.HitTestSelectedEndpoint(_lastHoverPx) >= 0)
+                {
+                    Cursor = CursorForSegmentEndpoint(_annotations.SelectedShape);
+                    return;
+                }
+                if (HitEditableForTool(_lastHoverPx, interiorGrab: IsGrabModifierHeld(_lastKeyModifiers)) is not null)
+                {
+                    Cursor = new Cursor(StandardCursorType.Hand);
+                    return;
+                }
+            }
             Cursor = new Cursor(StandardCursorType.Cross);
             return;
         }
 
-        // While a drag IS active, the cursor tracks the drag kind rather than re-hit-testing —
-        // a Move/Resize drag can carry the pointer off the body/handle it started on (fast mouse
+        // While a drag IS active, the cursor tracks the drag kind rather than re-hit-testing — a
+        // Move/Resize drag can carry the pointer off the body/handle it started on (fast pointer
         // movement outruns the rect), and it must still read as the drag it actually is.
-        SelectionHandle handle = _dragMode switch
+        switch (_dragMode)
         {
-            DragMode.Move => SelectionHandle.Body,
-            DragMode.Resize => _activeHandle,
-            DragMode.NewSelection => SelectionHandle.None, // dragging out a new rect: stay crosshair
-            _ => _adorner.HitTestHandle(_lastHoverPx),
-        };
+            case DragMode.Move:
+                Cursor = new Cursor(StandardCursorType.Hand);
+                return;
+            case DragMode.Resize:
+                Cursor = CursorForHandle(_activeHandle);
+                return;
+            case DragMode.NewSelection:
+                Cursor = new Cursor(StandardCursorType.Cross); // dragging out a new rect: stay crosshair
+                return;
+            case DragMode.SelectedMove:
+                Cursor = new Cursor(StandardCursorType.Hand);
+                return;
+            case DragMode.SelectedResize:
+                Cursor = CursorForHandle(_activeHandle);
+                return;
+            case DragMode.SelectedEndpoint:
+                Cursor = CursorForSegmentEndpoint(_annotations.SelectedShape);
+                return;
+        }
 
-        Cursor = handle switch
+        Cursor = CursorForHover(_lastHoverPx);
+    }
+
+    /// <summary>Directional resize cursor for a Line/Arrow endpoint, chosen by the segment's own
+    /// angle — dragging an endpoint stretches ALONG the segment, so the pointer should say "resize
+    /// this way", not SizeAll's four-way move arrows (the grabbing hand already means "move the
+    /// whole thing"). Buckets at ~22.5° off each axis (tan 67.5° ~= 2.414). Avalonia has no generic
+    /// diagonal size cursor (only the rect-corner set already used by <see cref="CursorForHandle"/>),
+    /// so the two diagonal buckets reuse TopLeftCorner/TopRightCorner for the same NW-SE/NE-SW
+    /// visual direction — screen Y grows downward, so same-sign dx/dy is the NW-SE diagonal, exactly
+    /// matching WPF's own bucket rule (which has real SizeNWSE/SizeNESW cursors to reach for).</summary>
+    private static Cursor CursorForSegmentEndpoint(AnnotationShape? shape)
+    {
+        if (shape is null || shape.PointsPx.Count < 2)
         {
-            SelectionHandle.Body => new Cursor(StandardCursorType.Hand),
-            SelectionHandle.TopLeft => new Cursor(StandardCursorType.TopLeftCorner),
-            SelectionHandle.TopRight => new Cursor(StandardCursorType.TopRightCorner),
-            SelectionHandle.BottomLeft => new Cursor(StandardCursorType.BottomLeftCorner),
-            SelectionHandle.BottomRight => new Cursor(StandardCursorType.BottomRightCorner),
-            SelectionHandle.Top => new Cursor(StandardCursorType.TopSide),
-            SelectionHandle.Bottom => new Cursor(StandardCursorType.BottomSide),
-            SelectionHandle.Left => new Cursor(StandardCursorType.LeftSide),
-            SelectionHandle.Right => new Cursor(StandardCursorType.RightSide),
-            _ => new Cursor(StandardCursorType.Cross),
-        };
+            return new Cursor(StandardCursorType.TopLeftCorner);
+        }
+        var d = shape.PointsPx[1] - shape.PointsPx[0];
+        double adx = Math.Abs(d.X), ady = Math.Abs(d.Y);
+        if (adx >= ady * 2.414)
+        {
+            return new Cursor(StandardCursorType.SizeWestEast);
+        }
+        if (ady >= adx * 2.414)
+        {
+            return new Cursor(StandardCursorType.SizeNorthSouth);
+        }
+        return (d.X > 0) == (d.Y > 0)
+            ? new Cursor(StandardCursorType.TopLeftCorner)
+            : new Cursor(StandardCursorType.TopRightCorner);
+    }
+
+    /// <summary>Maps a selection hit-test result to the matching Avalonia cursor: Hand over the
+    /// body, the directional resize cursor over each handle, and Cross for None.</summary>
+    private static Cursor CursorForHandle(SelectionHandle handle) => handle switch
+    {
+        SelectionHandle.Body => new Cursor(StandardCursorType.Hand),
+        SelectionHandle.TopLeft => new Cursor(StandardCursorType.TopLeftCorner),
+        SelectionHandle.TopRight => new Cursor(StandardCursorType.TopRightCorner),
+        SelectionHandle.BottomLeft => new Cursor(StandardCursorType.BottomLeftCorner),
+        SelectionHandle.BottomRight => new Cursor(StandardCursorType.BottomRightCorner),
+        SelectionHandle.Top => new Cursor(StandardCursorType.SizeNorthSouth),
+        SelectionHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
+        SelectionHandle.Left => new Cursor(StandardCursorType.SizeWestEast),
+        SelectionHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
+        _ => new Cursor(StandardCursorType.Cross),
+    };
+
+    /// <summary>Static (non-drag) Select-tool hover cursor — mirrors the click priority in
+    /// OnPreviewPointerPressed: the selected annotation's own handles/endpoints beat the crop
+    /// selection's handles, which beat hovering an editable annotation body (Hand), which beat the
+    /// crop's own body/handle mapping.</summary>
+    private Cursor CursorForHover(Point px)
+    {
+        if (_annotations.SelectedShape is not null)
+        {
+            var selectedHandle = _annotations.HitTestSelectedHandle(px);
+            if (selectedHandle != SelectionHandle.None)
+            {
+                return CursorForHandle(selectedHandle);
+            }
+            if (_annotations.HitTestSelectedEndpoint(px) >= 0)
+            {
+                return CursorForSegmentEndpoint(_annotations.SelectedShape);
+            }
+        }
+
+        var cropHandle = _adorner.HitTestHandle(px);
+        if (cropHandle != SelectionHandle.None && cropHandle != SelectionHandle.Body)
+        {
+            return CursorForHandle(cropHandle);
+        }
+
+        if (HitEditableForTool(px, interiorGrab: IsGrabModifierHeld(_lastKeyModifiers)) is not null)
+        {
+            return new Cursor(StandardCursorType.Hand);
+        }
+
+        return CursorForHandle(cropHandle); // Body -> Hand, None -> Cross
     }
 
     // ---------- Click-to-inspect color info panel ----------
@@ -1063,21 +1492,47 @@ public partial class OverlayWindow : Window
 
     // ---------- Inline text annotation (cuttable per PLAN.md §3.2 if it endangers the milestone) ----------
 
-    private void BeginTextEditor(Point originPx, Point originDip)
+    /// <summary>Double-click on a placed Text annotation (Select tool, or any tool — placed shapes
+    /// are always clickable) reopens this SAME inline editor at the shape's own position, prefilled
+    /// with its text/color/size — reuses BeginTextEditor's machinery wholesale rather than a second
+    /// editor implementation. The original shape is suppressed from AnnotationLayer's normal render
+    /// for the duration (see SuppressedFromRender) so the floating editor doesn't show doubled
+    /// text.</summary>
+    private void BeginTextReEdit(AnnotationShape shape, Point clickDip)
+    {
+        var originPx = shape.PointsPx[0];
+        var originDip = new Point(originPx.X / _scaleX, originPx.Y / _scaleY);
+        BeginTextEditor(originPx, originDip, shape);
+    }
+
+    private void BeginTextEditor(Point originPx, Point originDip, AnnotationShape? editingExisting = null)
     {
         CommitActiveTextEditor();
 
+        _textEditReplacing = editingExisting;
+        if (editingExisting is not null)
+        {
+            _annotations.SuppressedFromRender = editingExisting;
+            _annotations.InvalidateVisual();
+        }
+
+        var editColor = editingExisting?.StrokeColor ?? _currentColor;
         var editor = new TextBox
         {
             MinWidth = 140,
-            FontSize = Math.Max(14.0, _currentStrokeWidth * 4.0),
-            Foreground = new SolidColorBrush(_currentColor),
+            FontSize = editingExisting?.StrokeWidthPx ?? Math.Max(14.0, _currentStrokeWidth * 4.0),
+            Foreground = new SolidColorBrush(editColor),
             Background = new SolidColorBrush(Color.FromArgb(0x70, 0, 0, 0)),
-            BorderBrush = new SolidColorBrush(_currentColor),
+            BorderBrush = new SolidColorBrush(editColor),
             BorderThickness = new Thickness(1),
             AcceptsReturn = false,
             AcceptsTab = false,
+            Text = editingExisting?.Text ?? string.Empty,
         };
+        if (editingExisting is not null)
+        {
+            editor.CaretIndex = editor.Text?.Length ?? 0; // reopen with the caret at the end, not a full re-type
+        }
 
         _activeTextEditor = editor;
         _activeTextEditorOriginPx = originPx;
@@ -1097,12 +1552,46 @@ public partial class OverlayWindow : Window
 
         string text = editor.Text ?? string.Empty;
         double fontSize = editor.FontSize;
+        var replacing = _textEditReplacing;
         _overlayCanvas.Children.Remove(editor);
         _activeTextEditor = null;
+        _textEditReplacing = null;
+        _annotations.SuppressedFromRender = null;
+
+        if (replacing is not null)
+        {
+            // A re-edit commit REPLACES the original shape, never adds a new one — an empty result
+            // is treated exactly like the new-text path's degenerate-text guard below (silently
+            // no-op, leaving the original untouched) rather than deleting it.
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                var replacement = new AnnotationShape
+                {
+                    Tool = AnnotationTool.Text,
+                    StrokeColor = ((SolidColorBrush)editor.Foreground!).Color,
+                    StrokeWidthPx = fontSize,
+                    Text = text,
+                };
+                replacement.PointsPx.Add(_activeTextEditorOriginPx);
+                _annotations.ReplaceShape(replacing, replacement);
+            }
+            else
+            {
+                _annotations.InvalidateVisual(); // un-suppress the original so it renders again
+            }
+            return;
+        }
 
         if (!string.IsNullOrWhiteSpace(text))
         {
-            _annotations.CommitText(_activeTextEditorOriginPx, text, _currentColor, fontSize);
+            // Auto-select the newly committed text exactly like a just-placed Pixelate/Rectangle/
+            // etc — its chrome shows up immediately so it reads as grabbable/editable like every
+            // other kind, without a trip through the Select tool.
+            var committed = _annotations.CommitText(_activeTextEditorOriginPx, text, _currentColor, fontSize);
+            if (committed is not null)
+            {
+                _annotations.Select(committed);
+            }
         }
     }
 
@@ -1114,6 +1603,9 @@ public partial class OverlayWindow : Window
         }
         _overlayCanvas.Children.Remove(editor);
         _activeTextEditor = null;
+        _textEditReplacing = null;
+        _annotations.SuppressedFromRender = null;
+        _annotations.InvalidateVisual();
     }
 
     // ---------- Export / feedback ----------
