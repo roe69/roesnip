@@ -1058,10 +1058,16 @@ public sealed class TrayApp : ITrayNotifier
     /// themselves (an AppImage/.dmg download, same as their first install). Never auto-applies
     /// anything. Latched to once per release version (<see cref="_passiveNoticeShownForVersion"/>)
     /// so the now-periodic cadence (see <see cref="RunPassiveNoticeLoopAsync"/>) re-alerts whenever
-    /// a NEWER release ships but never repeats the same notice tick after tick.</summary>
+    /// a NEWER release ships but never repeats the same notice tick after tick.
+    ///
+    /// Passes <c>commitEvenWhenUpdateFound: true</c>: unlike the Windows auto-apply path, this
+    /// method never downloads or retries anything, so there is nothing to protect by withholding the
+    /// ETag once a found update has been handled - doing so would otherwise force a full uncached
+    /// GET on every periodic tick for as long as the release sits un-upgraded (weeks, since downloads
+    /// stay manual here), instead of the free 304 the conditional-GET client exists to provide.</summary>
     private async Task CheckForNewVersionPassivelyAsync()
     {
-        UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
+        UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync(commitEvenWhenUpdateFound: true).ConfigureAwait(false);
         if (update is null)
         {
             return;

@@ -173,15 +173,23 @@ public static class UpdateManager
     /// for the full contract): a conditional If-None-Match request that comes back 304 costs nothing
     /// against GitHub's unauthenticated rate limit, which is what makes an hourly-by-default periodic
     /// loop (see TrayApp's periodic update loop) cheap on both Windows (full auto-apply) and
-    /// Linux/macOS (passive notice). The ETag is committed ONLY when this method is about to return
-    /// null because there's genuinely no update - never when a payload parsed to a real update, and
-    /// never on a rate-limited/failed probe - so a stored ETag always safely means "304 = still no
-    /// update"; if an update was found but its later download/apply failed, the next check gets a
-    /// full uncached GET and a real chance to retry rather than silently 304'ing forever.
+    /// Linux/macOS (passive notice). The ETag is committed when this method is about to return null
+    /// because there's genuinely no update - never on a rate-limited/failed probe, so a stored ETag
+    /// always safely means "304 = still no update"; if an update was found but its later
+    /// download/apply failed, the next check gets a full uncached GET and a real chance to retry
+    /// rather than silently 304'ing forever.
     /// <paramref name="bypassBackoff"/> forces a live network attempt even inside an active
     /// rate-limit backoff window - the manual "Check for updates" menu item passes true because a
-    /// deliberate user click deserves a real answer.</summary>
-    public static async Task<UpdateInfo?> CheckForUpdateAsync(bool bypassBackoff = false)
+    /// deliberate user click deserves a real answer.
+    /// <paramref name="commitEvenWhenUpdateFound"/> is for the Linux/macOS passive notice ONLY (see
+    /// <c>TrayApp.CheckForNewVersionPassivelyAsync</c>): that path never downloads or applies
+    /// anything, it just shows a once-per-version toast, so there is no retry to protect by
+    /// withholding the ETag - and withholding it anyway would mean every hourly tick between a
+    /// release shipping and the user manually upgrading (potentially weeks, since downloads stay
+    /// manual there) re-fetches the full payload instead of getting a free 304. A genuinely NEWER
+    /// release still changes the resource and answers 200 regardless of a stale ETag, so committing
+    /// here cannot mask a real new release.</summary>
+    public static async Task<UpdateInfo?> CheckForUpdateAsync(bool bypassBackoff = false, bool commitEvenWhenUpdateFound = false)
     {
         try
         {
@@ -201,11 +209,12 @@ public static class UpdateManager
 
             using JsonDocument document = probe.Json!;
             UpdateInfo? update = ParseUpdateInfo(document.RootElement, CurrentVersion, requireWindowsAsset: OperatingSystem.IsWindows());
-            if (update is null)
+            if (update is null || commitEvenWhenUpdateFound)
             {
-                // No update found in this payload - commit the ETag so the NEXT check can 304 for
-                // free. See this method's doc comment for why an update-found-but-not-applied path
-                // must never reach this line.
+                // No update found in this payload - or the passive-notice caller has already fully
+                // processed whatever was found and there is nothing left to retry. See this method's
+                // doc comment for why an update-found-but-not-yet-applied Windows path must never
+                // reach this line.
                 ReleaseClient.CommitETag(probe.ETag);
             }
 
