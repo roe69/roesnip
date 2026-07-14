@@ -65,6 +65,12 @@ public static class UpdateManager
     private static string DownloadingExePath => Path.Combine(InstallDir, "RoeSnip.exe.new");
     private static string PendingSourceCleanupMarkerPath => Path.Combine(InstallDir, "pending-source-cleanup.txt");
 
+    /// <summary>Where the crash-loop-guard marker (update-health.json) lives - the settings
+    /// directory (%APPDATA%\RoeSnip), never <see cref="InstallDir"/>: the install dir is exactly
+    /// what an update swap replaces wholesale, so a marker written there could never survive across
+    /// the swap it exists to guard.</summary>
+    private static string HealthMarkerDirectory => SettingsStore.SettingsDirectory;
+
     /// <summary>The running build's version, straight off the assembly (set by the csproj's
     /// &lt;Version&gt;) - compared against each release's tag_name.</summary>
     public static Version CurrentVersion =>
@@ -74,14 +80,12 @@ public static class UpdateManager
     /// in a Revision component (always 0 for this project's x.y.z &lt;Version&gt; scheme), which
     /// reads as noise ("1.0.4.0") anywhere this is shown to the user (About box, tray tooltip,
     /// update-check result). Matches the release tag's own x.y.z shape exactly.</summary>
-    public static string CurrentVersionText
-    {
-        get
-        {
-            Version v = CurrentVersion;
-            return $"{v.Major}.{v.Minor}.{v.Build}";
-        }
-    }
+    public static string CurrentVersionText => FormatVersionText(CurrentVersion);
+
+    /// <summary>Shared by <see cref="CurrentVersionText"/> and the crash-loop guard (which needs
+    /// the identical "x.y.z" text for a RELEASE's <see cref="Version"/>, parsed from a tag rather
+    /// than an assembly, to compare equal to it in UpdateHealthMarker's string-keyed marker).</summary>
+    private static string FormatVersionText(Version v) => $"{v.Major}.{v.Minor}.{v.Build}";
 
     /// <summary>True when an installed copy already exists on disk
     /// (%LOCALAPPDATA%\RoeSnip\RoeSnip.exe), regardless of whether THIS process is that copy. Gates
@@ -162,6 +166,13 @@ public static class UpdateManager
         TryDelete(DownloadingExePath);
     }
 
+    /// <summary>Deletes only the abandoned ".new" download leftover, never <see cref="StaleExePath"/>
+    /// - used at startup instead of <see cref="CleanupStaleUpdateFiles"/> when the crash-loop guard
+    /// (<see cref="CheckUpdateHealthAtStartup"/>) determines this launch is still pending health
+    /// verification, so the ".old" rollback target must survive until the health milestone
+    /// (<see cref="CompleteHealthMilestone"/>) proves this launch didn't crash-loop.</summary>
+    public static void CleanupDownloadLeftover() => TryDelete(DownloadingExePath);
+
     /// <summary>Background bounded-retry delete of the ".old" exe a prior update swapped out. The
     /// synchronous <see cref="CleanupStaleUpdateFiles"/> above tries once, but right after an update
     /// hand-off the just-replaced process can still be exiting and holding its renamed exe locked,
@@ -172,6 +183,115 @@ public static class UpdateManager
     public static void CleanupStaleExeWithRetry()
     {
         TryDeleteWithRetry(StaleExePath);
+    }
+
+    // ---------------- Crash-loop guard (hardening item 7) ----------------
+
+    /// <summary>What <see cref="CheckUpdateHealthAtStartup"/> found and what the caller (TrayApp)
+    /// must do next.</summary>
+    public enum HealthCheckAction
+    {
+        /// <summary>Nothing pending (not installed, no marker, or a marker for some other version) -
+        /// start up exactly as before this feature existed, cleaning up ".old"/".new" immediately.</summary>
+        ProceedImmediateCleanup,
+
+        /// <summary>This launch is a post-update verification run that has not yet failed
+        /// <see cref="UpdateHealthMarker.RollbackAttemptThreshold"/> times - start up normally, but
+        /// the caller must defer ".old" cleanup to <see cref="CompleteHealthMilestone"/> once this
+        /// launch proves itself (only ".new" leftovers, via <see cref="CleanupDownloadLeftover"/>,
+        /// are safe to clean up immediately).</summary>
+        ProceedDeferredCleanup,
+
+        /// <summary>The previous build was just restored and relaunched - the caller must exit
+        /// immediately without creating a tray icon, registering the hotkey, or doing anything
+        /// else; this process's only remaining job was to hand off.</summary>
+        Restored,
+    }
+
+    /// <summary>Crash-loop guard entry point: call once, as early as possible in TrayApp.RunInstance
+    /// (before the tray icon/hotkey/anything else that could itself crash). See UpdateHealthMarker's
+    /// own doc comment for the full three-part design (pending-verify, health milestone,
+    /// quarantine); this method is the file-system half of it - deciding whether an auto-restore is
+    /// warranted and, if so, performing it.
+    ///
+    /// A portable/dev run (<see cref="IsInstalled"/> false) can never have a pending marker that
+    /// means anything - it never goes through <see cref="ApplyUpdateAsync"/> - so it always gets
+    /// <see cref="HealthCheckAction.ProceedImmediateCleanup"/>, identical to every launch before this
+    /// feature existed.</summary>
+    public static HealthCheckAction CheckUpdateHealthAtStartup()
+    {
+        if (!IsInstalled)
+        {
+            return HealthCheckAction.ProceedImmediateCleanup;
+        }
+
+        UpdateHealthMarker.State state = UpdateHealthMarker.RecordLaunchAttempt(HealthMarkerDirectory, CurrentVersionText);
+        if (state.PendingVersion != CurrentVersionText)
+        {
+            // No marker, or a marker naming some other version (e.g. a hand-rolled downgrade) -
+            // this launch isn't a post-update verification run.
+            return HealthCheckAction.ProceedImmediateCleanup;
+        }
+
+        if (state.AttemptCount >= UpdateHealthMarker.RollbackAttemptThreshold &&
+            File.Exists(StaleExePath) &&
+            TryRestorePreviousBuild(state.AttemptCount))
+        {
+            return HealthCheckAction.Restored;
+        }
+
+        return HealthCheckAction.ProceedDeferredCleanup;
+    }
+
+    /// <summary>The health milestone: call once, after a <see cref="HealthCheckAction.ProceedDeferredCleanup"/>
+    /// launch has stayed up long enough to be trusted (TrayApp's own "tray icon shown plus ~15s of
+    /// uptime" gate). Clears the pending-verify marker - this build is proven, the next update
+    /// starts a fresh cycle - and only then runs the ".old" cleanup
+    /// <see cref="CheckUpdateHealthAtStartup"/> deferred, since it is only safe to delete the
+    /// rollback target once this launch is known not to be crash-looping.</summary>
+    public static void CompleteHealthMilestone()
+    {
+        UpdateHealthMarker.ClearPending(HealthMarkerDirectory);
+        CleanupStaleExeWithRetry();
+    }
+
+    /// <summary>Restores the ".old" build over <see cref="InstalledExePath"/>, quarantines the
+    /// currently-running (bad) version so <see cref="CheckForUpdateAsync"/> never re-offers it, and
+    /// relaunches the restored build. The currently-running exe can be renamed out from under this
+    /// very process - the same trick every update swap already relies on (Windows allows renaming a
+    /// running executable's file; the process keeps running against its now-renamed handle) - so the
+    /// bad exe is rotated into <see cref="StaleExePath"/>'s slot rather than deleted outright,
+    /// letting the RESTORED build's own next-launch cleanup (<see cref="CheckUpdateHealthAtStartup"/>'s
+    /// ProceedImmediateCleanup path, since the marker was just cleared by
+    /// <see cref="UpdateHealthMarker.Quarantine"/>) delete it normally instead of inventing a second
+    /// cleanup path for a one-off leftover file. Returns false (never throws) on any failure, so the
+    /// caller falls back to letting this launch continue as an ordinary (if still potentially bad)
+    /// startup rather than getting stuck.</summary>
+    private static bool TryRestorePreviousBuild(int attemptCount)
+    {
+        string badVersion = CurrentVersionText;
+        try
+        {
+            FileLog.Write(
+                $"RoeSnip: {badVersion} failed to reach the startup health milestone {attemptCount} times in a row - " +
+                "restoring the previous build and quarantining this version.");
+
+            string stagingPath = DownloadingExePath; // idle at this point: this runs before any download could start
+            TryDelete(stagingPath);
+            File.Move(StaleExePath, stagingPath);      // good build -> staging
+            File.Move(InstalledExePath, StaleExePath); // bad running exe -> the ".old" slot (cleaned up normally next launch)
+            File.Move(stagingPath, InstalledExePath);  // good build -> installed
+
+            UpdateHealthMarker.Quarantine(HealthMarkerDirectory, badVersion);
+
+            Process.Start(new ProcessStartInfo(InstalledExePath) { UseShellExecute = true });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: auto-restore after repeated startup failures failed (non-fatal, continuing this launch): {ex.Message}");
+            return false;
+        }
     }
 
     private static void TryDelete(string path)
@@ -425,6 +545,18 @@ public static class UpdateManager
             using JsonDocument document = probe.Json!;
             JsonElement root = document.RootElement;
             UpdateInfo? update = ParsePayload(root, CurrentVersion);
+            if (update is not null && UpdateHealthMarker.IsQuarantined(HealthMarkerDirectory, update.Version))
+            {
+                // This exact release already crash-looped on this machine and was auto-rolled-back -
+                // see UpdateHealthMarker's own doc comment for why the ordinary downgrade guard above
+                // (releaseVersion <= currentVersion, inside ParsePayload) cannot catch this: the
+                // quarantined release IS newer than CurrentVersion, that's the whole reason it looked
+                // like an update. Never re-apply it; a fixed re-release under a newer version number
+                // clears the quarantine automatically (IsQuarantined's own side effect).
+                FileLog.Write($"RoeSnip: skipping update to {update.Version} - quarantined after repeated startup failures.");
+                update = null;
+            }
+
             if (update is null)
             {
                 // No update found in this payload - commit the ETag so the NEXT check can 304 for
@@ -662,6 +794,14 @@ public static class UpdateManager
             {
                 await beforeLaunch().ConfigureAwait(false);
             }
+
+            // Crash-loop guard (hardening item 7): record the version we're about to launch into as
+            // pending health verification BEFORE starting it, so the new process's own startup
+            // (UpdateManager.CheckUpdateHealthAtStartup) sees the marker on its very first launch.
+            // Must be written here, not by the new process itself on its own first line of Main -
+            // this process is the one that knows for certain a swap just happened; the new process
+            // only knows "I am this version", which is exactly as true on every ordinary relaunch.
+            UpdateHealthMarker.RecordPendingUpdate(HealthMarkerDirectory, FormatVersionText(info.Version));
 
             Process.Start(new ProcessStartInfo(InstalledExePath) { UseShellExecute = true });
         }

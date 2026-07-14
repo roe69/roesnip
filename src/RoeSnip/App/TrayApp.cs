@@ -141,6 +141,18 @@ public sealed class TrayApp : ITrayNotifier
 
     private int RunInstance(bool automationEnabled)
     {
+        // Crash-loop guard (hardening item 7), first statement in this method: a bad release that
+        // crashes at/near startup must be caught before ANYTHING else here gets a chance to also
+        // crash (visual styles, settings load, the tray icon itself). See
+        // UpdateManager.CheckUpdateHealthAtStartup's own doc comment for the full contract; when it
+        // restores and relaunches the previous build, this process's only remaining job is to get
+        // out of the way immediately - no tray icon, no hotkey, nothing.
+        UpdateManager.HealthCheckAction healthAction = UpdateManager.CheckUpdateHealthAtStartup();
+        if (healthAction == UpdateManager.HealthCheckAction.Restored)
+        {
+            return 0;
+        }
+
         Application.EnableVisualStyles();
 
         _settings = AppComposition.LoadSettings?.Invoke() ?? RoeSnipSettings.Default;
@@ -217,17 +229,34 @@ public sealed class TrayApp : ITrayNotifier
         // its first iteration, and the periodic re-checks are what actually keeps a long-lived
         // resident current. Fire-and-forget: CheckForUpdateAsync never throws and this must never
         // delay startup or block the UI thread.
-        UpdateManager.CleanupStaleUpdateFiles();
+        //
+        // Crash-loop guard: when this launch is still pending health verification
+        // (ProceedDeferredCleanup), the ".old" rollback target must survive until the health
+        // milestone below proves this launch isn't crash-looping - only the always-safe ".new"
+        // download leftover is cleaned up now. The common case (ProceedImmediateCleanup) is
+        // byte-for-byte what this did before the crash-loop guard existed.
+        if (healthAction == UpdateManager.HealthCheckAction.ProceedImmediateCleanup)
+        {
+            UpdateManager.CleanupStaleUpdateFiles();
+        }
+        else
+        {
+            UpdateManager.CleanupDownloadLeftover();
+        }
         // Background cleanup that may need a bounded retry (a still-locked file must never stall
         // startup): the source exe a prior Install() "move" left behind (pending-source-cleanup
         // marker) AND the ".old" a just-applied update swapped out - right after an update hand-off
         // the replaced process can still be exiting and holding that renamed exe locked, so the
         // synchronous CleanupStaleUpdateFiles above can miss it. Retrying here frees the ~170 MB
-        // artefact the same session instead of leaving it until the next launch.
+        // artefact the same session instead of leaving it until the next launch. The ".old" retry
+        // itself is skipped here when ProceedDeferredCleanup - see the health-milestone timer below.
         _ = Task.Run(() =>
         {
             UpdateManager.ProcessPendingSourceCleanup();
-            UpdateManager.CleanupStaleExeWithRetry();
+            if (healthAction == UpdateManager.HealthCheckAction.ProceedImmediateCleanup)
+            {
+                UpdateManager.CleanupStaleExeWithRetry();
+            }
             if (UpdateManager.IsInstalled)
             {
                 // Startup ensure (not just install-time): installs made before the shortcut feature
@@ -236,6 +265,22 @@ public sealed class TrayApp : ITrayNotifier
                 StartMenuShortcut.EnsureFor(UpdateManager.InstalledExePath);
             }
         });
+        if (healthAction == UpdateManager.HealthCheckAction.ProceedDeferredCleanup)
+        {
+            // The health milestone (hardening item 7): this launch is a post-update verification
+            // run. Once it has stayed up for ~15s past the tray icon going live (already true by
+            // the time this Task.Run body executes, since the tray icon was created synchronously
+            // above), clear the pending-verify marker and only THEN run the deferred ".old" cleanup
+            // - see UpdateManager.CompleteHealthMilestone's own doc comment for why the ordering
+            // matters. 15s, not a shorter window: long enough that a fast-fail crash (the exact
+            // failure mode this guard exists for) has already happened by the time this fires, short
+            // enough that a genuinely healthy build isn't left holding its rollback target for long.
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+                UpdateManager.CompleteHealthMilestone();
+            });
+        }
         if (UpdateManager.IsInstalled)
         {
             // Gating once here (rather than inside the loop, on every wake) is sound because
