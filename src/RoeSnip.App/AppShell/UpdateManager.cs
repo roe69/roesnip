@@ -195,6 +195,7 @@ public static class UpdateManager
                     Console.Error.WriteLine("RoeSnip: update check skipped - GitHub rate limit backoff is active.");
                     return null;
                 case ProbeStatus.Failed:
+                    Console.Error.WriteLine($"RoeSnip: update check failed (non-fatal): {probe.Detail}");
                     return null;
             }
 

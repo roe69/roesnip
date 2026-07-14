@@ -25,8 +25,12 @@ public enum ProbeStatus
 /// and is the caller's to dispose (a JsonDocument holds pooled buffers). <see cref="ETag"/> is the
 /// response's ETag header value on a Payload result — the caller passes it to
 /// <see cref="GitHubLatestReleaseClient.CommitETag"/> once it has decided what the payload meant,
-/// never here automatically (see that method's doc comment for why).</summary>
-public sealed record ProbeResult(ProbeStatus Status, JsonDocument? Json, string? ETag);
+/// never here automatically (see that method's doc comment for why). <see cref="Detail"/> is only
+/// populated on <see cref="ProbeStatus.Failed"/> (the HTTP status code, or an exception message) so
+/// callers can log SOMETHING for a private-repo 404, a broken proxy, or a transport failure — without
+/// it every periodic check that hits this path is silent, which is exactly the "updates never fired"
+/// class of report this whole feature exists to make diagnosable.</summary>
+public sealed record ProbeResult(ProbeStatus Status, JsonDocument? Json, string? ETag, string? Detail = null);
 
 /// <summary>Conditional-GET wrapper around GitHub's "releases/latest" REST endpoint — the whole
 /// network-thrift strategy for periodic update checking. GitHub's REST docs guarantee a conditional
@@ -125,7 +129,7 @@ public sealed class GitHubLatestReleaseClient
 
             if (!response.IsSuccessStatusCode)
             {
-                return new ProbeResult(ProbeStatus.Failed, Json: null, ETag: null);
+                return new ProbeResult(ProbeStatus.Failed, Json: null, ETag: null, Detail: $"HTTP {(int)response.StatusCode} {response.StatusCode}");
             }
 
             string? etag = response.Headers.ETag?.Tag;
@@ -133,11 +137,13 @@ public sealed class GitHubLatestReleaseClient
             JsonDocument document = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
             return new ProbeResult(ProbeStatus.Payload, document, etag);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // A network failure or malformed response means the same thing to every caller: nothing
-            // actionable right now. Never throw out of a periodic background loop.
-            return new ProbeResult(ProbeStatus.Failed, Json: null, ETag: null);
+            // actionable right now. Never throw out of a periodic background loop - but keep the
+            // exception message on the result so the caller can still log it (see Detail's doc
+            // comment above).
+            return new ProbeResult(ProbeStatus.Failed, Json: null, ETag: null, Detail: ex.Message);
         }
     }
 

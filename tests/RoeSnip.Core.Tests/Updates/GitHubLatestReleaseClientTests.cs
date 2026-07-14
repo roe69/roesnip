@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -167,5 +168,36 @@ public class GitHubLatestReleaseClientTests
 
         Assert.Equal(ProbeStatus.Failed, result.Status);
         Assert.Null(result.Json);
+        // Detail carries the HTTP status so callers can still log SOMETHING for a Failed probe -
+        // otherwise every non-success status is silent to a "check for updates failed" report.
+        Assert.Contains("500", result.Detail);
+    }
+
+    /// <summary>A malformed/non-JSON body throws out of JsonDocument.ParseAsync - ProbeAsync's catch
+    /// must still surface a Detail string (the exception message), not just swallow it, so a caller
+    /// can log why a periodic check found nothing.</summary>
+    private sealed class ThrowingContent : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            throw new InvalidOperationException("boom");
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
+    [Fact]
+    public async Task TransportOrParseFailure_ReturnsFailed_WithExceptionDetail()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ThrowingContent() };
+        using var handler = new SequenceHttpMessageHandler(response);
+        var sut = new GitHubLatestReleaseClient("owner", "repo");
+
+        ProbeResult result = await sut.ProbeAsync(handler.ToClient());
+
+        Assert.Equal(ProbeStatus.Failed, result.Status);
+        Assert.Null(result.Json);
+        Assert.Equal("boom", result.Detail);
     }
 }
