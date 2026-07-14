@@ -26,6 +26,9 @@ public class UpdateCheckFrequencyTests
     [InlineData("")]
     [InlineData("garbage")]
     [InlineData("hourly ")] // trailing space is not a valid enum name
+    [InlineData("7")] // Enum.TryParse accepts any integer string for a non-Flags enum - must not slip past IsDefined
+    [InlineData("-1")]
+    [InlineData("2")] // happens to be the underlying int of a DEFINED member (Every30Minutes) - still not a valid name, must fail safe
     public void Parse_UnrecognizedOrMissing_FailsSafeToHourly(string? value)
     {
         Assert.Equal(UpdateCheckFrequency.Hourly, UpdateCheckFrequencies.Parse(value));

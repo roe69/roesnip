@@ -42,11 +42,42 @@ public static class UpdateCheckFrequencies
     /// SettingsStore.Load's own doc comment). A missing field in an old settings.json (any build
     /// that predates this feature) resolves here too, and upgrading a long-lived tray resident from
     /// "never periodically checks" to "checks hourly" by default is the intended fix for the
-    /// "updates never fired" report this feature responds to, not an accidental side effect.</summary>
+    /// "updates never fired" report this feature responds to, not an accidental side effect.
+    ///
+    /// The all-digits rejection and the <see cref="Enum.IsDefined(System.Type,object)"/> check both
+    /// matter: this is a plain, non-Flags enum, so <c>Enum.TryParse</c> happily accepts any integer
+    /// string ("7", "-1") and returns an UNDEFINED value of the underlying int rather than failing —
+    /// a hand-editor typing a number (plausibly meaning "every 7 hours", which this enum doesn't even
+    /// offer) would otherwise sail past this guard and blow up <see cref="Interval"/>'s switch inside
+    /// the fire-and-forget update loop, silently killing periodic checking for the rest of the
+    /// process lifetime. Rejecting ALL numeric strings up front (not just undefined ones) also stops
+    /// the surprising case where a small integer happens to line up with a real member's ordinal
+    /// ("2" silently meaning Every30Minutes to someone who typed it thinking "every 2 hours") - this
+    /// field is documented as taking enum member names, never numbers.</summary>
     public static UpdateCheckFrequency Parse(string? value) =>
-        Enum.TryParse<UpdateCheckFrequency>(value, ignoreCase: true, out var frequency)
+        !string.IsNullOrEmpty(value)
+        && !IsAllDigits(value)
+        && Enum.TryParse<UpdateCheckFrequency>(value, ignoreCase: true, out var frequency)
+        && Enum.IsDefined(frequency)
             ? frequency
             : UpdateCheckFrequency.Hourly;
+
+    private static bool IsAllDigits(string value)
+    {
+        int start = value[0] == '-' ? 1 : 0;
+        if (start >= value.Length)
+        {
+            return false;
+        }
+        for (int i = start; i < value.Length; i++)
+        {
+            if (!char.IsAsciiDigit(value[i]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
 
     /// <summary>How long a tray resident should wait between periodic checks, or null for
     /// <see cref="UpdateCheckFrequency.StartupOnly"/> (no periodic loop tick should ever fire — the
