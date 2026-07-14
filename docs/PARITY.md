@@ -516,6 +516,45 @@ existing WPF test suite is the proof.
       cannot be exercised without either a live published release with this exact asset name or
       debug-only URL-injection plumbing, both out of scope here. --self-update-now was not driven
       live for the same reason (it always calls the real GitHub API, never a mock).
+      2026-07 update (periodic-loops-ui-and-live-verify): the startup-only check above almost
+      never actually delivers an update for a long-lived tray resident (weeks between launches),
+      so CheckForUpdatesOnStartupAsync was renamed CheckForUpdatesAndAutoApplyAsync and became one
+      iteration of a periodic RunUpdateLoopAsync (Windows) / RunPassiveNoticeLoopAsync (Linux/
+      macOS) — same shape on both apps: wake every minute, re-read the user-configurable
+      UpdateCheckFrequency setting live, check once the configured interval (plus jitter, up to
+      5 min) has elapsed, awaited inline so a check parked in the idle gate cannot pile up behind
+      ApplyUpdateLock. Network cost stays flat: RoeSnip.Core/Updates/GitHubLatestReleaseClient.cs
+      wraps the GitHub releases/latest call in a conditional GET (If-None-Match/ETag), so a
+      steady-state periodic check is a free 304 that does not count against the unauthenticated
+      rate limit; the ETag is committed only when a check concluded "no update" (never when an
+      update was found but its apply then failed), so a failed apply always gets a real retry on
+      the next tick instead of silently 304'ing forever. The fallback toast/balloon (Windows) and
+      the passive new-version notice (Linux/macOS) are both now latched to once per release
+      version so an hourly retry of a persistent failure, or an hourly re-check on Linux/macOS,
+      cannot turn into notification spam — the underlying retries/re-checks keep happening
+      regardless. Settings gained a "Check for updates" combo (both apps) bound to
+      UpdateCheckFrequency, deferred-save like the rest of the window, with a portable/dev hint on
+      Windows and a "downloads stay manual" hint on Linux/macOS. Live-verified on the Avalonia
+      app's install dir only (WPF's resident is off-limits — see this repo's standing rule; no
+      admin rights were available in this environment for the hosts-file/firewall trick the design
+      called for, so the network-blackhole choreography was substituted with direct timing proof
+      instead): a v1.0.0 build seeded into %LOCALAPPDATA%\RoeSnip.App with UpdateCheckFrequency set
+      to the hidden EveryMinute dev value auto-updated itself to the real latest release on its
+      startup check (iteration zero), confirming the whole download/swap/relaunch pipeline still
+      works unchanged. A fresh run of the now-current build was then observed via stderr with a
+      temporary diagnostic build (5s wake cadence instead of 1 minute, otherwise byte-identical
+      loop/threshold logic, reverted before committing) to directly confirm two consecutive
+      periodic ticks land back-to-back at the expected interval-plus-jitter spacing and both log
+      the quiet "up to date (304)" line, and that setting UpdateCheckFrequency to StartupOnly makes
+      every subsequent wake a permanent no-op (interval resolves to null forever, confirmed over
+      several wakes). A final run of the unmodified, non-diagnostic build with the real 1-minute
+      wake cadence then reproduced the same "up to date (304)" line at its expected ~2-minute mark,
+      closing the loop against production code. The live in-process Settings-Save reconfigure path
+      itself (_settings reassigned by the onSaved callback, read fresh by the loop every wake) was
+      not exercised via an actual UI click — this repo's standing automation rule rules out
+      synthetic mouse/UIA input, and no Settings-specific automation command exists — so that half
+      is verified by code inspection only (a plain instance-field reassignment/read, the same
+      shape TrayApp already uses for its hotkey re-registration).
 - [x] 14-shell-parity-batch: Hotkey rebind fixes (suspend live hotkey, PrintScreen
       keyup-only capture, real key names), WM_SETTINGCHANGE broadcast after the PrtScr
       consent registry write, competing-screenshot-tool startup warning, ColorPickerEnabled
