@@ -920,48 +920,19 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>The periodic update loop (Windows only; only started when
     /// <see cref="UpdateManager.IsInstalled"/> is true — see the Start() call site's comment).
-    /// Iteration zero runs immediately and IS the old startup check; after that it wakes every
-    /// minute purely to re-read the current setting, and only actually performs a check once the
-    /// configured interval (plus jitter) has elapsed since the last one. The 1-minute wake — not a
-    /// timer re-armed to the configured interval — is what lets a Settings change take effect
-    /// without any CancellationToken/re-arm plumbing: SettingsWindow's onSaved callback
-    /// (ApplyUpdatedSettingsAsync) reassigns <c>_settings</c> synchronously, and the very next wake
-    /// picks the new value up. Wall-clock elapsed (DateTime.UtcNow, never .Now — a DST jump must
-    /// not double-fire or stall this) rather than counting Task.Delay iterations means a laptop
-    /// resumed after sleep fires its overdue check on the next wake instead of drifting forever
-    /// behind. The check is awaited INLINE, not fire-and-forgotten per tick: if an apply is parked
-    /// for hours inside CheckForUpdatesAndAutoApplyAsync's idle-wait gate, this loop is parked with
-    /// it, so checks can never pile up behind UpdateManager.ApplyUpdateLock. Jitter (up to
-    /// interval/4, capped at 5 minutes) keeps a fleet of machines that all boot at the same moment
-    /// from stampeding GitHub's API in lockstep. Named method (not run inline in Start()) purely so
-    /// the platform-compat analyzer can see it is directly inside the IsWindows() guard — it cannot
-    /// see through an anonymous method body (same trick as RunPendingUpdateFileCleanup).</summary>
+    /// Scheduling itself (iteration-zero startup check, 1-minute settings-poll wake, wall-clock
+    /// elapsed, jitter, StartupOnly handling) is <see cref="UpdatePolling.RunPeriodicAsync"/> — see
+    /// its doc comment for the full semantics, which are unchanged here. This method supplies only
+    /// the two things that differ per app/platform: where the frequency setting lives
+    /// (<c>_settings.UpdateCheckFrequency</c>, re-read fresh on every call so SettingsWindow's
+    /// onSaved callback (ApplyUpdatedSettingsAsync) reassigning <c>_settings</c> takes effect on the
+    /// very next wake) and what a tick means (CheckForUpdatesAndAutoApplyAsync). Named method (not
+    /// run inline in Start()) purely so the platform-compat analyzer can see it is directly inside
+    /// the IsWindows() guard — it cannot see through an anonymous method body (same trick as
+    /// RunPendingUpdateFileCleanup).</summary>
     [SupportedOSPlatform("windows")]
-    private async Task RunUpdateLoopAsync()
-    {
-        await CheckForUpdatesAndAutoApplyAsync().ConfigureAwait(false); // iteration zero = today's startup check
-        DateTime lastCheckUtc = DateTime.UtcNow;
-        TimeSpan currentInterval = UpdateCheckFrequencies.Interval(UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency))
-            ?? TimeSpan.FromHours(1);
-        TimeSpan jitter = UpdateCheckFrequencies.Jitter(currentInterval, Random.Shared.NextDouble());
-        while (true)
-        {
-            await Task.Delay(TimeSpan.FromMinutes(1)).ConfigureAwait(false); // settings-poll cadence, not network cadence
-            var freq = UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency); // FRESH read: live reconfigure
-            TimeSpan? interval = UpdateCheckFrequencies.Interval(freq);
-            if (interval is null)
-            {
-                continue; // StartupOnly: keep watching the setting, never check again on our own
-            }
-            if (DateTime.UtcNow - lastCheckUtc < interval + jitter)
-            {
-                continue;
-            }
-            lastCheckUtc = DateTime.UtcNow;
-            jitter = UpdateCheckFrequencies.Jitter(interval.Value, Random.Shared.NextDouble());
-            await CheckForUpdatesAndAutoApplyAsync().ConfigureAwait(false); // awaited INLINE: no pile-up possible
-        }
-    }
+    private Task RunUpdateLoopAsync() =>
+        UpdatePolling.RunPeriodicAsync(() => _settings.UpdateCheckFrequency, CheckForUpdatesAndAutoApplyAsync);
 
     /// <summary>One check-and-apply cycle (Windows only). Says nothing when there is nothing to
     /// offer (no update, no network, private-repo 404, a 304/rate-limit backoff —
@@ -1109,39 +1080,20 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
-    /// <summary>Linux/macOS periodic equivalent of <see cref="RunUpdateLoopAsync"/> — same
-    /// skeleton, deliberately duplicated rather than abstracted behind a delegate parameter (it is
-    /// ~15 lines of Task.Delay glue and staying textually parallel with the Windows loop is more
-    /// valuable than sharing it), except its tick calls <see cref="CheckForNewVersionPassivelyAsync"/>
-    /// instead of an auto-applying check — there is no install directory or exe-swap strategy on
-    /// these platforms (item 13d), only a heads-up notice. No IsInstalled/IsWindows guard here: this
-    /// is only ever started from the non-Windows branch of Start(), and there is no "installed
-    /// copy" concept on Linux/macOS to gate on — every launch runs the loop.</summary>
-    private async Task RunPassiveNoticeLoopAsync()
-    {
-        await CheckForNewVersionPassivelyAsync().ConfigureAwait(false); // iteration zero = today's startup check
-        DateTime lastCheckUtc = DateTime.UtcNow;
-        TimeSpan currentInterval = UpdateCheckFrequencies.Interval(UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency))
-            ?? TimeSpan.FromHours(1);
-        TimeSpan jitter = UpdateCheckFrequencies.Jitter(currentInterval, Random.Shared.NextDouble());
-        while (true)
-        {
-            await Task.Delay(TimeSpan.FromMinutes(1)).ConfigureAwait(false); // settings-poll cadence, not network cadence
-            var freq = UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency); // FRESH read: live reconfigure
-            TimeSpan? interval = UpdateCheckFrequencies.Interval(freq);
-            if (interval is null)
-            {
-                continue; // StartupOnly: keep watching the setting, never check again on our own
-            }
-            if (DateTime.UtcNow - lastCheckUtc < interval + jitter)
-            {
-                continue;
-            }
-            lastCheckUtc = DateTime.UtcNow;
-            jitter = UpdateCheckFrequencies.Jitter(interval.Value, Random.Shared.NextDouble());
-            await CheckForNewVersionPassivelyAsync().ConfigureAwait(false); // awaited INLINE: no pile-up possible
-        }
-    }
+    /// <summary>Linux/macOS periodic equivalent of <see cref="RunUpdateLoopAsync"/>. Scheduling is
+    /// the same shared <see cref="UpdatePolling.RunPeriodicAsync"/> skeleton both Windows loops in
+    /// this class use (this used to be a hand-duplicated third copy of that ~25-line Task.Delay
+    /// skeleton, defended on the theory that staying textually parallel with the Windows loop was
+    /// worth the duplication - a third near-identical copy appearing is exactly the evidence that
+    /// argument was wrong: a future jitter/DST fix needs to land once, not three times, and Core is
+    /// where framework-free logic shared by both apps already lives). The only thing that differs
+    /// here is what a tick means: <see cref="CheckForNewVersionPassivelyAsync"/> instead of an
+    /// auto-applying check — there is no install directory or exe-swap strategy on these platforms
+    /// (item 13d), only a heads-up notice. No IsInstalled/IsWindows guard here: this is only ever
+    /// started from the non-Windows branch of Start(), and there is no "installed copy" concept on
+    /// Linux/macOS to gate on — every launch runs the loop.</summary>
+    private Task RunPassiveNoticeLoopAsync() =>
+        UpdatePolling.RunPeriodicAsync(() => _settings.UpdateCheckFrequency, CheckForNewVersionPassivelyAsync);
 
     /// <summary>Linux/macOS (item 13d): no install directory, no exe swap strategy that can be
     /// tested here (see docs/PARITY.md's accepted-limitations list) — just a passive heads-up that

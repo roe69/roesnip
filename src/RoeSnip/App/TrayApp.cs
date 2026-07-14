@@ -713,45 +713,15 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>The periodic update loop (only started when <see cref="UpdateManager.IsInstalled"/>
-    /// is true - see the RunInstance call site's comment). Iteration zero runs immediately and IS
-    /// the old startup check; after that it wakes every minute purely to re-read the current
-    /// setting, and only actually performs a check once the configured interval (plus jitter) has
-    /// elapsed since the last one. The 1-minute wake - not a timer re-armed to the configured
-    /// interval - is what lets a Settings change take effect without any CancellationToken/re-arm
-    /// plumbing: SettingsWindow's onSaved callback reassigns <c>_settings</c> synchronously, and the
-    /// very next wake picks the new value up. Wall-clock elapsed (DateTime.UtcNow, never .Now - a
-    /// DST jump must not double-fire or stall this) rather than counting Task.Delay iterations means
-    /// a laptop resumed after sleep fires its overdue check on the next wake instead of drifting
-    /// forever behind. The check is awaited INLINE, not fire-and-forgotten per tick: if an apply is
-    /// parked for hours inside CheckForUpdatesAndAutoApplyAsync's idle-wait gate, this loop is parked
-    /// with it, so checks can never pile up behind UpdateManager.ApplyUpdateLock. Jitter (up to
-    /// interval/4, capped at 5 minutes) keeps a fleet of machines that all boot at the same moment
-    /// from stampeding GitHub's API in lockstep.</summary>
-    private async Task RunUpdateLoopAsync()
-    {
-        await CheckForUpdatesAndAutoApplyAsync().ConfigureAwait(false); // iteration zero = today's startup check
-        DateTime lastCheckUtc = DateTime.UtcNow;
-        TimeSpan currentInterval = UpdateCheckFrequencies.Interval(UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency))
-            ?? TimeSpan.FromHours(1);
-        TimeSpan jitter = UpdateCheckFrequencies.Jitter(currentInterval, Random.Shared.NextDouble());
-        while (true)
-        {
-            await Task.Delay(TimeSpan.FromMinutes(1)).ConfigureAwait(false); // settings-poll cadence, not network cadence
-            var freq = UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency); // FRESH read: live reconfigure
-            TimeSpan? interval = UpdateCheckFrequencies.Interval(freq);
-            if (interval is null)
-            {
-                continue; // StartupOnly: keep watching the setting, never check again on our own
-            }
-            if (DateTime.UtcNow - lastCheckUtc < interval + jitter)
-            {
-                continue;
-            }
-            lastCheckUtc = DateTime.UtcNow;
-            jitter = UpdateCheckFrequencies.Jitter(interval.Value, Random.Shared.NextDouble());
-            await CheckForUpdatesAndAutoApplyAsync().ConfigureAwait(false); // awaited INLINE: no pile-up possible
-        }
-    }
+    /// is true - see the RunInstance call site's comment). Scheduling itself (iteration-zero
+    /// startup check, 1-minute settings-poll wake, wall-clock elapsed, jitter, StartupOnly handling)
+    /// is <see cref="UpdatePolling.RunPeriodicAsync"/> - see its doc comment for the full semantics,
+    /// which are unchanged here. This method supplies only the two things that differ per app: where
+    /// the frequency setting lives (<c>_settings.UpdateCheckFrequency</c>, re-read fresh on every
+    /// call so a Settings-window save takes effect on the very next wake) and what a tick means
+    /// (CheckForUpdatesAndAutoApplyAsync).</summary>
+    private Task RunUpdateLoopAsync() =>
+        UpdatePolling.RunPeriodicAsync(() => _settings.UpdateCheckFrequency, CheckForUpdatesAndAutoApplyAsync);
 
     /// <summary>One check-and-apply cycle: says nothing when there is nothing to offer (no update,
     /// no network, private-repo 404, a 304/rate-limit backoff - CheckForUpdateAsync already swallows
