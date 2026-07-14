@@ -151,12 +151,18 @@ public partial class SettingsWindow : Window
     /// Hourly here rather than throwing or leaving nothing selected. Saving from this window then
     /// rewrites EveryMinute to Hourly - acceptable, since EveryMinute is never reachable through the
     /// UI in the first place. Deferred-save like the checkboxes above: no SelectionChanged handler,
-    /// read back in SaveButton_Click.</summary>
+    /// read back in SaveButton_Click.
+    ///
+    /// The no-match fallback below selects the Hourly item explicitly - NOT UiChoices[0]
+    /// (StartupOnly). UiChoices[0] would silently turn Save into "disable periodic checking" for
+    /// exactly the EveryMinute/undefined-value cases this method's own doc comment above says land
+    /// on Hourly.</summary>
     private void LoadUpdateFrequency()
     {
         UpdateFrequencyCombo.Items.Clear();
         UpdateCheckFrequency current = UpdateCheckFrequencies.Parse(_original.UpdateCheckFrequency);
         UpdateFrequencyComboItem? selected = null;
+        UpdateFrequencyComboItem? hourly = null;
         foreach (UpdateCheckFrequency choice in UpdateCheckFrequencies.UiChoices)
         {
             var item = new UpdateFrequencyComboItem(choice.ToString(), UpdateCheckFrequencies.DisplayLabel(choice));
@@ -165,8 +171,12 @@ public partial class SettingsWindow : Window
             {
                 selected = item;
             }
+            if (choice == UpdateCheckFrequency.Hourly)
+            {
+                hourly = item;
+            }
         }
-        UpdateFrequencyCombo.SelectedItem = selected ?? UpdateFrequencyCombo.Items[0];
+        UpdateFrequencyCombo.SelectedItem = selected ?? hourly ?? UpdateFrequencyCombo.Items[0];
 
         // A portable/dev launch (UpdateManager.IsInstalled false) never runs the update loop at all
         // (see RunInstance's IsInstalled guard) - the combo still saves a value for whenever this

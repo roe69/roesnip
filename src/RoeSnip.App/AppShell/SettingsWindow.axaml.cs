@@ -165,12 +165,18 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     /// see that field's own doc comment), both land on Hourly here rather than leaving nothing
     /// selected. Saving from this window then rewrites EveryMinute to Hourly - acceptable, since
     /// EveryMinute is never reachable through the UI in the first place. Deferred-save like every
-    /// other field below Sharing: no SelectionChanged handler, read back in SaveButton_Click.</summary>
+    /// other field below Sharing: no SelectionChanged handler, read back in SaveButton_Click.
+    ///
+    /// The no-match fallback below selects the Hourly item explicitly - NOT UiChoices[0]
+    /// (StartupOnly). UiChoices[0] would silently turn Save into "disable periodic checking" for
+    /// exactly the EveryMinute/undefined-value cases this method's own doc comment above says land
+    /// on Hourly.</summary>
     private void LoadUpdateFrequency()
     {
         UpdateFrequencyCombo.Items.Clear();
         UpdateCheckFrequency current = UpdateCheckFrequencies.Parse(_original.UpdateCheckFrequency);
         ComboBoxItem? selected = null;
+        ComboBoxItem? hourly = null;
         foreach (UpdateCheckFrequency choice in UpdateCheckFrequencies.UiChoices)
         {
             var item = new ComboBoxItem { Content = UpdateCheckFrequencies.DisplayLabel(choice), Tag = choice.ToString() };
@@ -179,8 +185,12 @@ public partial class SettingsWindow : Avalonia.Controls.Window
             {
                 selected = item;
             }
+            if (choice == UpdateCheckFrequency.Hourly)
+            {
+                hourly = item;
+            }
         }
-        UpdateFrequencyCombo.SelectedItem = selected ?? UpdateFrequencyCombo.Items[0];
+        UpdateFrequencyCombo.SelectedItem = selected ?? hourly ?? UpdateFrequencyCombo.Items[0];
 
         // Windows portable/dev copies never run the update loop at all (TrayApp.Start's
         // IsInstalled guard); Linux/macOS run the passive-notice loop unconditionally but never
