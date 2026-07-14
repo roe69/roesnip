@@ -78,6 +78,18 @@ public class ShareManagerTests
         Assert.Null(resolved);
     }
 
+    [Fact]
+    public void ResolveDefault_NoDefaultId_FallsBackInCatalogOrderNotTouchOrder()
+    {
+        // GoFile was enabled/persisted first (touch order), but RoeShare is earlier in the catalog
+        // (BuiltIns[0]) - the no-explicit-default fallback must follow catalog order, not touch order,
+        // so it stays deterministic and doesn't jump around as the user enables more providers.
+        var configuredGoFile = new ShareProviderConfig { Id = "gofile", SpecId = "gofile", Enabled = true };
+        var resolved = ShareManager.ResolveDefault(
+            new List<ShareProviderConfig> { configuredGoFile, ConfiguredRoeShare }, defaultProviderId: null);
+        Assert.Equal("roeshare", resolved!.Id);
+    }
+
     // ---------- EffectiveConfigs passthrough ----------
 
     [Fact]

@@ -350,7 +350,13 @@ existing WPF test suite is the proof.
       settings record shape (the WPF RoeSnipSettings in Program.cs and RoeSnip.Core.Settings.
       RoeSnipSettings are two distinct records by design, per the two-settings-files split), so
       every call site now passes settings.ShareProviders/settings.DefaultShareProviderId
-      explicitly; behavior (default-resolution order, fallback rules) is unchanged. ShareTestImage
+      explicitly; behavior (default-resolution order, fallback rules) is unchanged.
+      2026-07 follow-up: ShareProviderCatalog.EffectiveConfigs now returns built-ins in fixed
+      BuiltIns catalog order (persisted row or fresh placeholder filling each slot) with customs
+      appended after in persisted order, instead of persisted-first-then-placeholders — fixes a
+      bug shared by both apps where enabling/configuring a provider for the first time jumped it
+      to the top of every picker (ShareProvidersWindow, SettingsWindow default combo, overlay
+      Share dropdown). Core-only fix, both apps get it automatically. ShareTestImage
       was rewritten against Core's own SdrImage + SkiaSharp PngWriter (a per-pixel diagonal
       gradient) instead of System.Drawing/GDI+ (Windows-only since .NET 7, incompatible with
       Core's portable net8.0 TFM) — not pixel-identical to the old GDI+ output, but produces the

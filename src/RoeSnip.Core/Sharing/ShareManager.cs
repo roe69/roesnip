@@ -43,9 +43,9 @@ public static class ShareManager
         return client;
     }
 
-    /// <summary>Every provider the settings UI / picker should show: persisted configs (built-in,
-    /// touched-or-not, plus every custom one) with a seeded placeholder for any BuiltIns entry the
-    /// user has never configured - see ShareProviderCatalog.EffectiveConfigs.</summary>
+    /// <summary>Every provider the settings UI / picker should show, in stable catalog order (built-ins
+    /// first in BuiltIns declaration order, then customs) - display order never changes just because a
+    /// provider gets touched/persisted. See ShareProviderCatalog.EffectiveConfigs.</summary>
     public static IReadOnlyList<ShareProviderConfig> EffectiveConfigs(IReadOnlyList<ShareProviderConfig> providers) =>
         ShareProviderCatalog.EffectiveConfigs(providers);
 

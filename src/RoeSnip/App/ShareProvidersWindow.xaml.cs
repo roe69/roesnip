@@ -177,11 +177,11 @@ public partial class ShareProvidersWindow : Window
     private void UpsertAndSave(ShareProviderConfig config)
     {
         var settings = SettingsStore.Load();
-        // Replace IN PLACE (not remove-then-append) - ShareManager.ResolveDefault falls back to
-        // "first enabled config in list order" whenever DefaultShareProviderId is null/stale, so
-        // reordering the list here would silently change which provider a plain Share click uploads
-        // to on every routine Enabled-toggle or Configure/Save, not just when the user actually
-        // means to reorder.
+        // Replace IN PLACE (not remove-then-append) - display and default-fallback order now come
+        // from ShareProviderCatalog.EffectiveConfigs' fixed catalog ordering, not from this persisted
+        // array's order, so that order is inert either way. Kept in-place simply to avoid rewriting
+        // the array shape (and thus the settings.json diff) on every routine Enabled-toggle or
+        // Configure/Save.
         var list = settings.ShareProviders.ToList();
         int existingIndex = list.FindIndex(c => string.Equals(c.Id, config.Id, StringComparison.Ordinal));
         if (existingIndex >= 0)

@@ -249,24 +249,52 @@ public static class ShareProviderCatalog
         };
     }
 
-    /// <summary>The full list the settings UI (and the toolbar/chrome provider pickers) shows:
-    /// whatever is persisted in <paramref name="persisted"/> (built-in configs the user has touched,
-    /// plus every custom one, in their persisted order), followed by a freshly-seeded, disabled
-    /// placeholder for any BuiltIns entry the user has never configured at all - so every built-in
-    /// is always visible and configurable, without settings.json ever needing to carry a full row for
-    /// a provider nobody has touched. Same "seed defaults, persist only once edited" convention as
-    /// SwatchPalette.EffectivePalette / ColorFormatCatalog.EffectiveFormats elsewhere in this app.</summary>
+    /// <summary>The full list the settings UI (and the toolbar/chrome provider pickers) shows: every
+    /// built-in always in BuiltIns catalog declaration order (RoeShare, Imgur, Catbox, Litterbox,
+    /// 0x0.st, GoFile, file.io), each slot filled by its persisted row if the user has configured it
+    /// or a freshly-seeded disabled placeholder otherwise, followed by every custom config and any
+    /// orphaned/unmatched persisted row (a settings.json hand-edit, or a retired built-in), in their
+    /// persisted order. Display order is therefore stable and independent of touch history - enabling
+    /// or configuring a built-in fills its existing catalog slot in place, it never jumps to the front.
+    /// Persisted array order in settings.json is storage only, never display order. Same
+    /// "seed defaults, persist only once edited" convention as SwatchPalette.EffectivePalette /
+    /// ColorFormatCatalog.EffectiveFormats elsewhere in this app.</summary>
     public static IReadOnlyList<ShareProviderConfig> EffectiveConfigs(IReadOnlyList<ShareProviderConfig> persisted)
     {
-        var result = new List<ShareProviderConfig>(persisted);
-        var seenBuiltInSpecIds = new HashSet<string>(
-            persisted.Where(c => !c.IsCustom).Select(c => c.SpecId), StringComparer.Ordinal);
+        // Track consumed rows by index, not value/record equality - ShareProviderConfig is a record,
+        // so two distinct persisted rows that happen to compare equal must not be conflated.
+        var consumed = new bool[persisted.Count];
+        var result = new List<ShareProviderConfig>(Math.Max(persisted.Count, BuiltIns.Count));
 
         foreach (var spec in BuiltIns)
         {
-            if (!seenBuiltInSpecIds.Contains(spec.Id))
+            var matchIndex = -1;
+            for (var i = 0; i < persisted.Count; i++)
+            {
+                if (!consumed[i] && !persisted[i].IsCustom &&
+                    string.Equals(persisted[i].SpecId, spec.Id, StringComparison.Ordinal))
+                {
+                    matchIndex = i;
+                    break;
+                }
+            }
+
+            if (matchIndex >= 0)
+            {
+                consumed[matchIndex] = true;
+                result.Add(persisted[matchIndex]);
+            }
+            else
             {
                 result.Add(DefaultConfigFor(spec));
+            }
+        }
+
+        for (var i = 0; i < persisted.Count; i++)
+        {
+            if (!consumed[i])
+            {
+                result.Add(persisted[i]);
             }
         }
 
