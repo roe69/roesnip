@@ -30,6 +30,7 @@ public partial class ShareResultWindow : Window
     private string? _cleanUrl;
     private string? _openUrl;
     private bool _resolved; // true once Success/Failure has been shown
+    private bool _autoDismissEligible; // true only after ShowSuccess - a Failure toast never auto-dismisses
     private readonly DispatcherTimer _autoDismissTimer;
 
     /// <summary>Parameterless overload for Avalonia's XAML runtime loader only (AVLN3001 - the
@@ -72,6 +73,7 @@ public partial class ShareResultWindow : Window
     public void ShowSuccess(string cleanUrl, string openUrl)
     {
         _resolved = true;
+        _autoDismissEligible = true;
         _cleanUrl = cleanUrl;
         _openUrl = openUrl;
 
@@ -179,7 +181,7 @@ public partial class ShareResultWindow : Window
 
     private void Window_PointerExited(object? sender, PointerEventArgs e)
     {
-        if (_resolved)
+        if (_autoDismissEligible)
         {
             _autoDismissTimer.Start();
         }

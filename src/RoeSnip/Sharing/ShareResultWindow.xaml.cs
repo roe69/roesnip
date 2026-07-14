@@ -28,6 +28,7 @@ public partial class ShareResultWindow : Window
     private string? _cleanUrl;
     private string? _openUrl;
     private bool _resolved; // true once Success/Failure has been shown - Cancel/Esc no longer cancels
+    private bool _autoDismissEligible; // true only after ShowSuccess - a Failure toast never auto-dismisses
     private readonly DispatcherTimer _autoDismissTimer;
 
     public ShareResultWindow(string providerName)
@@ -70,6 +71,7 @@ public partial class ShareResultWindow : Window
     public void ShowSuccess(string cleanUrl, string openUrl)
     {
         _resolved = true;
+        _autoDismissEligible = true;
         _cleanUrl = cleanUrl;
         _openUrl = openUrl;
 
@@ -189,7 +191,7 @@ public partial class ShareResultWindow : Window
 
     private void Window_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
     {
-        if (_resolved)
+        if (_autoDismissEligible)
         {
             _autoDismissTimer.Start();
         }
