@@ -82,6 +82,11 @@
               HorizontalAlignment="Left" Margin="20,2,0,0"/>
     </StackPanel>
 
+    <TextBlock Text="Check for updates" Foreground="{StaticResource RlTextMutedBrush}" Margin="0,10,0,0"/>
+    <ComboBox x:Name="UpdateFrequencyCombo" HorizontalAlignment="Stretch" Margin="0,0,0,4"/>
+    <TextBlock x:Name="UpdateFrequencyHintText" Foreground="{StaticResource RlTextDimBrush}" FontSize="11"
+               TextWrapping="Wrap" IsVisible="False" Margin="0,0,0,4"/>
+
     <TextBlock Text="Advanced tone-map overrides (leave blank for automatic)" Margin="0,10,0,4" Foreground="{StaticResource RlTextDimBrush}"/>
     <Grid ColumnDefinitions="*,12,*">
       <StackPanel Grid.Column="0" Spacing="2">

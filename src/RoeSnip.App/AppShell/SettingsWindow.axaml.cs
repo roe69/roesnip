@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using RoeSnip.Core.Settings;
+using RoeSnip.Core.Updates;
 
 namespace RoeSnip.App.AppShell;
 
@@ -150,7 +151,61 @@ public partial class SettingsWindow : Avalonia.Controls.Window
             RefreshElevationStatusText();
         }
 
+        LoadUpdateFrequency();
+
         RefreshShareProvidersUi();
+    }
+
+    // ---------- Periodic update check frequency ----------
+
+    /// <summary>Populates the frequency combo from <see cref="UpdateCheckFrequencies.UiChoices"/>
+    /// (pattern: DefaultShareProviderCombo above) and selects the item matching the PARSED (not
+    /// raw) current setting: running the same fail-safe Parse the loop itself uses means garbage in
+    /// settings.json, or the hidden EveryMinute dev value (deliberately excluded from UiChoices -
+    /// see that field's own doc comment), both land on Hourly here rather than leaving nothing
+    /// selected. Saving from this window then rewrites EveryMinute to Hourly - acceptable, since
+    /// EveryMinute is never reachable through the UI in the first place. Deferred-save like every
+    /// other field below Sharing: no SelectionChanged handler, read back in SaveButton_Click.</summary>
+    private void LoadUpdateFrequency()
+    {
+        UpdateFrequencyCombo.Items.Clear();
+        UpdateCheckFrequency current = UpdateCheckFrequencies.Parse(_original.UpdateCheckFrequency);
+        ComboBoxItem? selected = null;
+        foreach (UpdateCheckFrequency choice in UpdateCheckFrequencies.UiChoices)
+        {
+            var item = new ComboBoxItem { Content = UpdateCheckFrequencies.DisplayLabel(choice), Tag = choice.ToString() };
+            UpdateFrequencyCombo.Items.Add(item);
+            if (choice == current)
+            {
+                selected = item;
+            }
+        }
+        UpdateFrequencyCombo.SelectedItem = selected ?? UpdateFrequencyCombo.Items[0];
+
+        // Windows portable/dev copies never run the update loop at all (TrayApp.Start's
+        // IsInstalled guard); Linux/macOS run the passive-notice loop unconditionally but never
+        // self-apply anything. Either way the combo still saves a value (for whenever a portable
+        // copy might get installed later), but a hint makes clear what today's behavior actually
+        // is instead of leaving the user to wonder why "updates don't work".
+        bool installed;
+        try
+        {
+            installed = UpdateManager.IsInstalled;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: could not read install state for the update-frequency hint: {ex.Message}");
+            installed = true; // fail toward showing no hint rather than a possibly-wrong one
+        }
+
+        string? hint = OperatingSystem.IsWindows()
+            ? (installed
+                ? null
+                : "This portable copy never checks for updates. Use Install RoeSnip in the tray menu to turn updates on.")
+            : "On Linux and macOS, RoeSnip only notifies you about new versions. Downloads stay manual.";
+
+        UpdateFrequencyHintText.Text = hint ?? string.Empty;
+        UpdateFrequencyHintText.IsVisible = hint is not null;
     }
 
     // ---------- Elevated startup (item 15) ----------
@@ -645,6 +700,8 @@ public partial class SettingsWindow : Avalonia.Controls.Window
             ToneMapKneeOverride = kneeOverride,
             ToneMapPeakOverride = peakOverride,
             RunAtStartup = runAtStartup,
+            UpdateCheckFrequency = (UpdateFrequencyCombo.SelectedItem as ComboBoxItem)?.Tag as string
+                ?? _current.UpdateCheckFrequency,
         };
 
         try

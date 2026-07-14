@@ -17,6 +17,7 @@ using RoeSnip.App.Overlay;
 using RoeSnip.Core.Capture;
 using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Settings;
+using RoeSnip.Core.Updates;
 
 namespace RoeSnip.App.AppShell;
 
@@ -56,6 +57,17 @@ public sealed class TrayApp : ITrayNotifier
     private SettingsWindow? _openSettingsWindow;
     private AutomationServer? _automationServer;
     private bool _exiting;
+
+    // Latches the click-to-update fallback toast to once per release version: a persistently
+    // failing download is retried every periodic tick (desirable - the network hiccup or the
+    // asset could be transient), but re-showing the toast on every one of those retries would be
+    // hourly notification spam for a problem the user has already been told about once. Only ever
+    // touched from Windows-only, [SupportedOSPlatform("windows")]-guarded methods.
+    private Version? _updateToastShownForVersion;
+
+    // Linux/macOS passive-notice equivalent: toasts once per release so an hourly cadence
+    // re-alerts on each NEW version without nagging about the same one every tick.
+    private Version? _passiveNoticeShownForVersion;
 
     private TrayApp(IClassicDesktopStyleApplicationLifetime lifetime)
     {
@@ -162,12 +174,17 @@ public sealed class TrayApp : ITrayNotifier
             _automationServer.Start();
         }
 
-        // Self-update (item 13b): best-effort cleanup of any leftover .old/.new from a prior
-        // install/update swap, then — only when this IS the installed copy — a silent background
-        // check for a newer GitHub release that, if found, downloads and applies it automatically
-        // (see CheckForUpdatesOnStartupAsync for the idle-wait guard on the relaunch that
-        // follows). Windows-only, per the class's own doc comment; Linux/macOS instead get a
-        // passive "new version available" notice with no self-swap (item 13d).
+        // Self-update (item 13b, periodic in this later pass): best-effort cleanup of any leftover
+        // .old/.new from a prior install/update swap, then — only when this IS the installed copy
+        // — a background loop that checks GitHub for a newer release and, if found, downloads and
+        // applies it automatically (see CheckForUpdatesAndAutoApplyAsync for the idle-wait guard on
+        // the relaunch that follows), then repeats on a user-configurable cadence for as long as
+        // this process lives. A startup-only check almost never actually delivers an update: this
+        // app spends its life as a tray resident running for weeks between launches, not being
+        // relaunched often enough to land on a fresh release. RunUpdateLoopAsync's first iteration
+        // IS the old startup check; the periodic re-checks after it are what actually keep a
+        // long-lived resident current. Windows-only, per the class's own doc comment; Linux/macOS
+        // instead get a passive "new version available" notice loop with no self-swap (item 13d).
         if (OperatingSystem.IsWindows())
         {
             UpdateManager.CleanupStaleUpdateFiles();
@@ -179,12 +196,16 @@ public sealed class TrayApp : ITrayNotifier
             _ = Task.Run(RunPendingUpdateFileCleanup);
             if (UpdateManager.IsInstalled)
             {
-                _ = CheckForUpdatesOnStartupAsync();
+                // Gating once here (rather than inside the loop, on every wake) is sound because
+                // IsInstalled derives from Environment.ProcessPath, which cannot change for the
+                // lifetime of this process. Named method, not an inline lambda, for the same
+                // platform-compat-analyzer reason as RunPendingUpdateFileCleanup above.
+                _ = RunUpdateLoopAsync();
             }
         }
         else
         {
-            _ = CheckForNewVersionPassivelyAsync();
+            _ = RunPassiveNoticeLoopAsync();
         }
 
         // Cold-start warmup (item 17, ported from the WPF app's TrayApp.StartWarmup/RunWarmup):
@@ -822,16 +843,66 @@ public sealed class TrayApp : ITrayNotifier
         });
     }
 
-    /// <summary>Silent startup update check (Windows only; only called when
-    /// <see cref="UpdateManager.IsInstalled"/> is true). Says nothing when there is nothing to
-    /// offer. When a newer release does exist, applies it automatically — no click required — but
-    /// the beforeLaunch delegate passed to ApplyUpdateAsync holds the actual relaunch (and the
-    /// replace-on-run kill that follows it) until <see cref="WaitForIdleAsync"/> reports idle, so
-    /// an update landing mid-snip can never yank the app out from under the user. Falls back to
-    /// the click-to-update toast if the auto-apply throws. Never blocks startup: fire-and-forget
-    /// from Start().</summary>
+    /// <summary>The periodic update loop (Windows only; only started when
+    /// <see cref="UpdateManager.IsInstalled"/> is true — see the Start() call site's comment).
+    /// Iteration zero runs immediately and IS the old startup check; after that it wakes every
+    /// minute purely to re-read the current setting, and only actually performs a check once the
+    /// configured interval (plus jitter) has elapsed since the last one. The 1-minute wake — not a
+    /// timer re-armed to the configured interval — is what lets a Settings change take effect
+    /// without any CancellationToken/re-arm plumbing: SettingsWindow's onSaved callback
+    /// (ApplyUpdatedSettingsAsync) reassigns <c>_settings</c> synchronously, and the very next wake
+    /// picks the new value up. Wall-clock elapsed (DateTime.UtcNow, never .Now — a DST jump must
+    /// not double-fire or stall this) rather than counting Task.Delay iterations means a laptop
+    /// resumed after sleep fires its overdue check on the next wake instead of drifting forever
+    /// behind. The check is awaited INLINE, not fire-and-forgotten per tick: if an apply is parked
+    /// for hours inside CheckForUpdatesAndAutoApplyAsync's idle-wait gate, this loop is parked with
+    /// it, so checks can never pile up behind UpdateManager.ApplyUpdateLock. Jitter (up to
+    /// interval/4, capped at 5 minutes) keeps a fleet of machines that all boot at the same moment
+    /// from stampeding GitHub's API in lockstep. Named method (not run inline in Start()) purely so
+    /// the platform-compat analyzer can see it is directly inside the IsWindows() guard — it cannot
+    /// see through an anonymous method body (same trick as RunPendingUpdateFileCleanup).</summary>
     [SupportedOSPlatform("windows")]
-    private async Task CheckForUpdatesOnStartupAsync()
+    private async Task RunUpdateLoopAsync()
+    {
+        await CheckForUpdatesAndAutoApplyAsync().ConfigureAwait(false); // iteration zero = today's startup check
+        DateTime lastCheckUtc = DateTime.UtcNow;
+        TimeSpan currentInterval = UpdateCheckFrequencies.Interval(UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency))
+            ?? TimeSpan.FromHours(1);
+        TimeSpan jitter = UpdateCheckFrequencies.Jitter(currentInterval, Random.Shared.NextDouble());
+        while (true)
+        {
+            await Task.Delay(TimeSpan.FromMinutes(1)).ConfigureAwait(false); // settings-poll cadence, not network cadence
+            var freq = UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency); // FRESH read: live reconfigure
+            TimeSpan? interval = UpdateCheckFrequencies.Interval(freq);
+            if (interval is null)
+            {
+                continue; // StartupOnly: keep watching the setting, never check again on our own
+            }
+            if (DateTime.UtcNow - lastCheckUtc < interval + jitter)
+            {
+                continue;
+            }
+            lastCheckUtc = DateTime.UtcNow;
+            jitter = UpdateCheckFrequencies.Jitter(interval.Value, Random.Shared.NextDouble());
+            await CheckForUpdatesAndAutoApplyAsync().ConfigureAwait(false); // awaited INLINE: no pile-up possible
+        }
+    }
+
+    /// <summary>One check-and-apply cycle (Windows only). Says nothing when there is nothing to
+    /// offer (no update, no network, private-repo 404, a 304/rate-limit backoff —
+    /// CheckForUpdateAsync already swallows all of that and returns null). When a newer release
+    /// does exist, applies it automatically — no click required — but the beforeLaunch delegate
+    /// passed to ApplyUpdateAsync holds the actual relaunch (and the replace-on-run kill that
+    /// follows it) until <see cref="WaitForIdleAsync"/> reports idle, so an update landing mid-snip
+    /// can never yank the app out from under the user. Falls back to the click-to-update toast if
+    /// the auto-apply throws, latched to once per release version
+    /// (<see cref="_updateToastShownForVersion"/>) so a persistently failing download retried every
+    /// periodic tick does not turn into hourly toast spam; the retries themselves keep happening
+    /// regardless, only the notification is latched. Called both as the loop's iteration zero
+    /// (RunUpdateLoopAsync) and, on every subsequent tick, as the actual periodic recheck — never
+    /// blocks its caller beyond its own await chain.</summary>
+    [SupportedOSPlatform("windows")]
+    private async Task CheckForUpdatesAndAutoApplyAsync()
     {
         UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
         if (update is null)
@@ -847,7 +918,11 @@ public sealed class TrayApp : ITrayNotifier
         catch (Exception ex)
         {
             Console.Error.WriteLine($"RoeSnip: auto-update to {update.Version} failed: {ex.Message}");
-            Dispatcher.UIThread.Post(() => ShowUpdateAvailableToast(update));
+            if (_updateToastShownForVersion != update.Version)
+            {
+                _updateToastShownForVersion = update.Version;
+                Dispatcher.UIThread.Post(() => ShowUpdateAvailableToast(update));
+            }
         }
     }
 
@@ -943,11 +1018,47 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
+    /// <summary>Linux/macOS periodic equivalent of <see cref="RunUpdateLoopAsync"/> — same
+    /// skeleton, deliberately duplicated rather than abstracted behind a delegate parameter (it is
+    /// ~15 lines of Task.Delay glue and staying textually parallel with the Windows loop is more
+    /// valuable than sharing it), except its tick calls <see cref="CheckForNewVersionPassivelyAsync"/>
+    /// instead of an auto-applying check — there is no install directory or exe-swap strategy on
+    /// these platforms (item 13d), only a heads-up notice. No IsInstalled/IsWindows guard here: this
+    /// is only ever started from the non-Windows branch of Start(), and there is no "installed
+    /// copy" concept on Linux/macOS to gate on — every launch runs the loop.</summary>
+    private async Task RunPassiveNoticeLoopAsync()
+    {
+        await CheckForNewVersionPassivelyAsync().ConfigureAwait(false); // iteration zero = today's startup check
+        DateTime lastCheckUtc = DateTime.UtcNow;
+        TimeSpan currentInterval = UpdateCheckFrequencies.Interval(UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency))
+            ?? TimeSpan.FromHours(1);
+        TimeSpan jitter = UpdateCheckFrequencies.Jitter(currentInterval, Random.Shared.NextDouble());
+        while (true)
+        {
+            await Task.Delay(TimeSpan.FromMinutes(1)).ConfigureAwait(false); // settings-poll cadence, not network cadence
+            var freq = UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency); // FRESH read: live reconfigure
+            TimeSpan? interval = UpdateCheckFrequencies.Interval(freq);
+            if (interval is null)
+            {
+                continue; // StartupOnly: keep watching the setting, never check again on our own
+            }
+            if (DateTime.UtcNow - lastCheckUtc < interval + jitter)
+            {
+                continue;
+            }
+            lastCheckUtc = DateTime.UtcNow;
+            jitter = UpdateCheckFrequencies.Jitter(interval.Value, Random.Shared.NextDouble());
+            await CheckForNewVersionPassivelyAsync().ConfigureAwait(false); // awaited INLINE: no pile-up possible
+        }
+    }
+
     /// <summary>Linux/macOS (item 13d): no install directory, no exe swap strategy that can be
     /// tested here (see docs/PARITY.md's accepted-limitations list) — just a passive heads-up that
     /// a newer release exists, linking straight to the GitHub release page so the user can grab it
     /// themselves (an AppImage/.dmg download, same as their first install). Never auto-applies
-    /// anything.</summary>
+    /// anything. Latched to once per release version (<see cref="_passiveNoticeShownForVersion"/>)
+    /// so the now-periodic cadence (see <see cref="RunPassiveNoticeLoopAsync"/>) re-alerts whenever
+    /// a NEWER release ships but never repeats the same notice tick after tick.</summary>
     private async Task CheckForNewVersionPassivelyAsync()
     {
         UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
@@ -955,6 +1066,12 @@ public sealed class TrayApp : ITrayNotifier
         {
             return;
         }
+
+        if (_passiveNoticeShownForVersion == update.Version)
+        {
+            return;
+        }
+        _passiveNoticeShownForVersion = update.Version;
 
         Dispatcher.UIThread.Post(() => ShowToast(
             $"RoeSnip {update.Version} is available - click to view the release",
