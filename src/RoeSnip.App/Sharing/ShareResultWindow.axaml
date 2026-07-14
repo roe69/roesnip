@@ -1,0 +1,69 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="RoeSnip.App.Sharing.ShareResultWindow"
+        Title="RoeSnip"
+        Width="360" Height="150"
+        WindowDecorations="None"
+        CanResize="False"
+        WindowStartupLocation="Manual"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        Topmost="True"
+        Background="Transparent"
+        TransparencyLevelHint="Transparent"
+        FontFamily="Segoe UI"
+        FontSize="12.5"
+        KeyDown="Window_KeyDown"
+        PointerEntered="Window_PointerEntered"
+        PointerExited="Window_PointerExited"
+        Closed="Window_Closed">
+  <!-- Same token set as ShowToast (App TrayApp.cs) - a real compiled window can reference the
+       App.axaml StaticResources directly, unlike ShowToast's code-only visual tree which had to
+       duplicate them as local Color fields (see that method's own doc comment). -->
+  <Window.Styles>
+    <Style Selector="Button.toast">
+      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="12,4"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+  </Window.Styles>
+
+  <Border Background="{StaticResource RlBgElevatedBrush}" BorderBrush="{StaticResource RlBorderBrush}"
+          BorderThickness="1" CornerRadius="6">
+    <Grid Margin="14,10" RowDefinitions="Auto,Auto,*,Auto">
+
+      <!-- Header: provider name + always-visible close (no hover-reveal). -->
+      <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+        <TextBlock x:Name="HeaderText" Grid.Column="0" FontWeight="SemiBold" VerticalAlignment="Center"
+                   Foreground="{StaticResource RlTextPrimaryBrush}"/>
+        <Button x:Name="CloseButton" Grid.Column="1" Content="&#x2715;" Click="CloseButton_Click"
+                Background="Transparent" BorderThickness="0" Foreground="{StaticResource RlTextDimBrush}"
+                Padding="4,0" Cursor="Hand"/>
+      </Grid>
+
+      <TextBlock x:Name="StatusText" Grid.Row="1" Margin="0,6,0,0" TextWrapping="Wrap"
+                 Foreground="{StaticResource RlTextDimBrush}"/>
+
+      <ProgressBar x:Name="ProgressBarControl" Grid.Row="1" VerticalAlignment="Bottom" Height="4"
+                   Margin="0,0,0,-6" IsIndeterminate="True" IsVisible="False"/>
+
+      <StackPanel Grid.Row="2" Margin="0,8,0,0">
+        <TextBox x:Name="LinkText" IsReadOnly="True" Background="{StaticResource RlBgSecondaryBrush}"
+                 Foreground="{StaticResource RlTextPrimaryBrush}" BorderBrush="{StaticResource RlBorderBrush}"
+                 Padding="6,4" IsVisible="False"/>
+        <TextBlock x:Name="KeptPathText" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="11"
+                   Foreground="{StaticResource RlTextDimBrush}" IsVisible="False"/>
+      </StackPanel>
+
+      <StackPanel x:Name="ButtonsPanel" Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right"
+                  Spacing="8" Margin="0,10,0,0">
+        <Button x:Name="CancelButton" Content="Cancel" Classes="toast" Click="CancelButton_Click" IsVisible="False"/>
+        <Button x:Name="OpenButton" Content="Open" Classes="toast" Click="OpenButton_Click" IsVisible="False"/>
+        <Button x:Name="CopyButton" Content="Copy" Classes="toast" Click="CopyButton_Click" IsVisible="False"/>
+      </StackPanel>
+    </Grid>
+  </Border>
+</Window>
