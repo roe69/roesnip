@@ -797,10 +797,13 @@ public sealed class TrayApp : ITrayNotifier
         }));
     }
 
-    /// <summary>Shows the click-to-update balloon (must already be on the UI thread). Startup checks
-    /// now apply updates automatically without asking (see CheckForUpdatesOnStartupAsync); this
-    /// balloon is only reached as its failure fallback, so the user still has a way to update by
-    /// hand if the automatic download/swap failed. Uses the same
+    /// <summary>Shows the click-to-update balloon (must already be on the UI thread). Every periodic
+    /// tick of the update loop (see <see cref="CheckForUpdatesAndAutoApplyAsync"/>,
+    /// <see cref="RunUpdateLoopAsync"/>) applies updates automatically without asking; this balloon
+    /// is only reached as that apply's failure fallback, so the user still has a way to update by
+    /// hand if the automatic download/swap failed. Latched once per release version (see
+    /// <see cref="_updateBalloonShownForVersion"/>) so an hourly retry against a persistently
+    /// failing download doesn't spam a fresh balloon every tick. Uses the same
     /// DetachActiveBalloonHandler/_activeBalloonClickHandler pattern as ShowSavedBalloon.</summary>
     private void ShowUpdateAvailableBalloon(UpdateManager.UpdateInfo info)
     {

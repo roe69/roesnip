@@ -987,10 +987,13 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
-    /// <summary>Shows the click-to-update toast (must already be on the UI thread). Startup checks
-    /// apply updates automatically without asking (CheckForUpdatesOnStartupAsync); this toast is
-    /// only reached as its failure fallback, so the user still has a way to update by hand if the
-    /// automatic download/swap failed.</summary>
+    /// <summary>Shows the click-to-update toast (must already be on the UI thread). Every periodic
+    /// tick of the update loop (see <see cref="CheckForUpdatesAndAutoApplyAsync"/>,
+    /// <see cref="RunUpdateLoopAsync"/>) applies updates automatically without asking; this toast is
+    /// only reached as that apply's failure fallback, so the user still has a way to update by hand
+    /// if the automatic download/swap failed. Latched once per release version (see
+    /// <see cref="_updateToastShownForVersion"/>) so an hourly retry against a persistently failing
+    /// download doesn't spam a fresh toast every tick.</summary>
     [SupportedOSPlatform("windows")]
     private void ShowUpdateAvailableToast(UpdateManager.UpdateInfo info)
     {
