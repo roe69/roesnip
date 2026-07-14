@@ -538,35 +538,6 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <inheritdoc/>
-    public void ShowShareUploadedBalloon(string url, bool clipboardCopied)
-    {
-        if (_notifyIcon is null) return;
-
-        DetachActiveBalloonHandler();
-        _activeBalloonClickHandler = (_, _) =>
-        {
-            DetachActiveBalloonHandler();
-            try
-            {
-                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"RoeSnip: failed to open {url}: {ex.Message}");
-            }
-        };
-        _notifyIcon.BalloonTipClicked += _activeBalloonClickHandler;
-        _notifyIcon.BalloonTipTitle = "RoeSnip";
-        // Senior-review fix: this used to unconditionally claim "copied the link" even when the
-        // clipboard write actually threw (Clipboard.SetText can fail, e.g. another process holding
-        // the clipboard open) - honest wording now depends on whether it really succeeded.
-        _notifyIcon.BalloonTipText = clipboardCopied
-            ? "Uploaded and copied the link. Click to open it."
-            : $"Uploaded: {url} (clipboard was busy). Click to open it.";
-        _notifyIcon.ShowBalloonTip(4000);
-    }
-
-    /// <inheritdoc/>
     public void ShowError(string message)
     {
         if (_notifyIcon is null)

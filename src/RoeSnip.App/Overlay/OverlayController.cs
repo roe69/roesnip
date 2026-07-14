@@ -905,9 +905,6 @@ public static class OverlayController
                     break;
 
                 case OverlayCommand.Share:
-                    // Deliberately does NOT fall through to Finish() the way every command above
-                    // does — see ShareCurrentSelection's own doc comment for why the overlay has to
-                    // stay open for the whole upload.
                     ShareCurrentSelection();
                     break;
 
@@ -978,18 +975,14 @@ public static class OverlayController
         /// aware command here uses) — so whatever gets shared is pixel-identical to what Ctrl+C would
         /// have put on the clipboard.
         ///
-        /// Unlike Copy/Save/SaveHdr, this never calls Finish(): those are all synchronous, one-shot
-        /// side effects with nothing left to do once they return, but an upload is a network call
-        /// that can legitimately take up to ShareManager's own 10-minute timeout. Closing the overlay
-        /// immediately (the way Copy does) would leave the toolbar's SetShareBusy(true) feedback
-        /// showing on a window that's already gone — so the overlay, and the toolbar-hosting window in
-        /// particular, stays fully open and interactive (the user can still Cancel/Copy/Save
-        /// independently) for the whole upload; only the Share button itself goes busy/disabled
-        /// (ToolbarControl.SetShareBusy) until the result comes back. Mirrors the WPF app's
-        /// OverlaySession.ShareCurrentSelection.</summary>
+        /// Unlike the old stay-open design, this now closes the overlay IMMEDIATELY (Finish(), same
+        /// as Copy/Save/Record) once the upload has been handed off to
+        /// <see cref="RoeSnip.App.Sharing.ShareFlowPresenter"/> — progress/success/failure now live in
+        /// that presenter's own ShareResultWindow, a small always-on-top toast that outlives the
+        /// overlay. Mirrors the WPF app's OverlaySession.ShareCurrentSelection.</summary>
         private void ShareCurrentSelection()
         {
-            if (!TryPrepareShareUpload(out var toolbarWindow, out var pngBytes))
+            if (!TryPrepareShareUpload(out var toolbarWindow, out var pngBytes, out var finishResult))
             {
                 return;
             }
@@ -1012,6 +1005,7 @@ public static class OverlayController
             }
 
             StartShareUpload(toolbarWindow, config, pngBytes!);
+            Finish(finishResult);
         }
 
         /// <summary>The dropdown's per-provider Share (Sharing/* subsystem, item 12 — this used to be
@@ -1023,7 +1017,7 @@ public static class OverlayController
         /// fail to resolve here.</summary>
         private void ShareToSpecificProvider(string providerId)
         {
-            if (!TryPrepareShareUpload(out var toolbarWindow, out var pngBytes))
+            if (!TryPrepareShareUpload(out var toolbarWindow, out var pngBytes, out var finishResult))
             {
                 return;
             }
@@ -1041,25 +1035,32 @@ public static class OverlayController
             }
 
             StartShareUpload(toolbarWindow, config, pngBytes!);
+            Finish(finishResult);
         }
 
         /// <summary>Shared render step for both <see cref="ShareCurrentSelection"/> (default
         /// provider) and <see cref="ShareToSpecificProvider"/> (dropdown pick) — everything the two
-        /// would otherwise duplicate verbatim except which provider config the result gets uploaded
-        /// to. Returns false (both out params default) on any no-op/failure condition, matching
-        /// Confirm/Record's own "nothing selected yet" and render-failure guards.</summary>
-        private bool TryPrepareShareUpload(out OverlayWindow? toolbarWindow, out byte[]? pngBytes)
+        /// would otherwise duplicate verbatim except which provider config the render gets uploaded
+        /// to. Returns false (all out params default) on any no-op/failure condition, matching
+        /// Confirm/Record's own "nothing selected yet" and render-failure guards.
+        /// <paramref name="finishResult"/> is the OverlayResult the caller passes straight to
+        /// Finish() right after starting the upload — built the same way this class's own Record()
+        /// builds theirs, RecordingRequested left null.</summary>
+        private bool TryPrepareShareUpload(out OverlayWindow? toolbarWindow, out byte[]? pngBytes, out OverlayResult? finishResult)
         {
             toolbarWindow = null;
             pngBytes = null;
+            finishResult = null;
 
             SdrImage rendered;
-            if (_spanningVirtual is { } spanningRect && _spanningPrimaryWindow is { } primary)
+            RectPhysical? spanningRect = null;
+            if (_spanningVirtual is { } virtualRect && _spanningPrimaryWindow is { } primary)
             {
                 toolbarWindow = primary;
+                spanningRect = virtualRect;
                 try
                 {
-                    rendered = RenderSpanningSelection(spanningRect);
+                    rendered = RenderSpanningSelection(virtualRect);
                 }
                 catch (Exception ex)
                 {
@@ -1099,76 +1100,29 @@ public static class OverlayController
                 return false;
             }
 
+            finishResult = spanningRect is { } sr
+                ? new OverlayResult(
+                    toolbarWindow.Monitor, toolbarWindow.SelectionPx ?? default, rendered, toolbarWindow.Frame,
+                    CopyPerformed: false, SavedPngPath: null, SaveHdrRequested: false, RecordingRequested: null,
+                    SpanningVirtualSelectionPx: sr, SpanningFrameCrops: BuildSpanningFrameCropsForHdr(sr))
+                : new OverlayResult(
+                    toolbarWindow.Monitor, toolbarWindow.SelectionPx!.Value, rendered, toolbarWindow.Frame,
+                    CopyPerformed: false, SavedPngPath: null, SaveHdrRequested: false, RecordingRequested: null);
+
             return true;
         }
 
-        private void StartShareUpload(OverlayWindow toolbarWindow, RoeSnip.Core.Sharing.ShareProviderConfig config, byte[] pngBytes)
+        /// <summary>Hands the prepared render off to the shared presenter and returns immediately —
+        /// the overlay's own Finish() runs right after this, per ShareCurrentSelection/
+        /// ShareToSpecificProvider above. SetShareBusy(true) here is now just a momentary
+        /// double-click guard (the window is closing anyway).</summary>
+        private static void StartShareUpload(OverlayWindow toolbarWindow, RoeSnip.Core.Sharing.ShareProviderConfig config, byte[] pngBytes)
         {
             toolbarWindow.SetShareBusy(true);
             string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}.png";
-            _ = UploadShareAsync(config, pngBytes, fileName, toolbarWindow, _notifier);
-        }
-
-        /// <summary>The async half of <see cref="ShareCurrentSelection"/>/<see cref="ShareToSpecificProvider"/>,
-        /// factored out as a static method (takes everything it needs as parameters) so it is
-        /// obviously safe to run detached — no accidental capture of session/window mutable state
-        /// beyond the explicit params. Never throws: ShareManager.UploadAsync already contracts to
-        /// return a Success=false result rather than throw for an ordinary failure, and the try/catch
-        /// here is belt-and-braces for the PNG stream/HTTP plumbing around that call, matching every
-        /// other "fire and forget from a UI click" handler's own contract in this codebase.</summary>
-        private static async Task UploadShareAsync(
-            RoeSnip.Core.Sharing.ShareProviderConfig config, byte[] pngBytes, string fileName,
-            OverlayWindow toolbarWindow, ITrayNotifier? notifier)
-        {
-            RoeSnip.Core.Sharing.ShareUploadResult result;
-            try
-            {
-                using var stream = new System.IO.MemoryStream(pngBytes, writable: false);
-                result = await RoeSnip.Core.Sharing.ShareManager
-                    .UploadAsync(config, stream, fileName, "image/png", CancellationToken.None)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                result = new RoeSnip.Core.Sharing.ShareUploadResult(false, null, $"Upload failed: {ex.Message}");
-            }
-
-            // this whole session runs on the Avalonia UI thread already (RunAsync's own doc comment),
-            // but the HTTP call above just resumed on a thread-pool thread (ConfigureAwait(false)) —
-            // hop back via Dispatcher.UIThread.Post rather than assuming a bare `await` would resume
-            // here, mirroring the WPF app's own Dispatcher.BeginInvoke marshal for the identical
-            // reason. Discarded via `_ =`: nothing further to do once the UI-thread callback is
-            // QUEUED, same "fire-and-forget async continuation on the UI thread" idiom TrayApp.cs
-            // already uses (e.g. CompleteStartupAsync).
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = FinishShareUploadAsync(result, toolbarWindow, notifier));
-        }
-
-        /// <summary>The UI-thread tail of <see cref="UploadShareAsync"/>: restores the toolbar's
-        /// Share buttons, copies a successful URL to the clipboard, and surfaces the result via the
-        /// tray notifier. Best-effort throughout — the overlay may have been cancelled/confirmed out
-        /// from under a still-in-flight upload (the user is free to keep interacting — see
-        /// ShareCurrentSelection's own doc comment), so SetShareBusy on an already-closed window is
-        /// wrapped defensively rather than allowed to turn a teardown race into an unhandled
-        /// exception.</summary>
-        private static async Task FinishShareUploadAsync(
-            RoeSnip.Core.Sharing.ShareUploadResult result, OverlayWindow toolbarWindow, ITrayNotifier? notifier)
-        {
-            try { toolbarWindow.SetShareBusy(false); }
-            catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: post-share SetShareBusy failed (non-fatal): {ex.Message}"); }
-
-            if (result.Success && result.Url is not null)
-            {
-                // ClipboardService.TryCopyTextAsync never throws (see its own doc comment) — its
-                // bool return IS the honest "did the clipboard write actually happen" signal
-                // ShowShareUploadedBalloon's second parameter needs, matching the WPF app's own
-                // "vary the balloon wording on a failed copy, don't just claim success" fix.
-                bool clipboardCopied = await ClipboardService.TryCopyTextAsync(toolbarWindow, result.Url);
-                notifier?.ShowShareUploadedBalloon(result.Url, clipboardCopied);
-            }
-            else
-            {
-                notifier?.ShowError(result.ErrorMessage ?? "Share upload failed.");
-            }
+            var request = new RoeSnip.Core.Sharing.ShareUploadRequest(
+                new System.IO.MemoryStream(pngBytes, writable: false), fileName, "image/png");
+            RoeSnip.App.Sharing.ShareFlowPresenter.StartUpload(config, request, keptFilePathOnFailure: null, onSuccess: null, onFailure: null);
         }
 
         /// <summary>O8 audit fix: OnCommand's callers (key handlers, toolbar button clicks) cannot
@@ -1661,13 +1615,13 @@ public static class OverlayController
 
                 case "share":
                     // Sharing/* subsystem (item 12): raises the exact OverlayCommand.Share the
-                    // toolbar's Share button raises — same detached-upload/URL-to-clipboard/balloon
-                    // flow, same stay-open semantics (this response's trailing state snapshot still
-                    // shows the overlay, unlike copy/save which close it; the upload's own result
-                    // arrives later via the tray balloon). ShareCurrentSelection has its own
-                    // no-provider guard; the no-selection case is pre-checked here so automation gets
-                    // an explicit error instead of that method's silent no-op. Mirrors the WPF app's
-                    // own OverlaySession.ConfirmForAutomation.
+                    // toolbar's Share button raises — hands the render to ShareFlowPresenter and
+                    // closes the overlay immediately, same as copy/save (this response's trailing
+                    // state snapshot no longer shows the overlay); the upload's own progress/result
+                    // now arrives via the presenter's own ShareResultWindow, entirely outside this
+                    // response. ShareCurrentSelection has its own no-provider guard; the no-selection
+                    // case is pre-checked here so automation gets an explicit error instead of that
+                    // method's silent no-op. Mirrors the WPF app's own OverlaySession.ConfirmForAutomation.
                     if (_spanningVirtual is null && _windows.All(w => w.SelectionPx is null))
                     {
                         return "no selection to share";

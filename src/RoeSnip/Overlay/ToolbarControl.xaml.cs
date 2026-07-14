@@ -621,13 +621,13 @@ public partial class ToolbarControl : UserControl
     private readonly List<MenuItem> _shareProviderMenuItems = new();
     private bool _shareHasProviders;
     // Senior-review fix (LOW finding): SetShareProviders is re-run on every toolbar show (see
-    // OverlayWindow.ShowToolbar's own doc comment - pooled-window reuse, not a settings refresh),
-    // which can land WHILE a Share upload is still in flight (the overlay stays open for the whole
-    // upload - see OverlaySession.ShareCurrentSelection's own doc comment - and the user is free to
-    // keep dragging the selection meanwhile). Without this flag, that re-run used to unconditionally
-    // recompute IsEnabled from _shareHasProviders alone, silently re-enabling both buttons mid-
-    // upload and clobbering the busy state SetShareBusy(true) had just set. One flag, checked by
-    // both methods, is enough to keep them from fighting over the same two IsEnabled bits.
+    // OverlayWindow.ShowToolbar's own doc comment - pooled-window reuse, not a settings refresh).
+    // SetShareBusy(true) is now only a momentary double-click guard set right before the overlay's
+    // own Finish() (see OverlaySession.ShareCurrentSelection's own doc comment) rather than a
+    // whole-upload-duration lock - the window is closing either way - but this flag still exists so
+    // that brief window can't have a re-run of SetShareProviders unconditionally recompute IsEnabled
+    // from _shareHasProviders alone and clobber it. One flag, checked by both methods, is enough to
+    // keep them from fighting over the same two IsEnabled bits.
     private bool _shareBusy;
 
     /// <summary>Called by the owning window to (re)populate the provider picker - typically once

@@ -174,16 +174,16 @@ public sealed class RecordingOrchestrator
         }
     }
 
-    /// <summary>Reviewing-state Share (item 21e). Ported VERBATIM (fail-open/fail-closed contract,
-    /// nothing re-derived) from the WPF reference's RecordingController.RequestShare (commit
-    /// 422e87a) - read that method's own doc comment before touching this. The provider is resolved
-    /// FIRST from a FRESH SettingsStore.Load() (never this orchestrator's own settings snapshot,
-    /// which can be minutes stale by the time a Reviewing take gets around to sharing) and checked
-    /// BEFORE the session's own irreversible hard-stop: if nothing resolves, this is a plain NO-OP -
-    /// an honest error balloon, the take left exactly as it was (still soft-stopped, still fully
-    /// Resumable). Only once a provider resolves does RecordingSession.BeginShareHandoff hard-stop
-    /// and rearm; the temp file is deleted ONLY on a successful upload, kept with its full path named
-    /// in the error balloon on failure - see UploadSharedTakeAsync's own doc comment.</summary>
+    /// <summary>Reviewing-state Share (item 21e). The provider is resolved FIRST from a FRESH
+    /// SettingsStore.Load() (never this orchestrator's own settings snapshot, which can be minutes
+    /// stale by the time a Reviewing take gets around to sharing) and checked BEFORE the session's
+    /// own irreversible hard-stop: if nothing resolves, this is a plain NO-OP - an honest error
+    /// balloon, the take left exactly as it was (still soft-stopped, still fully Resumable). Only
+    /// once a provider resolves does RecordingSession.BeginShareHandoff hard-stop and rearm; the
+    /// upload itself is handed to <see cref="RoeSnip.App.Sharing.ShareFlowPresenter"/> - its own
+    /// ShareResultWindow now owns progress/result reporting, and the temp file is deleted ONLY via
+    /// the presenter's onSuccess callback (the DATA-LOSS RULE), kept with its full path named in the
+    /// Failure state on any other outcome.</summary>
     private void RequestShare()
     {
         var config = ResolveFreshDefaultShareProvider();
@@ -199,7 +199,33 @@ public sealed class RecordingOrchestrator
             return; // reentrant call, or the encoder failed to stop (already messaged by the session itself)
         }
 
-        _ = UploadSharedTakeAsync(handoff, config, _notifier, _chrome);
+        Stream stream;
+        try
+        {
+            stream = new FileStream(
+                handoff.TempPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16, useAsync: true);
+        }
+        catch (Exception ex)
+        {
+            // Could not even open the finalized file for reading - report the same way an upload
+            // failure would, naming the (still-present) path so the user can go rescue it by hand.
+            _notifier?.ShowError($"Recording share failed: {ex.Message} The recording was kept at: {handoff.TempPath}");
+            return;
+        }
+
+        var request = new ShareUploadRequest(stream, handoff.FileName, handoff.ContentType);
+        RoeSnip.App.Sharing.ShareFlowPresenter.StartUpload(
+            config,
+            request,
+            keptFilePathOnFailure: handoff.TempPath,
+            onSuccess: () =>
+            {
+                // The DATA-LOSS RULE's enforcement point: delete ONLY here, on a genuine upload
+                // success - never in the presenter's own generic plumbing.
+                try { if (File.Exists(handoff.TempPath)) File.Delete(handoff.TempPath); }
+                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
+            },
+            onFailure: null);
     }
 
     /// <summary>The single fresh-disk-state provider lookup shared by <see cref="RequestShare"/> and
@@ -217,62 +243,6 @@ public sealed class RecordingOrchestrator
             Console.Error.WriteLine($"RoeSnip: fresh settings load for share availability check failed: {ex.Message}");
             return null;
         }
-    }
-
-    /// <summary>The detached background half of <see cref="RequestShare"/> - runs after the session
-    /// has already re-armed to Setup (see that method's own doc comment for why this is never
-    /// awaited from there). Never throws: ShareManager.UploadAsync already contracts to return a
-    /// Success=false result instead of throwing for an ordinary failure; the try/catch here is
-    /// belt-and-braces for the file-stream/provider plumbing around that call.</summary>
-    private static async Task UploadSharedTakeAsync(
-        RecordingShareHandoff handoff, ShareProviderConfig config, ITrayNotifier? notifier, RecordingChrome chromeForClipboard)
-    {
-        ShareUploadResult result;
-        try
-        {
-            await using var stream = new FileStream(
-                handoff.TempPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16, useAsync: true);
-            result = await ShareManager
-                .UploadAsync(config, stream, handoff.FileName, handoff.ContentType, CancellationToken.None)
-                .ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            result = new ShareUploadResult(false, null, $"Recording share upload failed: {ex.Message}");
-        }
-
-        // Senior-review fix ported verbatim (WPF reference, commit 422e87a): delete the temp file
-        // ONLY on a successful upload - an upload failure (or an offline MaxUploadBytes pre-flight
-        // rejection, which surfaces through this same Success=false result) must never be the thing
-        // that erases the user's only copy of the recording.
-        if (result.Success)
-        {
-            try { if (File.Exists(handoff.TempPath)) File.Delete(handoff.TempPath); }
-            catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
-        }
-
-        await Dispatcher.UIThread.InvokeAsync(async () =>
-        {
-            if (result.Success && result.Url is not null)
-            {
-                bool clipboardCopied = true;
-                try { clipboardCopied = await ClipboardService.TryCopyTextAsync(chromeForClipboard, result.Url); }
-                catch (Exception ex)
-                {
-                    clipboardCopied = false;
-                    Console.Error.WriteLine($"RoeSnip: share URL clipboard copy failed (non-fatal): {ex.Message}");
-                }
-                notifier?.ShowShareUploadedBalloon(result.Url, clipboardCopied);
-            }
-            else
-            {
-                // Senior-review fix ported verbatim: name the preserved file's full path so the user
-                // can go rescue it by hand - the temp file above was deliberately NOT deleted for
-                // this exact branch.
-                string message = result.ErrorMessage ?? "Recording share upload failed.";
-                notifier?.ShowError($"{message} The recording was kept at: {handoff.TempPath}");
-            }
-        });
     }
 
     // ---------- PrtScr state machine (item 21d) ----------

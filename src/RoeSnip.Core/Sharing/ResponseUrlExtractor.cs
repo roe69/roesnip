@@ -117,8 +117,8 @@ public static class ResponseUrlExtractor
     /// http, which this engine's own endpoint validation explicitly allows - could return something
     /// like a UNC path or a "file:"/"ms-appinstaller:" URI as if it were the uploaded file's public
     /// link; callers report Success=true, copy the value to the clipboard verbatim, and ShellExecute
-    /// it on a balloon click (TrayApp.ShowShareUploadedBalloon), so an unvalidated "URL" here is a
-    /// direct path to running attacker-controlled input.</summary>
+    /// it on the ShareResultWindow's Open button click, so an unvalidated "URL" here is a direct path
+    /// to running attacker-controlled input.</summary>
     private static bool TryValidateUrl(string candidate, out string? url, out string? error)
     {
         if (Uri.TryCreate(candidate, UriKind.Absolute, out Uri? uri)

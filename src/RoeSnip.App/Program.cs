@@ -56,11 +56,9 @@ public interface ITrayNotifier
     void ShowSavedBalloon(string filePath);
     void ShowError(string message);
 
-    /// <summary>Sharing/* subsystem: the toolbar Share split-button's result. Mirrors the WPF app's
-    /// ITrayNotifier.ShowShareUploadedBalloon - clipboardCopied is false only when the upload itself
-    /// succeeded but the follow-up clipboard write failed, so the balloon wording never claims a
-    /// copy that didn't actually happen.</summary>
-    void ShowShareUploadedBalloon(string url, bool clipboardCopied);
+    // Sharing/* subsystem: ShowShareUploadedBalloon used to live here. Removed - ShareResultWindow
+    // (Sharing/ShareFlowPresenter) now owns that whole progress/success/failure lifecycle directly,
+    // mirroring the WPF app's identical removal.
 }
 
 /// <summary>CliMode gains two new verbs beyond the WPF app's CliOptions (PLAN-XPLAT.md §2.8):

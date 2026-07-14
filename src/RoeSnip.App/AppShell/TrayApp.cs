@@ -1281,21 +1281,6 @@ public sealed class TrayApp : ITrayNotifier
         Dispatcher.UIThread.Post(() => ShowToast(message, isError: true, durationMs: 6000, onClick: null));
     }
 
-    /// <inheritdoc/>
-    public void ShowShareUploadedBalloon(string url, bool clipboardCopied)
-    {
-        // Senior-review-style honesty (mirrors the WPF app's own ShowShareUploadedBalloon): only
-        // claims "copied the link" when the clipboard write actually succeeded.
-        string message = clipboardCopied
-            ? "Uploaded and copied the link - click to open it."
-            : $"Uploaded: {url} (clipboard was busy) - click to open it.";
-        Dispatcher.UIThread.Post(() => ShowToast(
-            message,
-            isError: false,
-            durationMs: 4000,
-            onClick: () => OpenUrl(url)));
-    }
-
     private static void OpenUrl(string url)
     {
         try

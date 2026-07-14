@@ -369,10 +369,12 @@ the way a disabled button would.
 `share` (Sharing/* subsystem, added alongside the toolbar's own Share wiring) requires `reviewing`
 and errors if a save or share is already in progress. It hard-stops the still-alive pipeline (same
 finalize Save uses), uploads the temp file to the configured default share provider WITHOUT moving
-it, then re-arms into `setup` immediately — the upload itself runs detached and its result (URL
-copied to clipboard + tray balloon on success, an honest error balloon otherwise) lands later,
-independent of whatever the session is doing by then. See `RecordingSession.RequestShare`'s own doc
-comment in `Recording/RecordingController.cs` for the full design.
+it, then re-arms into `setup` immediately — the upload itself is handed to `ShareFlowPresenter`,
+which shows its own small `ShareResultWindow` toast (Uploading → Success/Failure) independent of
+whatever the chrome/session is doing by then; the URL is copied to the clipboard automatically on
+success, and a failed/cancelled upload leaves the recording's temp file in place and names its path
+in the toast. See `RecordingSession.RequestShare`'s own doc comment in `Recording/RecordingController.cs`
+for the full design.
 
 ```
 --auto '{"cmd":"chrome","action":"start"}'
@@ -443,11 +445,12 @@ reflects the post-close (`idle`) state, not the selection that was just confirme
 
 `action: "share"` (Sharing/* subsystem, wired in the same integration pass as the chrome `share`
 action above) raises the same `OverlayCommand.Share` the toolbar's Share button raises: renders the
-current selection through the exact path Copy uses (including a spanning stitch), uploads it to the
-configured default share provider, copies the result URL to the clipboard, and shows a tray balloon.
-Unlike `copy`/`save` the overlay STAYS OPEN (the trailing `state` still reports `overlay`) — the
-upload runs detached and its result lands later; drive `escape` afterwards to close the session.
-Requires a selection and at least one enabled share provider (Settings > Sharing).
+current selection through the exact path Copy uses (including a spanning stitch), hands it to
+`ShareFlowPresenter`, and closes the overlay IMMEDIATELY, same as `copy`/`save` (the trailing `state`
+snapshot reflects the post-close state, not `overlay`). The upload itself runs detached; its
+progress/result is reported via the presenter's own `ShareResultWindow` toast — a successful URL is
+copied to the clipboard automatically, a failed/cancelled upload names the kept file/error in the
+toast. Requires a selection and at least one enabled share provider (Settings > Sharing).
 
 ### Cross-monitor selection (`select` spanning multiple monitors)
 
@@ -666,9 +669,10 @@ reference) — `mode` is `idle`/`overlay` while no recording is active, and `set
   waiting for a human) — same production render (`RenderSelectionWithAnnotations`) either path
   already uses. `"share"` (Sharing/* subsystem, item 12) uploads to the configured default
   provider through the exact same `OverlayCommand.Share` path the toolbar's Share button raises —
-  unlike `copy`/`save` it does **not** close the overlay (the response's `mode` stays `"overlay"`;
-  the upload's own result — success or failure — arrives later via the tray balloon, same as a
-  real click). Requires an active overlay session with a selection; errors otherwise.
+  same as `copy`/`save` it closes the overlay immediately (the response's `mode` reflects the
+  post-close state, not `"overlay"`); the upload's own progress/result — success or failure —
+  is reported via a `ShareResultWindow` toast, same as a real click. Requires an active overlay
+  session with a selection; errors otherwise.
 
 ### `record` / `preset` / `fps` / `chrome` (item 21 — recording)
 
