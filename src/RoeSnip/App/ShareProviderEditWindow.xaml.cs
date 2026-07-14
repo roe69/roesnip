@@ -17,6 +17,7 @@ namespace RoeSnip.App;
 using Control = System.Windows.Controls.Control;
 using Label = System.Windows.Controls.Label;
 using TextBox = System.Windows.Controls.TextBox;
+using ComboBox = System.Windows.Controls.ComboBox;
 using Brush = System.Windows.Media.Brush;
 using MessageBox = System.Windows.MessageBox;
 
@@ -105,7 +106,11 @@ public partial class ShareProviderEditWindow : Window
             values.TryGetValue(field.Key, out string? existingValue);
 
             Control control;
-            if (field.IsSecret)
+            if (field.Options is { Count: > 0 } options)
+            {
+                control = BuildOptionsComboBox(options, existingValue ?? field.DefaultValue);
+            }
+            else if (field.IsSecret)
             {
                 var passwordBox = new PasswordBox { Margin = new Thickness(0, 0, 0, 10) };
                 if (!string.IsNullOrEmpty(existingValue))
@@ -136,9 +141,35 @@ public partial class ShareProviderEditWindow : Window
         }
     }
 
+    /// <summary>Builds the ComboBox for a <see cref="ShareConfigField"/> that declares
+    /// <see cref="ShareConfigField.Options"/>. Selects the option matching <paramref name="value"/>
+    /// (already resolved to the field's DefaultValue by the caller when nothing is persisted yet); if
+    /// <paramref name="value"/> doesn't match any declared option (a value from a future RoeSnip build,
+    /// or a hand-edited settings.json), that raw value is preserved verbatim as its own selectable
+    /// entry rather than silently discarded or rewritten to some other choice.</summary>
+    private static ComboBox BuildOptionsComboBox(IReadOnlyList<ShareConfigOption> options, string? value)
+    {
+        var items = new List<ShareConfigOption>(options);
+        if (!string.IsNullOrEmpty(value) && !items.Any(o => o.Value == value))
+        {
+            items.Insert(0, new ShareConfigOption(value, value));
+        }
+
+        var comboBox = new ComboBox
+        {
+            Margin = new Thickness(0, 0, 0, 10),
+            ItemsSource = items,
+            DisplayMemberPath = nameof(ShareConfigOption.Label),
+            SelectedValuePath = nameof(ShareConfigOption.Value),
+            SelectedValue = value,
+        };
+        return comboBox;
+    }
+
     private static string ReadControlValue(Control control) => control switch
     {
         PasswordBox pb => pb.Password,
+        ComboBox cb => cb.SelectedValue as string ?? "",
         TextBox tb => tb.Text,
         _ => "",
     };

@@ -40,9 +40,10 @@ public partial class ShareProviderEditWindow : Window
     private readonly Action<ShareProviderConfig> _onSave;
     private readonly Action<string>? _onRemove;
 
-    // Built-in mode: one TextBox (PasswordChar set per ShareConfigField.IsSecret) per
-    // ProviderSpec.ConfigFields entry, keyed by ShareConfigField.Key.
-    private readonly Dictionary<string, TextBox> _builtInFieldControls = new();
+    // Built-in mode: one control per ProviderSpec.ConfigFields entry, keyed by ShareConfigField.Key -
+    // a TextBox (PasswordChar set per ShareConfigField.IsSecret), or a ComboBox when the field
+    // declares Options.
+    private readonly Dictionary<string, Control> _builtInFieldControls = new();
 
     private CancellationTokenSource? _testCts;
 
@@ -110,13 +111,23 @@ public partial class ShareProviderEditWindow : Window
 
             values.TryGetValue(field.Key, out string? existingValue);
 
-            var textBox = new TextBox { Text = existingValue ?? "" };
-            if (field.IsSecret)
+            Control control;
+            if (field.Options is { Count: > 0 } options)
             {
-                textBox.PasswordChar = '●';
+                control = BuildOptionsComboBox(options, existingValue ?? field.DefaultValue);
             }
-            BuiltInFieldsPanel.Children.Add(textBox);
-            _builtInFieldControls[field.Key] = textBox;
+            else
+            {
+                var textBox = new TextBox { Text = existingValue ?? "" };
+                if (field.IsSecret)
+                {
+                    textBox.PasswordChar = '●';
+                }
+                control = textBox;
+            }
+
+            BuiltInFieldsPanel.Children.Add(control);
+            _builtInFieldControls[field.Key] = control;
         }
 
         if (spec.ConfigFields.Count == 0)
@@ -131,12 +142,43 @@ public partial class ShareProviderEditWindow : Window
         }
     }
 
+    /// <summary>Builds the ComboBox for a <see cref="ShareConfigField"/> that declares
+    /// <see cref="ShareConfigField.Options"/>. Selects the option matching <paramref name="value"/>
+    /// (already resolved to the field's DefaultValue by the caller when nothing is persisted yet); if
+    /// <paramref name="value"/> doesn't match any declared option (a value from a future RoeSnip build,
+    /// or a hand-edited settings.json), that raw value is preserved verbatim as its own selectable
+    /// entry rather than silently discarded or rewritten to some other choice.</summary>
+    private static ComboBox BuildOptionsComboBox(IReadOnlyList<ShareConfigOption> options, string? value)
+    {
+        var items = new List<ShareConfigOption>(options);
+        if (!string.IsNullOrEmpty(value) && !items.Any(o => o.Value == value))
+        {
+            items.Insert(0, new ShareConfigOption(value, value));
+        }
+
+        return new ComboBox
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            ItemsSource = items,
+            DisplayMemberBinding = new Avalonia.Data.Binding(nameof(ShareConfigOption.Label)),
+            SelectedValueBinding = new Avalonia.Data.Binding(nameof(ShareConfigOption.Value)),
+            SelectedValue = value,
+        };
+    }
+
+    private static string ReadControlValue(Control control) => control switch
+    {
+        ComboBox cb => cb.SelectedValue as string ?? "",
+        TextBox tb => tb.Text ?? "",
+        _ => "",
+    };
+
     private Dictionary<string, string> CollectBuiltInValues()
     {
         var result = new Dictionary<string, string>();
         foreach (var (key, control) in _builtInFieldControls)
         {
-            string value = (control.Text ?? "").Trim();
+            string value = ReadControlValue(control).Trim();
             if (value.Length > 0)
             {
                 result[key] = value;

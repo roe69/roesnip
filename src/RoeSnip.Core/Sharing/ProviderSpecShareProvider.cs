@@ -40,6 +40,27 @@ public sealed class ProviderSpecShareProvider : IShareProvider
             ["Filename"] = request.FileName,
         };
 
+        // Generic backfill for any spec field with a DefaultValue that came out missing or blank in
+        // the persisted config - covers a config saved before this field was added to the spec (e.g.
+        // a RoeShare row configured before ExpiresIn existed). This is spec-carried DATA, never a
+        // per-provider branch: RoeShare's ExpiresIn DefaultValue is the literal "0" ("never expire").
+        // A blank value here is NOT the same as "0" - Endpoint templating expands a missing/blank
+        // token to an empty string, and the server reads an empty expiresIn as "use the 7-day
+        // default", so skipping this backfill would silently turn "never expire" into "expires in a
+        // week" for every user who configured RoeShare before this update. Do not "clean up" this loop
+        // to leave blanks alone.
+        foreach (var field in _spec.ConfigFields)
+        {
+            if (field.DefaultValue is null)
+            {
+                continue;
+            }
+            if (!values.TryGetValue(field.Key, out string? existing) || string.IsNullOrEmpty(existing))
+            {
+                values[field.Key] = field.DefaultValue;
+            }
+        }
+
         string expandedEndpoint = TemplateExpander.Expand(_spec.Endpoint, values);
         if (!Uri.TryCreate(expandedEndpoint, UriKind.Absolute, out Uri? endpointUri)
             || (endpointUri.Scheme != Uri.UriSchemeHttp && endpointUri.Scheme != Uri.UriSchemeHttps))

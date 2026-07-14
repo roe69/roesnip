@@ -119,6 +119,29 @@ public class ShareProviderCatalogTests
     }
 
     [Fact]
+    public void DefaultConfigFor_IsGeneric_SeedsAnyFieldDeclaringADefaultValue()
+    {
+        // Proves the seeding loop is genuinely generic (not a per-provider branch in disguise) by
+        // exercising it against a synthetic spec that isn't Litterbox or RoeShare.
+        var spec = new ProviderSpec
+        {
+            Id = "synthetic",
+            Name = "Synthetic",
+            Endpoint = "https://example.com/{Foo}",
+            ConfigFields = new List<ShareConfigField>
+            {
+                new("Foo", "Foo", Required: false, IsSecret: false, DefaultValue: "bar"),
+                new("Baz", "Baz", Required: false, IsSecret: false), // no default - must stay unseeded
+            },
+        };
+
+        var config = ShareProviderCatalog.DefaultConfigFor(spec);
+
+        Assert.Equal("bar", config.Values["Foo"]);
+        Assert.False(config.Values.ContainsKey("Baz"));
+    }
+
+    [Fact]
     public void EffectiveConfigs_EmptyPersisted_SeedsEveryBuiltIn()
     {
         var effective = ShareProviderCatalog.EffectiveConfigs(new List<ShareProviderConfig>());

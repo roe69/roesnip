@@ -136,7 +136,10 @@ public static class ShareProviderCatalog
         ResponseMode = ResponseUrlMode.PlainBody,
         ConfigFields = new List<ShareConfigField>
         {
-            new("Time", "Expiry: 1h, 12h, 24h, or 72h", Required: true, IsSecret: false),
+            // DefaultValue seeds "1h" for the same reason it always did (the one required-but-not-
+            // secret field with an obviously sensible default) - now via the generic DefaultConfigFor
+            // loop instead of a Litterbox-specific branch, see that method's own doc comment.
+            new("Time", "Expiry: 1h, 12h, 24h, or 72h", Required: true, IsSecret: false, DefaultValue: "1h"),
         },
         IsBuiltIn = true,
         Verified = true,
@@ -229,17 +232,25 @@ public static class ShareProviderCatalog
         config.IsCustom ? config.CustomSpec : FindBuiltIn(config.SpecId);
 
     /// <summary>A fresh, not-yet-configured config for a built-in spec: disabled, empty credential
-    /// values (with the one exception below), Id/SpecId both set to the spec's own Id so re-seeding
-    /// an unconfigured built-in can never produce a duplicate row.</summary>
+    /// values except for any field that declares a <see cref="ShareConfigField.DefaultValue"/> (seeded
+    /// verbatim), Id/SpecId both set to the spec's own Id so re-seeding an unconfigured built-in can
+    /// never produce a duplicate row.
+    ///
+    /// RoeShare's ExpiresIn field is the reason this loop exists and must never be "simplified" back
+    /// to a per-provider branch: its DefaultValue is the literal "0" (never expire), and a config that
+    /// never gets this seed falls through to Endpoint templating expanding the missing token to an
+    /// EMPTY string, which the server reads as "use the 7-day default" - see ProviderSpecShareProvider
+    /// upload-time backfill's own comment for the second half of this defense (existing rows that
+    /// predate the field entirely).</summary>
     public static ShareProviderConfig DefaultConfigFor(ProviderSpec spec)
     {
         var values = new Dictionary<string, string>();
-        if (ReferenceEquals(spec, Litterbox))
+        foreach (var field in spec.ConfigFields)
         {
-            // The one required-but-not-secret field with an obviously sensible default - seeding it
-            // means a user who only cares about the Time choice never has to learn the exact literal
-            // "1h"/"12h"/"24h"/"72h" values are what the field wants.
-            values["Time"] = "1h";
+            if (field.DefaultValue is not null)
+            {
+                values[field.Key] = field.DefaultValue;
+            }
         }
 
         return new ShareProviderConfig

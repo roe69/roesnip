@@ -254,6 +254,93 @@ public class ProviderSpecShareProviderTests
     }
 
     [Fact]
+    public async Task Upload_MissingConfigValue_BackfillsFromFieldDefaultValue()
+    {
+        // Generic DefaultValue backfill (not a per-provider branch): a config that predates a field
+        // entirely (never has the key at all) must still get the field's DefaultValue at upload time,
+        // not an empty template expansion.
+        var spec = new ProviderSpec
+        {
+            Id = "synthetic",
+            Name = "Synthetic",
+            Endpoint = "https://example.com/upload?opt={Opt}",
+            UploadKind = ShareUploadKind.RawBody,
+            ResponseMode = ResponseUrlMode.PlainBody,
+            ConfigFields = new List<ShareConfigField>
+            {
+                new("Opt", "Opt", Required: false, IsSecret: false, DefaultValue: "fallback"),
+            },
+        };
+        var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.OK, "https://example.com/x");
+        var config = new ShareProviderConfig { Id = "s1", SpecId = "synthetic" }; // no "Opt" key at all
+
+        var provider = new ProviderSpecShareProvider(spec, config, handler.ToClient());
+        await provider.UploadAsync(SamplePng(), CancellationToken.None);
+
+        Assert.Equal("https://example.com/upload?opt=fallback", handler.LastRequest!.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task Upload_BlankConfigValue_IsAlsoBackfilledFromFieldDefaultValue()
+    {
+        // Same defense, but for a config that DOES have the key with an explicit empty value (e.g. a
+        // user cleared a text box) rather than lacking the key entirely.
+        var spec = new ProviderSpec
+        {
+            Id = "synthetic",
+            Name = "Synthetic",
+            Endpoint = "https://example.com/upload?opt={Opt}",
+            UploadKind = ShareUploadKind.RawBody,
+            ResponseMode = ResponseUrlMode.PlainBody,
+            ConfigFields = new List<ShareConfigField>
+            {
+                new("Opt", "Opt", Required: false, IsSecret: false, DefaultValue: "fallback"),
+            },
+        };
+        var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.OK, "https://example.com/x");
+        var config = new ShareProviderConfig
+        {
+            Id = "s1",
+            SpecId = "synthetic",
+            Values = new Dictionary<string, string> { ["Opt"] = "" },
+        };
+
+        var provider = new ProviderSpecShareProvider(spec, config, handler.ToClient());
+        await provider.UploadAsync(SamplePng(), CancellationToken.None);
+
+        Assert.Equal("https://example.com/upload?opt=fallback", handler.LastRequest!.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task Upload_ExplicitConfigValue_OverridesFieldDefaultValue()
+    {
+        var spec = new ProviderSpec
+        {
+            Id = "synthetic",
+            Name = "Synthetic",
+            Endpoint = "https://example.com/upload?opt={Opt}",
+            UploadKind = ShareUploadKind.RawBody,
+            ResponseMode = ResponseUrlMode.PlainBody,
+            ConfigFields = new List<ShareConfigField>
+            {
+                new("Opt", "Opt", Required: false, IsSecret: false, DefaultValue: "fallback"),
+            },
+        };
+        var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.OK, "https://example.com/x");
+        var config = new ShareProviderConfig
+        {
+            Id = "s1",
+            SpecId = "synthetic",
+            Values = new Dictionary<string, string> { ["Opt"] = "chosen" },
+        };
+
+        var provider = new ProviderSpecShareProvider(spec, config, handler.ToClient());
+        await provider.UploadAsync(SamplePng(), CancellationToken.None);
+
+        Assert.Equal("https://example.com/upload?opt=chosen", handler.LastRequest!.RequestUri!.ToString());
+    }
+
+    [Fact]
     public async Task Upload_PlainBodyResponse_ExtractsWholeTrimmedBody()
     {
         var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.OK, "  https://0x0.st/abcd.png\n");

@@ -28,6 +28,12 @@ public enum ResponseUrlMode
     PlainBody,
 }
 
+/// <summary>One fixed choice in a <see cref="ShareConfigField"/> whose <see cref="ShareConfigField.Options"/>
+/// is set - the settings UI renders these as a ComboBox instead of a free-text box. <see cref="Label"/>
+/// is what the user sees (e.g. "1 hour"), <see cref="Value"/> is what actually gets stored into
+/// <see cref="ShareProviderConfig.Values"/> and templated into the spec (e.g. "3600").</summary>
+public sealed record ShareConfigOption(string Label, string Value);
+
 /// <summary>One user-facing, per-provider settings field (e.g. "API key", "Server URL") that a
 /// <see cref="ProviderSpec"/> declares it needs. Purely descriptive - <see cref="ShareProviderConfig.Values"/>
 /// holds the actual values, keyed by <see cref="Key"/>, which is also the template variable name
@@ -36,8 +42,22 @@ public enum ResponseUrlMode
 /// e.g. "optional; blank = anonymous upload") - the templating layer never hard-fails on a missing
 /// value, it just expands the token to an empty string (see TemplateExpander), and
 /// <see cref="ProviderSpecShareProvider"/> omits any header/extra-field whose expansion comes out
-/// empty rather than sending a broken "Authorization: Client-ID " or similar.</summary>
-public sealed record ShareConfigField(string Key, string Label, bool Required, bool IsSecret);
+/// empty rather than sending a broken "Authorization: Client-ID " or similar.
+///
+/// <see cref="Options"/>, when set, turns the settings-UI control for this field from a free-text box
+/// into a ComboBox offering exactly those choices (e.g. RoeShare's ExpiresIn: Never/1 hour/1 day/...).
+/// <see cref="DefaultValue"/>, when set, is the value <see cref="ShareProviderCatalog.DefaultConfigFor"/>
+/// seeds into a freshly-created config for this field AND the value
+/// <see cref="ProviderSpecShareProvider"/> falls back to at upload time if the field is missing or
+/// blank in the persisted config (covers rows saved before this field existed) - see both of those
+/// sites' own loud comments for why a blank default is not always safe to assume.</summary>
+public sealed record ShareConfigField(
+    string Key,
+    string Label,
+    bool Required,
+    bool IsSecret,
+    IReadOnlyList<ShareConfigOption>? Options = null,
+    string? DefaultValue = null);
 
 /// <summary>The whole declarative description of a share-upload endpoint: this IS the "it's just web
 /// requests" design center the Sharing package is built around. A built-in provider is DATA (see
