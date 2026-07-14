@@ -14,4 +14,10 @@
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- FileLogTests needs FileLog.ResetForTests (internal) to isolate the "before Initialize"
+         case from every other test sharing the same process-wide static sink. -->
+    <InternalsVisibleTo Include="RoeSnip.Core.Tests" />
+  </ItemGroup>
+
 </Project>
