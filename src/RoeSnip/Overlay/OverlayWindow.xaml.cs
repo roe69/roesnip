@@ -1764,13 +1764,6 @@ public partial class OverlayWindow : Window
             // persist immediately via SettingsStore.
             _toolbar.PaletteReplaceRequested += OnPaletteReplaceRequested;
 
-            // The record menu's MP4 audio-source toggles persist the same way.
-            _toolbar.RecordAudioTogglesChanged += (mic, systemAudio) =>
-            {
-                _liveSettings = _liveSettings with { RecordMicrophone = mic, RecordSystemAudio = systemAudio };
-                TrySaveLiveSettings();
-            };
-
             OverlayCanvas.Children.Add(_toolbar);
             // Keep the zoom loupe ABOVE the toolbar (it is added after the Magnifier, so it would
             // otherwise cover the loupe) - the loupe must stay visible, not hide behind the toolbar.
@@ -1781,7 +1774,6 @@ public partial class OverlayWindow : Window
         RefreshToolbarPalette();
         _toolbar.SetStrokeWidth(_currentStrokeWidth);
         _toolbar.SetHistoryState(Annotations.CanUndo, Annotations.CanRedo);
-        _toolbar.SetRecordAudioToggles(_liveSettings.RecordMicrophone, _liveSettings.RecordSystemAudio);
         // Sharing/* subsystem (doc fix, senior review): re-populated on every show (not just once)
         // — but the real reason is POOLED-WINDOW REUSE (OverlayWindowPool/Initialize), not a live
         // mid-session settings refresh. _liveSettings is a snapshot taken once, either at this

@@ -108,19 +108,6 @@ public partial class ToolbarControl : UserControl
     /// only palette edit: the row is a fixed set of recolorable slots, never grown or shrunk.</summary>
     public event Action<int>? PaletteReplaceRequested;
 
-    /// <summary>UNUSED as of the feature 10 redesign: the record menu no longer has audio
-    /// checkboxes (they moved into RecordingChrome's Setup panel, which persists them itself via
-    /// SettingsStore — see RecordingController.cs). Kept declared, and never raised, purely because
-    /// OverlayWindow.xaml.cs (outside this workstream) still subscribes to it.</summary>
-    public event Action<bool, bool>? RecordAudioTogglesChanged;
-
-    /// <summary>UNUSED as of the feature 10 redesign — see <see cref="RecordAudioTogglesChanged"/>'s
-    /// doc comment. Kept as a no-op purely because OverlayWindow.xaml.cs still calls it once per
-    /// toolbar show.</summary>
-    public void SetRecordAudioToggles(bool microphone, bool systemAudio)
-    {
-    }
-
     public ToolbarControl()
     {
         InitializeComponent();
