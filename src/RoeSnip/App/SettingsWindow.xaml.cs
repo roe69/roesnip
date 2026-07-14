@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using RoeSnip.Core.Sharing;
+using RoeSnip.Core.Updates;
 using RoeSnip.Interop;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
@@ -30,6 +31,11 @@ public partial class SettingsWindow : Window
     private RoeSnipSettings _current;
 
     private sealed record ShareProviderComboItem(string Id, string Name);
+
+    private sealed record UpdateFrequencyComboItem(string Tag, string Label)
+    {
+        public override string ToString() => Label; // ComboBox with no DisplayMemberPath shows ToString()
+    }
 
     // Bugs 2 & 5: the global hotkey and this window's own key-capture compete for the same
     // keystroke (RegisterHotKey has first claim - a registered combo never reaches a focused
@@ -133,7 +139,61 @@ public partial class SettingsWindow : Window
 
         RefreshElevationStatusText();
 
+        LoadUpdateFrequency();
+
         RefreshShareProvidersUi();
+    }
+
+    /// <summary>Populates the frequency combo from <see cref="UpdateCheckFrequencies.UiChoices"/> and
+    /// selects the item matching the PARSED (not raw) current setting: running the same fail-safe
+    /// Parse the loop itself uses means garbage in settings.json, or the hidden EveryMinute dev value
+    /// (deliberately excluded from UiChoices - see that field's own doc comment), both land on
+    /// Hourly here rather than throwing or leaving nothing selected. Saving from this window then
+    /// rewrites EveryMinute to Hourly - acceptable, since EveryMinute is never reachable through the
+    /// UI in the first place. Deferred-save like the checkboxes above: no SelectionChanged handler,
+    /// read back in SaveButton_Click.</summary>
+    private void LoadUpdateFrequency()
+    {
+        UpdateFrequencyCombo.Items.Clear();
+        UpdateCheckFrequency current = UpdateCheckFrequencies.Parse(_original.UpdateCheckFrequency);
+        UpdateFrequencyComboItem? selected = null;
+        foreach (UpdateCheckFrequency choice in UpdateCheckFrequencies.UiChoices)
+        {
+            var item = new UpdateFrequencyComboItem(choice.ToString(), UpdateCheckFrequencies.DisplayLabel(choice));
+            UpdateFrequencyCombo.Items.Add(item);
+            if (choice == current)
+            {
+                selected = item;
+            }
+        }
+        UpdateFrequencyCombo.SelectedItem = selected ?? UpdateFrequencyCombo.Items[0];
+
+        // A portable/dev launch (UpdateManager.IsInstalled false) never runs the update loop at all
+        // (see RunInstance's IsInstalled guard) - the combo still saves a value for whenever this
+        // copy might get installed later, but a hint makes clear why nothing is actually happening
+        // today instead of leaving the user to wonder why updates "don't work".
+        bool installed;
+        try
+        {
+            installed = UpdateManager.IsInstalled;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"RoeSnip: could not read install state for the update-frequency hint: {ex.Message}");
+            installed = true; // fail toward showing no hint rather than a possibly-wrong one
+        }
+
+        if (!installed)
+        {
+            UpdateFrequencyHintText.Text =
+                "This portable copy never checks for updates. Use Install RoeSnip in the tray menu to turn updates on.";
+            UpdateFrequencyHintText.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            UpdateFrequencyHintText.Text = string.Empty;
+            UpdateFrequencyHintText.Visibility = Visibility.Collapsed;
+        }
     }
 
     // ---------- Sharing/* subsystem ----------
@@ -599,6 +659,8 @@ public partial class SettingsWindow : Window
             ToneMapKneeOverride = kneeOverride,
             ToneMapPeakOverride = peakOverride,
             RunAtStartup = runAtStartup,
+            UpdateCheckFrequency = (UpdateFrequencyCombo.SelectedItem as UpdateFrequencyComboItem)?.Tag
+                ?? _current.UpdateCheckFrequency,
         };
 
         // Bug 4: make sure Browse/first-save never hit a missing folder. Non-fatal - save-time

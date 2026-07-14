@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Win32;
+using RoeSnip.Core.Updates;
 using RoeSnip.Interop;
 
 namespace RoeSnip.App;
@@ -36,6 +37,11 @@ public sealed class TrayApp : ITrayNotifier
     private EventHandler? _activeBalloonClickHandler;
     private SettingsWindow? _settingsWindow;
     private AutomationServer? _automationServer;
+    // Latches the click-to-update fallback balloon to once per release version: a persistently
+    // failing download is retried every periodic tick (desirable - the network hiccup or the
+    // asset could be transient), but re-showing the balloon on every one of those retries would
+    // be hourly notification spam for a problem the user has already been told about once.
+    private Version? _updateBalloonShownForVersion;
 
     /// <summary>Runs the tray app: NotifyIcon + context menu + message loop. A normal launch while
     /// another instance is already running (named mutex held) REPLACES that instance with this one -
@@ -194,13 +200,22 @@ public sealed class TrayApp : ITrayNotifier
             _automationServer.Start();
         }
 
-        // Self-update (CHANGE 2): best-effort cleanup of any leftover .old/.new from a prior
-        // install/update swap, then - only when this IS the installed copy (a portable/dev run has
-        // nothing sensible to update itself into) - a silent background check for a newer GitHub
-        // release that, if found, downloads and applies it automatically (no click required; see
-        // CheckForUpdatesOnStartupAsync for the idle-wait guard on the relaunch that follows).
-        // Fire-and-forget: CheckForUpdateAsync never throws and this must never delay startup or
-        // block the UI thread.
+        // Self-update (CHANGE 2, periodic in this later pass): best-effort cleanup of any leftover
+        // .old/.new from a prior install/update swap, then - only when this IS the installed copy
+        // (a portable/dev run has nothing sensible to update itself into) - a background loop that
+        // checks GitHub for a newer release and, if found, downloads and applies it automatically
+        // (no click required; see CheckForUpdatesAndAutoApplyAsync for the idle-wait guard on the
+        // relaunch that follows), then repeats on a user-configurable cadence for as long as this
+        // process lives. The original ship (v1.6.0/1.7.0) only ever checked once, at this exact
+        // startup moment - which almost never actually delivers an update, because this app spends
+        // its life as a tray resident running for weeks between launches, not being relaunched
+        // often enough for a startup-only check to land on a fresh release. Reports of "updates
+        // never fired" trace to that: an install that predates auto-apply, a portable/dev run
+        // (checks nothing, by design), or an installed copy that just hadn't been relaunched since
+        // the last release shipped. RunUpdateLoopAsync below is the fix - the startup check becomes
+        // its first iteration, and the periodic re-checks are what actually keeps a long-lived
+        // resident current. Fire-and-forget: CheckForUpdateAsync never throws and this must never
+        // delay startup or block the UI thread.
         UpdateManager.CleanupStaleUpdateFiles();
         // Background cleanup that may need a bounded retry (a still-locked file must never stall
         // startup): the source exe a prior Install() "move" left behind (pending-source-cleanup
@@ -222,7 +237,11 @@ public sealed class TrayApp : ITrayNotifier
         });
         if (UpdateManager.IsInstalled)
         {
-            _ = CheckForUpdatesOnStartupAsync();
+            // Gating once here (rather than inside the loop, on every wake) is sound because
+            // IsInstalled derives from Environment.ProcessPath, which cannot change for the
+            // lifetime of this process - a portable/dev copy that is never installed keeps getting
+            // zero checks for as long as it runs, exactly as before this feature.
+            _ = RunUpdateLoopAsync();
         }
 
         // Cold-start warmup (item 6b, UX round 3): runs on its own background thread so it can
@@ -627,18 +646,63 @@ public sealed class TrayApp : ITrayNotifier
         });
     }
 
-    /// <summary>Silent startup update check (only called when <see cref="UpdateManager.IsInstalled"/>
-    /// is true - see that property's doc comment). Says nothing when there is nothing to offer (no
-    /// update, no network, private-repo 404 - CheckForUpdateAsync already swallows all of that and
-    /// returns null). When a newer release does exist, applies it automatically - no click required
-    /// - but the beforeLaunch delegate passed to ApplyUpdateAsync holds the actual relaunch (and the
-    /// replace-on-run kill that follows it) until CaptureGate and RecordingController both report
-    /// idle, so an update landing mid-snip or mid-recording can never yank the app out from under
-    /// the user; the download itself is allowed to proceed regardless since it does not touch
-    /// anything live. Falls back to the old click-to-update balloon if the auto-apply throws, so a
-    /// download/swap failure still leaves the user a way to update by hand. Never blocks startup:
-    /// this is fire-and-forget from RunInstance.</summary>
-    private async Task CheckForUpdatesOnStartupAsync()
+    /// <summary>The periodic update loop (only started when <see cref="UpdateManager.IsInstalled"/>
+    /// is true - see the RunInstance call site's comment). Iteration zero runs immediately and IS
+    /// the old startup check; after that it wakes every minute purely to re-read the current
+    /// setting, and only actually performs a check once the configured interval (plus jitter) has
+    /// elapsed since the last one. The 1-minute wake - not a timer re-armed to the configured
+    /// interval - is what lets a Settings change take effect without any CancellationToken/re-arm
+    /// plumbing: SettingsWindow's onSaved callback reassigns <c>_settings</c> synchronously, and the
+    /// very next wake picks the new value up. Wall-clock elapsed (DateTime.UtcNow, never .Now - a
+    /// DST jump must not double-fire or stall this) rather than counting Task.Delay iterations means
+    /// a laptop resumed after sleep fires its overdue check on the next wake instead of drifting
+    /// forever behind. The check is awaited INLINE, not fire-and-forgotten per tick: if an apply is
+    /// parked for hours inside CheckForUpdatesAndAutoApplyAsync's idle-wait gate, this loop is parked
+    /// with it, so checks can never pile up behind UpdateManager.ApplyUpdateLock. Jitter (up to
+    /// interval/4, capped at 5 minutes) keeps a fleet of machines that all boot at the same moment
+    /// from stampeding GitHub's API in lockstep.</summary>
+    private async Task RunUpdateLoopAsync()
+    {
+        await CheckForUpdatesAndAutoApplyAsync().ConfigureAwait(false); // iteration zero = today's startup check
+        DateTime lastCheckUtc = DateTime.UtcNow;
+        TimeSpan currentInterval = UpdateCheckFrequencies.Interval(UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency))
+            ?? TimeSpan.FromHours(1);
+        TimeSpan jitter = UpdateCheckFrequencies.Jitter(currentInterval, Random.Shared.NextDouble());
+        while (true)
+        {
+            await Task.Delay(TimeSpan.FromMinutes(1)).ConfigureAwait(false); // settings-poll cadence, not network cadence
+            var freq = UpdateCheckFrequencies.Parse(_settings.UpdateCheckFrequency); // FRESH read: live reconfigure
+            TimeSpan? interval = UpdateCheckFrequencies.Interval(freq);
+            if (interval is null)
+            {
+                continue; // StartupOnly: keep watching the setting, never check again on our own
+            }
+            if (DateTime.UtcNow - lastCheckUtc < interval + jitter)
+            {
+                continue;
+            }
+            lastCheckUtc = DateTime.UtcNow;
+            jitter = UpdateCheckFrequencies.Jitter(interval.Value, Random.Shared.NextDouble());
+            await CheckForUpdatesAndAutoApplyAsync().ConfigureAwait(false); // awaited INLINE: no pile-up possible
+        }
+    }
+
+    /// <summary>One check-and-apply cycle: says nothing when there is nothing to offer (no update,
+    /// no network, private-repo 404, a 304/rate-limit backoff - CheckForUpdateAsync already swallows
+    /// all of that and returns null). When a newer release does exist, applies it automatically - no
+    /// click required - but the beforeLaunch delegate passed to ApplyUpdateAsync holds the actual
+    /// relaunch (and the replace-on-run kill that follows it) until CaptureGate and
+    /// RecordingController both report idle, so an update landing mid-snip or mid-recording can
+    /// never yank the app out from under the user; the download itself is allowed to proceed
+    /// regardless since it does not touch anything live. Falls back to the old click-to-update
+    /// balloon if the auto-apply throws, so a download/swap failure still leaves the user a way to
+    /// update by hand - latched to once per release version (<see cref="_updateBalloonShownForVersion"/>)
+    /// so a persistently failing download retried every periodic tick does not turn into hourly
+    /// balloon spam; the retries themselves keep happening regardless, only the notification is
+    /// latched. Called both as the loop's iteration zero (RunUpdateLoopAsync) and, on every
+    /// subsequent tick, as the actual periodic recheck - never blocks its caller beyond its own
+    /// await chain.</summary>
+    private async Task CheckForUpdatesAndAutoApplyAsync()
     {
         UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
         if (update is null)
@@ -654,7 +718,11 @@ public sealed class TrayApp : ITrayNotifier
         catch (Exception ex)
         {
             Console.Error.WriteLine($"RoeSnip: auto-update to {update.Version} failed: {ex.Message}");
-            _uiThreadMarshal?.BeginInvoke(new Action(() => ShowUpdateAvailableBalloon(update)));
+            if (_updateBalloonShownForVersion != update.Version)
+            {
+                _updateBalloonShownForVersion = update.Version;
+                _uiThreadMarshal?.BeginInvoke(new Action(() => ShowUpdateAvailableBalloon(update)));
+            }
         }
 
         // Polled rather than event-driven: capture/recording sessions are short-lived (seconds to a
