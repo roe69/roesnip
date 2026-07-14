@@ -974,6 +974,7 @@ public sealed class TrayApp : ITrayNotifier
         UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
         if (update is null)
         {
+            UpdateManager.RecordLastCheckOutcome(version: null, outcome: "UpToDate");
             return;
         }
 
@@ -981,10 +982,12 @@ public sealed class TrayApp : ITrayNotifier
         try
         {
             await UpdateManager.ApplyUpdateAsync(update, WaitForIdleAsync).ConfigureAwait(false);
+            UpdateManager.RecordLastCheckOutcome(update.Version.ToString(), $"Applied {update.Version}");
         }
         catch (Exception ex)
         {
             FileLog.Write($"RoeSnip: auto-update to {update.Version} failed: {ex.Message}");
+            UpdateManager.RecordLastCheckOutcome(update.Version.ToString(), $"Failed: {ex.Message}");
             if (_updateToastShownForVersion != update.Version)
             {
                 _updateToastShownForVersion = update.Version;
@@ -1022,10 +1025,18 @@ public sealed class TrayApp : ITrayNotifier
         catch (Exception ex)
         {
             FileLog.Write($"RoeSnip: update check failed (non-fatal): {ex.Message}");
+            UpdateManager.RecordLastCheckOutcome(version: null, outcome: $"Failed: {ex.Message}");
             Dispatcher.UIThread.Post(() => ShowToast(
                 "Could not check for updates - GitHub could not be reached.", isError: true, durationMs: 6000, onClick: null));
             return;
         }
+
+        if (update is null)
+        {
+            UpdateManager.RecordLastCheckOutcome(version: null, outcome: "UpToDate");
+        }
+        // else: the outcome is still undecided (user hasn't answered Yes/No yet) -
+        // ApplyUpdateFromToastAsync records Applied/Failed once they do.
 
         Dispatcher.UIThread.Post(() =>
         {
@@ -1081,9 +1092,11 @@ public sealed class TrayApp : ITrayNotifier
         try
         {
             await UpdateManager.ApplyUpdateAsync(info).ConfigureAwait(false);
+            UpdateManager.RecordLastCheckOutcome(info.Version.ToString(), $"Applied {info.Version}");
         }
         catch (Exception ex)
         {
+            UpdateManager.RecordLastCheckOutcome(info.Version.ToString(), $"Failed: {ex.Message}");
             Dispatcher.UIThread.Post(() => ShowError($"Update to {info.Version} failed: {ex.Message}"));
         }
     }
@@ -1415,14 +1428,26 @@ public sealed class TrayApp : ITrayNotifier
     {
         try
         {
+            string aboutMessage =
+                $"RoeSnip {UpdateManager.CurrentVersionText}\n\n" +
+                "An HDR-correct screenshot tool. On HDR/Advanced-Color displays, RoeSnip captures the " +
+                "true linear scRGB frame and tone-maps it properly (matching the SDR white level and " +
+                "rolling off highlights) instead of producing the washed-out gray screenshots typical " +
+                "of legacy capture tools.";
+
+            // Hardening item 8: a durable breadcrumb of the last update check's outcome, since the
+            // unattended auto-update path's only other failure signal is a toast that can go
+            // unnoticed. Omitted entirely (no line at all) when nothing has ever been recorded yet -
+            // see UpdateManager.LastCheckSummary/UpdateStatusMarker.DescribeLastCheck.
+            string? lastCheck = UpdateManager.LastCheckSummary();
+            if (lastCheck is not null)
+            {
+                aboutMessage += $"\n\n{lastCheck}";
+            }
+
             var text = new TextBlock
             {
-                Text =
-                    $"RoeSnip {UpdateManager.CurrentVersionText}\n\n" +
-                    "An HDR-correct screenshot tool. On HDR/Advanced-Color displays, RoeSnip captures the " +
-                    "true linear scRGB frame and tone-maps it properly (matching the SDR white level and " +
-                    "rolling off highlights) instead of producing the washed-out gray screenshots typical " +
-                    "of legacy capture tools.",
+                Text = aboutMessage,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(16),
             };

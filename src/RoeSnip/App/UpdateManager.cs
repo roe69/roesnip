@@ -71,6 +71,17 @@ public static class UpdateManager
     /// the swap it exists to guard.</summary>
     private static string HealthMarkerDirectory => SettingsStore.SettingsDirectory;
 
+    /// <summary>Hardening item 8: records the outcome of an update check (or check+apply) to the
+    /// durable last-update-status.json breadcrumb, so a missed tray balloon can still be answered
+    /// later via <see cref="LastCheckSummary"/> in the About box. Best-effort, never throws - see
+    /// UpdateStatusMarker.Record's own doc comment.</summary>
+    public static void RecordLastCheckOutcome(string? version, string outcome) =>
+        UpdateStatusMarker.Record(HealthMarkerDirectory, version, outcome);
+
+    /// <summary>One user-facing line describing the last recorded update check, or null when
+    /// nothing has ever been recorded - see UpdateStatusMarker.DescribeLastCheck.</summary>
+    public static string? LastCheckSummary() => UpdateStatusMarker.DescribeLastCheck(HealthMarkerDirectory);
+
     /// <summary>The running build's version, straight off the assembly (set by the csproj's
     /// &lt;Version&gt;) - compared against each release's tag_name.</summary>
     public static Version CurrentVersion =>

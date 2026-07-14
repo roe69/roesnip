@@ -1213,3 +1213,11 @@ because a correct implementation needs live hardware this repo cannot exercise.
   install dir an update swap replaces wholesale) so it survives the swap it guards. Windows
   only on the Avalonia app, matching item 13d — Linux/macOS never self-swap, so there is
   nothing to guard there.
+- Update-status breadcrumb (hardening item 8, RoeSnip.Core.Updates.UpdateStatusMarker +
+  UpdateManager.RecordLastCheckOutcome/LastCheckSummary, both apps): the last update check's
+  outcome (up to date / applied / failed) is overwritten to last-update-status.json in the same
+  per-app settings/config directory as the crash-loop marker, then surfaced as one read-only
+  line in the About box. Recorded from the periodic auto-apply cycle and the "Check for
+  updates" menu item; exists because the unattended auto-update path's only other failure
+  signal is a tray balloon/toast that can be silently eaten by the OS, leaving no way to later
+  find out what actually happened.
