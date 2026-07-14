@@ -209,7 +209,13 @@ public static class UpdateManager
     /// at the ".gz" transit asset (preferred whenever present - see <see cref="ParseUpdateInfo"/>)
     /// rather than the plain exe - <see cref="ApplyUpdateAsync"/> decompresses it after digest
     /// verification, before the swap.</summary>
-    public sealed record UpdateInfo(Version Version, string? DownloadUrl, string ReleaseUrl, string? Digest = null, long? Size = null, bool IsGzip = false);
+    /// <param name="PlainDigest">The UNCOMPRESSED asset's own sha256 digest, carried alongside
+    /// <paramref name="Digest"/> (the CHOSEN asset's digest - the .gz's, when
+    /// <paramref name="IsGzip"/>) so <see cref="ApplyUpdateAsync"/> can verify the decompressed
+    /// bytes actually swapped into the install directory, not just the compressed transit bytes.
+    /// Null whenever the release payload had no plain-asset digest to offer, same fail-open
+    /// contract as <see cref="Digest"/> itself.</param>
+    public sealed record UpdateInfo(Version Version, string? DownloadUrl, string ReleaseUrl, string? Digest = null, long? Size = null, bool IsGzip = false, string? PlainDigest = null);
 
     /// <summary>Result of one <see cref="CheckForUpdateAsync"/> call. <see cref="Update"/> is
     /// non-null only when a genuinely newer release was found. <see cref="Failed"/> distinguishes a
@@ -395,7 +401,7 @@ public static class UpdateManager
             return null;
         }
 
-        return new UpdateInfo(releaseVersion, downloadUrl, releaseUrl, chosenDigest, chosenSize, isGzip);
+        return new UpdateInfo(releaseVersion, downloadUrl, releaseUrl, chosenDigest, chosenSize, isGzip, plainDigest);
     }
 
     // ---------------- Windows-only: cleanup / install / apply ----------------
@@ -861,6 +867,27 @@ public static class UpdateManager
                 }
 
                 TryDelete(fetchPath);
+
+                // The check above only proved the COMPRESSED transit bytes matched what CI uploaded -
+                // it says nothing about what GzipStream (or a release.yml packaging slip) actually
+                // produced on decompression. The release payload carries the plain exe's own digest
+                // for exactly this: verify the bytes about to be swapped into the install directory
+                // are the actual published exe, not just "some file that decompressed from a
+                // correctly-hashed .gz".
+                bool? plainVerified = await AssetDigest.VerifyAsync(downloadPath, info.PlainDigest).ConfigureAwait(false);
+                if (plainVerified == false)
+                {
+                    TryDelete(downloadPath);
+                    throw new IOException($"Decompressed update for {info.Version} failed SHA-256 verification.");
+                }
+
+                if (plainVerified is null)
+                {
+                    // Same fail-open policy as the compressed-asset check above (AssetDigest's own
+                    // doc comment) - a release with no plain-asset digest in the payload must not
+                    // block updates.
+                    FileLog.Write($"RoeSnip: decompressed update to {info.Version} has no verifiable plain-asset digest - skipping the post-decompression hash check.");
+                }
             }
 
             // Retried, not a bare delete: a prior .old can still be held locked by a sibling

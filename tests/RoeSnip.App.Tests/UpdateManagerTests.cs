@@ -223,6 +223,25 @@ public class UpdateManagerTests
         Assert.True(info!.IsGzip);
     }
 
+    [Fact]
+    public void ParseUpdateInfo_GzChosen_StillCarriesThePlainAssetsOwnDigest()
+    {
+        // ApplyUpdateAsync verifies the .gz's digest before decompressing AND the plain asset's
+        // digest after - the second check needs the plain digest to survive even though the .gz was
+        // the chosen (downloaded) asset. Losing this would leave the decompressed bytes actually
+        // swapped into the install directory unverified.
+        string plainHex = new string('a', 64);
+        string gzHex = new string('b', 64);
+        var info = UpdateManager.ParseUpdateInfo(
+            Parse(ReleaseJson("v1.2.0", digest: $"sha256:{plainHex}", size: 1000,
+                windowsGzAssetName: "RoeSnipApp-win-x64.exe.gz", gzDigest: $"sha256:{gzHex}", gzSize: 400)),
+            V100, requireWindowsAsset: true);
+        Assert.NotNull(info);
+        Assert.True(info!.IsGzip);
+        Assert.Equal($"sha256:{gzHex}", info.Digest);
+        Assert.Equal($"sha256:{plainHex}", info.PlainDigest);
+    }
+
     // ---------- identity constants ----------
 
     [Fact]
