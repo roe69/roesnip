@@ -695,7 +695,9 @@ public sealed class TrayApp : ITrayNotifier
         UpdateManager.UpdateInfo? update;
         try
         {
-            update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
+            // A deliberate user click deserves a real network answer even if a periodic check
+            // recently tripped the rate-limit backoff.
+            update = await UpdateManager.CheckForUpdateAsync(bypassBackoff: true).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

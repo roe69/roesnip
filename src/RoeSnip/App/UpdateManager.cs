@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
+using RoeSnip.Core.Updates;
 
 namespace RoeSnip.App;
 
@@ -37,6 +38,12 @@ public static class UpdateManager
     // One shared HttpClient for the process lifetime (never one-per-call - see MSDN's socket
     // exhaustion guidance) with the User-Agent GitHub's API mandates and rejects requests without.
     private static readonly HttpClient HttpClient = CreateHttpClient();
+
+    // One shared instance for the process lifetime, matching HttpClient above - its in-memory ETag
+    // is exactly what makes a periodic tray-resident check cheap (see the class's own doc comment):
+    // a fresh instance every call would throw the ETag away and turn every periodic check back into
+    // a full, uncached GET.
+    private static readonly GitHubLatestReleaseClient ReleaseClient = new(GitHubOwner, GitHubRepo);
 
     // Serializes ApplyUpdateAsync across callers: the silent startup auto-update can be parked in
     // its beforeLaunch idle-wait for minutes with the new exe already swapped in, and without this
@@ -367,64 +374,49 @@ public static class UpdateManager
 
     /// <summary>Checks the GitHub Releases API for a newer published build. Returns null (never
     /// throws) whenever there's nothing to offer: the repo is private (404), there's no network,
-    /// the response doesn't parse, the release has no "RoeSnip.exe" asset, or its version isn't
-    /// newer than <see cref="CurrentVersion"/>.</summary>
-    public static async Task<UpdateInfo?> CheckForUpdateAsync()
+    /// the response doesn't parse, the release has no "RoeSnip.exe" asset, its version isn't newer
+    /// than <see cref="CurrentVersion"/>, or GitHub answered 304/rate-limited.
+    ///
+    /// Routed through <see cref="ReleaseClient"/> (see GitHubLatestReleaseClient's own doc comment
+    /// for the full contract): a conditional If-None-Match request that comes back 304 costs nothing
+    /// against GitHub's unauthenticated rate limit, which is what makes an hourly-by-default periodic
+    /// loop (see TrayApp.RunUpdateLoopAsync) cheap. The ETag is committed ONLY when this method is
+    /// about to return null because there's genuinely no update - never when a payload parsed to a
+    /// real update, and never on a rate-limited/failed probe - so a stored ETag always safely means
+    /// "304 = still no update"; if an update was found but its later download/apply failed, the next
+    /// check gets a full uncached GET and a real chance to retry rather than silently 304'ing forever.
+    /// <paramref name="bypassBackoff"/> forces a live network attempt even inside an active
+    /// rate-limit backoff window - the manual "Check for updates" menu item passes true because a
+    /// deliberate user click deserves a real answer.</summary>
+    public static async Task<UpdateInfo?> CheckForUpdateAsync(bool bypassBackoff = false)
     {
         try
         {
-            string url = $"https://api.github.com/repos/{GitHubOwner}/{GitHubRepo}/releases/latest";
-            using HttpResponseMessage response = await HttpClient.GetAsync(url).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
+            ProbeResult probe = await ReleaseClient.ProbeAsync(HttpClient, bypassBackoff).ConfigureAwait(false);
+            switch (probe.Status)
             {
-                Console.Error.WriteLine($"RoeSnip: update check got HTTP {(int)response.StatusCode} from GitHub.");
-                return null;
+                case ProbeStatus.NotModified:
+                    Console.Error.WriteLine("RoeSnip: update check up to date (304, conditional request, does not count against the GitHub rate limit).");
+                    return null;
+                case ProbeStatus.RateLimited:
+                    Console.Error.WriteLine("RoeSnip: update check skipped - GitHub rate limit backoff is active.");
+                    return null;
+                case ProbeStatus.Failed:
+                    return null;
             }
 
-            await using Stream stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-            using JsonDocument document = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+            using JsonDocument document = probe.Json!;
             JsonElement root = document.RootElement;
-
-            if (!root.TryGetProperty("tag_name", out JsonElement tagElement))
+            UpdateInfo? update = ParsePayload(root);
+            if (update is null)
             {
-                return null;
+                // No update found in this payload - commit the ETag so the NEXT check can 304 for
+                // free. See this method's doc comment for why an update-found-but-not-applied path
+                // must never reach this line.
+                ReleaseClient.CommitETag(probe.ETag);
             }
 
-            string? tag = tagElement.GetString();
-            if (string.IsNullOrWhiteSpace(tag))
-            {
-                return null;
-            }
-
-            string versionText = tag.Length > 0 && (tag[0] == 'v' || tag[0] == 'V') ? tag[1..] : tag;
-            if (!Version.TryParse(versionText, out Version? releaseVersion) || releaseVersion is null)
-            {
-                return null;
-            }
-
-            if (!root.TryGetProperty("assets", out JsonElement assets) || assets.ValueKind != JsonValueKind.Array)
-            {
-                return null;
-            }
-
-            string? downloadUrl = null;
-            foreach (JsonElement asset in assets.EnumerateArray())
-            {
-                if (asset.TryGetProperty("name", out JsonElement nameElement) &&
-                    string.Equals(nameElement.GetString(), ReleaseAssetName, StringComparison.OrdinalIgnoreCase) &&
-                    asset.TryGetProperty("browser_download_url", out JsonElement urlElement))
-                {
-                    downloadUrl = urlElement.GetString();
-                    break;
-                }
-            }
-
-            if (string.IsNullOrEmpty(downloadUrl) || releaseVersion <= CurrentVersion)
-            {
-                return null;
-            }
-
-            return new UpdateInfo(releaseVersion, downloadUrl);
+            return update;
         }
         catch (Exception ex)
         {
@@ -434,6 +426,53 @@ public static class UpdateManager
             Console.Error.WriteLine($"RoeSnip: update check failed (non-fatal): {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>Pure parse of one "releases/latest" JSON payload - split out of
+    /// <see cref="CheckForUpdateAsync"/> unchanged from its previous inline form, just relocated so
+    /// that method can decide whether to commit the probe's ETag based on this method's result.</summary>
+    private static UpdateInfo? ParsePayload(JsonElement root)
+    {
+        if (!root.TryGetProperty("tag_name", out JsonElement tagElement))
+        {
+            return null;
+        }
+
+        string? tag = tagElement.GetString();
+        if (string.IsNullOrWhiteSpace(tag))
+        {
+            return null;
+        }
+
+        string versionText = tag.Length > 0 && (tag[0] == 'v' || tag[0] == 'V') ? tag[1..] : tag;
+        if (!Version.TryParse(versionText, out Version? releaseVersion) || releaseVersion is null)
+        {
+            return null;
+        }
+
+        if (!root.TryGetProperty("assets", out JsonElement assets) || assets.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        string? downloadUrl = null;
+        foreach (JsonElement asset in assets.EnumerateArray())
+        {
+            if (asset.TryGetProperty("name", out JsonElement nameElement) &&
+                string.Equals(nameElement.GetString(), ReleaseAssetName, StringComparison.OrdinalIgnoreCase) &&
+                asset.TryGetProperty("browser_download_url", out JsonElement urlElement))
+            {
+                downloadUrl = urlElement.GetString();
+                break;
+            }
+        }
+
+        if (string.IsNullOrEmpty(downloadUrl) || releaseVersion <= CurrentVersion)
+        {
+            return null;
+        }
+
+        return new UpdateInfo(releaseVersion, downloadUrl);
     }
 
     /// <summary>Downloads the release exe, swaps it in for <see cref="InstalledExePath"/>, and

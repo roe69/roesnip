@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
 using RoeSnip.Core.Settings;
+using RoeSnip.Core.Updates;
 
 namespace RoeSnip.App.AppShell;
 
@@ -73,6 +74,12 @@ public static class UpdateManager
     // path's guard. Queueing here means a manual click during that window simply waits; it
     // completes only after the parked call's own launch has already ended the process.
     private static readonly SemaphoreSlim ApplyUpdateLock = new(1, 1);
+
+    // One shared instance for the process lifetime, matching HttpClient above - its in-memory ETag
+    // is exactly what makes a periodic tray-resident check cheap (see the class's own doc comment):
+    // a fresh instance every call would throw the ETag away and turn every periodic check back into
+    // a full, uncached GET.
+    private static readonly GitHubLatestReleaseClient ReleaseClient = new(GitHubOwner, GitHubRepo);
 
     public static string InstallDir { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RoeSnip.App");
@@ -159,23 +166,49 @@ public static class UpdateManager
 
     /// <summary>Checks the GitHub Releases API for a newer published build. Returns null (never
     /// throws) whenever there's nothing to offer: the repo is private (404), there's no network,
-    /// the response doesn't parse, or the release isn't newer than <see cref="CurrentVersion"/> —
-    /// see <see cref="ParseUpdateInfo"/> for the full gating.</summary>
-    public static async Task<UpdateInfo?> CheckForUpdateAsync()
+    /// the response doesn't parse, the release isn't newer than <see cref="CurrentVersion"/> (see
+    /// <see cref="ParseUpdateInfo"/> for the full gating), or GitHub answered 304/rate-limited.
+    ///
+    /// Routed through <see cref="ReleaseClient"/> (see GitHubLatestReleaseClient's own doc comment
+    /// for the full contract): a conditional If-None-Match request that comes back 304 costs nothing
+    /// against GitHub's unauthenticated rate limit, which is what makes an hourly-by-default periodic
+    /// loop (see TrayApp's periodic update loop) cheap on both Windows (full auto-apply) and
+    /// Linux/macOS (passive notice). The ETag is committed ONLY when this method is about to return
+    /// null because there's genuinely no update - never when a payload parsed to a real update, and
+    /// never on a rate-limited/failed probe - so a stored ETag always safely means "304 = still no
+    /// update"; if an update was found but its later download/apply failed, the next check gets a
+    /// full uncached GET and a real chance to retry rather than silently 304'ing forever.
+    /// <paramref name="bypassBackoff"/> forces a live network attempt even inside an active
+    /// rate-limit backoff window - the manual "Check for updates" menu item passes true because a
+    /// deliberate user click deserves a real answer.</summary>
+    public static async Task<UpdateInfo?> CheckForUpdateAsync(bool bypassBackoff = false)
     {
         try
         {
-            string url = $"https://api.github.com/repos/{GitHubOwner}/{GitHubRepo}/releases/latest";
-            using HttpResponseMessage response = await HttpClient.GetAsync(url).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
+            ProbeResult probe = await ReleaseClient.ProbeAsync(HttpClient, bypassBackoff).ConfigureAwait(false);
+            switch (probe.Status)
             {
-                Console.Error.WriteLine($"RoeSnip: update check got HTTP {(int)response.StatusCode} from GitHub.");
-                return null;
+                case ProbeStatus.NotModified:
+                    Console.Error.WriteLine("RoeSnip: update check up to date (304, conditional request, does not count against the GitHub rate limit).");
+                    return null;
+                case ProbeStatus.RateLimited:
+                    Console.Error.WriteLine("RoeSnip: update check skipped - GitHub rate limit backoff is active.");
+                    return null;
+                case ProbeStatus.Failed:
+                    return null;
             }
 
-            await using Stream stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-            using JsonDocument document = await JsonDocument.ParseAsync(stream).ConfigureAwait(false);
-            return ParseUpdateInfo(document.RootElement, CurrentVersion, requireWindowsAsset: OperatingSystem.IsWindows());
+            using JsonDocument document = probe.Json!;
+            UpdateInfo? update = ParseUpdateInfo(document.RootElement, CurrentVersion, requireWindowsAsset: OperatingSystem.IsWindows());
+            if (update is null)
+            {
+                // No update found in this payload - commit the ETag so the NEXT check can 304 for
+                // free. See this method's doc comment for why an update-found-but-not-applied path
+                // must never reach this line.
+                ReleaseClient.CommitETag(probe.ETag);
+            }
+
+            return update;
         }
         catch (Exception ex)
         {
