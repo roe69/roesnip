@@ -9,6 +9,11 @@ name: release
 # are load-bearing and must never change or collide (a name collision would let one app's updater
 # silently download and swap in the OTHER product's binary).
 #
+# Each Windows exe also ships a gzip -9 "<name>.exe.gz" sibling (hardening item 9: ~61% smaller,
+# measured on the real binaries) as an ADDITIONAL asset - both UpdateManagers prefer it and fall
+# back to the plain exe. Never remove or rename the plain "RoeSnip.exe" / "RoeSnipApp-win-x64.exe"
+# assets themselves: older installs (pre-item-9) only ever look for those exact names.
+#
 # LOOP SAFETY (why this cannot re-trigger itself):
 #   * There is NO `push: branches` trigger, so the version-bump commit prep pushes to the branch
 #     starts no run (ci.yml is likewise skipped - see below).
@@ -157,6 +162,21 @@ jobs:
           path: src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe
           if-no-files-found: error
 
+      # Compressed transit asset (hardening item 9): gzip -9 measured -60.9% on this exact binary
+      # (185,831,624 -> 72,672,366 bytes). -k keeps the uncompressed exe in place too - the v1.8.0
+      # fleet's self-updater matches on "RoeSnip.exe" by exact name to reach this release, so that
+      # asset must keep publishing unchanged; the .gz is published ADDITIONALLY, never instead.
+      - name: Compress RoeSnip.exe for transit
+        shell: bash
+        run: gzip -9 -k -f src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe
+
+      - name: Upload RoeSnip.exe.gz
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-gz
+          path: src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe.gz
+          if-no-files-found: error
+
       # RoeSnip.App (the Avalonia cross-platform port) ships its own distinctly-named Windows asset
       # so its self-updater (AppShell/UpdateManager.cs) can never collide with the WPF app's own
       # "RoeSnip.exe" asset above - see that file's doc comment. win-x64.pubxml pins the same
@@ -174,6 +194,20 @@ jobs:
         with:
           name: win-app
           path: src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnipApp-win-x64.exe
+          if-no-files-found: error
+
+      # Compressed transit asset (hardening item 9): gzip -9 measured -61.4% on this exact binary
+      # (126,639,993 -> 48,910,796 bytes). -k keeps the uncompressed exe in place too - published
+      # ADDITIONALLY, never instead, matching the WPF asset's own compression step above.
+      - name: Compress RoeSnip.App Windows asset for transit
+        shell: bash
+        run: gzip -9 -k -f src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnipApp-win-x64.exe
+
+      - name: Upload RoeSnip.App Windows asset (gz)
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-app-gz
+          path: src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnipApp-win-x64.exe.gz
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
