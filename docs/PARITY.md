@@ -1204,3 +1204,12 @@ because a correct implementation needs live hardware this repo cannot exercise.
   the process terminate; TaskScheduler.UnobservedTaskException logs only (it does not crash the
   process on .NET 8).
   comments point at.
+- Crash-loop guard (hardening item 7, RoeSnip.Core.Updates.UpdateHealthMarker +
+  UpdateManager.CheckUpdateHealthAtStartup/CompleteHealthMilestone, both apps): a bad release
+  that fails to reach the "tray icon shown plus ~15s of uptime" health milestone three launches
+  in a row is auto-restored from the ".old" the swap kept around and the bad version is
+  quarantined (CheckForUpdateAsync skips it, cleared automatically once a strictly newer
+  release ships). The marker lives in each app's own settings/config directory (never the
+  install dir an update swap replaces wholesale) so it survives the swap it guards. Windows
+  only on the Avalonia app, matching item 13d — Linux/macOS never self-swap, so there is
+  nothing to guard there.
