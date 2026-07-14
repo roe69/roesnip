@@ -33,6 +33,11 @@ public partial class ShareResultWindow : Window
     private bool _autoDismissEligible; // true only after ShowSuccess - a Failure toast never auto-dismisses
     private readonly DispatcherTimer _autoDismissTimer;
 
+    /// <summary>Set once <see cref="Window_Closed"/> has run - mirrors the WPF app's identically-named
+    /// property, letting <see cref="ShareFlowPresenter"/> fall back to a tray notification for a kept-
+    /// file message that would otherwise render into a window nobody can see.</summary>
+    public bool IsClosed { get; private set; }
+
     /// <summary>Parameterless overload for Avalonia's XAML runtime loader only (AVLN3001 - the
     /// compiled .axaml needs a public no-arg constructor to be reachable via avares://, even though
     /// every real call site uses the parameterized one below).</summary>
@@ -191,6 +196,7 @@ public partial class ShareResultWindow : Window
     /// still-in-flight upload - mirrors the WPF app's identically-named handler.</summary>
     private void Window_Closed(object? sender, EventArgs e)
     {
+        IsClosed = true;
         _autoDismissTimer.Stop();
         _onCancelRequested?.Invoke();
     }

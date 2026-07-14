@@ -31,6 +31,12 @@ public partial class ShareResultWindow : Window
     private bool _autoDismissEligible; // true only after ShowSuccess - a Failure toast never auto-dismisses
     private readonly DispatcherTimer _autoDismissTimer;
 
+    /// <summary>Set once <see cref="Window_Closed"/> has run, so <see cref="ShareFlowPresenter"/> can
+    /// tell (on the UI thread, after the upload's continuation is queued) that this window is no
+    /// longer visible and fall back to a tray notification for any message - in particular a kept-
+    /// file path - that would otherwise be written into a window nobody can see.</summary>
+    public bool IsClosed { get; private set; }
+
     public ShareResultWindow(string providerName)
     {
         InitializeComponent();
@@ -204,6 +210,7 @@ public partial class ShareResultWindow : Window
     /// CancellationTokenSource is simply a no-op.</summary>
     private void Window_Closed(object sender, EventArgs e)
     {
+        IsClosed = true;
         _autoDismissTimer.Stop();
         _onCancelRequested?.Invoke();
     }

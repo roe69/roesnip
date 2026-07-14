@@ -24,13 +24,19 @@ public static class ShareFlowPresenter
     /// <summary>Fires one upload: creates and shows a <see cref="ShareResultWindow"/> immediately
     /// (Uploading state), then runs the upload detached - never awaited by callers. See the WPF app's
     /// identically-named method for the full parameter contract (stream ownership, onSuccess/
-    /// onFailure semantics).</summary>
+    /// onFailure semantics). <paramref name="notifier"/>: if the user closes the toast (X/Esc) while
+    /// the upload is still in flight, the Failure state that would otherwise name a kept recording's
+    /// path renders into a window nobody can see - when that happens AND
+    /// <paramref name="keptFilePathOnFailure"/> is non-null, the message is also surfaced via
+    /// <see cref="RoeSnip.App.ITrayNotifier.ShowError"/> so it is never silently lost. Mirrors the WPF
+    /// app's identically-named parameter.</summary>
     public static void StartUpload(
         ShareProviderConfig config,
         ShareUploadRequest request,
         string? keptFilePathOnFailure,
         Action? onSuccess,
-        Action? onFailure)
+        Action? onFailure,
+        RoeSnip.App.ITrayNotifier? notifier = null)
     {
         string providerName = string.IsNullOrWhiteSpace(config.DisplayName)
             ? (ShareProviderCatalog.ResolveSpec(config)?.Name ?? "Share")
@@ -41,7 +47,7 @@ public static class ShareFlowPresenter
         window.ShowUploading(() => cts.Cancel());
         window.Show();
 
-        _ = RunUploadAsync(window, config, request, cts, keptFilePathOnFailure, onSuccess, onFailure);
+        _ = RunUploadAsync(window, config, request, cts, keptFilePathOnFailure, onSuccess, onFailure, notifier);
     }
 
     private static async Task RunUploadAsync(
@@ -51,7 +57,8 @@ public static class ShareFlowPresenter
         CancellationTokenSource cts,
         string? keptFilePathOnFailure,
         Action? onSuccess,
-        Action? onFailure)
+        Action? onFailure,
+        RoeSnip.App.ITrayNotifier? notifier)
     {
         ShareUploadResult result;
         try
@@ -83,7 +90,7 @@ public static class ShareFlowPresenter
         // FinishShareUploadAsync(...))), which this same `() => _ = ...` shape follows rather than
         // posting an async lambda directly (an async-void Post callback's exceptions would otherwise
         // vanish unobserved instead of at least reaching Console.Error below).
-        Dispatcher.UIThread.Post(() => _ = FinishOnUiThreadAsync(window, result, keptFilePathOnFailure, onSuccess, onFailure));
+        Dispatcher.UIThread.Post(() => _ = FinishOnUiThreadAsync(window, result, keptFilePathOnFailure, onSuccess, onFailure, notifier));
     }
 
     private static async Task FinishOnUiThreadAsync(
@@ -91,7 +98,8 @@ public static class ShareFlowPresenter
         ShareUploadResult result,
         string? keptFilePathOnFailure,
         Action? onSuccess,
-        Action? onFailure)
+        Action? onFailure,
+        RoeSnip.App.ITrayNotifier? notifier)
     {
         if (result.Success && result.Url is not null)
         {
@@ -111,7 +119,15 @@ public static class ShareFlowPresenter
         }
         else
         {
-            window.ShowFailure(result.ErrorMessage ?? "Share upload failed.", keptFilePathOnFailure);
+            string message = result.ErrorMessage ?? "Share upload failed.";
+            window.ShowFailure(message, keptFilePathOnFailure);
+            // The user closed the toast (X/Esc) before the upload converged - ShowFailure above just
+            // wrote into a window nobody can see. Fine for an ordinary error, but a kept recording's
+            // path is the ONLY place it is ever surfaced, so fall back to a tray notification.
+            if (window.IsClosed && keptFilePathOnFailure is not null)
+            {
+                notifier?.ShowError($"{message} The recording file was kept at {keptFilePathOnFailure}");
+            }
             onFailure?.Invoke();
         }
     }

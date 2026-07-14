@@ -35,13 +35,18 @@ public static class ShareFlowPresenter
     /// a toolbar (in-memory PNG) share. <paramref name="onSuccess"/> fires ONLY on a genuine upload
     /// success (never on cancel/failure) - the DATA-LOSS RULE's temp-file delete belongs there, at the
     /// caller, not in this shared plumbing. <paramref name="onFailure"/> fires on failure OR
-    /// cancellation (Cancel counts as failure, file kept).</summary>
+    /// cancellation (Cancel counts as failure, file kept). <paramref name="notifier"/>: if the user
+    /// closes the toast (X/Esc) while the upload is still in flight, the Failure state that would
+    /// otherwise name a kept recording's path renders into a window nobody can see - when that
+    /// happens AND <paramref name="keptFilePathOnFailure"/> is non-null, the message is also surfaced
+    /// via <see cref="RoeSnip.ITrayNotifier.ShowError"/> so it is never silently lost.</summary>
     public static void StartUpload(
         ShareProviderConfig config,
         ShareUploadRequest request,
         string? keptFilePathOnFailure,
         Action? onSuccess,
-        Action? onFailure)
+        Action? onFailure,
+        RoeSnip.ITrayNotifier? notifier = null)
     {
         string providerName = string.IsNullOrWhiteSpace(config.DisplayName)
             ? (ShareProviderCatalog.ResolveSpec(config)?.Name ?? "Share")
@@ -52,7 +57,7 @@ public static class ShareFlowPresenter
         window.ShowUploading(() => cts.Cancel());
         window.Show();
 
-        _ = RunUploadAsync(window, config, request, cts, keptFilePathOnFailure, onSuccess, onFailure);
+        _ = RunUploadAsync(window, config, request, cts, keptFilePathOnFailure, onSuccess, onFailure, notifier);
     }
 
     private static async Task RunUploadAsync(
@@ -62,7 +67,8 @@ public static class ShareFlowPresenter
         CancellationTokenSource cts,
         string? keptFilePathOnFailure,
         Action? onSuccess,
-        Action? onFailure)
+        Action? onFailure,
+        RoeSnip.ITrayNotifier? notifier)
     {
         ShareUploadResult result;
         try
@@ -114,7 +120,16 @@ public static class ShareFlowPresenter
             }
             else
             {
-                window.ShowFailure(result.ErrorMessage ?? "Share upload failed.", keptFilePathOnFailure);
+                string message = result.ErrorMessage ?? "Share upload failed.";
+                window.ShowFailure(message, keptFilePathOnFailure);
+                // The user closed the toast (X/Esc) before the upload converged - ShowFailure above
+                // just wrote into a window nobody can see. That is fine for an ordinary error, but a
+                // kept recording's path is the ONLY place it is ever surfaced, so fall back to a tray
+                // notification rather than silently losing it.
+                if (window.IsClosed && keptFilePathOnFailure is not null)
+                {
+                    notifier?.ShowError($"{message} The recording file was kept at {keptFilePathOnFailure}");
+                }
                 onFailure?.Invoke();
             }
         }));

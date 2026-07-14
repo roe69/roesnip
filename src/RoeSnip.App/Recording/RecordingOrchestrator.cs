@@ -225,7 +225,8 @@ public sealed class RecordingOrchestrator
                 try { if (File.Exists(handoff.TempPath)) File.Delete(handoff.TempPath); }
                 catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
             },
-            onFailure: null);
+            onFailure: null,
+            notifier: _notifier);
     }
 
     /// <summary>The single fresh-disk-state provider lookup shared by <see cref="RequestShare"/> and

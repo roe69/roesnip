@@ -1652,7 +1652,8 @@ internal sealed class RecordingSession
                 try { if (File.Exists(tempPath)) File.Delete(tempPath); }
                 catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
             },
-            onFailure: null);
+            onFailure: null,
+            notifier: _notifier);
     }
 
     /// <summary>The single terminal path every end-of-recording route funnels through (Save,
