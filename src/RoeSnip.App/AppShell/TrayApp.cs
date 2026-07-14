@@ -15,6 +15,7 @@ using Avalonia.Threading;
 using Microsoft.Win32;
 using RoeSnip.App.Overlay;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Settings;
 using RoeSnip.Core.Updates;
@@ -117,7 +118,7 @@ public sealed class TrayApp : ITrayNotifier
             instanceLock = SingleInstance.TryTakeOver(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(2));
             if (instanceLock is null)
             {
-                Console.Error.WriteLine("RoeSnip: could not take over from the running instance; leaving it in place.");
+                FileLog.Write("RoeSnip: could not take over from the running instance; leaving it in place.");
                 return 0;
             }
         }
@@ -256,7 +257,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: startup did not fully complete: {ex.Message}");
+            FileLog.Write($"RoeSnip: startup did not fully complete: {ex.Message}");
         }
     }
 
@@ -285,7 +286,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to persist the Wayland hotkey notice flag: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to persist the Wayland hotkey notice flag: {ex.Message}");
         }
         _settings = updated;
     }
@@ -346,14 +347,14 @@ public sealed class TrayApp : ITrayNotifier
             flashShown = Overlay.OverlayController.TryShowFlash(monitors);
             if (flashShown)
             {
-                Console.Error.WriteLine($"RoeSnip: hotkey-to-dim {flashWatch.ElapsedMilliseconds} ms");
+                FileLog.Write($"RoeSnip: hotkey-to-dim {flashWatch.ElapsedMilliseconds} ms");
             }
         }
         catch (Exception ex)
         {
             // The flash is a pure perceived-latency optimization — its failure must never block the
             // actual capture.
-            Console.Error.WriteLine($"RoeSnip: flash dimmer failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: flash dimmer failed (non-fatal): {ex.Message}");
         }
 
         // Fire-and-forget from a UI event handler: RunCaptureFlowAsync reports its own failures
@@ -431,7 +432,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to re-register the hotkey: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to re-register the hotkey: {ex.Message}");
         }
     }
 
@@ -520,7 +521,7 @@ public sealed class TrayApp : ITrayNotifier
             WarmupOverlayWindowType();
             WarmupCaptureSessions(monitors);
             stopwatch.Stop();
-            Console.Error.WriteLine($"RoeSnip: warmup completed in {stopwatch.ElapsedMilliseconds} ms");
+            FileLog.Write($"RoeSnip: warmup completed in {stopwatch.ElapsedMilliseconds} ms");
 
             // Warmup itself is a full-scale burst (throwaway full-res captures + tonemaps) — sweep
             // its garbage so the app starts its resident life at the small footprint, not at the
@@ -533,7 +534,7 @@ public sealed class TrayApp : ITrayNotifier
         {
             // Never let a warmup failure be visible as anything other than "the first real capture
             // is exactly as cold as before" — this is a pure optimization, not a requirement.
-            Console.Error.WriteLine($"RoeSnip: warmup failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: warmup failed (non-fatal): {ex.Message}");
         }
         finally
         {
@@ -568,7 +569,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: flash dimmer warmup scheduling failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: flash dimmer warmup scheduling failed (non-fatal): {ex.Message}");
         }
     }
 
@@ -591,7 +592,7 @@ public sealed class TrayApp : ITrayNotifier
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: monitor cache refresh failed (non-fatal): {ex.Message}");
+                FileLog.Write($"RoeSnip: monitor cache refresh failed (non-fatal): {ex.Message}");
             }
         });
     }
@@ -679,7 +680,7 @@ public sealed class TrayApp : ITrayNotifier
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: overlay window type warmup failed (non-fatal): {ex.Message}");
+                FileLog.Write($"RoeSnip: overlay window type warmup failed (non-fatal): {ex.Message}");
             }
             finally
             {
@@ -702,7 +703,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         if (!CaptureGate.TryEnter())
         {
-            Console.Error.WriteLine("RoeSnip: skipping warmup capture; a real capture is already in progress.");
+            FileLog.Write("RoeSnip: skipping warmup capture; a real capture is already in progress.");
             return;
         }
         // Flag the hold as warmup's so a real hotkey press in this window waits for the gate
@@ -747,14 +748,14 @@ public sealed class TrayApp : ITrayNotifier
                     }
                     catch (Exception ex)
                     {
-                        Console.Error.WriteLine(
+                        FileLog.Write(
                             $"RoeSnip: WGC pre-provisioning failed for monitor {monitor.DeviceName} (non-fatal): {ex.Message}");
                     }
                 }
             }
 #endif
             watch.Stop();
-            Console.Error.WriteLine(
+            FileLog.Write(
                 $"RoeSnip: warmup capture ({frames.Count}/{monitors.Count} monitors) completed in " +
                 $"{watch.ElapsedMilliseconds} ms (the OS capture border may have flashed once on WGC monitors)");
         }
@@ -809,7 +810,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: self-update failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: self-update failed: {ex.Message}");
             return 1;
         }
     }
@@ -910,14 +911,14 @@ public sealed class TrayApp : ITrayNotifier
             return;
         }
 
-        Console.Error.WriteLine($"RoeSnip: auto-updating {UpdateManager.CurrentVersion} -> {update.Version}...");
+        FileLog.Write($"RoeSnip: auto-updating {UpdateManager.CurrentVersion} -> {update.Version}...");
         try
         {
             await UpdateManager.ApplyUpdateAsync(update, WaitForIdleAsync).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: auto-update to {update.Version} failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: auto-update to {update.Version} failed: {ex.Message}");
             if (_updateToastShownForVersion != update.Version)
             {
                 _updateToastShownForVersion = update.Version;
@@ -954,7 +955,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: update check failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: update check failed (non-fatal): {ex.Message}");
             Dispatcher.UIThread.Post(() => ShowToast(
                 "Could not check for updates - GitHub could not be reached.", isError: true, durationMs: 6000, onClick: null));
             return;
@@ -1168,7 +1169,7 @@ public sealed class TrayApp : ITrayNotifier
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine(
+                    FileLog.Write(
                         $"RoeSnip: failed to disable the Snipping Tool PrintScreen intercept: {ex.Message}");
                 }
                 updated = settings with { PrintScreenPromptAnswered = true };
@@ -1188,7 +1189,7 @@ public sealed class TrayApp : ITrayNotifier
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: failed to persist the PrintScreen consent answer: {ex.Message}");
             }
 
@@ -1196,7 +1197,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(
+            FileLog.Write(
                 $"RoeSnip: PrintScreen consent check failed, keeping PrintScreen-alone: {ex.Message}");
             return settings;
         }
@@ -1386,7 +1387,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to show the About window: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to show the About window: {ex.Message}");
         }
     }
 
@@ -1405,7 +1406,7 @@ public sealed class TrayApp : ITrayNotifier
     /// <inheritdoc/>
     public void ShowError(string message)
     {
-        Console.Error.WriteLine($"RoeSnip: {message}");
+        FileLog.Write($"RoeSnip: {message}");
         Dispatcher.UIThread.Post(() => ShowToast(message, isError: true, durationMs: 6000, onClick: null));
     }
 
@@ -1417,7 +1418,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to open {url}: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to open {url}: {ex.Message}");
         }
     }
 
@@ -1493,7 +1494,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: toast notification failed ({ex.Message}); message was: {message}");
+            FileLog.Write($"RoeSnip: toast notification failed ({ex.Message}); message was: {message}");
         }
     }
 
@@ -1520,7 +1521,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to open folder for {filePath}: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to open folder for {filePath}: {ex.Message}");
         }
     }
 
@@ -1587,7 +1588,7 @@ public sealed class TrayApp : ITrayNotifier
             _trayIcon = null;
             // Tray is STRICTLY optional (DESIGN-XPLAT.md) — e.g. Linux StatusNotifier may simply
             // not render one. Never let this stop the hotkey/pipe-listener startup.
-            Console.Error.WriteLine(
+            FileLog.Write(
                 $"RoeSnip: tray icon unavailable ({ex.Message}). The app remains fully operable via " +
                 "the global hotkey and the `RoeSnip capture` / `RoeSnip settings` CLI verbs.");
         }
@@ -1614,7 +1615,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(
+            FileLog.Write(
                 $"RoeSnip: failed to load the bundled app icon ({ex.Message}); using the procedural glyph instead.");
             return null;
         }

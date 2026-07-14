@@ -1,4 +1,5 @@
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using SkiaSharp;
 using Tmds.DBus;
 
@@ -195,7 +196,7 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
         double scaleX = (double)pngWidth / union.Width;
         double scaleY = (double)pngHeight / union.Height;
         bool oneToOne = Math.Abs(scaleX - 1.0) < 0.001 && Math.Abs(scaleY - 1.0) < 0.001;
-        Console.Error.WriteLine(
+        FileLog.Write(
             $"RoeSnip: portal screenshot {pngWidth}x{pngHeight}; RandR virtual desktop " +
             $"{union.Width}x{union.Height} at ({union.Left},{union.Top}); pixel scale {scaleX:F3}x{scaleY:F3}" +
             (oneToOne ? "" : " — portal/RandR unit mismatch detected, slicing with the discovered scale"));

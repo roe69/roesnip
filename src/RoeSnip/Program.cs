@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Sharing;
 
 namespace RoeSnip;
@@ -391,7 +392,7 @@ public static class AppComposition
         var monitors = Capture.MonitorEnumerator.Enumerate();
         if (monitors.Count == 0)
         {
-            Console.Error.WriteLine("RoeSnip: no monitors enumerated.");
+            FileLog.Write("RoeSnip: no monitors enumerated.");
             return 1;
         }
 
@@ -419,10 +420,10 @@ public static class AppComposition
         captureWatch.Stop();
         // Latency instrumentation (stderr, like RunCaptureFlowAsync's capture-to-overlay line) so
         // hotkey-feel regressions are measurable from the CLI without launching the tray app.
-        Console.Error.WriteLine($"RoeSnip: capture {captureWatch.ElapsedMilliseconds} ms");
+        FileLog.Write($"RoeSnip: capture {captureWatch.ElapsedMilliseconds} ms");
         if (frames.Count == 0)
         {
-            Console.Error.WriteLine("RoeSnip: capture failed on every monitor.");
+            FileLog.Write("RoeSnip: capture failed on every monitor.");
             return 1;
         }
 
@@ -453,7 +454,7 @@ public static class AppComposition
             catch (Exception ex)
             {
                 anyWriteFailed = true;
-                Console.Error.WriteLine($"RoeSnip: failed to write {outPath}: {ex.Message}");
+                FileLog.Write($"RoeSnip: failed to write {outPath}: {ex.Message}");
             }
 
             if (cli.Jxr)
@@ -470,13 +471,13 @@ public static class AppComposition
                     catch (Exception ex)
                     {
                         anyWriteFailed = true;
-                        Console.Error.WriteLine($"RoeSnip: failed to write HDR copy: {ex.Message}");
+                        FileLog.Write($"RoeSnip: failed to write HDR copy: {ex.Message}");
                     }
                 }
                 else
                 {
                     anyWriteFailed = true;
-                    Console.Error.WriteLine("RoeSnip: HDR export unavailable, the App package is not present in this build.");
+                    FileLog.Write("RoeSnip: HDR export unavailable, the App package is not present in this build.");
                 }
             }
 
@@ -504,7 +505,7 @@ public static class AppComposition
 
         if (RunTrayApp is null)
         {
-            Console.Error.WriteLine("RoeSnip: the tray app is unavailable in this build (App package not present).");
+            FileLog.Write("RoeSnip: the tray app is unavailable in this build (App package not present).");
             return 1;
         }
 
@@ -566,7 +567,7 @@ public static class AppComposition
         }
         if (!entered)
         {
-            Console.Error.WriteLine("RoeSnip: capture already in progress; ignoring trigger.");
+            FileLog.Write("RoeSnip: capture already in progress; ignoring trigger.");
             // Review fix: same reasoning as the RunOverlay-null branch above — this trigger is being
             // dropped and will never construct an OverlaySession.
             ClearPendingOverlayTrigger?.Invoke();
@@ -624,7 +625,7 @@ public static class AppComposition
                 }
 
                 totalWatch.Stop();
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: capture-to-overlay {totalWatch.ElapsedMilliseconds} ms " +
                     $"(capture {captureMs} ms, tonemap {totalWatch.ElapsedMilliseconds - captureMs} ms)");
 
@@ -637,7 +638,7 @@ public static class AppComposition
 
                 if (result.RecordingRequested is { } recordingRequest)
                 {
-                    Console.Error.WriteLine($"RoeSnip: recording requested ({recordingRequest.Format})");
+                    FileLog.Write($"RoeSnip: recording requested ({recordingRequest.Format})");
                     // Recording has its own save/balloon path (RecordingController.Stop) — skip the
                     // SaveHdr/SavedPngPath handling below entirely; this branch is the terminal one
                     // for a Record command.
@@ -806,6 +807,8 @@ public static class AppComposition
         return count == 0 ? (0, 0, 0) : (min, max, sum / count);
     }
 
+    // Pure CLI help text, not a diagnostic — only ever printed to a terminal the user is actively
+    // looking at, so it stays plain Console.Error (no point cluttering roesnip.log with it).
     private static void PrintUsage()
     {
         Console.Error.WriteLine("Usage: RoeSnip.exe [--diag | --capture [--monitor N] [--out path] [--jxr]]");
@@ -856,6 +859,17 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // RoeSnip.csproj is WinExe, so CLI verbs (--diag/--capture) print into a void unless a
+        // console is explicitly reattached — mirrors the Avalonia app's own TryAttachParentConsole
+        // (App/Program.cs there), which this is a direct port of. Must run before any Console
+        // output, including FileLog.Write below (it also writes to Console.Error).
+        TryAttachParentConsole();
+
+        // Field-visible diagnostics (filelog-sink): as early as possible, before anything else in
+        // this method could log. %APPDATA%\RoeSnip is the settings directory (App/Settings.cs),
+        // never the install dir — the install dir gets replaced wholesale by the self-updater.
+        FileLog.Initialize(App.SettingsStore.SettingsDirectory);
+
         // `--auto` (dev-gated automation client — App/AutomationServer.cs): handled here, before
         // ANY of the mutex/single-instance machinery below, so a client invocation can never trigger
         // the "normal launch replaces the running instance" takeover the way a bare `RoeSnip.exe`
@@ -864,6 +878,7 @@ public static class Program
         {
             if (args.Length != 2)
             {
+                // Pure CLI usage text, not a diagnostic — see PrintUsage's own doc comment.
                 Console.Error.WriteLine(
                     "Usage: RoeSnip.exe --auto '<json>'   (or --auto <command> for a zero-arg command, e.g. --auto state)");
                 return 1;
@@ -890,5 +905,25 @@ public static class Program
             CliMode.Capture => AppComposition.RunCaptureCli(cli),
             _ => AppComposition.RunTray(args), // includes single-instance signalling, see §3.3
         };
+    }
+
+    private const int AttachParentProcess = -1;
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AttachConsole(int dwProcessId);
+
+    private static void TryAttachParentConsole()
+    {
+        try
+        {
+            // Fails harmlessly when double-clicked (no parent console) or when std handles are
+            // already redirected; must run before any Console output so .NET binds the attached
+            // console's handles.
+            AttachConsole(AttachParentProcess);
+        }
+        catch
+        {
+            // best-effort
+        }
     }
 }

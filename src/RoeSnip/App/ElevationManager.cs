@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.App;
 
@@ -223,7 +224,7 @@ public static class ElevationManager
         if (!IsProcessElevated())
         {
             const string message = "RoeSnip: --enable-elevated-startup must be run elevated (the UAC prompt may have been declined).";
-            Console.Error.WriteLine(message);
+            FileLog.Write(message);
             WriteLastError(message);
             return 1;
         }
@@ -237,7 +238,7 @@ public static class ElevationManager
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: {ex.Message}");
+            FileLog.Write($"RoeSnip: {ex.Message}");
             WriteLastError(ex.Message);
             return 1;
         }
@@ -248,7 +249,7 @@ public static class ElevationManager
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to create the elevated startup task: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to create the elevated startup task: {ex.Message}");
             WriteLastError(ex.Message);
             return 1;
         }
@@ -263,7 +264,7 @@ public static class ElevationManager
             // matters. A stray Run key entry alongside it just means RoeSnip's second-instance
             // signalling (TrayApp.SignalExistingInstance) hands off to the elevated task's own
             // capture flow at the next logon — harmless double-launch race, not silent breakage.
-            Console.Error.WriteLine($"RoeSnip: warning: failed to remove the HKCU Run key: {ex.Message}");
+            FileLog.Write($"RoeSnip: warning: failed to remove the HKCU Run key: {ex.Message}");
         }
 
         Console.WriteLine("RoeSnip: elevated startup task installed.");
@@ -278,7 +279,7 @@ public static class ElevationManager
         if (!IsProcessElevated())
         {
             const string message = "RoeSnip: --disable-elevated-startup must be run elevated (the UAC prompt may have been declined).";
-            Console.Error.WriteLine(message);
+            FileLog.Write(message);
             WriteLastError(message);
             return 1;
         }
@@ -289,7 +290,7 @@ public static class ElevationManager
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to remove the elevated startup task: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to remove the elevated startup task: {ex.Message}");
             WriteLastError(ex.Message);
             return 1;
         }
@@ -301,7 +302,7 @@ public static class ElevationManager
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: warning: failed to restore the HKCU Run key: {ex.Message}");
+            FileLog.Write($"RoeSnip: warning: failed to restore the HKCU Run key: {ex.Message}");
         }
 
         Console.WriteLine("RoeSnip: elevated startup task removed.");

@@ -6,6 +6,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Interop;
 
 namespace RoeSnip.Sharing;
@@ -150,7 +151,7 @@ public partial class ShareResultWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to open {_openUrl}: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to open {_openUrl}: {ex.Message}");
         }
     }
 
@@ -171,7 +172,7 @@ public partial class ShareResultWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: share link clipboard copy failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: share link clipboard copy failed (non-fatal): {ex.Message}");
         }
     }
 
@@ -255,7 +256,7 @@ public partial class ShareResultWindow : Window
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: share result window DPI query failed (using 96): {ex.Message}");
+                FileLog.Write($"RoeSnip: share result window DPI query failed (using 96): {ex.Message}");
             }
 
             double scale = dpiX / 96.0;
@@ -269,7 +270,7 @@ public partial class ShareResultWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: share result window placement failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: share result window placement failed (non-fatal): {ex.Message}");
         }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Windows.Threading;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip;
 
@@ -86,7 +87,7 @@ internal static class IdleMemoryTrimmer
         // Managed side is now minimal — the other resident chunk is driver-internal scratch memory
         // cached against the permanently-warm per-monitor D3D11 devices. Hand that back too.
         Capture.WgcCapturer.TrimCachedDeviceMemory();
-        Console.Error.WriteLine(
+        FileLog.Write(
             $"RoeSnip: idle memory trim {watch.ElapsedMilliseconds} ms " +
             $"(managed heap now {GC.GetTotalMemory(false) / (1024 * 1024)} MB)");
     }

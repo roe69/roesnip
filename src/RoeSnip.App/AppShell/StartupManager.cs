@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.Versioning;
 using Microsoft.Win32;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.App.AppShell;
 
@@ -25,7 +26,7 @@ public static class StartupManager
     {
         if (!OperatingSystem.IsWindows())
         {
-            Console.Error.WriteLine("RoeSnip: run-at-startup is not yet implemented on this OS.");
+            FileLog.Write("RoeSnip: run-at-startup is not yet implemented on this OS.");
             return;
         }
 

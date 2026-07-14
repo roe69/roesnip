@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using RoeSnip.App;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Overlay;
 
@@ -72,7 +73,7 @@ public partial class ColorPickerWindow : Window
             var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
             if (!SetWindowDisplayAffinity(hwnd, 0x00000011 /* WDA_EXCLUDEFROMCAPTURE */))
             {
-                Console.Error.WriteLine(
+                FileLog.Write(
                     "RoeSnip: SetWindowDisplayAffinity failed on the color picker window; " +
                     "pick-mode re-captures will include this window in the frozen frame.");
             }
@@ -525,7 +526,7 @@ public partial class ColorPickerWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to save color picker settings: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to save color picker settings: {ex.Message}");
         }
     }
 

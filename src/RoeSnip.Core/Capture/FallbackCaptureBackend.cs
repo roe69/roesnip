@@ -1,3 +1,5 @@
+using RoeSnip.Core.Diagnostics;
+
 namespace RoeSnip.Core.Capture;
 
 /// <summary>Generalizes the WPF app's CaptureService fallback/cache/parallel-capture orchestration
@@ -83,7 +85,7 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
             // (environment changed since it was recorded, e.g. a portal got installed or a
             // one-off X error got persisted by an older build). Clear this monitor's memos and
             // retry once from scratch so a poisoned cache can never permanently kill capture.
-            Console.Error.WriteLine(
+            FileLog.Write(
                 $"RoeSnip: all capturers failed for monitor {monitor.Index} ({monitor.DeviceName}) " +
                 "while some were skipped by the persisted memo — clearing the memo and retrying once.");
             for (int i = 0; i < _capturersInPriorityOrder.Count; i++)
@@ -131,7 +133,7 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
             {
                 failedSlots.Add(i);
                 if (isLastCapturer) lastCapturerFailureMessage = ex.Message;
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: capturer #{i} failed for monitor {monitor.Index} ({monitor.DeviceName}): " +
                     $"{ex.Message}.{(isLastCapturer ? " Omitting this monitor." : " Falling back to the next capturer.")}");
             }

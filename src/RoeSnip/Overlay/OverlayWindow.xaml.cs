@@ -11,6 +11,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using RoeSnip.App;
 using RoeSnip.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Imaging;
 using RoeSnip.Interop;
 
@@ -550,7 +551,7 @@ public partial class OverlayWindow : Window
         if (Environment.GetEnvironmentVariable("ROESNIP_DIAG_NOEXCLUDE") != "1"
             && !NativeMethods.SetWindowDisplayAffinity(hwnd, NativeMethods.WDA_EXCLUDEFROMCAPTURE))
         {
-            Console.Error.WriteLine(
+            FileLog.Write(
                 "RoeSnip: SetWindowDisplayAffinity(EXCLUDEFROMCAPTURE) failed on an overlay window (non-fatal).");
         }
 
@@ -2571,7 +2572,7 @@ public partial class OverlayWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to save live overlay settings: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to save live overlay settings: {ex.Message}");
         }
     }
 

@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Input;
 using System.Windows.Interop;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Overlay;
 
@@ -190,7 +191,7 @@ internal sealed class SessionKeyboardHook : IDisposable
             if (_hookHandle == IntPtr.Zero)
             {
                 int error = Marshal.GetLastWin32Error();
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: failed to install the session keyboard hook (error 0x{error:X}); " +
                     "Esc/Enter/Ctrl+C/Ctrl+S/Ctrl+Z will only work while the overlay actually has focus.");
             }
@@ -199,7 +200,7 @@ internal sealed class SessionKeyboardHook : IDisposable
         {
             // Never let hook installation itself take down the overlay session — this is a
             // reliability layer on top of normal WPF key handling, not a hard requirement.
-            Console.Error.WriteLine($"RoeSnip: failed to install the session keyboard hook: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to install the session keyboard hook: {ex.Message}");
             _hookHandle = IntPtr.Zero;
         }
     }
@@ -295,7 +296,7 @@ internal sealed class SessionKeyboardHook : IDisposable
             {
                 // A malformed hook struct or KeyInterop failure must never crash the hook chain
                 // (which would break keyboard input system-wide) — fall through to CallNextHookEx.
-                Console.Error.WriteLine($"RoeSnip: session keyboard hook callback error: {ex.Message}");
+                FileLog.Write($"RoeSnip: session keyboard hook callback error: {ex.Message}");
             }
         }
 

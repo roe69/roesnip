@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Channels;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Recording;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -313,7 +314,7 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
                 {
                     // Best-effort: losing the take's last frame to a stop-time GPU hiccup is far
                     // better than throwing out of Stop() and leaving the session half torn-down.
-                    Console.Error.WriteLine($"RoeSnip: recording ring drain on stop failed (non-fatal): {ex.Message}");
+                    FileLog.Write($"RoeSnip: recording ring drain on stop failed (non-fatal): {ex.Message}");
                 }
             }
 

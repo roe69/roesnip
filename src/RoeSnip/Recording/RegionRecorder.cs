@@ -8,6 +8,7 @@ using Vortice.Mathematics;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
 using RoeSnip.Capture;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Recording;
 
@@ -292,7 +293,7 @@ internal sealed class RegionRecorder : IDisposable
                 // Best-effort: worst case this monitor's canvas sub-rect just stays at whatever it
                 // was for a bit longer, same as before this method was ever called — not worth
                 // failing the whole take over a stop-time-style GPU hiccup here either.
-                Console.Error.WriteLine($"RoeSnip: initial-frame flush failed (non-fatal): {ex.Message}");
+                FileLog.Write($"RoeSnip: initial-frame flush failed (non-fatal): {ex.Message}");
                 return false;
             }
         }
@@ -391,7 +392,7 @@ internal sealed class RegionRecorder : IDisposable
                 {
                     // Best-effort: losing the take's last frame to a stop-time GPU hiccup is far
                     // better than throwing out of Stop() and leaving the session half torn-down.
-                    Console.Error.WriteLine($"RoeSnip: recording ring drain on stop failed (non-fatal): {ex.Message}");
+                    FileLog.Write($"RoeSnip: recording ring drain on stop failed (non-fatal): {ex.Message}");
                 }
             }
 

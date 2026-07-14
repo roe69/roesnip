@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Capture;
 
@@ -104,7 +105,7 @@ public sealed class CaptureCache
             // Corrupt/unreadable cache = empty memo; a capture must never fail because of this
             // file. (Broader catch than SettingsStore on purpose — this file is disposable derived
             // state, not user data.)
-            Console.Error.WriteLine($"RoeSnip: capture cache unreadable/corrupt, starting empty: {ex.Message}");
+            FileLog.Write($"RoeSnip: capture cache unreadable/corrupt, starting empty: {ex.Message}");
         }
     }
 
@@ -126,7 +127,7 @@ public sealed class CaptureCache
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to save capture cache: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to save capture cache: {ex.Message}");
         }
     }
 

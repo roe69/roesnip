@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Imaging;
 
 namespace RoeSnip.App.Overlay;
@@ -42,7 +43,7 @@ public static class ClipboardService
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: NSPasteboard PNG write failed ({ex.Message}); falling back to the Avalonia clipboard.");
             }
         }

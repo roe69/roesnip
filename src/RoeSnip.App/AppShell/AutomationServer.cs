@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Recording;
 using RoeSnip.Core.Recording.Gif;
@@ -320,7 +321,7 @@ internal sealed class AutomationServer
     {
         _cts = new CancellationTokenSource();
         _ = RunAsync(_cts.Token);
-        Console.Error.WriteLine("RoeSnip: automation pipe enabled (ROESNIP_AUTOMATION=1 / --automation).");
+        FileLog.Write("RoeSnip: automation pipe enabled (ROESNIP_AUTOMATION=1 / --automation).");
     }
 
     public void Stop() => _cts?.Cancel();
@@ -343,7 +344,7 @@ internal sealed class AutomationServer
             }
             catch (Exception ex) when (!token.IsCancellationRequested)
             {
-                Console.Error.WriteLine($"RoeSnip: automation pipe listener error: {ex.Message}");
+                FileLog.Write($"RoeSnip: automation pipe listener error: {ex.Message}");
                 await Task.Delay(1000, token).ContinueWith(_ => { }).ConfigureAwait(false);
             }
         }
@@ -773,7 +774,7 @@ public static class AutomationClient
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: --auto argument is not valid JSON: {ex.Message}");
+            FileLog.Write($"RoeSnip: --auto argument is not valid JSON: {ex.Message}");
             return 1;
         }
 
@@ -814,7 +815,7 @@ public static class AutomationClient
             string? response = reader.ReadLine();
             if (response is null)
             {
-                Console.Error.WriteLine("RoeSnip: automation pipe closed without a response.");
+                FileLog.Write("RoeSnip: automation pipe closed without a response.");
                 return 1;
             }
 
@@ -825,13 +826,13 @@ public static class AutomationClient
         }
         catch (TimeoutException)
         {
-            Console.Error.WriteLine(
+            FileLog.Write(
                 "RoeSnip: could not connect to the automation pipe - resident not started with ROESNIP_AUTOMATION=1 (or --automation).");
             return 1;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: --auto failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: --auto failed: {ex.Message}");
             return 1;
         }
         finally

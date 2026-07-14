@@ -13,6 +13,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Overlay;
 using RoeSnip.Core.Settings;
@@ -363,7 +364,7 @@ public partial class OverlayWindow : Window
                 // the "never reposition/resize post-Show" discipline exists to avoid; it only
                 // fires on this rare mismatch path, never on the common one.
                 var boundsPx = _frame.Monitor.BoundsPx;
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: overlay for monitor {_frame.Monitor.Index} opened with RenderScaling {actual} " +
                     $"but Screen.Scaling was {_scaleX}; resizing to {boundsPx.Width}x{boundsPx.Height}px " +
                     $"({boundsPx.Width / actual:0.##}x{boundsPx.Height / actual:0.##} DIP) to keep monitor " +
@@ -402,7 +403,7 @@ public partial class OverlayWindow : Window
 
         if (match is null)
         {
-            Console.Error.WriteLine(
+            FileLog.Write(
                 $"RoeSnip: no Avalonia screen matches monitor {_frame.Monitor.Index} " +
                 $"({_frame.Monitor.DeviceName}, bounds {bounds.Left},{bounds.Top} {bounds.Width}x{bounds.Height}); " +
                 "skipping its overlay window.");
@@ -1122,7 +1123,7 @@ public partial class OverlayWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to save live overlay settings: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to save live overlay settings: {ex.Message}");
         }
     }
 

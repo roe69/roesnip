@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.App.Overlay;
 
@@ -150,7 +151,7 @@ public sealed class ToolCursorCache : IDisposable
             // system cursor for the rest of this session rather than re-attempting (and re-logging)
             // on every subsequent tool/color/width change.
             _bitmapCursorsUnsupported = true;
-            Console.Error.WriteLine($"RoeSnip: custom tool cursor rendering failed ({ex.Message}); falling back to the system cursor.");
+            FileLog.Write($"RoeSnip: custom tool cursor rendering failed ({ex.Message}); falling back to the system cursor.");
             return FallbackCursor(tool);
         }
 

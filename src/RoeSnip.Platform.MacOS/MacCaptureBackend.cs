@@ -1,5 +1,6 @@
 using System.Globalization;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Platform.MacOS;
 
@@ -47,7 +48,7 @@ public sealed class MacCaptureBackend : ICaptureBackend
         catch (CaptureException ex)
         {
             // §2.3 contract: empty list only if enumeration itself fails entirely.
-            Console.Error.WriteLine($"RoeSnip: scksnap display enumeration failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: scksnap display enumeration failed: {ex.Message}");
             return Array.Empty<MonitorInfo>();
         }
 
@@ -97,7 +98,7 @@ public sealed class MacCaptureBackend : ICaptureBackend
             }
             catch (CaptureException ex)
             {
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: scksnap capture failed for monitor {monitor.Index} ({monitor.DeviceName}): " +
                     $"{ex.Message}. Omitting this monitor.");
             }

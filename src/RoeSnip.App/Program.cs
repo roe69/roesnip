@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Avalonia;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Settings;
 
@@ -217,7 +218,7 @@ public static class AppComposition
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to load settings, using defaults: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to load settings, using defaults: {ex.Message}");
             return RoeSnipSettings.Default;
         }
     }
@@ -234,11 +235,11 @@ public static class AppComposition
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: no capture backend available: {ex.Message}");
+            FileLog.Write($"RoeSnip: no capture backend available: {ex.Message}");
             return 1;
         }
 
-        Console.Error.WriteLine($"RoeSnip: backend = {captureService.BackendName}");
+        FileLog.Write($"RoeSnip: backend = {captureService.BackendName}");
 
         IReadOnlyList<MonitorInfo> monitors;
 #if MACOS_BACKEND
@@ -259,7 +260,7 @@ public static class AppComposition
 #endif
         if (monitors.Count == 0)
         {
-            Console.Error.WriteLine("RoeSnip: no monitors enumerated.");
+            FileLog.Write("RoeSnip: no monitors enumerated.");
             return 1;
         }
 
@@ -287,7 +288,7 @@ public static class AppComposition
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: no capture backend available: {ex.Message}");
+            FileLog.Write($"RoeSnip: no capture backend available: {ex.Message}");
             return 1;
         }
 
@@ -313,10 +314,10 @@ public static class AppComposition
         captureWatch.Stop();
         // Latency instrumentation (stderr, like RunCaptureFlowAsync's capture-to-overlay line) so
         // hotkey-feel regressions are measurable from the CLI without launching the tray app.
-        Console.Error.WriteLine($"RoeSnip: capture {captureWatch.ElapsedMilliseconds} ms");
+        FileLog.Write($"RoeSnip: capture {captureWatch.ElapsedMilliseconds} ms");
         if (frames.Count == 0)
         {
-            Console.Error.WriteLine("RoeSnip: capture failed on every monitor.");
+            FileLog.Write("RoeSnip: capture failed on every monitor.");
             return 1;
         }
 
@@ -347,7 +348,7 @@ public static class AppComposition
             catch (Exception ex)
             {
                 anyWriteFailed = true;
-                Console.Error.WriteLine($"RoeSnip: failed to write {outPath}: {ex.Message}");
+                FileLog.Write($"RoeSnip: failed to write {outPath}: {ex.Message}");
             }
 
             if (cli.Jxr)
@@ -364,13 +365,13 @@ public static class AppComposition
                     catch (Exception ex)
                     {
                         anyWriteFailed = true;
-                        Console.Error.WriteLine($"RoeSnip: failed to write HDR copy: {ex.Message}");
+                        FileLog.Write($"RoeSnip: failed to write HDR copy: {ex.Message}");
                     }
                 }
                 else
                 {
                     anyWriteFailed = true;
-                    Console.Error.WriteLine("RoeSnip: HDR export is not available on this platform/build.");
+                    FileLog.Write("RoeSnip: HDR export is not available on this platform/build.");
                 }
             }
 
@@ -402,7 +403,7 @@ public static class AppComposition
 
         if (RunTrayApp is null)
         {
-            Console.Error.WriteLine("RoeSnip: the tray app is unavailable in this build (AppShell not present).");
+            FileLog.Write("RoeSnip: the tray app is unavailable in this build (AppShell not present).");
             return 1;
         }
 
@@ -424,7 +425,7 @@ public static class AppComposition
     {
         if (RunResidentWithInitialAction is null)
         {
-            Console.Error.WriteLine("RoeSnip: the tray app is unavailable in this build (AppShell not present).");
+            FileLog.Write("RoeSnip: the tray app is unavailable in this build (AppShell not present).");
             return 1;
         }
 
@@ -499,7 +500,7 @@ public static class AppComposition
         }
         if (!entered)
         {
-            Console.Error.WriteLine("RoeSnip: capture already in progress; ignoring trigger.");
+            FileLog.Write("RoeSnip: capture already in progress; ignoring trigger.");
             return;
         }
 
@@ -545,7 +546,7 @@ public static class AppComposition
                 }
 
                 totalWatch.Stop();
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: capture-to-overlay {totalWatch.ElapsedMilliseconds} ms " +
                     $"(capture {captureMs} ms, tonemap {totalWatch.ElapsedMilliseconds - captureMs} ms)");
 
@@ -739,14 +740,16 @@ public static class AppComposition
     private static int ReportScreenRecordingPermissionDenied(
         RoeSnip.Platform.MacOS.ScreenRecordingPermissionDeniedException ex)
     {
-        Console.Error.WriteLine("RoeSnip: Screen Recording permission is required to capture the screen.");
-        Console.Error.WriteLine($"  {ex.Message}");
-        Console.Error.WriteLine(
+        FileLog.Write("RoeSnip: Screen Recording permission is required to capture the screen.");
+        FileLog.Write($"  {ex.Message}");
+        FileLog.Write(
             "  Grant it to 'scksnap' in System Settings > Privacy & Security > Screen Recording, then retry.");
         return RoeSnip.Platform.MacOS.ScksnapHelperClient.TccDeniedExitCode;
     }
 #endif
 
+    // Pure CLI help text, not a diagnostic — only ever printed to a terminal the user is actively
+    // looking at, so it stays plain Console.Error (no point cluttering roesnip.log with it).
     internal static void PrintUsage()
     {
         Console.Error.WriteLine("Usage: RoeSnip [--diag | --capture [--monitor N] [--out path] [--jxr] | capture | settings]");
@@ -773,6 +776,12 @@ public static class Program
         // flag 7) — reattach to the invoking terminal's console so CLI verbs still print.
         TryAttachParentConsole();
 
+        // Field-visible diagnostics (filelog-sink): as early as possible, before anything else in
+        // this method could log. ConfigPaths.ConfigDirectory is the settings/config directory
+        // (Settings/ConfigPaths.cs), never the install dir — the install dir gets replaced
+        // wholesale by the self-updater.
+        FileLog.Initialize(ConfigPaths.ConfigDirectory);
+
         // `--auto` (dev-gated automation client — AppShell/AutomationServer.cs): handled here,
         // before ANY of the single-instance machinery below (CliOptions.Parse/AppComposition.
         // RunTray/RunTriggerCapture etc.), so a client invocation can never trigger the "normal
@@ -783,6 +792,7 @@ public static class Program
         {
             if (args.Length != 2)
             {
+                // Pure CLI usage text, not a diagnostic — see PrintUsage's own doc comment.
                 Console.Error.WriteLine(
                     "Usage: RoeSnip --auto '<json>'   (or --auto <command> for a zero-arg command, e.g. --auto state)");
                 return 1;

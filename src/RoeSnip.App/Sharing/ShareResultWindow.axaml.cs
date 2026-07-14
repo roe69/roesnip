@@ -7,6 +7,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 using RoeSnip.App.Overlay;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.App.Sharing;
 
@@ -145,7 +146,7 @@ public partial class ShareResultWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to open {_openUrl}: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to open {_openUrl}: {ex.Message}");
         }
     }
 
@@ -160,7 +161,7 @@ public partial class ShareResultWindow : Window
         bool copied = await ClipboardService.TryCopyTextAsync(this, _cleanUrl);
         if (!copied)
         {
-            Console.Error.WriteLine("RoeSnip: share link clipboard copy failed (non-fatal).");
+            FileLog.Write("RoeSnip: share link clipboard copy failed (non-fatal).");
         }
     }
 
@@ -235,7 +236,7 @@ public partial class ShareResultWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: share result window placement failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: share result window placement failed (non-fatal): {ex.Message}");
         }
     }
 }

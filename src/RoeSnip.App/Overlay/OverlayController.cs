@@ -1,5 +1,6 @@
 using Avalonia.Platform.Storage;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Overlay;
 using RoeSnip.Core.Settings;
@@ -129,12 +130,12 @@ public static class OverlayController
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
             FlashDimmer.EnsureCreated(monitors);
-            Console.Error.WriteLine(
+            FileLog.Write(
                 $"RoeSnip: flash dimmer windows ready in {watch.ElapsedMilliseconds} ms ({monitors.Count} monitors)");
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: flash dimmer pre-creation failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: flash dimmer pre-creation failed (non-fatal): {ex.Message}");
         }
     }
 
@@ -165,7 +166,7 @@ public static class OverlayController
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: flash dimmer show failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: flash dimmer show failed (non-fatal): {ex.Message}");
             try { FlashDimmer.HideAll(); } catch { /* best-effort */ }
             return false;
         }
@@ -184,7 +185,7 @@ public static class OverlayController
         if (--s_flashUsers == 0)
         {
             try { FlashDimmer.HideAll(); }
-            catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
+            catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
         }
     }
 
@@ -201,7 +202,7 @@ public static class OverlayController
         }
         s_flashCancelRequested = true;
         try { FlashDimmer.HideAll(); }
-        catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
+        catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
     }
 
     private static bool ConsumeFlashCancelRequest()
@@ -295,7 +296,7 @@ public static class OverlayController
     {
         if (!AppShell.CaptureGate.TryEnter())
         {
-            Console.Error.WriteLine("RoeSnip: a capture is already in progress; ignoring pick request.");
+            FileLog.Write("RoeSnip: a capture is already in progress; ignoring pick request.");
             return;
         }
 
@@ -312,7 +313,7 @@ public static class OverlayController
             var frames = captureService.CaptureAll();
             if (frames.Count == 0)
             {
-                Console.Error.WriteLine("RoeSnip: pick-mode capture failed on every monitor.");
+                FileLog.Write("RoeSnip: pick-mode capture failed on every monitor.");
                 return;
             }
 
@@ -342,7 +343,7 @@ public static class OverlayController
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: pick-mode capture failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: pick-mode capture failed: {ex.Message}");
         }
         finally
         {
@@ -554,13 +555,13 @@ public static class OverlayController
             double elapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(_responseBaseTimestamp).TotalMilliseconds;
             if (_shownCount == 1)
             {
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: first-overlay-visible {elapsedMs:0} ms (monitor {window.Monitor.Index})");
             }
             bool allShown = _shownCount == _windows.Count;
             if (allShown)
             {
-                Console.Error.WriteLine($"RoeSnip: all-overlays-visible {elapsedMs:0} ms");
+                FileLog.Write($"RoeSnip: all-overlays-visible {elapsedMs:0} ms");
             }
 
             string deviceName = window.Monitor.DeviceName;
@@ -809,7 +810,7 @@ public static class OverlayController
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine(
+                    FileLog.Write(
                         $"RoeSnip: spanning-selection crop failed for monitor {geo.Window.Monitor.DeviceName} (non-fatal, that slice stays black): {ex.Message}");
                     continue;
                 }
@@ -1064,7 +1065,7 @@ public static class OverlayController
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"RoeSnip: spanning-selection share render failed: {ex.Message}");
+                    FileLog.Write($"RoeSnip: spanning-selection share render failed: {ex.Message}");
                     toolbarWindow = null;
                     return false;
                 }
@@ -1094,7 +1095,7 @@ public static class OverlayController
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: share PNG encode failed: {ex.Message}");
+                FileLog.Write($"RoeSnip: share PNG encode failed: {ex.Message}");
                 toolbarWindow = null;
                 pngBytes = null;
                 return false;
@@ -1135,7 +1136,7 @@ public static class OverlayController
         private static void FireAndForget(Task task)
         {
             _ = task.ContinueWith(
-                t => Console.Error.WriteLine(
+                t => FileLog.Write(
                     $"RoeSnip: unhandled overlay command failure: {t.Exception?.GetBaseException().Message}"),
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
         }
@@ -1294,7 +1295,7 @@ public static class OverlayController
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: overlay confirm failed: {ex.Message}");
+                FileLog.Write($"RoeSnip: overlay confirm failed: {ex.Message}");
             }
             finally
             {
@@ -1319,7 +1320,7 @@ public static class OverlayController
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: spanning-selection render failed: {ex.Message}");
+                FileLog.Write($"RoeSnip: spanning-selection render failed: {ex.Message}");
                 return;
             }
 
@@ -1395,7 +1396,7 @@ public static class OverlayController
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: overlay confirm failed: {ex.Message}");
+                FileLog.Write($"RoeSnip: overlay confirm failed: {ex.Message}");
             }
             finally
             {
@@ -1501,7 +1502,7 @@ public static class OverlayController
             // FlashWindow.HideFlash is itself idempotent.)
             FlashDimmer.InvalidateForegroundClaim();
             try { FlashDimmer.HideAll(); }
-            catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
+            catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
 
             _completion.TrySetResult(result);
         }
@@ -1655,7 +1656,7 @@ public static class OverlayController
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"RoeSnip: spanning-selection render failed: {ex.Message}");
+                    FileLog.Write($"RoeSnip: spanning-selection render failed: {ex.Message}");
                     return;
                 }
 
@@ -1665,7 +1666,7 @@ public static class OverlayController
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"RoeSnip: automation save failed: {ex.Message}");
+                    FileLog.Write($"RoeSnip: automation save failed: {ex.Message}");
                     return;
                 }
 
@@ -1709,7 +1710,7 @@ public static class OverlayController
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: automation save failed: {ex.Message}");
+                FileLog.Write($"RoeSnip: automation save failed: {ex.Message}");
                 return;
             }
 

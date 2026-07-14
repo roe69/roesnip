@@ -6,6 +6,7 @@ using Avalonia.Threading;
 using RoeSnip.App.AppShell;
 using RoeSnip.App.Overlay;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Recording;
 using RoeSnip.Core.Recording.Gif;
 using RoeSnip.Core.Settings;
@@ -223,7 +224,7 @@ public sealed class RecordingOrchestrator
                 // The DATA-LOSS RULE's enforcement point: delete ONLY here, on a genuine upload
                 // success - never in the presenter's own generic plumbing.
                 try { if (File.Exists(handoff.TempPath)) File.Delete(handoff.TempPath); }
-                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
             },
             onFailure: null,
             notifier: _notifier);
@@ -241,7 +242,7 @@ public sealed class RecordingOrchestrator
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: fresh settings load for share availability check failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: fresh settings load for share availability check failed: {ex.Message}");
             return null;
         }
     }

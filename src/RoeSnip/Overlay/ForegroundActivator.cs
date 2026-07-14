@@ -1,6 +1,7 @@
 using System;
 using System.Windows;
 using System.Windows.Interop;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Overlay;
 
@@ -30,12 +31,12 @@ internal static class ForegroundActivator
         IntPtr hwnd = new WindowInteropHelper(window).Handle;
         if (hwnd == IntPtr.Zero)
         {
-            Console.Error.WriteLine($"RoeSnip: {context} activation skipped, window has no HWND yet.");
+            FileLog.Write($"RoeSnip: {context} activation skipped, window has no HWND yet.");
             return;
         }
 
         IntPtr before = OverlayInputInterop.GetForegroundWindow();
-        Console.Error.WriteLine(
+        FileLog.Write(
             $"RoeSnip: {context} activation starting; foreground before = 0x{before.ToInt64():X} (ours = 0x{hwnd.ToInt64():X}).");
 
         try
@@ -44,14 +45,14 @@ internal static class ForegroundActivator
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: {context} activation: Window.Activate() threw: {ex.Message}");
+            FileLog.Write($"RoeSnip: {context} activation: Window.Activate() threw: {ex.Message}");
         }
 
         if (TryTier1(hwnd)) { LogResult(context, 1); return; }
         if (TryTier2(hwnd)) { LogResult(context, 2); return; }
         if (TryTier3(hwnd)) { LogResult(context, 3); return; }
 
-        Console.Error.WriteLine(
+        FileLog.Write(
             $"RoeSnip: {context} activation: all tiers failed; foreground remains 0x{OverlayInputInterop.GetForegroundWindow().ToInt64():X}.");
     }
 
@@ -70,7 +71,7 @@ internal static class ForegroundActivator
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: tier-1 activation failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: tier-1 activation failed: {ex.Message}");
             return false;
         }
     }
@@ -106,7 +107,7 @@ internal static class ForegroundActivator
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: tier-2 (AttachThreadInput) activation failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: tier-2 (AttachThreadInput) activation failed: {ex.Message}");
             return false;
         }
     }
@@ -122,14 +123,14 @@ internal static class ForegroundActivator
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: tier-3 (SendInput Alt-tap) activation failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: tier-3 (SendInput Alt-tap) activation failed: {ex.Message}");
             return false;
         }
     }
 
     private static void LogResult(string context, int tier)
     {
-        Console.Error.WriteLine(
+        FileLog.Write(
             $"RoeSnip: {context} activation via tier {tier} (foreground now = 0x{OverlayInputInterop.GetForegroundWindow().ToInt64():X}).");
     }
 }

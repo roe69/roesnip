@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Capture;
 
@@ -77,7 +78,7 @@ public sealed class CaptureService
                 // First failure for this monitor: log it and persist the memo so later captures
                 // (including after an app relaunch) skip the doomed primary attempt entirely.
                 _cache.MarkDesktopDuplicationBroken(monitor.DeviceName);
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: Desktop Duplication capture failed for monitor {monitor.Index} " +
                     $"({monitor.DeviceName}): {primaryEx.Message}. Falling back to WGC " +
                     "(and skipping Desktop Duplication for this monitor from now on; memo persisted to capture-cache.json).");
@@ -90,7 +91,7 @@ public sealed class CaptureService
         }
         catch (CaptureException fallbackEx)
         {
-            Console.Error.WriteLine(
+            FileLog.Write(
                 $"RoeSnip: WGC fallback capture also failed for monitor {monitor.Index} " +
                 $"({monitor.DeviceName}): {fallbackEx.Message}. Omitting this monitor.");
             return null;

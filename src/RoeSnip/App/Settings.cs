@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.App;
 
@@ -67,7 +68,7 @@ public static class SettingsStore
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
-            Console.Error.WriteLine($"RoeSnip: settings file unreadable/corrupt, using defaults: {ex.Message}");
+            FileLog.Write($"RoeSnip: settings file unreadable/corrupt, using defaults: {ex.Message}");
             return RoeSnipSettings.Default;
         }
     }

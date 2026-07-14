@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Recording;
 using RoeSnip.Core.Settings;
 
@@ -22,6 +23,7 @@ internal static class RecordingSmokeTest
     {
         if (args.Length is < 2 or > 3 || (args[1] != "gif" && args[1] != "mp4"))
         {
+            // Pure CLI usage text, not a diagnostic — see Program.PrintUsage's own doc comment.
             Console.Error.WriteLine("Usage: RoeSnip --record-smoketest gif|mp4 [seconds]");
             return 1;
         }
@@ -30,7 +32,7 @@ internal static class RecordingSmokeTest
 
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ROESNIP_RECORD_AUTOSAVE")))
         {
-            Console.Error.WriteLine("RoeSnip: --record-smoketest requires ROESNIP_RECORD_AUTOSAVE to be set (this port has no save-file dialog yet).");
+            FileLog.Write("RoeSnip: --record-smoketest requires ROESNIP_RECORD_AUTOSAVE to be set (this port has no save-file dialog yet).");
             return 1;
         }
 
@@ -41,7 +43,7 @@ internal static class RecordingSmokeTest
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: no capture backend available: {ex.Message}");
+            FileLog.Write($"RoeSnip: no capture backend available: {ex.Message}");
             return 1;
         }
 
@@ -49,7 +51,7 @@ internal static class RecordingSmokeTest
         var monitor = monitors.FirstOrDefault(m => m.IsPrimary) ?? monitors.FirstOrDefault();
         if (monitor is null)
         {
-            Console.Error.WriteLine("RoeSnip: no monitor enumerated.");
+            FileLog.Write("RoeSnip: no monitor enumerated.");
             return 1;
         }
 
@@ -62,18 +64,18 @@ internal static class RecordingSmokeTest
         session.BeginCapture();
         if (!session.IsCapturing)
         {
-            Console.Error.WriteLine("RoeSnip: recording failed to start capturing.");
+            FileLog.Write("RoeSnip: recording failed to start capturing.");
             return 1;
         }
 
-        Console.Error.WriteLine($"RoeSnip: recording {format} for {seconds}s ({width}x{height} @ {monitor.DeviceName})...");
+        FileLog.Write($"RoeSnip: recording {format} for {seconds}s ({width}x{height} @ {monitor.DeviceName})...");
         System.Threading.Thread.Sleep(seconds * 1000);
 
         session.StopCaptureToReview();
         string? finalPath = session.Save();
         if (finalPath is null)
         {
-            Console.Error.WriteLine("RoeSnip: recording save failed.");
+            FileLog.Write("RoeSnip: recording save failed.");
             return 1;
         }
 

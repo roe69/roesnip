@@ -1,4 +1,5 @@
 using System;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Interop;
 
 namespace RoeSnip.App;
@@ -53,7 +54,7 @@ public sealed class HotkeyManager : IDisposable
 
         if (!_registered)
         {
-            Console.Error.WriteLine(
+            FileLog.Write(
                 $"RoeSnip: RegisterHotKey failed (modifiers=0x{modifiers:X}, vk=0x{virtualKey:X}); " +
                 "another application likely already owns this key combination.");
         }

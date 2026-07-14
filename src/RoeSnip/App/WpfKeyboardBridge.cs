@@ -1,5 +1,6 @@
 using System;
 using System.Windows.Interop;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.App;
 
@@ -46,7 +47,7 @@ internal sealed class WpfKeyboardBridge : System.Windows.Forms.IMessageFilter
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: WPF keyboard bridge error (key passed through): {ex.Message}");
+            FileLog.Write($"RoeSnip: WPF keyboard bridge error (key passed through): {ex.Message}");
             return false;
         }
     }

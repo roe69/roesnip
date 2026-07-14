@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Platform.Windows.Interop;
 using Vortice.DXGI;
 
@@ -49,7 +50,7 @@ public static class MonitorEnumerator
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: monitor enumeration failed entirely: {ex.Message}");
+            FileLog.Write($"RoeSnip: monitor enumeration failed entirely: {ex.Message}");
             return Array.Empty<MonitorInfo>();
         }
 
@@ -101,7 +102,7 @@ public static class MonitorEnumerator
                 };
                 if (!NativeMethods.GetMonitorInfo(hMonitor, ref mi))
                 {
-                    Console.Error.WriteLine($"RoeSnip: GetMonitorInfo failed for HMONITOR {hMonitor}.");
+                    FileLog.Write($"RoeSnip: GetMonitorInfo failed for HMONITOR {hMonitor}.");
                     return true;
                 }
 
@@ -113,7 +114,7 @@ public static class MonitorEnumerator
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"RoeSnip: GetDpiForMonitor failed for {mi.szDevice}: {ex.Message}");
+                    FileLog.Write($"RoeSnip: GetDpiForMonitor failed for {mi.szDevice}: {ex.Message}");
                 }
 
                 raw.Add(new RawMonitor
@@ -128,7 +129,7 @@ public static class MonitorEnumerator
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: monitor enum callback failed: {ex.Message}");
+                FileLog.Write($"RoeSnip: monitor enum callback failed: {ex.Message}");
             }
             return true;
         }
@@ -137,7 +138,7 @@ public static class MonitorEnumerator
         NativeMethods.MonitorEnumProc proc = Callback;
         if (!NativeMethods.EnumDisplayMonitors(0, 0, proc, 0))
         {
-            Console.Error.WriteLine("RoeSnip: EnumDisplayMonitors reported failure.");
+            FileLog.Write("RoeSnip: EnumDisplayMonitors reported failure.");
         }
         GC.KeepAlive(proc);
         return raw;
@@ -178,7 +179,7 @@ public static class MonitorEnumerator
                             }
                             catch (Exception ex)
                             {
-                                Console.Error.WriteLine($"RoeSnip: DXGI output query failed: {ex.Message}");
+                                FileLog.Write($"RoeSnip: DXGI output query failed: {ex.Message}");
                             }
                         }
                     }
@@ -187,7 +188,7 @@ public static class MonitorEnumerator
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: DXGI adapter enumeration failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: DXGI adapter enumeration failed: {ex.Message}");
         }
         return result;
     }
@@ -201,7 +202,7 @@ public static class MonitorEnumerator
             int sizesHr = NativeMethods.GetDisplayConfigBufferSizes(NativeMethods.QDC_ONLY_ACTIVE_PATHS, out pathCount, out modeCount);
             if (sizesHr != 0)
             {
-                Console.Error.WriteLine($"RoeSnip: GetDisplayConfigBufferSizes failed (0x{sizesHr:X8}); SDR white level will default to 240 nits.");
+                FileLog.Write($"RoeSnip: GetDisplayConfigBufferSizes failed (0x{sizesHr:X8}); SDR white level will default to 240 nits.");
                 return result;
             }
 
@@ -211,7 +212,7 @@ public static class MonitorEnumerator
                 NativeMethods.QDC_ONLY_ACTIVE_PATHS, ref pathCount, paths, ref modeCount, modes, IntPtr.Zero);
             if (queryHr != 0)
             {
-                Console.Error.WriteLine($"RoeSnip: QueryDisplayConfig failed (0x{queryHr:X8}); SDR white level will default to 240 nits.");
+                FileLog.Write($"RoeSnip: QueryDisplayConfig failed (0x{queryHr:X8}); SDR white level will default to 240 nits.");
                 return result;
             }
 
@@ -255,13 +256,13 @@ public static class MonitorEnumerator
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"RoeSnip: SDR white level query failed for path {i}: {ex.Message}");
+                    FileLog.Write($"RoeSnip: SDR white level query failed for path {i}: {ex.Message}");
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: SDR white level enumeration failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: SDR white level enumeration failed: {ex.Message}");
         }
         return result;
     }

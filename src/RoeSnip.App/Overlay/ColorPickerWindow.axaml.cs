@@ -6,6 +6,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Settings;
 using ColorFormatCatalog = RoeSnip.Core.Color.ColorFormatCatalog;
 using ColorFormatEntry = RoeSnip.Core.Color.ColorFormatEntry;
@@ -542,7 +543,7 @@ public partial class ColorPickerWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to save color picker settings: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to save color picker settings: {ex.Message}");
         }
     }
 

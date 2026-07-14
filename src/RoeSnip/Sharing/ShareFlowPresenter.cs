@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Sharing;
 
 namespace RoeSnip.Sharing;
@@ -97,7 +98,7 @@ public static class ShareFlowPresenter
             // recording's temp-file delete (the caller's onSuccess) never races an still-open
             // FileStream handle on the same path.
             try { request.Content.Dispose(); }
-            catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: share upload stream dispose failed (non-fatal): {ex.Message}"); }
+            catch (Exception ex) { FileLog.Write($"RoeSnip: share upload stream dispose failed (non-fatal): {ex.Message}"); }
         }
 
         // Discarded: DispatcherOperation is awaitable, but there is nothing further to do once the
@@ -113,7 +114,7 @@ public static class ShareFlowPresenter
                 // identical copy on demand, e.g. after the user pasted the link elsewhere and
                 // overwrote the clipboard.
                 try { System.Windows.Clipboard.SetText(cleanUrl); }
-                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: share URL clipboard copy failed (non-fatal): {ex.Message}"); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: share URL clipboard copy failed (non-fatal): {ex.Message}"); }
 
                 window.ShowSuccess(cleanUrl, openUrl);
                 onSuccess?.Invoke();

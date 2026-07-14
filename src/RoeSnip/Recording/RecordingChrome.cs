@@ -10,6 +10,7 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using RoeSnip.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Interop;
 using RoeSnip.Core.Recording.Gif;
 // Recording-core-extraction: RecordingSizeEstimator moved to RoeSnip.Core.Recording. A plain
@@ -745,7 +746,7 @@ internal sealed class RecordingChrome : Window
         if (Environment.GetEnvironmentVariable("ROESNIP_DIAG_NOEXCLUDE") != "1"
             && !NativeMethods.SetWindowDisplayAffinity(hwnd, NativeMethods.WDA_EXCLUDEFROMCAPTURE))
         {
-            Console.Error.WriteLine(
+            FileLog.Write(
                 "RoeSnip: SetWindowDisplayAffinity(EXCLUDEFROMCAPTURE) failed on the recording chrome; it will appear IN the recording!");
         }
 

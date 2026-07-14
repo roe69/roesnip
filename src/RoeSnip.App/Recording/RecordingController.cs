@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Recording;
 using RoeSnip.Core.Recording.Gif;
 using RoeSnip.Core.Settings;
@@ -232,7 +233,7 @@ public sealed class RecordingSession
         // content, an auto-exposure-style flicker).
         _fixedToneMapOpts = ComputeFixedToneMapOpts(_monitor);
 
-        Console.Error.WriteLine($"RoeSnip: recording setup opened ({_format}, {_selectionPx.Width}x{_selectionPx.Height})");
+        FileLog.Write($"RoeSnip: recording setup opened ({_format}, {_selectionPx.Width}x{_selectionPx.Height})");
     }
 
     private RoeSnip.Core.Color.ToneMapOptions ComputeFixedToneMapOpts(MonitorInfo monitor)
@@ -292,7 +293,7 @@ public sealed class RecordingSession
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to persist recording setting: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to persist recording setting: {ex.Message}");
         }
     }
 
@@ -367,11 +368,11 @@ public sealed class RecordingSession
 
             _captureStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
             SetPhase(Phase.Capturing);
-            Console.Error.WriteLine($"RoeSnip: recording capture started ({_format}, {_selectionPx.Width}x{_selectionPx.Height}, {_targetFps}fps)");
+            FileLog.Write($"RoeSnip: recording capture started ({_format}, {_selectionPx.Width}x{_selectionPx.Height}, {_targetFps}fps)");
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to start recording capture: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to start recording capture: {ex.Message}");
             _notifier?.ShowError($"Failed to start recording: {ex.Message}");
 
             try { _recorder?.Dispose(); } catch { /* best-effort */ }
@@ -440,7 +441,7 @@ public sealed class RecordingSession
 
     private void OnRecorderFaulted(Exception ex)
     {
-        Console.Error.WriteLine($"RoeSnip: recording capture failed mid-session (non-fatal, stopping with what was captured): {ex.Message}");
+        FileLog.Write($"RoeSnip: recording capture failed mid-session (non-fatal, stopping with what was captured): {ex.Message}");
         if (_phase == Phase.Capturing)
         {
             StopCaptureToReview();
@@ -469,7 +470,7 @@ public sealed class RecordingSession
         bool joined = _encoderThread!.Join(TimeSpan.FromSeconds(5));
         if (!joined)
         {
-            Console.Error.WriteLine("RoeSnip: recording encoder thread did not finish within 5s; abandoning it without touching its output.");
+            FileLog.Write("RoeSnip: recording encoder thread did not finish within 5s; abandoning it without touching its output.");
             return false;
         }
 
@@ -492,7 +493,7 @@ public sealed class RecordingSession
         {
             return;
         }
-        Console.Error.WriteLine("RoeSnip: recording capture soft-stopping for review");
+        FileLog.Write("RoeSnip: recording capture soft-stopping for review");
 
         if (!_paused)
         {
@@ -588,7 +589,7 @@ public sealed class RecordingSession
             string? autosaveDir = Environment.GetEnvironmentVariable("ROESNIP_RECORD_AUTOSAVE");
             if (string.IsNullOrEmpty(autosaveDir))
             {
-                Console.Error.WriteLine(
+                FileLog.Write(
                     "RoeSnip: recording save requested with no explicit path and no ROESNIP_RECORD_AUTOSAVE set - this port has no save-file dialog yet (item 21).");
                 return null;
             }
@@ -699,7 +700,7 @@ public sealed class RecordingSession
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to clean up recording temp file: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to clean up recording temp file: {ex.Message}");
         }
     }
 
@@ -711,7 +712,7 @@ public sealed class RecordingSession
         {
             return;
         }
-        Console.Error.WriteLine($"RoeSnip: recording session ending (saved={finalPath is not null})");
+        FileLog.Write($"RoeSnip: recording session ending (saved={finalPath is not null})");
 
         if (finalPath is not null)
         {
@@ -841,15 +842,15 @@ public sealed class RecordingSession
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: recording encoder failed mid-session after {framesWritten} frame(s): {ex}");
+            FileLog.Write($"RoeSnip: recording encoder failed mid-session after {framesWritten} frame(s): {ex}");
         }
         finally
         {
-            Console.Error.WriteLine($"RoeSnip: encoder loop exiting, {framesWritten} frame(s) processed");
+            FileLog.Write($"RoeSnip: encoder loop exiting, {framesWritten} frame(s) processed");
             prevRaw?.Dispose();
 
             try { DrainAudio(freq, epochTicks); }
-            catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: final audio drain failed: {ex}"); }
+            catch (Exception ex) { FileLog.Write($"RoeSnip: final audio drain failed: {ex}"); }
 
             // Finalize with the take's stop moment on the pause-adjusted clock so the LAST frame's
             // delay (GIF) covers the static tail the user held before stopping; MP4 ignores the
@@ -861,7 +862,7 @@ public sealed class RecordingSession
                 pausedTotal += now - Volatile.Read(ref _pauseStartTicks); // stopped mid-pause
             }
             try { _encoder?.FinishAsync(now - pausedTotal).GetAwaiter().GetResult(); }
-            catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: recording finalize failed: {ex}"); }
+            catch (Exception ex) { FileLog.Write($"RoeSnip: recording finalize failed: {ex}"); }
         }
     }
 

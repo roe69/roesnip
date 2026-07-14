@@ -6,6 +6,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using RoeSnip.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Interop;
 
 namespace RoeSnip.Overlay;
@@ -383,7 +384,7 @@ internal static class FlashDimmer
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: closing a flash dimmer window failed: {ex.Message}");
+                FileLog.Write($"RoeSnip: closing a flash dimmer window failed: {ex.Message}");
             }
         }
         s_windows.Clear();
@@ -495,7 +496,7 @@ internal static class FlashDimmer
             if (Environment.GetEnvironmentVariable("ROESNIP_DIAG_NOEXCLUDE") != "1"
                 && !SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE))
             {
-                Console.Error.WriteLine(
+                FileLog.Write(
                     "RoeSnip: SetWindowDisplayAffinity(EXCLUDEFROMCAPTURE) failed on a flash window; " +
                     "captures taken while the flash is up will include the dim!");
             }

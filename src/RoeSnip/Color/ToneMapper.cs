@@ -5,6 +5,7 @@ using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using System.Threading.Tasks;
 using RoeSnip.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Imaging;
 
 namespace RoeSnip.Color;
@@ -58,7 +59,7 @@ public static class ToneMapper
         // "capture-to-overlay" line remains the interactive-flow number.
         var watch = System.Diagnostics.Stopwatch.StartNew();
         var image = MapToSdrOptimized(frame, opts, null);
-        Console.Error.WriteLine($"RoeSnip: tonemap {frame.Width}x{frame.Height} {watch.ElapsedMilliseconds} ms");
+        FileLog.Write($"RoeSnip: tonemap {frame.Width}x{frame.Height} {watch.ElapsedMilliseconds} ms");
         return image;
     }
 

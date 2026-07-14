@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Settings;
 using SharpHook;
 using SharpHook.Data;
@@ -63,7 +64,7 @@ public sealed class HotkeyManager : IDisposable
             KeyCode? keyCode = VirtualKeyToKeyCode(settings.HotkeyVirtualKey);
             if (keyCode is null)
             {
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: hotkey virtual key 0x{settings.HotkeyVirtualKey:X} has no global-hook mapping; " +
                     "no hotkey is active. Pick a different key in Settings.");
                 return;
@@ -101,7 +102,7 @@ public sealed class HotkeyManager : IDisposable
             // libuiohook is X11-only (PLAN-XPLAT.md §5) — never start the hook on Wayland;
             // starting-then-failing and never-starting both end in "no global hotkey", but
             // never-starting avoids a confusing failure log on every launch.
-            Console.Error.WriteLine(
+            FileLog.Write(
                 "RoeSnip: global hotkeys are not available on Wayland. Bind a desktop-environment " +
                 "keyboard shortcut to `RoeSnip capture` instead (the primary activation path on Wayland).");
             _unavailableOnWayland = true;
@@ -120,7 +121,7 @@ public sealed class HotkeyManager : IDisposable
                     lock (_gate)
                     {
                         // Covers e.g. macOS without the Accessibility permission, or a dead X display.
-                        Console.Error.WriteLine(
+                        FileLog.Write(
                             $"RoeSnip: the global keyboard hook stopped/failed to start: " +
                             $"{t.Exception?.GetBaseException().Message}. The hotkey is inactive; the app " +
                             "remains operable via the tray menu and `RoeSnip capture`.");
@@ -142,7 +143,7 @@ public sealed class HotkeyManager : IDisposable
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to create the global keyboard hook: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to create the global keyboard hook: {ex.Message}");
             _hook?.Dispose();
             _hook = null;
             _hookRunning = false;

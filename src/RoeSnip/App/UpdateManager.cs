@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Updates;
 
 namespace RoeSnip.App;
@@ -184,7 +185,7 @@ public static class UpdateManager
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: could not clean up stale update file '{path}' (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: could not clean up stale update file '{path}' (non-fatal): {ex.Message}");
         }
     }
 
@@ -212,7 +213,7 @@ public static class UpdateManager
             {
                 if (attempt == maxAttempts - 1)
                 {
-                    Console.Error.WriteLine($"RoeSnip: could not delete '{path}' after retries (non-fatal): {ex.Message}");
+                    FileLog.Write($"RoeSnip: could not delete '{path}' after retries (non-fatal): {ex.Message}");
                     return;
                 }
 
@@ -233,7 +234,7 @@ public static class UpdateManager
             string? currentExe = Environment.ProcessPath;
             if (string.IsNullOrEmpty(currentExe))
             {
-                Console.Error.WriteLine("RoeSnip: install failed - could not determine the current executable path.");
+                FileLog.Write("RoeSnip: install failed - could not determine the current executable path.");
                 return;
             }
 
@@ -287,7 +288,7 @@ public static class UpdateManager
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: install could not set run-at-startup (non-fatal): {ex.Message}");
+                FileLog.Write($"RoeSnip: install could not set run-at-startup (non-fatal): {ex.Message}");
             }
 
             // Make the freshly-installed app findable in Windows search: nothing under
@@ -301,7 +302,7 @@ public static class UpdateManager
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: install could not persist the run-at-startup setting (non-fatal): {ex.Message}");
+                FileLog.Write($"RoeSnip: install could not persist the run-at-startup setting (non-fatal): {ex.Message}");
             }
 
             // Make install behave like a MOVE, not a copy: the source exe (currentExe, confirmed
@@ -314,7 +315,7 @@ public static class UpdateManager
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: could not record source exe for post-install cleanup (non-fatal): {ex.Message}");
+                FileLog.Write($"RoeSnip: could not record source exe for post-install cleanup (non-fatal): {ex.Message}");
             }
 
             Process.Start(new ProcessStartInfo(InstalledExePath) { UseShellExecute = true });
@@ -325,7 +326,7 @@ public static class UpdateManager
             // tray on a silent failure. The install is best-effort up to here: if the copy failed the
             // portable exe is untouched and any prior installed copy still runs, so surfacing the
             // error and staying put is the correct outcome.
-            Console.Error.WriteLine($"RoeSnip: install failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: install failed: {ex.Message}");
             throw;
         }
     }
@@ -360,7 +361,7 @@ public static class UpdateManager
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: post-install source cleanup failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: post-install source cleanup failed (non-fatal): {ex.Message}");
         }
         finally
         {
@@ -411,13 +412,13 @@ public static class UpdateManager
             switch (probe.Status)
             {
                 case ProbeStatus.NotModified:
-                    Console.Error.WriteLine("RoeSnip: update check up to date (304, conditional request, does not count against the GitHub rate limit).");
+                    FileLog.Write("RoeSnip: update check up to date (304, conditional request, does not count against the GitHub rate limit).");
                     return null;
                 case ProbeStatus.RateLimited:
-                    Console.Error.WriteLine("RoeSnip: update check skipped - GitHub rate limit backoff is active.");
+                    FileLog.Write("RoeSnip: update check skipped - GitHub rate limit backoff is active.");
                     return null;
                 case ProbeStatus.Failed:
-                    Console.Error.WriteLine($"RoeSnip: update check failed (non-fatal): {probe.Detail}");
+                    FileLog.Write($"RoeSnip: update check failed (non-fatal): {probe.Detail}");
                     return null;
             }
 
@@ -439,7 +440,7 @@ public static class UpdateManager
             // A private repo (404), a network failure, or a malformed response all mean the same
             // thing to the caller: no update available right now. Never let any of it crash the
             // tray - log to stderr and move on.
-            Console.Error.WriteLine($"RoeSnip: update check failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: update check failed (non-fatal): {ex.Message}");
             return null;
         }
     }
@@ -594,7 +595,7 @@ public static class UpdateManager
                 // genuinely absent) - fail OPEN rather than block updates on a field this project
                 // doesn't control. See AssetDigest's doc comment for why fail-closed here wouldn't
                 // add real security anyway (digest and URL travel the same channel).
-                Console.Error.WriteLine($"RoeSnip: update to {info.Version} has no verifiable digest in the release payload - skipping hash check.");
+                FileLog.Write($"RoeSnip: update to {info.Version} has no verifiable digest in the release payload - skipping hash check.");
             }
 
             // Retried, not a bare delete: a prior .old can still be held locked by a sibling
@@ -633,7 +634,7 @@ public static class UpdateManager
                     }
                     catch (Exception rollbackEx)
                     {
-                        Console.Error.WriteLine($"RoeSnip: rollback to the previous exe failed: {rollbackEx.Message}");
+                        FileLog.Write($"RoeSnip: rollback to the previous exe failed: {rollbackEx.Message}");
                     }
                 }
 
@@ -650,7 +651,7 @@ public static class UpdateManager
                     catch (Exception fallbackEx)
                     {
                         preserveDownload = true;
-                        Console.Error.WriteLine($"RoeSnip: last-resort swap-in also failed, leaving the update download in place for manual recovery: {fallbackEx.Message}");
+                        FileLog.Write($"RoeSnip: last-resort swap-in also failed, leaving the update download in place for manual recovery: {fallbackEx.Message}");
                     }
                 }
 
@@ -671,7 +672,7 @@ public static class UpdateManager
                 TryDelete(downloadPath);
             }
 
-            Console.Error.WriteLine($"RoeSnip: update to {info.Version} failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: update to {info.Version} failed: {ex.Message}");
             throw;
         }
     }

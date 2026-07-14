@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows.Threading;
 using RoeSnip.Capture;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Overlay;
 
@@ -83,12 +84,12 @@ internal static class OverlayWindowPool
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine(
+                    FileLog.Write(
                         $"RoeSnip: overlay pool build failed for monitor {monitor.DeviceName} (non-fatal, " +
                         $"that monitor falls back to on-demand construction): {ex.Message}");
                 }
             }
-            Console.Error.WriteLine(
+            FileLog.Write(
                 $"RoeSnip: overlay pool built in {watch.ElapsedMilliseconds} ms ({s_parked.Count}/{monitors.Count} monitors)");
         }
         finally
@@ -151,7 +152,7 @@ internal static class OverlayWindowPool
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"RoeSnip: overlay pool reprovision failed (non-fatal): {ex.Message}");
+                    FileLog.Write($"RoeSnip: overlay pool reprovision failed (non-fatal): {ex.Message}");
                 }
             }));
         }
@@ -208,7 +209,7 @@ internal static class OverlayWindowPool
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: closing a pooled overlay window failed: {ex.Message}");
+                FileLog.Write($"RoeSnip: closing a pooled overlay window failed: {ex.Message}");
             }
         }
         s_parked.Clear();

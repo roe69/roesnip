@@ -5,6 +5,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Sharing;
 using RoeSnip.Core.Updates;
 using RoeSnip.Interop;
@@ -101,7 +102,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: could not read elevated-startup task state: {ex.Message}");
+            FileLog.Write($"RoeSnip: could not read elevated-startup task state: {ex.Message}");
             elevatedTaskInstalled = false;
         }
 
@@ -116,7 +117,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: could not read run-at-startup state: {ex.Message}");
+            FileLog.Write($"RoeSnip: could not read run-at-startup state: {ex.Message}");
             RunAtStartupCheckBox.IsChecked = _original.RunAtStartup || elevatedTaskInstalled;
         }
 
@@ -129,7 +130,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: could not read elevated-startup task state: {ex.Message}");
+            FileLog.Write($"RoeSnip: could not read elevated-startup task state: {ex.Message}");
             RunElevatedCheckBox.IsChecked = false;
         }
         finally
@@ -189,7 +190,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: could not read install state for the update-frequency hint: {ex.Message}");
+            FileLog.Write($"RoeSnip: could not read install state for the update-frequency hint: {ex.Message}");
             installed = true; // fail toward showing no hint rather than a possibly-wrong one
         }
 
@@ -327,7 +328,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: could not read process elevation state: {ex.Message}");
+            FileLog.Write($"RoeSnip: could not read process elevation state: {ex.Message}");
             elevatedNow = false;
         }
 
@@ -439,7 +440,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: could not read elevated-startup task state: {ex.Message}");
+            FileLog.Write($"RoeSnip: could not read elevated-startup task state: {ex.Message}");
             wasInstalled = !enable; // assume the toggle is meaningful; proceed
         }
 
@@ -464,7 +465,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: could not re-read elevated-startup task state: {ex.Message}");
+            FileLog.Write($"RoeSnip: could not re-read elevated-startup task state: {ex.Message}");
             nowInstalled = wasInstalled;
         }
 
@@ -819,7 +820,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: GetKeyNameText failed for vk 0x{virtualKey:X2}: {ex.Message}");
+            FileLog.Write($"RoeSnip: GetKeyNameText failed for vk 0x{virtualKey:X2}: {ex.Message}");
         }
 
         try
@@ -832,7 +833,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: KeyFromVirtualKey failed for vk 0x{virtualKey:X2}: {ex.Message}");
+            FileLog.Write($"RoeSnip: KeyFromVirtualKey failed for vk 0x{virtualKey:X2}: {ex.Message}");
         }
 
         return $"VK 0x{virtualKey:X2}";

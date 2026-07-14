@@ -8,6 +8,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using RoeSnip.App;
 using RoeSnip.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Imaging;
 using RoeSnip.Core.Recording.Gif;
 // Recording-core-extraction: RecordingSizeEstimator moved to RoeSnip.Core.Recording. A plain
@@ -378,7 +379,7 @@ internal sealed class RecordingSession
             _chrome.FpsChanged += SetFps;
             _chrome.Show();
 
-            Console.Error.WriteLine($"RoeSnip: recording setup opened ({_format}, {_selectionPx.Width}x{_selectionPx.Height})");
+            FileLog.Write($"RoeSnip: recording setup opened ({_format}, {_selectionPx.Width}x{_selectionPx.Height})");
         }
         catch
         {
@@ -443,7 +444,7 @@ internal sealed class RecordingSession
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to persist recording audio toggle: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to persist recording audio toggle: {ex.Message}");
         }
     }
 
@@ -474,7 +475,7 @@ internal sealed class RecordingSession
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to persist recording size preset: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to persist recording size preset: {ex.Message}");
         }
     }
 
@@ -499,7 +500,7 @@ internal sealed class RecordingSession
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to persist recording fps: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to persist recording fps: {ex.Message}");
         }
     }
 
@@ -600,7 +601,7 @@ internal sealed class RecordingSession
             // edge, clamped sane by SetOrigin's own internal clamp, until the user drags back or the
             // take ends. No user-visible error surfaced for this narrow failure — an accepted phase-1
             // gap (see the plan's own "measure before committing" flag).
-            Console.Error.WriteLine($"RoeSnip: cross-monitor recording handoff to {destMonitor.DeviceName} failed, staying on {_monitor.DeviceName}: {ex.Message}");
+            FileLog.Write($"RoeSnip: cross-monitor recording handoff to {destMonitor.DeviceName} failed, staying on {_monitor.DeviceName}: {ex.Message}");
             return;
         }
 
@@ -632,7 +633,7 @@ internal sealed class RecordingSession
         _outline?.SyncExternalSelection(clamped);
         _chrome?.UpdateSelection(clamped);
 
-        Console.Error.WriteLine($"RoeSnip: recording handed off {fromDevice} -> {destMonitor.DeviceName} at ({clamped.Left},{clamped.Top}), size {clamped.Width}x{clamped.Height}");
+        FileLog.Write($"RoeSnip: recording handed off {fromDevice} -> {destMonitor.DeviceName} at ({clamped.Left},{clamped.Top}), size {clamped.Width}x{clamped.Height}");
     }
 
     /// <summary>The spanning-mode counterpart of <see cref="OnRegionMoved"/>'s single-recorder
@@ -868,7 +869,7 @@ internal sealed class RecordingSession
                     try { r.Stop(); r.Dispose(); } catch { /* best-effort teardown of a partial rebuild */ }
                 }
             }
-            Console.Error.WriteLine($"RoeSnip: spanning recording topology rebuild failed, staying on the previous monitor set: {ex.Message}");
+            FileLog.Write($"RoeSnip: spanning recording topology rebuild failed, staying on the previous monitor set: {ex.Message}");
             return;
         }
 
@@ -885,7 +886,7 @@ internal sealed class RecordingSession
         _outline?.SyncExternalSelection(selectionAbs);
         _chrome?.UpdateSelection(selectionAbs);
 
-        Console.Error.WriteLine($"RoeSnip: spanning recording topology rebuilt at ({selectionAbs.Left},{selectionAbs.Top}) {selectionAbs.Width}x{selectionAbs.Height}, {newRecorders.Length} monitor(s)");
+        FileLog.Write($"RoeSnip: spanning recording topology rebuilt at ({selectionAbs.Left},{selectionAbs.Top}) {selectionAbs.Width}x{selectionAbs.Height}, {newRecorders.Length} monitor(s)");
     }
 
     private void AdvanceOnPrtScr()
@@ -1039,11 +1040,11 @@ internal sealed class RecordingSession
             _phase = Phase.Capturing;
             _chrome!.EnterRecording();
             _outline?.SetInteractionMode(allowResize: false); // size is locked to the encoder now - band moves, not resizes
-            Console.Error.WriteLine($"RoeSnip: recording capture started ({_format}, {_selectionPx.Width}x{_selectionPx.Height}, {_targetFps}fps, {intersecting.Count} monitor(s){(spanning ? " [spanning]" : "")})");
+            FileLog.Write($"RoeSnip: recording capture started ({_format}, {_selectionPx.Width}x{_selectionPx.Height}, {_targetFps}fps, {intersecting.Count} monitor(s){(spanning ? " [spanning]" : "")})");
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: failed to start recording capture: {ex.Message}");
+            FileLog.Write($"RoeSnip: failed to start recording capture: {ex.Message}");
             _notifier?.ShowError($"Failed to start recording: {ex.Message}");
 
             try { _elapsedTimer?.Dispose(); } catch { /* best-effort */ }
@@ -1219,7 +1220,7 @@ internal sealed class RecordingSession
 
     private void OnRecorderFaulted(Exception ex)
     {
-        Console.Error.WriteLine($"RoeSnip: recording capture failed mid-session (non-fatal, stopping with what was captured): {ex.Message}");
+        FileLog.Write($"RoeSnip: recording capture failed mid-session (non-fatal, stopping with what was captured): {ex.Message}");
         RequestForceStopAndSave();
     }
 
@@ -1319,7 +1320,7 @@ internal sealed class RecordingSession
         bool joined = _encoderThread!.Join(TimeSpan.FromSeconds(5));
         if (!joined)
         {
-            Console.Error.WriteLine("RoeSnip: recording encoder thread did not finish within 5s; abandoning it without touching its output.");
+            FileLog.Write("RoeSnip: recording encoder thread did not finish within 5s; abandoning it without touching its output.");
             return false;
         }
 
@@ -1357,7 +1358,7 @@ internal sealed class RecordingSession
         {
             return;
         }
-        Console.Error.WriteLine($"RoeSnip: recording capture soft-stopping for review (elapsed={_stopwatch?.Elapsed})");
+        FileLog.Write($"RoeSnip: recording capture soft-stopping for review (elapsed={_stopwatch?.Elapsed})");
 
         if (!_paused)
         {
@@ -1403,7 +1404,7 @@ internal sealed class RecordingSession
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: fresh settings load for share availability check failed: {ex.Message}");
+            FileLog.Write($"RoeSnip: fresh settings load for share availability check failed: {ex.Message}");
             return null;
         }
     }
@@ -1650,7 +1651,7 @@ internal sealed class RecordingSession
                 // success — never in the presenter's own generic plumbing. See this method's own doc
                 // comment ("FAILURE = DATA LOSS").
                 try { if (File.Exists(tempPath)) File.Delete(tempPath); }
-                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
             },
             onFailure: null,
             notifier: _notifier);
@@ -1664,10 +1665,10 @@ internal sealed class RecordingSession
         {
             return;
         }
-        Console.Error.WriteLine($"RoeSnip: recording session ending (saved={finalPath is not null})");
+        FileLog.Write($"RoeSnip: recording session ending (saved={finalPath is not null})");
 
         try { _outline?.CloseOutline(); }
-        catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: closing the recording outline failed (non-fatal): {ex.Message}"); }
+        catch (Exception ex) { FileLog.Write($"RoeSnip: closing the recording outline failed (non-fatal): {ex.Message}"); }
         _chrome?.CloseChrome();
 
         if (finalPath is not null)
@@ -1762,7 +1763,7 @@ internal sealed class RecordingSession
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: failed to delete abandoned recording temp file: {ex.Message}");
+                FileLog.Write($"RoeSnip: failed to delete abandoned recording temp file: {ex.Message}");
             }
         }
     }
@@ -1962,14 +1963,14 @@ internal sealed class RecordingSession
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: recording encoder failed mid-session after {framesWritten} frame(s): {ex}");
+            FileLog.Write($"RoeSnip: recording encoder failed mid-session after {framesWritten} frame(s): {ex}");
             // Best-effort: keep whatever encoded cleanly so far rather than losing the whole
             // recording to one bad frame/disk hiccup.
             RequestForceStopAndSave();
         }
         finally
         {
-            Console.Error.WriteLine($"RoeSnip: encoder loop exiting, {framesWritten} frame(s) processed");
+            FileLog.Write($"RoeSnip: encoder loop exiting, {framesWritten} frame(s) processed");
             prevGifRaw?.Dispose();
             prevMp4Raw?.Dispose();
             if (_format == RecordingFormat.Mp4)
@@ -1978,9 +1979,9 @@ internal sealed class RecordingSession
                 // file — Stop() halts the audio engine BEFORE completing the channel, so this final
                 // drain is bounded.
                 try { DrainAudio(freq, epochTicks); }
-                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: final audio drain failed: {ex}"); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: final audio drain failed: {ex}"); }
                 try { _mp4Encoder?.FinalizeAndClose(); }
-                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: MP4 finalize failed: {ex}"); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: MP4 finalize failed: {ex}"); }
             }
             else
             {
@@ -1994,7 +1995,7 @@ internal sealed class RecordingSession
                     pausedTotal += now - Volatile.Read(ref _pauseStartTicks); // stopped mid-pause
                 }
                 try { _gifEncoder?.FinalizeAndClose(now - pausedTotal); }
-                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: GIF finalize failed: {ex}"); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: GIF finalize failed: {ex}"); }
             }
         }
     }
@@ -2258,14 +2259,14 @@ internal sealed class RecordingSession
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: spanning recording encoder failed mid-session after {framesWritten} frame(s): {ex}");
+            FileLog.Write($"RoeSnip: spanning recording encoder failed mid-session after {framesWritten} frame(s): {ex}");
             // Best-effort: keep whatever encoded cleanly so far rather than losing the whole
             // recording to one bad frame/disk hiccup — same policy EncoderLoop's own catch uses.
             RequestForceStopAndSave();
         }
         finally
         {
-            Console.Error.WriteLine($"RoeSnip: spanning encoder loop exiting, {framesWritten} frame(s) processed");
+            FileLog.Write($"RoeSnip: spanning encoder loop exiting, {framesWritten} frame(s) processed");
             foreach (var f in prevRaw)
             {
                 f?.Dispose();
@@ -2273,9 +2274,9 @@ internal sealed class RecordingSession
             if (_format == RecordingFormat.Mp4)
             {
                 try { DrainAudio(freq, epochTicks); }
-                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: final audio drain failed: {ex}"); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: final audio drain failed: {ex}"); }
                 try { _mp4Encoder?.FinalizeAndClose(); }
-                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: MP4 finalize failed: {ex}"); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: MP4 finalize failed: {ex}"); }
             }
             else
             {
@@ -2286,7 +2287,7 @@ internal sealed class RecordingSession
                     pausedTotal += now - Volatile.Read(ref _pauseStartTicks);
                 }
                 try { _gifEncoder?.FinalizeAndClose(now - pausedTotal); }
-                catch (Exception ex) { Console.Error.WriteLine($"RoeSnip: GIF finalize failed: {ex}"); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: GIF finalize failed: {ex}"); }
             }
         }
     }

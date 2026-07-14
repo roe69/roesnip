@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Recording;
 using Vortice.MediaFoundation;
 using Vortice.Multimedia;
@@ -88,7 +89,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
         if (!signaled || engine._startupError is not null)
         {
             string reason = signaled ? engine._startupError! : "timed out waiting for the capture thread";
-            Console.Error.WriteLine($"RoeSnip: audio capture unavailable: {reason}");
+            FileLog.Write($"RoeSnip: audio capture unavailable: {reason}");
             engine.Dispose();
             return null;
         }
@@ -187,7 +188,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
         {
             // Never throw across the thread boundary — log once and let the queue simply stop
             // growing; RecordingController already treats a drained-but-silent audio engine fine.
-            Console.Error.WriteLine($"RoeSnip: audio capture stopped unexpectedly: {ex.Message}");
+            FileLog.Write($"RoeSnip: audio capture stopped unexpectedly: {ex.Message}");
         }
         finally
         {

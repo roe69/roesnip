@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using Avalonia.Threading;
 using RoeSnip.App.Overlay;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.App;
 
@@ -81,7 +82,7 @@ internal static class IdleMemoryTrimmer
         // cached against the permanently-warm per-monitor D3D11 devices (Windows only). Hand that
         // back too; a no-op on platforms with no such cache.
         TrimPlatformCaptureCache();
-        Console.Error.WriteLine(
+        FileLog.Write(
             $"RoeSnip: idle memory trim {watch.ElapsedMilliseconds} ms " +
             $"(managed heap now {GC.GetTotalMemory(false) / (1024 * 1024)} MB)");
     }
@@ -99,7 +100,7 @@ internal static class IdleMemoryTrimmer
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: platform capture cache trim failed (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: platform capture cache trim failed (non-fatal): {ex.Message}");
         }
 #endif
     }

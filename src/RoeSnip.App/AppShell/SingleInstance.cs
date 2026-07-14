@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Threading;
 using System.Threading.Tasks;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.App.AppShell;
 
@@ -144,7 +145,7 @@ public sealed class SingleInstance : IDisposable
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: could not terminate a stale instance (pid {p.Id}): {ex.Message}");
+                FileLog.Write($"RoeSnip: could not terminate a stale instance (pid {p.Id}): {ex.Message}");
             }
             finally
             {
@@ -194,7 +195,7 @@ public sealed class SingleInstance : IDisposable
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(
+            FileLog.Write(
                 $"RoeSnip: another instance appears to be running, but signalling it failed: {ex.Message}");
             return false;
         }
@@ -223,7 +224,7 @@ public sealed class SingleInstance : IDisposable
                 }
                 else if (raw >= 0)
                 {
-                    Console.Error.WriteLine($"RoeSnip: ignoring unknown single-instance signal {raw}.");
+                    FileLog.Write($"RoeSnip: ignoring unknown single-instance signal {raw}.");
                 }
             }
             catch (OperationCanceledException)
@@ -232,7 +233,7 @@ public sealed class SingleInstance : IDisposable
             }
             catch (Exception ex) when (!token.IsCancellationRequested)
             {
-                Console.Error.WriteLine($"RoeSnip: single-instance pipe listener error: {ex.Message}");
+                FileLog.Write($"RoeSnip: single-instance pipe listener error: {ex.Message}");
                 await Task.Delay(1000, token).ContinueWith(_ => { }).ConfigureAwait(false);
             }
         }

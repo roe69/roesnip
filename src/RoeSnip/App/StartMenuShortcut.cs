@@ -3,6 +3,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.App;
 
@@ -41,7 +42,7 @@ public static class StartMenuShortcut
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"RoeSnip: could not create the Start Menu shortcut (non-fatal): {ex.Message}");
+            FileLog.Write($"RoeSnip: could not create the Start Menu shortcut (non-fatal): {ex.Message}");
         }
     }
 

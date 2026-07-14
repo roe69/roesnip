@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Threading;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Platform.Windows.Interop;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
@@ -134,7 +135,7 @@ public sealed class WgcCapturer : IScreenCapturer
                     {
                         throw;
                     }
-                    Console.Error.WriteLine(
+                    FileLog.Write(
                         $"RoeSnip: WGC capture with cached resources failed for monitor {monitor.DeviceName} " +
                         $"({ex.Message}); re-provisioning and retrying once.");
                 }
@@ -219,7 +220,7 @@ public sealed class WgcCapturer : IScreenCapturer
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: DXGI device trim failed (non-fatal): {ex.Message}");
+                FileLog.Write($"RoeSnip: DXGI device trim failed (non-fatal): {ex.Message}");
             }
             finally
             {
@@ -279,7 +280,7 @@ public sealed class WgcCapturer : IScreenCapturer
                     }
                     catch (Exception ex)
                     {
-                        Console.Error.WriteLine($"RoeSnip: WGC keepalive health check failed (non-fatal): {ex.Message}");
+                        FileLog.Write($"RoeSnip: WGC keepalive health check failed (non-fatal): {ex.Message}");
                         continue;
                     }
                     if (alive)
@@ -287,7 +288,7 @@ public sealed class WgcCapturer : IScreenCapturer
                         continue;
                     }
 
-                    Console.Error.WriteLine(
+                    FileLog.Write(
                         "RoeSnip: WGC keepalive found a dead cached device; re-provisioning proactively.");
                     resources.Dispose();
                     slot.Resources = null;
@@ -299,7 +300,7 @@ public sealed class WgcCapturer : IScreenCapturer
                         }
                         catch (Exception ex)
                         {
-                            Console.Error.WriteLine(
+                            FileLog.Write(
                                 $"RoeSnip: WGC keepalive re-provisioning failed (non-fatal; the next real " +
                                 $"capture will retry): {ex.Message}");
                         }

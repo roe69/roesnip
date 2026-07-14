@@ -8,6 +8,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using RoeSnip.App.AppShell;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Overlay;
 
 namespace RoeSnip.App.Overlay;
@@ -313,7 +314,7 @@ internal static class FlashDimmer
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: closing a flash dimmer window failed: {ex.Message}");
+                FileLog.Write($"RoeSnip: closing a flash dimmer window failed: {ex.Message}");
             }
         }
         s_windows.Clear();
@@ -419,7 +420,7 @@ internal static class FlashDimmer
             _hwnd = TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
             if (_hwnd == IntPtr.Zero)
             {
-                Console.Error.WriteLine("RoeSnip: flash dimmer window has no native handle after Show(); skipping it.");
+                FileLog.Write("RoeSnip: flash dimmer window has no native handle after Show(); skipping it.");
                 return;
             }
 

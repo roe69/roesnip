@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Settings;
 using RoeSnip.Core.Sharing;
 
@@ -232,7 +233,7 @@ public partial class ShareProvidersWindow : Window
     /// SettingsWindow this window has no persistent inline error TextBlock of its own (rows rebuild
     /// on every save), so stderr is the whole of it — the row list itself still reflects reality via
     /// the RefreshList() that follows every call site.</summary>
-    private static void ShowSaveFailure(string message) => Console.Error.WriteLine($"RoeSnip: {message}");
+    private static void ShowSaveFailure(string message) => FileLog.Write($"RoeSnip: {message}");
 
     private void CloseButton_Click(object? sender, RoutedEventArgs e) => Close();
 }

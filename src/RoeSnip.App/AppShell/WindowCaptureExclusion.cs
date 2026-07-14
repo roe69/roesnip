@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Avalonia.Controls;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.App.AppShell;
 
@@ -77,7 +78,7 @@ public static class WindowCaptureExclusion
         var handle = window.TryGetPlatformHandle();
         if (handle is null || handle.Handle == IntPtr.Zero)
         {
-            Console.Error.WriteLine(
+            FileLog.Write(
                 "RoeSnip: could not resolve a native handle to apply capture exclusion (non-fatal).");
             return;
         }
@@ -85,7 +86,7 @@ public static class WindowCaptureExclusion
         IntPtr hwnd = handle.Handle;
         if (!SetWindowDisplayAffinity(hwnd, WdaExcludeFromCapture))
         {
-            Console.Error.WriteLine(
+            FileLog.Write(
                 "RoeSnip: SetWindowDisplayAffinity(EXCLUDEFROMCAPTURE) failed on a window (non-fatal).");
             return;
         }
@@ -141,7 +142,7 @@ public static class WindowCaptureExclusion
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: could not inspect a window's capture affinity (non-fatal): {ex.Message}");
             }
         }
@@ -171,7 +172,7 @@ public static class WindowCaptureExclusion
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine(
+                FileLog.Write(
                     $"RoeSnip: failed to restore capture exclusion (non-fatal): {ex.Message}");
             }
         }

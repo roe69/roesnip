@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Platform.Linux;
 
@@ -91,7 +92,7 @@ public sealed class X11Capturer : IScreenCapturer
                     }
                     if (clamped != bounds)
                     {
-                        Console.Error.WriteLine(
+                        FileLog.Write(
                             $"RoeSnip: monitor {monitor.Index} ({monitor.DeviceName}) extends beyond the " +
                             $"X root window ({rootW}x{rootH}); capturing the visible " +
                             $"{clamped.Width}x{clamped.Height} intersection.");
@@ -192,7 +193,7 @@ public sealed class X11Capturer : IScreenCapturer
             IntPtr display = XOpenDisplay(IntPtr.Zero);
             if (display == IntPtr.Zero)
             {
-                Console.Error.WriteLine(
+                FileLog.Write(
                     "RoeSnip: XOpenDisplay failed (no X11/XWayland DISPLAY?) — cannot enumerate monitors.");
                 return result;
             }
@@ -203,7 +204,7 @@ public sealed class X11Capturer : IScreenCapturer
                 IntPtr resourcesPtr = XRRGetScreenResources(display, root);
                 if (resourcesPtr == IntPtr.Zero)
                 {
-                    Console.Error.WriteLine("RoeSnip: XRRGetScreenResources failed — is the RandR extension available?");
+                    FileLog.Write("RoeSnip: XRRGetScreenResources failed — is the RandR extension available?");
                     return result;
                 }
 
@@ -226,7 +227,7 @@ public sealed class X11Capturer : IScreenCapturer
                         }
                         catch (Exception ex)
                         {
-                            Console.Error.WriteLine($"RoeSnip: skipping RandR output #{i}: {ex.Message}");
+                            FileLog.Write($"RoeSnip: skipping RandR output #{i}: {ex.Message}");
                         }
                     }
                 }
@@ -244,7 +245,7 @@ public sealed class X11Capturer : IScreenCapturer
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"RoeSnip: RandR monitor enumeration failed: {ex.Message}");
+                FileLog.Write($"RoeSnip: RandR monitor enumeration failed: {ex.Message}");
             }
             finally
             {
