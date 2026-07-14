@@ -1187,3 +1187,9 @@ because a correct implementation needs live hardware this repo cannot exercise.
   (%APPDATA%\RoeSnip vs %APPDATA%\RoeSnip.App), mutex/pipe names, Run key value names,
   and (after item 13) install dir and release asset names. Any new named OS object must
   follow the split so both residents can run side by side.
+- Both UpdateManagers' install/swap/registry mutation paths (Install, ApplyUpdateAsync,
+  CleanupStale*, ProcessPendingSourceCleanup) have no automated test coverage by design —
+  they touch the real filesystem/registry and a real HTTP endpoint, so each change to that
+  code is reviewed by eye instead and, where practical, verified live against a standalone
+  install dir (never the user's own resident). This is the "manual review" the two class doc
+  comments point at.

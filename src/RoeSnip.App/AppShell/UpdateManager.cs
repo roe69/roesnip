@@ -562,6 +562,11 @@ public static class UpdateManager
         }
 
         string downloadPath = DownloadingExePath;
+        // Set when the swap-in fails AND the rollback-to-previous-exe recovery also fails: the
+        // outer catch's usual "always delete downloadPath" cleanup would otherwise throw away the
+        // one surviving, already digest-verified asset on a disk that has no runnable exe left at
+        // all — see the inner catch below for the full recovery chain this guards.
+        bool preserveDownload = false;
         try
         {
             Directory.CreateDirectory(InstallDir);
@@ -614,7 +619,12 @@ public static class UpdateManager
                 Console.Error.WriteLine($"RoeSnip: update to {info.Version} has no verifiable digest in the release payload - skipping hash check.");
             }
 
-            TryDelete(StaleExePath);
+            // Retried, not a bare delete: a prior .old can still be held locked by a sibling
+            // process that is only now exiting (see TryDeleteWithRetry's own doc comment). A
+            // one-shot TryDelete losing that race would make the File.Move below throw
+            // "destination exists" AFTER the ~180 MB download above already completed, wasting it
+            // for a purely transient lock instead of the ~2s bounded wait paying for itself.
+            TryDeleteWithRetry(StaleExePath);
 
             bool renamedCurrent = false;
             if (File.Exists(InstalledExePath))
@@ -629,10 +639,41 @@ public static class UpdateManager
             }
             catch
             {
-                // Roll back: never leave the install without a runnable exe.
+                // Roll back: never leave the install without a runnable exe. This recovery move can
+                // itself fail (the realistic trigger is the same kind of transient AV sharing
+                // violation on a fresh exe that failed the move above) - guard it separately so
+                // that failure doesn't fall straight through to the outer catch, which would delete
+                // downloadPath unconditionally and brick the install with neither a runnable exe nor
+                // the one verified asset left to recover from by hand.
+                bool recovered = false;
                 if (renamedCurrent && !File.Exists(InstalledExePath) && File.Exists(StaleExePath))
                 {
-                    File.Move(StaleExePath, InstalledExePath);
+                    try
+                    {
+                        File.Move(StaleExePath, InstalledExePath);
+                        recovered = true;
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        Console.Error.WriteLine($"RoeSnip: rollback to the previous exe failed: {rollbackEx.Message}");
+                    }
+                }
+
+                if (!recovered && !File.Exists(InstalledExePath))
+                {
+                    // Last resort: retry the same move. A running, digest-verified new build beats
+                    // an install directory left with no runnable exe at all, and the original
+                    // failure is plausibly transient (a momentary AV lock), so a second attempt can
+                    // succeed even though the rollback above just failed the identical way.
+                    try
+                    {
+                        File.Move(downloadPath, InstalledExePath);
+                    }
+                    catch (Exception fallbackEx)
+                    {
+                        preserveDownload = true;
+                        Console.Error.WriteLine($"RoeSnip: last-resort swap-in also failed, leaving the update download in place for manual recovery: {fallbackEx.Message}");
+                    }
                 }
 
                 throw;
@@ -647,7 +688,11 @@ public static class UpdateManager
         }
         catch (Exception ex)
         {
-            TryDelete(downloadPath);
+            if (!preserveDownload)
+            {
+                TryDelete(downloadPath);
+            }
+
             Console.Error.WriteLine($"RoeSnip: update to {info.Version} failed: {ex.Message}");
             throw;
         }
