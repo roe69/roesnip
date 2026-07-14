@@ -200,6 +200,13 @@ public sealed class TrayApp : ITrayNotifier
     {
         UpdateManager.ProcessPendingSourceCleanup();
         UpdateManager.CleanupStaleExeWithRetry();
+        if (UpdateManager.IsInstalled)
+        {
+            // Startup ensure (not just install-time): installs made before the shortcut feature
+            // existed gain search findability on their first launch after updating, and a
+            // user-deleted/corrupted shortcut heals itself. No-op when it already points right.
+            StartMenuShortcut.EnsureFor(UpdateManager.InstalledExePath);
+        }
     }
 
     private async Task CompleteStartupAsync()

@@ -272,6 +272,10 @@ public static class UpdateManager
                 Console.Error.WriteLine($"RoeSnip: install could not set run-at-startup (non-fatal): {ex.Message}");
             }
 
+            // Make the freshly-installed app findable in Windows search: nothing under
+            // %LOCALAPPDATA% is indexed, only a Start Menu shortcut is. Never throws.
+            StartMenuShortcut.EnsureFor(InstalledExePath);
+
             try
             {
                 RoeSnipSettings settings = AppComposition.LoadSettings?.Invoke() ?? RoeSnipSettings.Default;
