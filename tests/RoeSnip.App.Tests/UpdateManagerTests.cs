@@ -21,15 +21,22 @@ public class UpdateManagerTests
 
     private static string ReleaseJson(string tag, string? htmlUrl = "https://github.com/roe69/roesnip/releases/tag/" + "TAG",
         string? windowsAssetName = "RoeSnipApp-win-x64.exe", string windowsAssetUrl = "https://example.invalid/RoeSnipApp-win-x64.exe",
-        bool includeAssets = true, string? digest = null, long? size = null)
+        bool includeAssets = true, string? digest = null, long? size = null,
+        string? windowsGzAssetName = null, string windowsGzAssetUrl = "https://example.invalid/RoeSnipApp-win-x64.exe.gz",
+        string? gzDigest = null, long? gzSize = null)
     {
         string digestJson = digest is null ? "" : $",\"digest\":\"{digest}\"";
         string sizeJson = size is null ? "" : $",\"size\":{size}";
         string windowsAssetEntry = windowsAssetName is null
             ? ""
             : $"{{\"name\":\"{windowsAssetName}\",\"browser_download_url\":\"{windowsAssetUrl}\"{digestJson}{sizeJson}}},";
+        string gzDigestJson = gzDigest is null ? "" : $",\"digest\":\"{gzDigest}\"";
+        string gzSizeJson = gzSize is null ? "" : $",\"size\":{gzSize}";
+        string windowsGzAssetEntry = windowsGzAssetName is null
+            ? ""
+            : $"{{\"name\":\"{windowsGzAssetName}\",\"browser_download_url\":\"{windowsGzAssetUrl}\"{gzDigestJson}{gzSizeJson}}},";
         string assetsJson = includeAssets
-            ? $"[{windowsAssetEntry}{{\"name\":\"RoeSnip-linux-x64.AppImage\",\"browser_download_url\":\"https://example.invalid/linux\"}}]"
+            ? $"[{windowsAssetEntry}{windowsGzAssetEntry}{{\"name\":\"RoeSnip-linux-x64.AppImage\",\"browser_download_url\":\"https://example.invalid/linux\"}}]"
             : "null";
         string htmlUrlJson = htmlUrl is null ? "" : $"\"html_url\":\"{htmlUrl.Replace("TAG", tag)}\",";
         return $"{{{htmlUrlJson}\"tag_name\":\"{tag}\",\"assets\":{assetsJson}}}";
@@ -168,6 +175,52 @@ public class UpdateManagerTests
         Assert.NotNull(info);
         Assert.Null(info!.Digest);
         Assert.Null(info.Size);
+    }
+
+    // ---------- gzip transit asset (hardening item 9) ----------
+
+    [Fact]
+    public void ParseUpdateInfo_PrefersGzAssetWhenBothPresent()
+    {
+        var info = UpdateManager.ParseUpdateInfo(
+            Parse(ReleaseJson("v1.2.0", windowsGzAssetName: "RoeSnipApp-win-x64.exe.gz")), V100, requireWindowsAsset: true);
+        Assert.NotNull(info);
+        Assert.True(info!.IsGzip);
+        Assert.Equal("https://example.invalid/RoeSnipApp-win-x64.exe.gz", info.DownloadUrl);
+    }
+
+    [Fact]
+    public void ParseUpdateInfo_FallsBackToPlainAssetWhenGzAbsent()
+    {
+        // Protects against a release.yml slip that only publishes the plain asset.
+        var info = UpdateManager.ParseUpdateInfo(Parse(ReleaseJson("v1.2.0")), V100, requireWindowsAsset: true);
+        Assert.NotNull(info);
+        Assert.False(info!.IsGzip);
+        Assert.Equal("https://example.invalid/RoeSnipApp-win-x64.exe", info.DownloadUrl);
+    }
+
+    [Fact]
+    public void ParseUpdateInfo_GzAssetCarriesItsOwnDigestAndSize()
+    {
+        string plainHex = new string('a', 64);
+        string gzHex = new string('b', 64);
+        var info = UpdateManager.ParseUpdateInfo(
+            Parse(ReleaseJson("v1.2.0", digest: $"sha256:{plainHex}", size: 1000,
+                windowsGzAssetName: "RoeSnipApp-win-x64.exe.gz", gzDigest: $"sha256:{gzHex}", gzSize: 400)),
+            V100, requireWindowsAsset: true);
+        Assert.NotNull(info);
+        Assert.True(info!.IsGzip);
+        Assert.Equal($"sha256:{gzHex}", info.Digest);
+        Assert.Equal(400, info.Size);
+    }
+
+    [Fact]
+    public void ParseUpdateInfo_GzAssetNameMatchIsCaseInsensitive()
+    {
+        var info = UpdateManager.ParseUpdateInfo(
+            Parse(ReleaseJson("v1.2.0", windowsGzAssetName: "ROESNIPAPP-WIN-X64.EXE.GZ")), V100, requireWindowsAsset: true);
+        Assert.NotNull(info);
+        Assert.True(info!.IsGzip);
     }
 
     // ---------- identity constants ----------

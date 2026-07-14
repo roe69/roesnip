@@ -1221,3 +1221,17 @@ because a correct implementation needs live hardware this repo cannot exercise.
   updates" menu item; exists because the unattended auto-update path's only other failure
   signal is a tray balloon/toast that can be silently eaten by the OS, leaving no way to later
   find out what actually happened.
+- Compressed transit asset (hardening item 9, RoeSnip.Core.Updates.GzipAssetDecompressor +
+  ParsePayload/ParseUpdateInfo + ApplyUpdateCoreAsync, both apps): release.yml gzip -9's each
+  Windows exe and attaches it as an ADDITIONAL "<asset>.gz" release asset (measured -60.9%/-61.4%
+  on the real binaries) - the plain, uncompressed asset keeps publishing under its exact existing
+  name unchanged, so older installs and the asset-name split both stay intact. Both parsers scan
+  for the ".gz" name first and fall back to the plain one (protects against a CI slip); the
+  chosen asset's OWN digest/size travel together, never mixed across the two. ApplyUpdateCoreAsync
+  downloads to a distinct ".exe.new.gz" temp name, verifies size + sha256 against THAT asset's
+  digest, then decompresses into the ordinary ".exe.new" slot before the existing swap logic runs
+  unchanged; CleanupStaleUpdateFiles/CleanupDownloadLeftover cover the ".gz" temp name too. Does
+  not touch the installed-file tradeoff: EnableCompressionInSingleFile stays off, the file on disk
+  is byte-identical and uncompressed either way - only the download in transit shrinks. Benefit
+  starts with updates FROM the release that first ships both assets onward (the release that
+  introduces this can only itself ship uncompressed, since nothing before it can request a ".gz").

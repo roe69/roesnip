@@ -57,6 +57,13 @@ public static class UpdateManager
     // "RoeSnip.exe" asset.
     private const string ReleaseAssetName = "RoeSnipApp-win-x64.exe";
 
+    // release.yml attaches this alongside the plain asset (hardening item 9: gzip -9 cuts ~61% off
+    // the transit size fleet-wide, at zero cost to the installed-file tradeoff - the exe on disk
+    // stays byte-identical and uncompressed). ParseUpdateInfo prefers this asset when present and
+    // falls back to the plain one so a CI slip that only publishes one of the two never blocks
+    // updates.
+    private const string GzReleaseAssetName = ReleaseAssetName + ".gz";
+
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
     // Matches StartupManager.ValueName exactly — both write/read the same HKCU value, so this
@@ -90,6 +97,12 @@ public static class UpdateManager
 
     private static string StaleExePath => InstalledExePath + ".old";
     private static string DownloadingExePath => Path.Combine(InstallDir, "RoeSnip.exe.new");
+
+    // Distinct temp name for the compressed transit asset, so a download in flight never collides
+    // with DownloadingExePath (the decompressed target ApplyUpdateCoreAsync's existing swap logic
+    // already expects) and both are independently coverable by CleanupStaleUpdateFiles.
+    private static string GzDownloadingExePath => DownloadingExePath + ".gz";
+
     private static string PendingSourceCleanupMarkerPath => Path.Combine(InstallDir, "pending-source-cleanup.txt");
 
     /// <summary>Where the crash-loop-guard marker (update-health.json) lives - the portable config
@@ -187,13 +200,16 @@ public static class UpdateManager
     // ---------------- portable: version check (every OS) ----------------
 
     /// <summary>The latest GitHub release worth telling the user about: its version, the direct
-    /// download URL for the Windows asset (null when this OS/release has none — never used off
-    /// Windows), the release page URL (what the Linux/macOS passive notice links to), and that same
-    /// Windows asset's "digest"/"size" fields straight off the releases payload (used by
+    /// download URL for the chosen Windows asset (null when this OS/release has none — never used
+    /// off Windows), the release page URL (what the Linux/macOS passive notice links to), and that
+    /// same asset's "digest"/"size" fields straight off the releases payload (used by
     /// <see cref="ApplyUpdateAsync"/> to verify the download - see AssetDigest's doc comment).
     /// <see cref="Digest"/> is null whenever the payload didn't carry one - callers fail open on
-    /// that, never fail closed.</summary>
-    public sealed record UpdateInfo(Version Version, string? DownloadUrl, string ReleaseUrl, string? Digest = null, long? Size = null);
+    /// that, never fail closed. <see cref="IsGzip"/> is true when <see cref="DownloadUrl"/> points
+    /// at the ".gz" transit asset (preferred whenever present - see <see cref="ParseUpdateInfo"/>)
+    /// rather than the plain exe - <see cref="ApplyUpdateAsync"/> decompresses it after digest
+    /// verification, before the swap.</summary>
+    public sealed record UpdateInfo(Version Version, string? DownloadUrl, string ReleaseUrl, string? Digest = null, long? Size = null, bool IsGzip = false);
 
     /// <summary>Checks the GitHub Releases API for a newer published build. Returns null (never
     /// throws) whenever there's nothing to offer: the repo is private (404), there's no network,
@@ -285,7 +301,13 @@ public static class UpdateManager
     /// OS could never actually apply would be worse than silence, matching the WPF reference's
     /// original all-or-nothing gate. When false (the Linux/macOS passive-notice caller),
     /// DownloadUrl is populated when present but never required — that notice only needs Version
-    /// and ReleaseUrl.</summary>
+    /// and ReleaseUrl.
+    ///
+    /// Scans for BOTH the ".gz" and plain Windows asset names and prefers the ".gz" one when
+    /// present (hardening item 9) - each asset carries its OWN digest/size, never mixed across the
+    /// two, so verification in <see cref="ApplyUpdateAsync"/> always checks the exact bytes that
+    /// were actually downloaded. Falling back to the plain asset when no ".gz" entry exists
+    /// protects against a release.yml slip that only publishes one of the two.</summary>
     public static UpdateInfo? ParseUpdateInfo(JsonElement root, Version currentVersion, bool requireWindowsAsset)
     {
         if (!root.TryGetProperty("tag_name", out JsonElement tagElement))
@@ -310,32 +332,45 @@ public static class UpdateManager
             ? html
             : $"https://github.com/{GitHubOwner}/{GitHubRepo}/releases/tag/{tag}";
 
-        string? downloadUrl = null;
-        string? digest = null;
-        long? size = null;
+        string? plainUrl = null, plainDigest = null;
+        long? plainSize = null;
+        string? gzUrl = null, gzDigest = null;
+        long? gzSize = null;
         if (root.TryGetProperty("assets", out JsonElement assets) && assets.ValueKind == JsonValueKind.Array)
         {
             foreach (JsonElement asset in assets.EnumerateArray())
             {
-                if (asset.TryGetProperty("name", out JsonElement nameElement) &&
-                    string.Equals(nameElement.GetString(), ReleaseAssetName, StringComparison.OrdinalIgnoreCase) &&
-                    asset.TryGetProperty("browser_download_url", out JsonElement urlElement))
+                if (!asset.TryGetProperty("name", out JsonElement nameElement) ||
+                    !asset.TryGetProperty("browser_download_url", out JsonElement urlElement))
                 {
-                    downloadUrl = urlElement.GetString();
-                    if (asset.TryGetProperty("digest", out JsonElement digestElement))
-                    {
-                        digest = digestElement.GetString();
-                    }
+                    continue;
+                }
 
-                    if (asset.TryGetProperty("size", out JsonElement sizeElement) && sizeElement.TryGetInt64(out long sizeValue))
-                    {
-                        size = sizeValue;
-                    }
+                string? name = nameElement.GetString();
+                string? digest = asset.TryGetProperty("digest", out JsonElement digestElement) ? digestElement.GetString() : null;
+                long? size = asset.TryGetProperty("size", out JsonElement sizeElement) && sizeElement.TryGetInt64(out long sizeValue)
+                    ? sizeValue
+                    : null;
 
-                    break;
+                if (string.Equals(name, GzReleaseAssetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    gzUrl = urlElement.GetString();
+                    gzDigest = digest;
+                    gzSize = size;
+                }
+                else if (string.Equals(name, ReleaseAssetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    plainUrl = urlElement.GetString();
+                    plainDigest = digest;
+                    plainSize = size;
                 }
             }
         }
+
+        string? downloadUrl = !string.IsNullOrEmpty(gzUrl) ? gzUrl : plainUrl;
+        string? chosenDigest = !string.IsNullOrEmpty(gzUrl) ? gzDigest : plainDigest;
+        long? chosenSize = !string.IsNullOrEmpty(gzUrl) ? gzSize : plainSize;
+        bool isGzip = !string.IsNullOrEmpty(gzUrl);
 
         if (releaseVersion <= currentVersion)
         {
@@ -347,7 +382,7 @@ public static class UpdateManager
             return null;
         }
 
-        return new UpdateInfo(releaseVersion, downloadUrl, releaseUrl, digest, size);
+        return new UpdateInfo(releaseVersion, downloadUrl, releaseUrl, chosenDigest, chosenSize, isGzip);
     }
 
     // ---------------- Windows-only: cleanup / install / apply ----------------
@@ -360,6 +395,7 @@ public static class UpdateManager
     {
         TryDelete(StaleExePath);
         TryDelete(DownloadingExePath);
+        TryDelete(GzDownloadingExePath);
     }
 
     /// <summary>Background bounded-retry delete of the ".old" exe a prior update swapped out —
@@ -375,7 +411,11 @@ public static class UpdateManager
     /// verification, so the ".old" rollback target must survive until the health milestone
     /// (<see cref="CompleteHealthMilestone"/>) proves this launch didn't crash-loop.</summary>
     [SupportedOSPlatform("windows")]
-    public static void CleanupDownloadLeftover() => TryDelete(DownloadingExePath);
+    public static void CleanupDownloadLeftover()
+    {
+        TryDelete(DownloadingExePath);
+        TryDelete(GzDownloadingExePath);
+    }
 
     // ---------------- Crash-loop guard (hardening item 7) ----------------
 
@@ -722,7 +762,12 @@ public static class UpdateManager
             throw new InvalidOperationException($"No downloadable Windows asset for {info.Version}.");
         }
 
-        string downloadPath = DownloadingExePath;
+        string downloadPath = DownloadingExePath; // final decompressed exe - the swap logic below always uses this slot
+        // Distinct temp name for a ".gz" transit asset (item 9) - kept separate from downloadPath
+        // so a failure between "downloaded" and "decompressed" never confuses the two, and so
+        // CleanupStaleUpdateFiles can find either kind of leftover independently. Equal to
+        // downloadPath itself when the chosen asset is the plain exe (no gz step happens at all).
+        string fetchPath = info.IsGzip ? GzDownloadingExePath : downloadPath;
         // Set when the swap-in fails AND the rollback-to-previous-exe recovery also fails: the
         // outer catch's usual "always delete downloadPath" cleanup would otherwise throw away the
         // one surviving, already digest-verified asset on a disk that has no runnable exe left at
@@ -732,6 +777,10 @@ public static class UpdateManager
         {
             Directory.CreateDirectory(InstallDir);
             TryDelete(downloadPath);
+            if (fetchPath != downloadPath)
+            {
+                TryDelete(fetchPath);
+            }
 
             using (HttpResponseMessage response = await HttpClient
                        .GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead)
@@ -739,35 +788,37 @@ public static class UpdateManager
             {
                 response.EnsureSuccessStatusCode();
                 await using Stream source = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                await using (FileStream destination = File.Create(downloadPath))
+                await using (FileStream destination = File.Create(fetchPath))
                 {
                     await source.CopyToAsync(destination).ConfigureAwait(false);
                 }
             }
 
-            var downloaded = new FileInfo(downloadPath);
+            var downloaded = new FileInfo(fetchPath);
             if (!downloaded.Exists || downloaded.Length == 0)
             {
-                TryDelete(downloadPath);
+                TryDelete(fetchPath);
                 throw new IOException($"Downloaded update for {info.Version} was empty or missing.");
             }
 
             if (info.Size is long expectedSize && downloaded.Length != expectedSize)
             {
                 // Cheap truncation catch ahead of the hash - a short/long download is almost always
-                // a broken transfer, and saying so plainly beats a generic "digest mismatch".
-                TryDelete(downloadPath);
+                // a broken transfer, and saying so plainly beats a generic "digest mismatch". This
+                // compares against the CHOSEN asset's own size (the .gz asset's when info.IsGzip),
+                // never the decompressed size.
+                TryDelete(fetchPath);
                 throw new IOException(
                     $"Downloaded update for {info.Version} was {downloaded.Length} bytes, expected {expectedSize} (truncated download).");
             }
 
-            bool? digestVerified = await AssetDigest.VerifyAsync(downloadPath, info.Digest).ConfigureAwait(false);
+            bool? digestVerified = await AssetDigest.VerifyAsync(fetchPath, info.Digest).ConfigureAwait(false);
             if (digestVerified == false)
             {
                 // Bytes don't match GitHub's own published sha256 for this asset - corruption or a
                 // tampered download-CDN path. Never swap this into the install; the caller's normal
                 // failure path (log + rethrow) leaves the current exe untouched and retries next cycle.
-                TryDelete(downloadPath);
+                TryDelete(fetchPath);
                 throw new IOException($"Downloaded update for {info.Version} failed SHA-256 verification.");
             }
 
@@ -778,6 +829,25 @@ public static class UpdateManager
                 // doesn't control. See AssetDigest's doc comment for why fail-closed here wouldn't
                 // add real security anyway (digest and URL travel the same channel).
                 FileLog.Write($"RoeSnip: update to {info.Version} has no verifiable digest in the release payload - skipping hash check.");
+            }
+
+            if (info.IsGzip)
+            {
+                // fetchPath's bytes are already digest-verified above - decompress into the plain
+                // exe the rest of this method (and every downstream caller) expects, then drop the
+                // now-redundant .gz. Sub-second local CPU; never inline with the swap itself.
+                try
+                {
+                    await GzipAssetDecompressor.DecompressAsync(fetchPath, downloadPath).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    TryDelete(fetchPath);
+                    TryDelete(downloadPath);
+                    throw new IOException($"Downloaded update for {info.Version} could not be decompressed: {ex.Message}", ex);
+                }
+
+                TryDelete(fetchPath);
             }
 
             // Retried, not a bare delete: a prior .old can still be held locked by a sibling
@@ -860,6 +930,10 @@ public static class UpdateManager
             if (!preserveDownload)
             {
                 TryDelete(downloadPath);
+                if (fetchPath != downloadPath)
+                {
+                    TryDelete(fetchPath);
+                }
             }
 
             FileLog.Write($"RoeSnip: update to {info.Version} failed: {ex.Message}");
