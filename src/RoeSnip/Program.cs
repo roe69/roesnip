@@ -206,6 +206,21 @@ public sealed record RoeSnipSettings
     /// - see Sharing/ShareManager.ResolveDefault.</summary>
     public string? DefaultShareProviderId { get; init; } = null;
 
+    /// <summary>How often the tray resident re-checks GitHub Releases for a newer build (periodic
+    /// auto-update), a plain string like <see cref="GifSizePreset"/> above rather than the
+    /// <see cref="RoeSnip.Core.Updates.UpdateCheckFrequency"/> enum itself - same human-editable,
+    /// forward/backward compatible JSON rationale. Parsed via
+    /// <see cref="RoeSnip.Core.Updates.UpdateCheckFrequencies.Parse"/>, which fails safe to "Hourly"
+    /// (this default) for any unknown or corrupt value. That fail-safe default matters beyond the
+    /// usual settings-compat story: a check that only ever runs once at startup almost never
+    /// actually fires anything for a tray resident that stays running for weeks between launches,
+    /// so the periodic cadence this field selects is the mechanism that actually delivers updates -
+    /// the startup check is just its first iteration. A settings.json from any build that predates
+    /// this field is missing it entirely and deserializes straight to "Hourly"; that upgrade from
+    /// effectively-never-periodic to hourly checking is the intended fix, not a migration to write
+    /// code for.</summary>
+    public string UpdateCheckFrequency { get; init; } = "Hourly";
+
     public static RoeSnipSettings Default { get; } = new();
 
     private static string DefaultSaveDirectory() =>

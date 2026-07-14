@@ -404,4 +404,39 @@ public class SettingsTests : IDisposable
         Assert.Equal(50, RoeSnip.Core.Recording.RecordingSizeEstimator.ClampFps(
             loaded.GifFps, RoeSnip.Core.Recording.RecordingSizeEstimator.GifMinFps, RoeSnip.Core.Recording.RecordingSizeEstimator.GifMaxFps));
     }
+
+    // ---------- UpdateCheckFrequency (periodic auto-update) ----------
+
+    [Fact]
+    public void Load_JsonMissingUpdateCheckFrequency_FallsBackToHourly()
+    {
+        // A settings.json from any build predating periodic auto-update lacks this field entirely -
+        // deserializing straight to "Hourly" (not "StartupOnly", today's actual old behavior) is the
+        // intended fix for a tray resident whose startup-only check almost never fires.
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+        File.WriteAllText(settingsPath, """
+            {
+              "SchemaVersion": 1,
+              "CopyOnSelect": true
+            }
+            """);
+
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Equal("Hourly", loaded.UpdateCheckFrequency);
+    }
+
+    [Fact]
+    public void SaveThenLoad_RoundTripsUpdateCheckFrequencyVerbatim_IncludingAnUnknownFutureValue()
+    {
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+
+        var original = RoeSnipSettings.Default with { UpdateCheckFrequency = "SomeFutureFrequency" };
+        SettingsStore.Save(original, settingsPath);
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Equal("SomeFutureFrequency", loaded.UpdateCheckFrequency);
+    }
 }

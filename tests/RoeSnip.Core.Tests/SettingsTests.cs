@@ -295,4 +295,41 @@ public class SettingsTests : IDisposable
         Assert.Empty(loaded.CustomColors);
         Assert.Empty(loaded.PaletteColors);
     }
+
+    [Fact]
+    public void Load_JsonMissingUpdateCheckFrequency_FallsBackToHourly()
+    {
+        // A settings.json from any build that predates the periodic auto-update feature is missing
+        // this field entirely - that upgrade to "Hourly" (not "StartupOnly", today's actual old
+        // behavior) is the intended fix for a tray resident whose startup-only check almost never
+        // fires, not an accidental default.
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+        File.WriteAllText(settingsPath, """
+            {
+              "SchemaVersion": 1,
+              "CopyOnSelect": true
+            }
+            """);
+
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Equal("Hourly", loaded.UpdateCheckFrequency);
+    }
+
+    [Fact]
+    public void SaveThenLoad_RoundTripsUpdateCheckFrequencyVerbatim_IncludingAnUnknownFutureValue()
+    {
+        Directory.CreateDirectory(_tempDir);
+        string settingsPath = PathFor("settings.json");
+
+        // The field is a plain string, not the enum - a future build's new member (unknown to this
+        // build) must still round-trip byte-for-byte rather than being coerced or dropped.
+        var original = RoeSnipSettings.Default with { UpdateCheckFrequency = "SomeFutureFrequency" };
+
+        SettingsStore.Save(original, settingsPath);
+        var loaded = SettingsStore.Load(settingsPath);
+
+        Assert.Equal("SomeFutureFrequency", loaded.UpdateCheckFrequency);
+    }
 }
