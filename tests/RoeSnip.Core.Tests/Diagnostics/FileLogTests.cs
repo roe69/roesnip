@@ -95,6 +95,32 @@ public sealed class FileLogTests : IDisposable
     }
 
     [Fact]
+    public void Write_RotatesOversizedLogFileWithinASession_WithoutARelaunch()
+    {
+        // The bug this guards against: Initialize's own rotation only ever ran once per process
+        // launch, so a long-lived tray resident (this class's normal lifetime) could grow the log
+        // well past MaxBytes before anything looked at it again. Write() must also catch it,
+        // periodically, without needing a fresh Initialize call.
+        FileLog.Initialize(_tempDir);
+        string logPath = Path.Combine(_tempDir, "roesnip.log");
+
+        // One write already past the 1 MB threshold, then enough small writes to cross the
+        // in-session rotation check's own interval (256 - see FileLog's RotateCheckInterval).
+        FileLog.Write(new string('z', 1024 * 1024 + 1));
+        for (int i = 0; i < 256; i++)
+        {
+            FileLog.Write("line " + i);
+        }
+
+        string rotatedPath = logPath + ".1";
+        Assert.True(File.Exists(rotatedPath));
+        Assert.True(new FileInfo(rotatedPath).Length > 1024 * 1024);
+        // The live path keeps accepting writes after rotating out from under itself.
+        Assert.True(File.Exists(logPath));
+        Assert.True(new FileInfo(logPath).Length < 1024 * 1024);
+    }
+
+    [Fact]
     public void Write_WithLockedLogFile_DoesNotThrow()
     {
         FileLog.Initialize(_tempDir);

@@ -23,12 +23,22 @@ public static class FileLog
     private const string FileName = "roesnip.log";
     private const long MaxBytes = 1L * 1024 * 1024; // 1 MB, per the class's own rotation contract
 
+    // How many Write() calls between each in-session rotation size check (see Write's own comment) -
+    // cheap enough (a FileInfo stat, not a read) to run this often without turning every write into
+    // extra I/O, frequent enough that a tray resident logging a line every few seconds still gets
+    // checked well within a session, long before 1 MB could accumulate unnoticed.
+    private const int RotateCheckInterval = 256;
+
     private static readonly object Lock = new();
 
     // Null until Initialize succeeds; Write() falls back to console-only output while null (covers
     // both "never initialized" — e.g. a unit test exercising Core code directly — and "Initialize
     // itself failed", e.g. an unwritable config directory).
     private static string? _filePath;
+
+    // Counts Write() calls since the last rotation check (Initialize's own check, or one of these) -
+    // see Write's own comment for why this exists.
+    private static int _writesSinceRotationCheck;
 
     /// <summary>Points the sink at "&lt;directory&gt;/roesnip.log" and rotates it if it has grown
     /// past <see cref="MaxBytes"/>. Call once, as early as possible in each app's Main, before any
@@ -45,6 +55,7 @@ public static class FileLog
                 string path = Path.Combine(directory, FileName);
                 RotateIfOversized(path);
                 _filePath = path;
+                _writesSinceRotationCheck = 0;
             }
             catch
             {
@@ -58,7 +69,15 @@ public static class FileLog
     /// <summary>Appends a UTC-timestamped line to the log file (if initialized) and echoes
     /// <paramref name="message"/> to Console.Error unchanged — the same single call every former
     /// Console.Error.WriteLine("RoeSnip: ...") site now makes, preserving the existing dev/terminal
-    /// experience while also making the line durable on a field machine.</summary>
+    /// experience while also making the line durable on a field machine.
+    ///
+    /// Also re-checks rotation every <see cref="RotateCheckInterval"/> calls (never on every single
+    /// call — a FileInfo stat on every capture-hot-path log line would be needless overhead for a
+    /// cap that only needs to be approximately enforced). Without this, <see cref="Initialize"/>'s
+    /// own rotation only ever ran once per process launch, so a tray resident's normal multi-week
+    /// uptime could grow the log well past <see cref="MaxBytes"/> before the next relaunch ever
+    /// looked at it again — this keeps the "capped at roughly 2x MaxBytes" contract true within a
+    /// single long-lived session too, not just across launches.</summary>
     public static void Write(string message)
     {
         try
@@ -82,6 +101,12 @@ public static class FileLog
             {
                 string line = $"[{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff}Z] {message}";
                 File.AppendAllText(_filePath, line + Environment.NewLine);
+
+                if (++_writesSinceRotationCheck >= RotateCheckInterval)
+                {
+                    _writesSinceRotationCheck = 0;
+                    RotateIfOversized(_filePath);
+                }
             }
             catch
             {
@@ -123,6 +148,7 @@ public static class FileLog
         lock (Lock)
         {
             _filePath = null;
+            _writesSinceRotationCheck = 0;
         }
     }
 }
