@@ -24,7 +24,14 @@ public static class ShareProviderCatalog
     /// the request body IS the raw file bytes (RawBody, not multipart), filename via the X-Filename
     /// header, auth via "Authorization: Bearer rsk_...", expiration via the <c>expiresIn</c> query
     /// param (CONTRACT.md's B addition - "0" = never, a positive integer = seconds from now, omitted/
-    /// blank = the server's own 7-day default). Response is
+    /// blank = the server's own 7-day default), content type via the <c>mime</c> query param (also
+    /// documented in CONTRACT.md's one-shot upload section) - the server does NOT sniff Content-Type
+    /// from the request headers or the filename extension for this route, it stores exactly
+    /// <c>application/octet-stream</c> unless <c>mime</c> is passed, and CONTRACT.md's embed-meta
+    /// feature (C) only renders a rich Discord/OG embed for a file whose stored mime is a known image
+    /// type - omitting <c>mime</c> here would silently make every RoeSnip upload embed-ineligible
+    /// forever. {Mime} is auto-populated from the upload's own Content-Type, same as {Filename} - see
+    /// ProviderSpecShareProvider.UploadAsync. Response is
     /// <c>201 { id, url, fileId, name, size, editToken, expiresAt }</c> - "url" is the ready-to-share
     /// link (config.baseUrl + '/' + id), "editToken" is the owner-management secret (CONTRACT.md's D1
     /// addition; absent on an older server, which is fine - see ResponseEditTokenJsonPath's own doc
@@ -36,7 +43,7 @@ public static class ShareProviderCatalog
     {
         Id = "roeshare",
         Name = "RoeShare",
-        Endpoint = "{BaseUrl}/api/v1/upload?expiresIn={ExpiresIn}",
+        Endpoint = "{BaseUrl}/api/v1/upload?expiresIn={ExpiresIn}&mime={Mime}",
         Method = "POST",
         UploadKind = ShareUploadKind.RawBody,
         Headers = new Dictionary<string, string>

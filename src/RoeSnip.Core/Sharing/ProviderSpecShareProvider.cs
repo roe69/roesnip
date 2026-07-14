@@ -38,6 +38,11 @@ public sealed class ProviderSpecShareProvider : IShareProvider
         var values = new Dictionary<string, string>(_config.Values, StringComparer.OrdinalIgnoreCase)
         {
             ["Filename"] = request.FileName,
+            // Same auto-populated-from-the-request idea as Filename above (not a ShareConfigField,
+            // not user-editable) - a spec that wants the content type in its Endpoint/Headers/
+            // ExtraFields (RoeShare's own "?mime={Mime}", see the Endpoint's own doc comment for why
+            // this matters for embed generation) can reference {Mime}.
+            ["Mime"] = request.ContentType,
         };
 
         // Generic backfill for any spec field with a DefaultValue that came out missing or blank in

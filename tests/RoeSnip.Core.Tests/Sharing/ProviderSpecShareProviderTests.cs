@@ -41,7 +41,7 @@ public class ProviderSpecShareProviderTests
         Assert.True(result.Success);
         Assert.Equal("https://share.example.com/abc", result.Url);
         // No ExpiresIn configured -> backfilled to "0" (never expire), the DEFAULT-NEVER trap defense.
-        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=0", handler.LastRequest!.RequestUri!.ToString());
+        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=0&mime=image/png", handler.LastRequest!.RequestUri!.ToString());
         Assert.Equal(HttpMethod.Post, handler.LastRequest.Method);
         Assert.Equal("Bearer rsk_test", handler.LastRequest.Headers.GetValues("Authorization").First());
         Assert.Equal("shot.png", handler.LastRequest.Headers.GetValues("X-Filename").First());
@@ -215,7 +215,7 @@ public class ProviderSpecShareProviderTests
 
         await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
-        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=0", handler.LastRequest!.RequestUri!.ToString());
+        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=0&mime=image/png", handler.LastRequest!.RequestUri!.ToString());
     }
 
     [Fact]
@@ -234,7 +234,7 @@ public class ProviderSpecShareProviderTests
 
         await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
-        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=0", handler.LastRequest!.RequestUri!.ToString());
+        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=0&mime=image/png", handler.LastRequest!.RequestUri!.ToString());
     }
 
     [Fact]
@@ -256,7 +256,7 @@ public class ProviderSpecShareProviderTests
 
         await provider.UploadAsync(SamplePng(), CancellationToken.None);
 
-        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=3600", handler.LastRequest!.RequestUri!.ToString());
+        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=3600&mime=image/png", handler.LastRequest!.RequestUri!.ToString());
     }
 
     [Fact]
