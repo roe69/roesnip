@@ -945,7 +945,11 @@ public static class Program
     ///   "Continue/Quit" dialog or an immediate process-level crash). WinForms would otherwise just
     ///   swallow the exception and keep pumping messages once this event returns — that risks
     ///   continuing on corrupt capture/UI state, so the handler force-terminates itself rather than
-    ///   letting the loop carry on (never-destabilize rule: die cleanly, don't limp on).
+    ///   letting the loop carry on (never-destabilize rule: die cleanly, don't limp on). Dying is not
+    ///   the same as disappearing, though: on the installed copy, <see cref="TryRelaunchInstalledCopy"/>
+    ///   starts a fresh process before exiting, so a one-off COM/GDI hiccup in a menu or balloon
+    ///   handler (this codebase's own experience with the clipboard/notify-icon APIs) loses the tray
+    ///   for a couple of seconds instead of until the next login.
     /// - AppDomain.CurrentDomain.UnhandledException covers every other thread (background Tasks
     ///   awaited without try/catch, ThreadPool work, the pipe-listener loop, etc.). The CLR
     ///   terminates the process right after this handler returns (IsTerminating is always true for
@@ -961,6 +965,7 @@ public static class Program
         {
             FileLog.Write("RoeSnip: unhandled UI-thread exception:\n" + e.Exception);
             CrashMarker.Write(App.SettingsStore.SettingsDirectory, App.UpdateManager.CurrentVersionText);
+            TryRelaunchInstalledCopy();
             Environment.Exit(1);
         };
 
@@ -977,5 +982,52 @@ public static class Program
         {
             FileLog.Write("RoeSnip: unobserved task exception:\n" + e.Exception);
         };
+    }
+
+    // Set the moment Main starts running, before any UI-thread work exists to fault - the baseline
+    // TryRelaunchInstalledCopy compares against to tell "this build ran fine for a while and hit a
+    // one-off glitch" apart from "this build (or this machine's state) faults almost immediately".
+    private static readonly DateTime ProcessStartUtc = DateTime.UtcNow;
+
+    // A relaunch that itself faults within this window and relaunches again would spin the tray in
+    // a tight crash loop instead of the slow, at-least-usable-in-between loop a startup-time fault
+    // degrades to without this guard (see TryRelaunchInstalledCopy). 15s matches
+    // UpdateHealthMarker's own post-update health-milestone window (item 7) - both exist to tell
+    // "ran long enough to be healthy" apart from "faulted right away".
+    private static readonly TimeSpan MinUptimeForRelaunch = TimeSpan.FromSeconds(15);
+
+    /// <summary>Starts a fresh installed-copy process before <see cref="Application.ThreadException"/>'s
+    /// handler exits this one, so a recoverable UI-thread exception (a transient clipboard/GDI
+    /// failure, say) loses the user their tray icon for a couple of seconds rather than until the
+    /// next login - see this class's RegisterUnhandledExceptionHandlers doc comment for the full
+    /// rationale. Never runs for a portable/dev copy (<see cref="App.UpdateManager.IsInstalled"/>
+    /// false) - there is no well-known path to relaunch, and a dev crash should stay visibly dead,
+    /// not quietly reappear. Skips the relaunch when this process crashed within
+    /// <see cref="MinUptimeForRelaunch"/> of starting, so a build that faults on startup (or a
+    /// machine-state fault that reproduces instantly) degrades to a single clean exit instead of a
+    /// tight, CPU-spinning crash loop. Best-effort: a failure to relaunch must never throw back into
+    /// an exception handler that is already on its way to Environment.Exit.</summary>
+    private static void TryRelaunchInstalledCopy()
+    {
+        try
+        {
+            if (!App.UpdateManager.IsInstalled)
+            {
+                return;
+            }
+
+            if (DateTime.UtcNow - ProcessStartUtc < MinUptimeForRelaunch)
+            {
+                FileLog.Write("RoeSnip: not relaunching after UI-thread exception - crashed within " +
+                    $"{MinUptimeForRelaunch.TotalSeconds:0}s of starting (avoiding a crash loop).");
+                return;
+            }
+
+            System.Diagnostics.Process.Start(App.UpdateManager.InstalledExePath);
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: relaunch after UI-thread exception failed: {ex.Message}");
+        }
     }
 }
