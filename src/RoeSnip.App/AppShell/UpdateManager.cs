@@ -408,11 +408,18 @@ public static class UpdateManager
 
     /// <summary>Best-effort delete of update leftovers (a ".old" from a prior swap that's unlocked
     /// once that older process exited, and any ".new" abandoned by a download that never
-    /// completed). Called once, synchronously, at startup. Never throws.</summary>
+    /// completed). Called once, synchronously, at startup. Never throws. Skips the ".old" delete
+    /// (never the ".new" ones) when <see cref="StaleExeIsSafeToDelete"/> says a pending-verify
+    /// marker is live - see that method's own doc comment for why THIS process being a portable/dev
+    /// run does not by itself mean nothing else needs ".old".</summary>
     [SupportedOSPlatform("windows")]
     public static void CleanupStaleUpdateFiles()
     {
-        TryDelete(StaleExePath);
+        if (StaleExeIsSafeToDelete())
+        {
+            TryDelete(StaleExePath);
+        }
+
         TryDelete(DownloadingExePath);
         TryDelete(GzDownloadingExePath);
     }
@@ -420,9 +427,29 @@ public static class UpdateManager
     /// <summary>Background bounded-retry delete of the ".old" exe a prior update swapped out —
     /// right after an update hand-off the just-replaced process can still be exiting and holding
     /// its renamed exe locked, so <see cref="CleanupStaleUpdateFiles"/>'s single synchronous
-    /// attempt can miss it. Never throws; call on a background thread.</summary>
+    /// attempt can miss it. Never throws; call on a background thread. Guarded by
+    /// <see cref="StaleExeIsSafeToDelete"/> - see that method's own doc comment.</summary>
     [SupportedOSPlatform("windows")]
-    public static void CleanupStaleExeWithRetry() => TryDeleteWithRetry(StaleExePath);
+    public static void CleanupStaleExeWithRetry()
+    {
+        if (StaleExeIsSafeToDelete())
+        {
+            TryDeleteWithRetry(StaleExePath);
+        }
+    }
+
+    /// <summary>Guards every ".old" delete in this class (both <see cref="CleanupStaleUpdateFiles"/>
+    /// and <see cref="CleanupStaleExeWithRetry"/>): false whenever <see cref="HealthMarkerDirectory"/>'s
+    /// update-health.json still names a pending-verify version, since ".old" is that launch's
+    /// rollback target for as long as the marker says so - see UpdateHealthMarker's own doc comment
+    /// for the crash-loop guard this protects. Deliberately NOT gated on <see cref="IsInstalled"/>:
+    /// a portable/dev copy launched while an INSTALLED copy's update is still pending verification
+    /// shares the very same <see cref="HealthMarkerDirectory"/> (the settings/config directory, not
+    /// the install dir) and would otherwise happily delete the installed copy's ".old" out from
+    /// under it - the marker itself is untouched by that, so a later crash-looping launch of the
+    /// installed copy would reach its own restore branch with nothing left to restore.</summary>
+    private static bool StaleExeIsSafeToDelete() =>
+        UpdateHealthMarker.Load(HealthMarkerDirectory).PendingVersion is null;
 
     /// <summary>Deletes only the abandoned ".new" download leftover, never <see cref="StaleExePath"/>
     /// - used at startup instead of <see cref="CleanupStaleUpdateFiles"/> when the crash-loop guard

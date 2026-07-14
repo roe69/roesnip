@@ -183,13 +183,35 @@ public static class UpdateManager
     /// completed). Called once, synchronously, at startup - a single fast attempt that clears both
     /// in the common case (a normal launch, where any prior process is long gone). The just-updated
     /// case, where the replaced process is still exiting and holding its renamed ".old" locked, is
-    /// covered by <see cref="CleanupStaleExeWithRetry"/> on a background thread. Never throws.</summary>
+    /// covered by <see cref="CleanupStaleExeWithRetry"/> on a background thread. Never throws.
+    /// Skips the ".old" delete (never the ".new" ones) when <see cref="StaleExeIsSafeToDelete"/>
+    /// says a pending-verify marker is live - see that method's own doc comment for why THIS
+    /// process being a portable/dev run (so <see cref="CheckUpdateHealthAtStartup"/> already
+    /// answered ProceedImmediateCleanup for it) does not by itself mean nothing else needs
+    /// ".old".</summary>
     public static void CleanupStaleUpdateFiles()
     {
-        TryDelete(StaleExePath);
+        if (StaleExeIsSafeToDelete())
+        {
+            TryDelete(StaleExePath);
+        }
+
         TryDelete(DownloadingExePath);
         TryDelete(GzDownloadingExePath);
     }
+
+    /// <summary>Guards every ".old" delete in this class (both <see cref="CleanupStaleUpdateFiles"/>
+    /// and <see cref="CleanupStaleExeWithRetry"/>): false whenever <see cref="HealthMarkerDirectory"/>'s
+    /// update-health.json still names a pending-verify version, since ".old" is that launch's
+    /// rollback target for as long as the marker says so - see UpdateHealthMarker's own doc comment
+    /// for the crash-loop guard this protects. Deliberately NOT gated on <see cref="IsInstalled"/>:
+    /// a portable/dev copy launched while an INSTALLED copy's update is still pending verification
+    /// shares the very same <see cref="HealthMarkerDirectory"/> (the settings directory, not the
+    /// install dir) and would otherwise happily delete the installed copy's ".old" out from under
+    /// it - the marker itself is untouched by that, so a later crash-looping launch of the installed
+    /// copy would reach its own restore branch with nothing left to restore.</summary>
+    private static bool StaleExeIsSafeToDelete() =>
+        UpdateHealthMarker.Load(HealthMarkerDirectory).PendingVersion is null;
 
     /// <summary>Deletes only the abandoned ".new" download leftover, never <see cref="StaleExePath"/>
     /// - used at startup instead of <see cref="CleanupStaleUpdateFiles"/> when the crash-loop guard
@@ -208,10 +230,14 @@ public static class UpdateManager
     /// so that first attempt misses and a full ~170 MB copy would otherwise sit in the install dir
     /// until the NEXT launch. This retries briefly so the swap frees its old artefact the same
     /// session and the install dir never keeps more than the one live exe. Never throws; call on a
-    /// background thread (the retry wait must never stall startup).</summary>
+    /// background thread (the retry wait must never stall startup). Guarded by
+    /// <see cref="StaleExeIsSafeToDelete"/> - see that method's own doc comment.</summary>
     public static void CleanupStaleExeWithRetry()
     {
-        TryDeleteWithRetry(StaleExePath);
+        if (StaleExeIsSafeToDelete())
+        {
+            TryDeleteWithRetry(StaleExePath);
+        }
     }
 
     // ---------------- Crash-loop guard (hardening item 7) ----------------
