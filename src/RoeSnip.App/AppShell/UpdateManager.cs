@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
@@ -151,7 +152,17 @@ public static class UpdateManager
 
     private static HttpClient CreateHttpClient()
     {
-        var client = new HttpClient();
+        // AutomaticDecompression only kicks in when the server actually sends a Content-Encoding
+        // header (the releases/latest JSON does - 8475 -> 1256 bytes measured live; the binary
+        // asset download doesn't, so this has zero effect there), and it's a no-op on a 304's empty
+        // body, so it's free to turn on for every request this client makes rather than special-cased.
+        var handler = new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate };
+        // Default 100s timeout (see ShareManager.CreateHttpClient's own comment for this exact bug
+        // class) deterministically fails the largest Windows asset download below sustained
+        // broadband speeds - a slow-but-working connection would then retry-and-fail every hourly
+        // check forever. 15 minutes comfortably covers that download on very ordinary consumer
+        // upstream while still eventually giving up on a truly hung connection.
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(15) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("RoeSnip.App-Updater");
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         return client;
