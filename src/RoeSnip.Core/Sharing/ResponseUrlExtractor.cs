@@ -134,6 +134,37 @@ public static class ResponseUrlExtractor
         return false;
     }
 
+    /// <summary>Tolerant JSON-path walk for an OPTIONAL response field (currently just RoeShare's
+    /// <c>editToken</c> - see ProviderSpec.ResponseEditTokenJsonPath) where absence must never fail the
+    /// upload, unlike <see cref="TryExtract"/>'s URL path which IS the primary contract. Returns null on
+    /// ANY problem - no path configured, unparseable body, path not found, or a blank/non-string leaf -
+    /// rather than an (error, out) pair, because callers never need to distinguish those cases: they all
+    /// mean exactly the same thing here, "nothing to carry forward".</summary>
+    public static string? TryExtractOptionalJsonPath(string? path, string body)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(body);
+            if (TryWalkPath(document.RootElement, path, out string? value) && !string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+        }
+        catch (JsonException)
+        {
+            // Tolerated - an older/different server whose response isn't JSON at all still succeeded
+            // at the primary URL extraction (e.g. a PlainBody-mode provider); this optional field
+            // simply isn't present for it.
+        }
+
+        return null;
+    }
+
     /// <summary>Walks a dotted path ("data.link") through nested JSON objects. Only object-property
     /// traversal is supported (no array indexing) - every built-in spec's response shape is a plain
     /// nested object, and keeping this to the minimum that's actually needed matches the rest of the

@@ -100,6 +100,13 @@ public sealed record ProviderSpec
     /// Regex.</summary>
     public string? ResponseRegex { get; init; }
 
+    /// <summary>Dotted JSON path (same walk as <see cref="ResponseJsonPath"/>) to an OPTIONAL owner-
+    /// management secret in a successful response body - RoeShare's own one-shot upload returns
+    /// <c>editToken</c> alongside <c>url</c>. Null for every built-in except RoeShare. Absence of the
+    /// field at this path is never an upload failure (an older server that predates this field, say) -
+    /// see ProviderSpecShareProvider's tolerant extraction and ShareUploadResult.EditToken.</summary>
+    public string? ResponseEditTokenJsonPath { get; init; }
+
     /// <summary>Per-provider settings fields shown in the settings UI (ShareProviderEditWindow),
     /// e.g. RoeShare needs BaseUrl + ApiKey, Imgur needs just a Client ID, several need nothing at
     /// all. Empty for a provider with no configurable credential.</summary>

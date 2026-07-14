@@ -133,7 +133,11 @@ public sealed class ProviderSpecShareProvider : IShareProvider
                     $"{DisplayName}: {extractError ?? "could not find a URL in the response."}", (int)response.StatusCode);
             }
 
-            return new ShareUploadResult(true, url, null, (int)response.StatusCode);
+            // Optional, best-effort - absence (an older server, or a spec that doesn't declare the
+            // path at all) is not an error; see ResponseEditTokenJsonPath's own doc comment.
+            string? editToken = ResponseUrlExtractor.TryExtractOptionalJsonPath(_spec.ResponseEditTokenJsonPath, body);
+
+            return new ShareUploadResult(true, url, null, (int)response.StatusCode, editToken);
         }
     }
 

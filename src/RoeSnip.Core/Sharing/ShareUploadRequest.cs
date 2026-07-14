@@ -15,5 +15,11 @@ public sealed record ShareUploadRequest(Stream Content, string FileName, string 
 
 /// <summary>Outcome of one upload attempt. Errors are surfaced honestly as a human-readable
 /// ErrorMessage rather than a bare exception/status code - callers (toolbar balloon, recording
-/// chrome, settings Test button) show it verbatim.</summary>
-public sealed record ShareUploadResult(bool Success, string? Url, string? ErrorMessage, int? HttpStatusCode = null);
+/// chrome, settings Test button) show it verbatim.
+///
+/// <see cref="EditToken"/> is the plaintext owner-management secret a spec's response carries (see
+/// ProviderSpec.ResponseEditTokenJsonPath) - null for any provider that doesn't declare that path, or
+/// when an otherwise-successful upload's response simply didn't include it (an older server before
+/// this field existed, say). Trailing/optional so every existing call site that constructs a
+/// ShareUploadResult positionally still compiles unchanged.</summary>
+public sealed record ShareUploadResult(bool Success, string? Url, string? ErrorMessage, int? HttpStatusCode = null, string? EditToken = null);

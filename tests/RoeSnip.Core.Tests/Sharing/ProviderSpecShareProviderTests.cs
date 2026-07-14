@@ -198,6 +198,62 @@ public class ProviderSpecShareProviderTests
     }
 
     [Fact]
+    public async Task Upload_RoeShare_ResponseWithEditToken_ExtractsToken()
+    {
+        var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.Created,
+            """{"id":"abc","url":"https://share.example.com/abc","editToken":"tok_secret123","expiresAt":null}""");
+        var config = new ShareProviderConfig
+        {
+            Id = "roeshare-1",
+            SpecId = "roeshare",
+            Values = new Dictionary<string, string> { ["BaseUrl"] = "https://share.example.com", ["ApiKey"] = "rsk_test" },
+        };
+        var provider = new ProviderSpecShareProvider(ShareProviderCatalog.RoeShare, config, handler.ToClient());
+
+        ShareUploadResult result = await provider.UploadAsync(SamplePng(), CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal("https://share.example.com/abc", result.Url);
+        Assert.Equal("tok_secret123", result.EditToken);
+    }
+
+    [Fact]
+    public async Task Upload_RoeShare_OldServerResponse_HasNoEditTokenField_StillSucceedsWithNullToken()
+    {
+        // Pre-D1 server: "url" only, no "editToken" - the whole point of making the field optional.
+        var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.Created, """{"id":"abc","url":"https://share.example.com/abc"}""");
+        var config = new ShareProviderConfig
+        {
+            Id = "roeshare-1",
+            SpecId = "roeshare",
+            Values = new Dictionary<string, string> { ["BaseUrl"] = "https://share.example.com", ["ApiKey"] = "rsk_test" },
+        };
+        var provider = new ProviderSpecShareProvider(ShareProviderCatalog.RoeShare, config, handler.ToClient());
+
+        ShareUploadResult result = await provider.UploadAsync(SamplePng(), CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal("https://share.example.com/abc", result.Url);
+        Assert.Null(result.EditToken);
+    }
+
+    [Fact]
+    public async Task Upload_ProviderWithoutEditTokenPath_NeverAttemptsExtraction()
+    {
+        // Imgur's spec declares no ResponseEditTokenJsonPath at all - even a response that happens to
+        // contain a same-shaped "editToken" field must not leak into the result.
+        var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.OK,
+            """{"data":{"link":"https://imgur.com/x","editToken":"should-not-be-picked-up"}}""");
+        var config = new ShareProviderConfig { Id = "imgur-1", SpecId = "imgur" };
+        var provider = new ProviderSpecShareProvider(ShareProviderCatalog.Imgur, config, handler.ToClient());
+
+        ShareUploadResult result = await provider.UploadAsync(SamplePng(), CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Null(result.EditToken);
+    }
+
+    [Fact]
     public async Task Upload_PlainBodyResponse_ExtractsWholeTrimmedBody()
     {
         var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.OK, "  https://0x0.st/abcd.png\n");

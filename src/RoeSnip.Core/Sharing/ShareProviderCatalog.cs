@@ -44,6 +44,10 @@ public static class ShareProviderCatalog
         MaxUploadBytes = null, // server-configured (config.maxFileSize) - not knowable statically
         ResponseMode = ResponseUrlMode.JsonPath,
         ResponseJsonPath = "url",
+        // Owner-management secret RoeShare's own upload endpoint returns alongside "url" (see
+        // CONTRACT.md's D1 addition) - absent on an older server, which is fine, see
+        // ProviderSpec.ResponseEditTokenJsonPath's own doc comment.
+        ResponseEditTokenJsonPath = "editToken",
         ConfigFields = new List<ShareConfigField>
         {
             new("BaseUrl", "Server URL (e.g. https://share.example.com, no trailing slash)", Required: true, IsSecret: false),
