@@ -748,6 +748,77 @@ structured unsupported error (not "unknown command"), `confirm copy` -> overlay 
 the reported dimensions, a second `trigger`+`select`+`confirm save` -> PNG written to the given
 path and overlay closed, `escape` while idle -> no-op `ok:true`.
 
+## RoeShare owner-token/expiry/embed integration (`roesnip-integration`, 2026-07-14)
+
+ShareConfigField gained Options/DefaultValue (generic ComboBox support + seeded/backfilled
+defaults in both edit windows), RoeShare's spec gained a configurable ExpiresIn field
+(Never/1h/1d/1w/30d, default Never) and `{Mime}` in its Endpoint, wiring the client half of
+CONTRACT.md's B (expiry)/C (embeds)/D (owner tokens) additions from the already-deployed
+`roeshare-server` package.
+
+**Verified 2026-07-14 (live, `https://share.roelite.net`, real production API key from the
+user's own already-configured resident RoeSnip provider row, a standalone `RoeSnip.App
+--automation` instance in its own isolated `%APPDATA%\RoeSnip.App` — never the resident on
+either app — started and killed by this session; settings.json/capture-cache.json restored to
+their pre-test byte-identical contents afterward; every test share deleted from the live
+server afterward):**
+
+- **Live bug found and fixed by this pass:** RoeShare's one-shot upload route reads the stored
+  file mime from a `?mime=` query param (CONTRACT.md), never from the request's Content-Type
+  header — RoeShare's Endpoint template never sent it, so every RoeSnip upload landed as
+  `application/octet-stream` and could never qualify for the embed feature (C) at all. Fixed by
+  auto-populating `{Mime}` from the request alongside the existing `{Filename}`, referenced in
+  the Endpoint as `&mime={Mime}` (commit "Send the file's mime type on RoeShare uploads").
+  Confirmed via a manual raw request that an unencoded `/` in `mime=image/png` round-trips fine
+  through the live server's query parsing.
+- **`--auto trigger` → `select` → `confirm share`**: overlay closed immediately (`mode` went
+  `overlay` → `idle`, not staying `overlay` as the pre-`roesnip-ux` behavior did), a screenshot
+  taken immediately after showed the new `ShareResultWindow` in its Success state — title
+  "RoeShare", "Uploaded" label, the clean URL as selectable text, Open/Copy always visible
+  bottom-right — and the clean URL (no `#edit=` fragment) was on the clipboard, confirming the
+  Copy/auto-clipboard-vs-Open URL split.
+- **Expiry (B):** the resulting share's `GET /api/shares/:id` showed `"expiresAt":null` (RoeSnip's
+  default `ExpiresIn=0` reached the server correctly, both for a fresh config and, in a separate
+  test, a config with `ExpiresIn` set directly in `Values` mimicking a pre-existing row missing
+  the key — both landed on `expiresAt:null`). Setting `Values.ExpiresIn="3600"` directly (the
+  ComboBox itself needs synthetic mouse/keyboard input outside the `--auto` pipe's coverage, same
+  documented gap as `ShareProviderEditWindow` elsewhere in this file) and uploading again produced
+  `expiresAt - createdAt == 3600` exactly.
+- **Embed (C):** with the mime fix in place, `GET /<id>` (the root slug fallback — the actual URL
+  shape RoeSnip's one-shot upload returns) rendered full rich `og:title`/`og:description`/
+  `og:image`/`og:image:type`/`twitter:*` tags, and `og:image` was fetched directly — 200,
+  `Content-Type: image/png`, byte count matching the uploaded file exactly.
+- **Owner token (D):** a share created with the exact same request shape RoeSnip's provider spec
+  sends (`?expiresIn=0&mime=image/png`, `X-Filename`, `Authorization: Bearer`) returned a real
+  `editToken`. Loading `{url}#edit={token}` in a headless Edge tab (CDP) showed
+  `location.hash === ""` after load (the fragment-strip-immediately defense verified live, not
+  just by code review) and the page body contained "You own this share" plus Change expiry/Make
+  private/Delete controls; the single image file's preview `<img>` was present without any click
+  (the single-complete-image auto-expand). Calling the page's own authenticated
+  `fetch('/api/shares/:id', {method:'PATCH', body:{password:...}})` (same call the "Make
+  private..." owner control makes) returned `{"ok":true,"protected":true}`, and a subsequent
+  anonymous `GET /api/shares/:id` (no cookie/token) got `401` — the visitor password gate. The
+  now-private share's `GET /<id>` meta reverted to the fixed generic tags, byte-identical to the
+  missing-share case. `DELETE` via the same owner-authenticated fetch removed it (`404` on a
+  follow-up lookup).
+- `dotnet build RoeSnip.sln -c Release` / `dotnet test RoeSnip.sln -c Release` — full suite green
+  throughout (1113 tests across the four test projects after this phase's additions).
+
+**NOT verified — deliberately not driven interactively this phase:**
+
+- Clicking the ComboBox/Options UI in `ShareProviderEditWindow` itself (WPF or Avalonia) with a
+  real mouse — same documented gap as every other settings-window interaction in this file; the
+  persisted-value effect it produces was instead verified directly via `settings.json` edits (see
+  the expiry bullet above) plus the unit tests covering `BuildOptionsComboBox`'s selection/
+  fallback logic at the model layer.
+- The Discord embed specifically (an actual Discord message unfurl) — verified instead via a
+  direct fetch of `og:image` and the exact meta tags Discord's unfurler reads, which is the same
+  surface a real Discord fetch exercises.
+- The WPF app's own share flow against the live server this phase (Avalonia only) — the WPF
+  result window/presenter share the same `RoeSnip.Core` provider plumbing this phase changed and
+  were unit-tested identically; only the Avalonia app was driven live, per the automation pipe's
+  existing side-by-side-with-the-resident precedent in this file.
+
 ## Sharing/upload subsystem (`src/RoeSnip/Sharing/*`, added 2026-07-13)
 
 The declarative share-upload feature: `IShareProvider`/`ProviderSpec`/`ShareProviderCatalog`/
