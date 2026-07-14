@@ -155,6 +155,25 @@ public sealed class TrayApp : ITrayNotifier
 
     private void Start()
     {
+        // Crash-loop guard (hardening item 7), first statement in this method: a bad release that
+        // crashes at/near startup must be caught before ANYTHING else here gets a chance to also
+        // crash (settings load, the tray icon itself). See
+        // UpdateManager.CheckUpdateHealthAtStartup's own doc comment for the full contract; when it
+        // restores and relaunches the previous build, this process's only remaining job is to get
+        // out of the way immediately - no tray icon, no hotkey, nothing. Windows only (the
+        // self-update swap this guards is Windows-only, item 13d) - Linux/macOS never write a
+        // pending-verify marker in the first place, so there is nothing to check there.
+        UpdateManager.HealthCheckAction healthAction = UpdateManager.HealthCheckAction.ProceedImmediateCleanup;
+        if (OperatingSystem.IsWindows())
+        {
+            healthAction = UpdateManager.CheckUpdateHealthAtStartup();
+            if (healthAction == UpdateManager.HealthCheckAction.Restored)
+            {
+                _lifetime.Shutdown();
+                return;
+            }
+        }
+
         _settings = AppComposition.LoadSettingsOrDefault();
 
         // Tray icon first, then pipe listener, then the (potentially modal) consent flow — the
@@ -188,13 +207,39 @@ public sealed class TrayApp : ITrayNotifier
         // instead get a passive "new version available" notice loop with no self-swap (item 13d).
         if (OperatingSystem.IsWindows())
         {
-            UpdateManager.CleanupStaleUpdateFiles();
+            // Crash-loop guard: when this launch is still pending health verification
+            // (ProceedDeferredCleanup), the ".old" rollback target must survive until the health
+            // milestone below proves this launch isn't crash-looping - only the always-safe ".new"
+            // download leftover is cleaned up now. The common case (ProceedImmediateCleanup) is
+            // byte-for-byte what this did before the crash-loop guard existed.
+            if (healthAction == UpdateManager.HealthCheckAction.ProceedImmediateCleanup)
+            {
+                UpdateManager.CleanupStaleUpdateFiles();
+            }
+            else
+            {
+                UpdateManager.CleanupDownloadLeftover();
+            }
             // Background cleanup that may need a bounded retry (a still-locked file must never
             // stall startup): the source exe a prior Install() "move" left behind AND the ".old" a
             // just-applied update swapped out. A named method (not an inline lambda) so the
             // platform-compat analyzer can see this Task.Run reference is itself directly inside
             // the IsWindows() guard above — it cannot see through an anonymous method body.
             _ = Task.Run(RunPendingUpdateFileCleanup);
+            if (healthAction == UpdateManager.HealthCheckAction.ProceedImmediateCleanup)
+            {
+                _ = Task.Run(RunImmediateStaleExeCleanup);
+            }
+            else
+            {
+                // The health milestone (hardening item 7): this launch is a post-update
+                // verification run. RunHealthMilestoneAsync is itself [SupportedOSPlatform("windows")]
+                // (like RunUpdateLoopAsync below), so it can call CompleteHealthMilestone directly
+                // without needing a Task.Run wrapper purely for the analyzer's sake - unlike
+                // RunPendingUpdateFileCleanup/RunImmediateStaleExeCleanup above, which are
+                // synchronous blocking I/O and genuinely need offloading off this thread.
+                _ = RunHealthMilestoneAsync();
+            }
             if (UpdateManager.IsInstalled)
             {
                 // Gating once here (rather than inside the loop, on every wake) is sound because
@@ -221,7 +266,6 @@ public sealed class TrayApp : ITrayNotifier
     private static void RunPendingUpdateFileCleanup()
     {
         UpdateManager.ProcessPendingSourceCleanup();
-        UpdateManager.CleanupStaleExeWithRetry();
         if (UpdateManager.IsInstalled)
         {
             // Startup ensure (not just install-time): installs made before the shortcut feature
@@ -229,6 +273,28 @@ public sealed class TrayApp : ITrayNotifier
             // user-deleted/corrupted shortcut heals itself. No-op when it already points right.
             StartMenuShortcut.EnsureFor(UpdateManager.InstalledExePath);
         }
+    }
+
+    /// <summary>Crash-loop guard (hardening item 7): the ".old" retry-cleanup, split out of
+    /// <see cref="RunPendingUpdateFileCleanup"/> so it can be skipped independently when this
+    /// launch is still pending health verification (see the healthAction branch at the Start() call
+    /// site) - a named zero-arg method, not a lambda, for the same platform-compat-analyzer reason
+    /// as RunPendingUpdateFileCleanup.</summary>
+    [SupportedOSPlatform("windows")]
+    private static void RunImmediateStaleExeCleanup() => UpdateManager.CleanupStaleExeWithRetry();
+
+    /// <summary>Crash-loop guard (hardening item 7): the health milestone, called directly (not via
+    /// Task.Run - unlike RunPendingUpdateFileCleanup/RunImmediateStaleExeCleanup above, this method
+    /// does no blocking I/O until AFTER its own await, so nothing here needs offloading off the
+    /// calling thread) once a <see cref="UpdateManager.HealthCheckAction.ProceedDeferredCleanup"/>
+    /// launch has been up for ~15s. Marked [SupportedOSPlatform("windows")] itself, like
+    /// RunUpdateLoopAsync, so the platform-compat analyzer accepts the CompleteHealthMilestone call
+    /// inside it without needing a surrounding guard at every call site.</summary>
+    [SupportedOSPlatform("windows")]
+    private async Task RunHealthMilestoneAsync()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+        UpdateManager.CompleteHealthMilestone();
     }
 
     private async Task CompleteStartupAsync()
