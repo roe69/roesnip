@@ -408,7 +408,7 @@ public static class UpdateManager
 
             using JsonDocument document = probe.Json!;
             JsonElement root = document.RootElement;
-            UpdateInfo? update = ParsePayload(root);
+            UpdateInfo? update = ParsePayload(root, CurrentVersion);
             if (update is null)
             {
                 // No update found in this payload - commit the ETag so the NEXT check can 304 for
@@ -431,8 +431,14 @@ public static class UpdateManager
 
     /// <summary>Pure parse of one "releases/latest" JSON payload - split out of
     /// <see cref="CheckForUpdateAsync"/> unchanged from its previous inline form, just relocated so
-    /// that method can decide whether to commit the probe's ETag based on this method's result.</summary>
-    private static UpdateInfo? ParsePayload(JsonElement root)
+    /// that method can decide whether to commit the probe's ETag based on this method's result.
+    /// Public (this repo's convention for making a testable slice unit-testable without an
+    /// InternalsVisibleTo edit - see e.g. RecordingController.StartAsync, AutomationServer,
+    /// ToolCursorCache) and takes <paramref name="currentVersion"/> as a parameter rather than
+    /// reading the static <see cref="CurrentVersion"/> directly, so tests can exercise version
+    /// gating without depending on the running assembly's own version. The sole call site above
+    /// passes <see cref="CurrentVersion"/>.</summary>
+    public static UpdateInfo? ParsePayload(JsonElement root, Version currentVersion)
     {
         if (!root.TryGetProperty("tag_name", out JsonElement tagElement))
         {
@@ -468,7 +474,7 @@ public static class UpdateManager
             }
         }
 
-        if (string.IsNullOrEmpty(downloadUrl) || releaseVersion <= CurrentVersion)
+        if (string.IsNullOrEmpty(downloadUrl) || releaseVersion <= currentVersion)
         {
             return null;
         }
