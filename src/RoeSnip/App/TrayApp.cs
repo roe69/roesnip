@@ -264,6 +264,13 @@ public sealed class TrayApp : ITrayNotifier
                 // user-deleted/corrupted shortcut heals itself. No-op when it already points right.
                 StartMenuShortcut.EnsureFor(UpdateManager.InstalledExePath);
             }
+            // Hardening item 10: reclaims the %TEMP%\.net\RoeSnip single-file self-extraction
+            // folders every launch of this build leaves behind (never cleaned up by the .NET host
+            // itself). No-op for a portable/dev run - see the class doc comment. Unconditional (not
+            // gated on IsInstalled/healthAction like the cleanups above): it only ever touches
+            // %TEMP%, never the install dir, so it carries none of the "is this launch a verified
+            // rollback target" concerns those cleanups exist for.
+            SelfExtractCleanup.CleanupSiblingExtractionDirs();
         });
         if (healthAction == UpdateManager.HealthCheckAction.ProceedDeferredCleanup)
         {
