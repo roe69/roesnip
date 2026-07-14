@@ -21,11 +21,13 @@ public class UpdateManagerTests
 
     private static string ReleaseJson(string tag, string? htmlUrl = "https://github.com/roe69/roesnip/releases/tag/" + "TAG",
         string? windowsAssetName = "RoeSnipApp-win-x64.exe", string windowsAssetUrl = "https://example.invalid/RoeSnipApp-win-x64.exe",
-        bool includeAssets = true)
+        bool includeAssets = true, string? digest = null, long? size = null)
     {
+        string digestJson = digest is null ? "" : $",\"digest\":\"{digest}\"";
+        string sizeJson = size is null ? "" : $",\"size\":{size}";
         string windowsAssetEntry = windowsAssetName is null
             ? ""
-            : $"{{\"name\":\"{windowsAssetName}\",\"browser_download_url\":\"{windowsAssetUrl}\"}},";
+            : $"{{\"name\":\"{windowsAssetName}\",\"browser_download_url\":\"{windowsAssetUrl}\"{digestJson}{sizeJson}}},";
         string assetsJson = includeAssets
             ? $"[{windowsAssetEntry}{{\"name\":\"RoeSnip-linux-x64.AppImage\",\"browser_download_url\":\"https://example.invalid/linux\"}}]"
             : "null";
@@ -144,6 +146,28 @@ public class UpdateManagerTests
         var info = UpdateManager.ParseUpdateInfo(Parse(ReleaseJson("v1.2.0", htmlUrl: null)), V100, requireWindowsAsset: false);
         Assert.NotNull(info);
         Assert.Equal("https://github.com/roe69/roesnip/releases/tag/v1.2.0", info!.ReleaseUrl);
+    }
+
+    // ---------- digest / size capture ----------
+
+    [Fact]
+    public void ParseUpdateInfo_CapturesDigestAndSize()
+    {
+        string hex = new string('c', 64);
+        var info = UpdateManager.ParseUpdateInfo(
+            Parse(ReleaseJson("v1.2.0", digest: $"sha256:{hex}", size: 654321)), V100, requireWindowsAsset: true);
+        Assert.NotNull(info);
+        Assert.Equal($"sha256:{hex}", info!.Digest);
+        Assert.Equal(654321, info.Size);
+    }
+
+    [Fact]
+    public void ParseUpdateInfo_NoDigestOrSizeInPayload_LeavesThemNull()
+    {
+        var info = UpdateManager.ParseUpdateInfo(Parse(ReleaseJson("v1.2.0")), V100, requireWindowsAsset: true);
+        Assert.NotNull(info);
+        Assert.Null(info!.Digest);
+        Assert.Null(info.Size);
     }
 
     // ---------- identity constants ----------

@@ -20,11 +20,14 @@ public class UpdateManagerTests
     private static JsonElement Parse(string json) => JsonDocument.Parse(json).RootElement;
 
     private static string ReleaseJson(string tag, string? assetName = "RoeSnip.exe",
-        string assetUrl = "https://example.invalid/RoeSnip.exe", bool includeAssets = true)
+        string assetUrl = "https://example.invalid/RoeSnip.exe", bool includeAssets = true,
+        string? digest = null, long? size = null)
     {
+        string digestJson = digest is null ? "" : $",\"digest\":\"{digest}\"";
+        string sizeJson = size is null ? "" : $",\"size\":{size}";
         string assetEntry = assetName is null
             ? ""
-            : $"{{\"name\":\"{assetName}\",\"browser_download_url\":\"{assetUrl}\"}},";
+            : $"{{\"name\":\"{assetName}\",\"browser_download_url\":\"{assetUrl}\"{digestJson}{sizeJson}}},";
         string assetsJson = includeAssets
             ? $"[{assetEntry}{{\"name\":\"RoeSnipApp-win-x64.exe\",\"browser_download_url\":\"https://example.invalid/other\"}}]"
             : "null";
@@ -114,5 +117,27 @@ public class UpdateManagerTests
     public void ParsePayload_NoAssetsArray_ReturnsNull()
     {
         Assert.Null(UpdateManager.ParsePayload(Parse(ReleaseJson("v1.2.0", includeAssets: false)), V100));
+    }
+
+    // ---------- digest / size capture ----------
+
+    [Fact]
+    public void ParsePayload_CapturesDigestAndSize()
+    {
+        string hex = new string('a', 64);
+        var info = UpdateManager.ParsePayload(
+            Parse(ReleaseJson("v1.2.0", digest: $"sha256:{hex}", size: 123456)), V100);
+        Assert.NotNull(info);
+        Assert.Equal($"sha256:{hex}", info!.Digest);
+        Assert.Equal(123456, info.Size);
+    }
+
+    [Fact]
+    public void ParsePayload_NoDigestOrSizeInPayload_LeavesThemNull()
+    {
+        var info = UpdateManager.ParsePayload(Parse(ReleaseJson("v1.2.0")), V100);
+        Assert.NotNull(info);
+        Assert.Null(info!.Digest);
+        Assert.Null(info.Size);
     }
 }

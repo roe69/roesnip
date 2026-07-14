@@ -368,9 +368,13 @@ public static class UpdateManager
         key?.SetValue(RunValueName, $"\"{InstalledExePath}\"", RegistryValueKind.String);
     }
 
-    /// <summary>The latest GitHub release worth updating to: its version and the direct download
-    /// URL for the "RoeSnip.exe" asset.</summary>
-    public sealed record UpdateInfo(Version Version, string DownloadUrl);
+    /// <summary>The latest GitHub release worth updating to: its version, the direct download URL
+    /// for the "RoeSnip.exe" asset, and that same asset's "digest"/"size" fields straight off the
+    /// releases payload (used by <see cref="ApplyUpdateAsync"/> to verify the download - see
+    /// AssetDigest's doc comment). <see cref="Digest"/> is null whenever the payload didn't carry
+    /// one (an older GitHub API response shape, or genuinely absent) - callers fail open on that,
+    /// never fail closed.</summary>
+    public sealed record UpdateInfo(Version Version, string DownloadUrl, string? Digest = null, long? Size = null);
 
     /// <summary>Checks the GitHub Releases API for a newer published build. Returns null (never
     /// throws) whenever there's nothing to offer: the repo is private (404), there's no network,
@@ -463,6 +467,8 @@ public static class UpdateManager
         }
 
         string? downloadUrl = null;
+        string? digest = null;
+        long? size = null;
         foreach (JsonElement asset in assets.EnumerateArray())
         {
             if (asset.TryGetProperty("name", out JsonElement nameElement) &&
@@ -470,6 +476,16 @@ public static class UpdateManager
                 asset.TryGetProperty("browser_download_url", out JsonElement urlElement))
             {
                 downloadUrl = urlElement.GetString();
+                if (asset.TryGetProperty("digest", out JsonElement digestElement))
+                {
+                    digest = digestElement.GetString();
+                }
+
+                if (asset.TryGetProperty("size", out JsonElement sizeElement) && sizeElement.TryGetInt64(out long sizeValue))
+                {
+                    size = sizeValue;
+                }
+
                 break;
             }
         }
@@ -479,7 +495,7 @@ public static class UpdateManager
             return null;
         }
 
-        return new UpdateInfo(releaseVersion, downloadUrl);
+        return new UpdateInfo(releaseVersion, downloadUrl, digest, size);
     }
 
     /// <summary>Downloads the release exe, swaps it in for <see cref="InstalledExePath"/>, and
@@ -535,6 +551,34 @@ public static class UpdateManager
             {
                 TryDelete(downloadPath);
                 throw new IOException($"Downloaded update for {info.Version} was empty or missing.");
+            }
+
+            if (info.Size is long expectedSize && downloaded.Length != expectedSize)
+            {
+                // Cheap truncation catch ahead of the hash - a short/long download is almost always
+                // a broken transfer, and saying so plainly beats a generic "digest mismatch".
+                TryDelete(downloadPath);
+                throw new IOException(
+                    $"Downloaded update for {info.Version} was {downloaded.Length} bytes, expected {expectedSize} (truncated download).");
+            }
+
+            bool? digestVerified = await AssetDigest.VerifyAsync(downloadPath, info.Digest).ConfigureAwait(false);
+            if (digestVerified == false)
+            {
+                // Bytes don't match GitHub's own published sha256 for this asset - corruption or a
+                // tampered download-CDN path. Never swap this into the install; the caller's normal
+                // failure path (log + rethrow) leaves the current exe untouched and retries next cycle.
+                TryDelete(downloadPath);
+                throw new IOException($"Downloaded update for {info.Version} failed SHA-256 verification.");
+            }
+
+            if (digestVerified is null)
+            {
+                // The release payload had no usable "digest" field (older GitHub API shape, or
+                // genuinely absent) - fail OPEN rather than block updates on a field this project
+                // doesn't control. See AssetDigest's doc comment for why fail-closed here wouldn't
+                // add real security anyway (digest and URL travel the same channel).
+                Console.Error.WriteLine($"RoeSnip: update to {info.Version} has no verifiable digest in the release payload - skipping hash check.");
             }
 
             TryDelete(StaleExePath);
