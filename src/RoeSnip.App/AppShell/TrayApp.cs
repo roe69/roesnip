@@ -870,13 +870,20 @@ public sealed class TrayApp : ITrayNotifier
                 return 0;
             }
 
-            UpdateManager.UpdateInfo? update = UpdateManager.CheckForUpdateAsync().GetAwaiter().GetResult();
-            if (update is null)
+            UpdateManager.UpdateCheckResult result = UpdateManager.CheckForUpdateAsync().GetAwaiter().GetResult();
+            if (result.Update is null)
             {
+                if (result.Failed)
+                {
+                    Console.Out.WriteLine($"RoeSnip: update check failed: {result.FailureDetail}");
+                    return 1;
+                }
+
                 Console.Out.WriteLine($"RoeSnip: already up to date (current {UpdateManager.CurrentVersion}).");
                 return 0;
             }
 
+            UpdateManager.UpdateInfo update = result.Update;
             Console.Out.WriteLine($"RoeSnip: updating {UpdateManager.CurrentVersion} -> {update.Version}...");
             UpdateManager.ApplyUpdateAsync(update).GetAwaiter().GetResult();
             Console.Out.WriteLine($"RoeSnip: updated to {update.Version}; new build launched.");
@@ -950,10 +957,18 @@ public sealed class TrayApp : ITrayNotifier
     [SupportedOSPlatform("windows")]
     private async Task CheckForUpdatesAndAutoApplyAsync()
     {
-        UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
+        UpdateManager.UpdateCheckResult result = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
+        UpdateManager.UpdateInfo? update = result.Update;
         if (update is null)
         {
-            UpdateManager.RecordLastCheckOutcome(version: null, outcome: "UpToDate");
+            // Only a CONFIRMED no-update is "UpToDate" - a rate-limited/network-down/parse-failed
+            // probe taught us nothing about whether an update exists and must not be recorded as
+            // "checked, all good", or a genuinely broken machine (proxy/firewall/DNS down for weeks)
+            // would show a false "up to date" in About forever instead of the failure that is
+            // actually happening every single tick.
+            UpdateManager.RecordLastCheckOutcome(
+                version: null,
+                outcome: result.Failed ? $"Failed: {result.FailureDetail}" : "UpToDate");
             return;
         }
 
@@ -994,12 +1009,12 @@ public sealed class TrayApp : ITrayNotifier
     [SupportedOSPlatform("windows")]
     private async Task CheckForUpdatesFromMenuAsync()
     {
-        UpdateManager.UpdateInfo? update;
+        UpdateManager.UpdateCheckResult result;
         try
         {
             // A deliberate user click deserves a real network answer even if a periodic check
             // recently tripped the rate-limit backoff.
-            update = await UpdateManager.CheckForUpdateAsync(bypassBackoff: true).ConfigureAwait(false);
+            result = await UpdateManager.CheckForUpdateAsync(bypassBackoff: true).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -1010,9 +1025,15 @@ public sealed class TrayApp : ITrayNotifier
             return;
         }
 
+        UpdateManager.UpdateInfo? update = result.Update;
         if (update is null)
         {
-            UpdateManager.RecordLastCheckOutcome(version: null, outcome: "UpToDate");
+            // Only a CONFIRMED no-update (304, or a parsed payload with nothing newer) is "UpToDate" -
+            // an inconclusive probe (rate limit, network down, GitHub 5xx, parse failure) must be
+            // recorded as a failure, never mistaken for "checked and up to date".
+            UpdateManager.RecordLastCheckOutcome(
+                version: null,
+                outcome: result.Failed ? $"Failed: {result.FailureDetail}" : "UpToDate");
         }
         // else: the outcome is still undecided (user hasn't answered Yes/No yet) -
         // ApplyUpdateFromToastAsync records Applied/Failed once they do.
@@ -1022,6 +1043,10 @@ public sealed class TrayApp : ITrayNotifier
             if (update is not null)
             {
                 _ = OfferUpdateAsync(update);
+            }
+            else if (result.Failed)
+            {
+                ShowToast($"Could not check for updates: {result.FailureDetail}", isError: true, durationMs: 6000, onClick: null);
             }
             else
             {
@@ -1110,7 +1135,7 @@ public sealed class TrayApp : ITrayNotifier
     /// stay manual here), instead of the free 304 the conditional-GET client exists to provide.</summary>
     private async Task CheckForNewVersionPassivelyAsync()
     {
-        UpdateManager.UpdateInfo? update = await UpdateManager.CheckForUpdateAsync(commitEvenWhenUpdateFound: true).ConfigureAwait(false);
+        UpdateManager.UpdateInfo? update = (await UpdateManager.CheckForUpdateAsync(commitEvenWhenUpdateFound: true).ConfigureAwait(false)).Update;
         if (update is null)
         {
             return;

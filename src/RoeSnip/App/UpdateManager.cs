@@ -540,23 +540,36 @@ public static class UpdateManager
     /// digest verification, before the swap.</summary>
     public sealed record UpdateInfo(Version Version, string DownloadUrl, string? Digest = null, long? Size = null, bool IsGzip = false);
 
-    /// <summary>Checks the GitHub Releases API for a newer published build. Returns null (never
-    /// throws) whenever there's nothing to offer: the repo is private (404), there's no network,
-    /// the response doesn't parse, the release has no "RoeSnip.exe" asset, its version isn't newer
-    /// than <see cref="CurrentVersion"/>, or GitHub answered 304/rate-limited.
+    /// <summary>Result of one <see cref="CheckForUpdateAsync"/> call. <see cref="Update"/> is
+    /// non-null only when a genuinely newer release was found. <see cref="Failed"/> distinguishes a
+    /// CONFIRMED "no update" (a parsed payload or a 304) from an INCONCLUSIVE probe (rate-limited,
+    /// network down, GitHub 5xx, unparseable response) - callers must never record the latter as
+    /// "up to date": see the last-update-status.json breadcrumb this exists to keep honest.
+    /// <see cref="FailureDetail"/> is only set when <see cref="Failed"/> is true.</summary>
+    public sealed record UpdateCheckResult(UpdateInfo? Update, bool Failed, string? FailureDetail);
+
+    /// <summary>Checks the GitHub Releases API for a newer published build. Never throws. The
+    /// result's <see cref="UpdateCheckResult.Update"/> is null whenever there's nothing to offer:
+    /// the repo is private (404), there's no network, the response doesn't parse, the release has no
+    /// "RoeSnip.exe" asset, its version isn't newer than <see cref="CurrentVersion"/>, or GitHub
+    /// answered 304/rate-limited - but <see cref="UpdateCheckResult.Failed"/> tells callers whether
+    /// that null means a CONFIRMED no-update (304, or a parsed payload with nothing newer) or an
+    /// INCONCLUSIVE probe (rate-limited, network failure, GitHub 5xx, malformed response) that
+    /// taught us nothing about whether an update exists.
     ///
     /// Routed through <see cref="ReleaseClient"/> (see GitHubLatestReleaseClient's own doc comment
     /// for the full contract): a conditional If-None-Match request that comes back 304 costs nothing
     /// against GitHub's unauthenticated rate limit, which is what makes an hourly-by-default periodic
     /// loop (see TrayApp.RunUpdateLoopAsync) cheap. The ETag is committed ONLY when this method is
-    /// about to return null because there's genuinely no update - never when a payload parsed to a
-    /// real update, and never on a rate-limited/failed probe - so a stored ETag always safely means
-    /// "304 = still no update"; if an update was found but its later download/apply failed, the next
-    /// check gets a full uncached GET and a real chance to retry rather than silently 304'ing forever.
+    /// about to return a confirmed no-update because there's genuinely no update - never when a
+    /// payload parsed to a real update, and never on a rate-limited/failed probe - so a stored ETag
+    /// always safely means "304 = still no update"; if an update was found but its later
+    /// download/apply failed, the next check gets a full uncached GET and a real chance to retry
+    /// rather than silently 304'ing forever.
     /// <paramref name="bypassBackoff"/> forces a live network attempt even inside an active
     /// rate-limit backoff window - the manual "Check for updates" menu item passes true because a
     /// deliberate user click deserves a real answer.</summary>
-    public static async Task<UpdateInfo?> CheckForUpdateAsync(bool bypassBackoff = false)
+    public static async Task<UpdateCheckResult> CheckForUpdateAsync(bool bypassBackoff = false)
     {
         try
         {
@@ -565,13 +578,13 @@ public static class UpdateManager
             {
                 case ProbeStatus.NotModified:
                     FileLog.Write("RoeSnip: update check up to date (304, conditional request, does not count against the GitHub rate limit).");
-                    return null;
+                    return new UpdateCheckResult(null, Failed: false, FailureDetail: null);
                 case ProbeStatus.RateLimited:
                     FileLog.Write("RoeSnip: update check skipped - GitHub rate limit backoff is active.");
-                    return null;
+                    return new UpdateCheckResult(null, Failed: true, FailureDetail: "rate limited by GitHub, will retry automatically");
                 case ProbeStatus.Failed:
                     FileLog.Write($"RoeSnip: update check failed (non-fatal): {probe.Detail}");
-                    return null;
+                    return new UpdateCheckResult(null, Failed: true, FailureDetail: probe.Detail ?? "update check failed");
             }
 
             using JsonDocument document = probe.Json!;
@@ -597,15 +610,16 @@ public static class UpdateManager
                 ReleaseClient.CommitETag(probe.ETag);
             }
 
-            return update;
+            return new UpdateCheckResult(update, Failed: false, FailureDetail: null);
         }
         catch (Exception ex)
         {
             // A private repo (404), a network failure, or a malformed response all mean the same
-            // thing to the caller: no update available right now. Never let any of it crash the
-            // tray - log to stderr and move on.
+            // thing to the caller re: whether to apply anything: nothing available right now. Never
+            // let any of it crash the tray - log to stderr and move on. But it IS a failed probe, not
+            // a confirmed up-to-date, so it must be reported as such (Failed: true).
             FileLog.Write($"RoeSnip: update check failed (non-fatal): {ex.Message}");
-            return null;
+            return new UpdateCheckResult(null, Failed: true, FailureDetail: ex.Message);
         }
     }
 
