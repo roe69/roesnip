@@ -172,6 +172,21 @@ public static class NativeMethods
     public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
     public const uint SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040, SWP_NOZORDER = 0x0004;
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X; public int Y; }
+
+    // Sharing/* result window placement: finds the primary monitor's HMONITOR without needing a
+    // real cursor position - MONITOR_DEFAULTTOPRIMARY makes the passed point irrelevant, it always
+    // resolves to the primary display. Paired with GetMonitorInfo's rcWork (taskbar-excluded, same
+    // physical-pixel convention as everywhere else in this codebase) and GetDpiForMonitor above to
+    // place a DIP-sized WPF window at an exact physical-pixel corner via SetWindowPos, mirroring
+    // FlashDimmer/RegionOutline's "position via Win32 in physical pixels, never WPF DIP properties"
+    // convention.
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+    public const uint MONITOR_DEFAULTTOPRIMARY = 0x00000001;
+
     // Raw HWND foreground-activation call (no WPF dispatcher-thread affinity — unlike
     // Window.Activate(), this can be called from ANY thread with just the target HWND). Used by
     // FlashDimmer.ShowAll to negotiate foreground off the UI thread — see its doc comment.
