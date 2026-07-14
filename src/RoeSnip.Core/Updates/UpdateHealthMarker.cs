@@ -172,18 +172,27 @@ public static class UpdateHealthMarker
     }
 
     /// <summary>The health milestone: called once a launch has been up long enough to be trusted.
-    /// Clears PendingVersion/AttemptCount so this build is never rolled back again. No-op (no write
-    /// at all) when nothing is pending, so a plain restart of an already-healthy build never touches
-    /// the file.</summary>
-    public static void ClearPending(string directory)
+    /// Clears PendingVersion/AttemptCount so this build is never rolled back again - but ONLY when
+    /// the marker's PendingVersion still names EXACTLY <paramref name="expectedVersion"/> (this
+    /// launch's own version). That guard matters for a fast chained update: this process's health
+    /// timer can fire AFTER a newer update has already swapped in and recorded ITS OWN pending
+    /// version, and clearing that unconditionally would wipe out the newer launch's crash-loop
+    /// protection before it ever got a chance to prove itself - degrading straight back to the
+    /// pre-item-7 "no rollback target" failure mode for exactly the machines that updated fastest.
+    /// Returns true when it actually cleared something, false when there was nothing of THIS
+    /// version's to clear (nothing pending, or a marker for some other version) - callers use that
+    /// to decide whether the deferred ".old" cleanup that normally follows a clear is theirs to run
+    /// (see each UpdateManager's CompleteHealthMilestone).</summary>
+    public static bool ClearPending(string directory, string expectedVersion)
     {
         State state = Load(directory);
-        if (state.PendingVersion is null && state.AttemptCount == 0)
+        if (state.PendingVersion != expectedVersion)
         {
-            return;
+            return false;
         }
 
         Save(directory, state with { PendingVersion = null, AttemptCount = 0 });
+        return true;
     }
 
     /// <summary>Records <paramref name="version"/> as quarantined (the version an auto-restore just

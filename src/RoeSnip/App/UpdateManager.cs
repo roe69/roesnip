@@ -274,14 +274,21 @@ public static class UpdateManager
 
     /// <summary>The health milestone: call once, after a <see cref="HealthCheckAction.ProceedDeferredCleanup"/>
     /// launch has stayed up long enough to be trusted (TrayApp's own "tray icon shown plus ~15s of
-    /// uptime" gate). Clears the pending-verify marker - this build is proven, the next update
-    /// starts a fresh cycle - and only then runs the ".old" cleanup
+    /// uptime" gate). Clears the pending-verify marker for THIS process's own version - this build is
+    /// proven, the next update starts a fresh cycle - and only then runs the ".old" cleanup
     /// <see cref="CheckUpdateHealthAtStartup"/> deferred, since it is only safe to delete the
-    /// rollback target once this launch is known not to be crash-looping.</summary>
+    /// rollback target once this launch is known not to be crash-looping. Skips the ".old" cleanup
+    /// entirely when ClearPending reports nothing of this version's was actually pending (a fast
+    /// chained update already overwrote the marker with a newer version's own pending-verify state -
+    /// see ClearPending's own doc comment): that ".old" is the NEWER launch's rollback target, not
+    /// this one's, and deleting it here would leave the newer build with nothing to restore to if it
+    /// turns out to be the bad release.</summary>
     public static void CompleteHealthMilestone()
     {
-        UpdateHealthMarker.ClearPending(HealthMarkerDirectory);
-        CleanupStaleExeWithRetry();
+        if (UpdateHealthMarker.ClearPending(HealthMarkerDirectory, CurrentVersionText))
+        {
+            CleanupStaleExeWithRetry();
+        }
     }
 
     /// <summary>Restores the ".old" build over <see cref="InstalledExePath"/>, quarantines the

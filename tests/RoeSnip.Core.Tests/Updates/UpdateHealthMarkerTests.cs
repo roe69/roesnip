@@ -122,8 +122,9 @@ public sealed class UpdateHealthMarkerTests : IDisposable
         UpdateHealthMarker.RecordPendingUpdate(_tempDir, "1.9.0");
         UpdateHealthMarker.RecordLaunchAttempt(_tempDir, "1.9.0");
 
-        UpdateHealthMarker.ClearPending(_tempDir);
+        bool cleared = UpdateHealthMarker.ClearPending(_tempDir, "1.9.0");
 
+        Assert.True(cleared);
         var state = UpdateHealthMarker.Load(_tempDir);
         Assert.Null(state.PendingVersion);
         Assert.Equal(0, state.AttemptCount);
@@ -135,7 +136,7 @@ public sealed class UpdateHealthMarkerTests : IDisposable
         UpdateHealthMarker.Quarantine(_tempDir, "1.8.0");
         UpdateHealthMarker.RecordPendingUpdate(_tempDir, "1.9.0");
 
-        UpdateHealthMarker.ClearPending(_tempDir);
+        UpdateHealthMarker.ClearPending(_tempDir, "1.9.0");
 
         Assert.Equal("1.8.0", UpdateHealthMarker.Load(_tempDir).QuarantinedVersion);
     }
@@ -143,9 +144,28 @@ public sealed class UpdateHealthMarkerTests : IDisposable
     [Fact]
     public void ClearPending_NothingPending_DoesNotCreateFile()
     {
-        UpdateHealthMarker.ClearPending(_tempDir);
+        bool cleared = UpdateHealthMarker.ClearPending(_tempDir, "1.9.0");
 
+        Assert.False(cleared);
         Assert.False(File.Exists(Path.Combine(_tempDir, "update-health.json")));
+    }
+
+    [Fact]
+    public void ClearPending_MarkerNamesADifferentNewerVersion_LeavesItIntact()
+    {
+        // The chained-update race this guards against: this process is verifying 1.9.0, but a fast
+        // second update has already swapped in and recorded 1.9.1 as pending by the time this
+        // process's own health-milestone timer fires. Clearing unconditionally here would wipe out
+        // 1.9.1's own crash-loop protection before it ever got a chance to prove itself.
+        UpdateHealthMarker.RecordPendingUpdate(_tempDir, "1.9.1");
+        UpdateHealthMarker.RecordLaunchAttempt(_tempDir, "1.9.1");
+
+        bool cleared = UpdateHealthMarker.ClearPending(_tempDir, "1.9.0");
+
+        Assert.False(cleared);
+        var state = UpdateHealthMarker.Load(_tempDir);
+        Assert.Equal("1.9.1", state.PendingVersion);
+        Assert.Equal(1, state.AttemptCount);
     }
 
     [Fact]
