@@ -40,7 +40,8 @@ public class ProviderSpecShareProviderTests
 
         Assert.True(result.Success);
         Assert.Equal("https://share.example.com/abc", result.Url);
-        Assert.Equal("https://share.example.com/api/v1/upload", handler.LastRequest!.RequestUri!.ToString());
+        // No ExpiresIn configured -> backfilled to "0" (never expire), the DEFAULT-NEVER trap defense.
+        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=0", handler.LastRequest!.RequestUri!.ToString());
         Assert.Equal(HttpMethod.Post, handler.LastRequest.Method);
         Assert.Equal("Bearer rsk_test", handler.LastRequest.Headers.GetValues("Authorization").First());
         Assert.Equal("shot.png", handler.LastRequest.Headers.GetValues("X-Filename").First());
@@ -195,6 +196,67 @@ public class ProviderSpecShareProviderTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => provider.UploadAsync(SamplePng(), cts.Token));
+    }
+
+    [Fact]
+    public async Task Upload_RoeShare_FreshConfig_SendsExpiresInZero()
+    {
+        var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.Created, """{"id":"abc","url":"https://share.example.com/abc"}""");
+        var freshConfig = ShareProviderCatalog.DefaultConfigFor(ShareProviderCatalog.RoeShare);
+        var config = freshConfig with
+        {
+            Values = new Dictionary<string, string>(freshConfig.Values)
+            {
+                ["BaseUrl"] = "https://share.example.com",
+                ["ApiKey"] = "rsk_test",
+            },
+        };
+        var provider = new ProviderSpecShareProvider(ShareProviderCatalog.RoeShare, config, handler.ToClient());
+
+        await provider.UploadAsync(SamplePng(), CancellationToken.None);
+
+        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=0", handler.LastRequest!.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task Upload_RoeShare_LegacyConfigMissingExpiresInKey_StillSendsExpiresInZero()
+    {
+        // A config persisted before the ExpiresIn field existed at all - the upload-time backfill
+        // (not just DefaultConfigFor's seed-on-creation) has to cover this too.
+        var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.Created, """{"id":"abc","url":"https://share.example.com/abc"}""");
+        var config = new ShareProviderConfig
+        {
+            Id = "roeshare-1",
+            SpecId = "roeshare",
+            Values = new Dictionary<string, string> { ["BaseUrl"] = "https://share.example.com", ["ApiKey"] = "rsk_test" },
+        };
+        var provider = new ProviderSpecShareProvider(ShareProviderCatalog.RoeShare, config, handler.ToClient());
+
+        await provider.UploadAsync(SamplePng(), CancellationToken.None);
+
+        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=0", handler.LastRequest!.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task Upload_RoeShare_UserSelectedExpiry_FlowsThroughToEndpoint()
+    {
+        var handler = StubHttpMessageHandler.ReturningText(HttpStatusCode.Created, """{"id":"abc","url":"https://share.example.com/abc"}""");
+        var config = new ShareProviderConfig
+        {
+            Id = "roeshare-1",
+            SpecId = "roeshare",
+            Values = new Dictionary<string, string>
+            {
+                ["BaseUrl"] = "https://share.example.com",
+                ["ApiKey"] = "rsk_test",
+                ["ExpiresIn"] = "3600",
+            },
+        };
+        var provider = new ProviderSpecShareProvider(ShareProviderCatalog.RoeShare, config, handler.ToClient());
+
+        await provider.UploadAsync(SamplePng(), CancellationToken.None);
+
+        Assert.Equal("https://share.example.com/api/v1/upload?expiresIn=3600", handler.LastRequest!.RequestUri!.ToString());
     }
 
     [Fact]

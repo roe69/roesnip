@@ -119,6 +119,15 @@ public class ShareProviderCatalogTests
     }
 
     [Fact]
+    public void DefaultConfigFor_RoeShare_SeedsExpiresInNever()
+    {
+        // The DEFAULT-NEVER trap: a fresh RoeShare config must be seeded with the literal "0", not
+        // left blank - a blank ExpiresIn means the SERVER picks its own 7-day default.
+        var config = ShareProviderCatalog.DefaultConfigFor(ShareProviderCatalog.RoeShare);
+        Assert.Equal("0", config.Values["ExpiresIn"]);
+    }
+
+    [Fact]
     public void DefaultConfigFor_IsGeneric_SeedsAnyFieldDeclaringADefaultValue()
     {
         // Proves the seeding loop is genuinely generic (not a per-provider branch in disguise) by

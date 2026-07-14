@@ -22,18 +22,21 @@ public static class ShareProviderCatalog
     /// <summary>RoeShare (E:\GitHub\RoeLite\roeshare) - the primary, self-hosted target. Uses the
     /// programmatic one-shot upload endpoint from CONTRACT.md's "Programmatic API (/api/v1)" section:
     /// the request body IS the raw file bytes (RawBody, not multipart), filename via the X-Filename
-    /// header, auth via "Authorization: Bearer rsk_...". Response is
-    /// <c>201 { id, url, fileId, name, size }</c> - "url" is the ready-to-share link
-    /// (config.baseUrl + '/' + id). Bounded by the server's own max request body size; CONTRACT.md
-    /// says larger files need the resumable /api/v1/shares + PATCH-chunks flow instead, which this
-    /// one-shot spec deliberately does not attempt to model (a multi-request resumable protocol does
-    /// not fit the flat "one POST, one response" ProviderSpec shape - a real future limitation, not
-    /// an oversight).</summary>
+    /// header, auth via "Authorization: Bearer rsk_...", expiration via the <c>expiresIn</c> query
+    /// param (CONTRACT.md's B addition - "0" = never, a positive integer = seconds from now, omitted/
+    /// blank = the server's own 7-day default). Response is
+    /// <c>201 { id, url, fileId, name, size, editToken, expiresAt }</c> - "url" is the ready-to-share
+    /// link (config.baseUrl + '/' + id), "editToken" is the owner-management secret (CONTRACT.md's D1
+    /// addition; absent on an older server, which is fine - see ResponseEditTokenJsonPath's own doc
+    /// comment). Bounded by the server's own max request body size; CONTRACT.md says larger files need
+    /// the resumable /api/v1/shares + PATCH-chunks flow instead, which this one-shot spec deliberately
+    /// does not attempt to model (a multi-request resumable protocol does not fit the flat "one POST,
+    /// one response" ProviderSpec shape - a real future limitation, not an oversight).</summary>
     public static readonly ProviderSpec RoeShare = new()
     {
         Id = "roeshare",
         Name = "RoeShare",
-        Endpoint = "{BaseUrl}/api/v1/upload",
+        Endpoint = "{BaseUrl}/api/v1/upload?expiresIn={ExpiresIn}",
         Method = "POST",
         UploadKind = ShareUploadKind.RawBody,
         Headers = new Dictionary<string, string>
@@ -52,6 +55,25 @@ public static class ShareProviderCatalog
         {
             new("BaseUrl", "Server URL (e.g. https://share.example.com, no trailing slash)", Required: true, IsSecret: false),
             new("ApiKey", "API key (rsk_...)", Required: true, IsSecret: true),
+            // THE DEFAULT-NEVER TRAP: Endpoint's {ExpiresIn} token expands to an EMPTY string via
+            // plain Expand (TemplateExpander.Expand, not TryExpand) when the value is missing, and the
+            // server reads an empty expiresIn as "use my own 7-day default" - NOT "never expire". The
+            // literal "0" IS the never-expire feature. DefaultValue="0" here seeds that literal into
+            // every fresh config (ShareProviderCatalog.DefaultConfigFor) and backfills it at upload
+            // time for any config saved before this field existed
+            // (ProviderSpecShareProvider.UploadAsync). Do NOT "clean up" this default to blank/null to
+            // match other optional fields - that silently turns every RoeShare upload's default
+            // behavior from "keep forever" into "delete in a week".
+            new("ExpiresIn", "Expiration", Required: false, IsSecret: false,
+                Options: new List<ShareConfigOption>
+                {
+                    new("Never", "0"),
+                    new("1 hour", "3600"),
+                    new("1 day", "86400"),
+                    new("1 week", "604800"),
+                    new("30 days", "2592000"),
+                },
+                DefaultValue: "0"),
         },
         IsBuiltIn = true,
         Verified = true,
