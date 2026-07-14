@@ -1193,3 +1193,14 @@ because a correct implementation needs live hardware this repo cannot exercise.
   code is reviewed by eye instead and, where practical, verified live against a standalone
   install dir (never the user's own resident). This is the "manual review" the two class doc
   comments point at.
+- Top-level unhandled-exception handlers (Program.cs Main, both apps): WPF additionally
+  registers Application.SetUnhandledExceptionMode(CatchException) + Application.ThreadException,
+  since WinForms' message pump otherwise swallows a UI-thread exception and keeps running (a
+  never-destabilize violation) rather than surfacing it through AppDomain.UnhandledException.
+  Avalonia has no equivalent dispatcher-exception event — its Dispatcher/UI-thread exceptions
+  already surface through AppDomain.UnhandledException like any other thread's, so it only
+  registers that plus TaskScheduler.UnobservedTaskException. Both log the full exception via
+  FileLog and write RoeSnip.Core.Diagnostics.CrashMarker (version + UTC timestamp) before letting
+  the process terminate; TaskScheduler.UnobservedTaskException logs only (it does not crash the
+  process on .NET 8).
+  comments point at.

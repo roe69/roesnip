@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Sharing;
 
@@ -870,6 +871,13 @@ public static class Program
         // never the install dir — the install dir gets replaced wholesale by the self-updater.
         FileLog.Initialize(App.SettingsStore.SettingsDirectory);
 
+        // Top-level unhandled-exception handlers (hardening item 6): registered before the WinForms
+        // pump (Application.Run, App/TrayApp.cs) ever starts and before anything else in Main could
+        // fault, so no code path in this process can die silently. A bad release that crashes on
+        // thousands of resident machines must at minimum leave a stack trace and a crash marker
+        // behind instead of the tray icon just vanishing with zero trace.
+        RegisterUnhandledExceptionHandlers();
+
         // `--auto` (dev-gated automation client — App/AutomationServer.cs): handled here, before
         // ANY of the mutex/single-instance machinery below, so a client invocation can never trigger
         // the "normal launch replaces the running instance" takeover the way a bare `RoeSnip.exe`
@@ -925,5 +933,49 @@ public static class Program
         {
             // best-effort
         }
+    }
+
+    /// <summary>Wires the three process-wide exception funnels a WinForms app needs so no crash
+    /// path can escape both FileLog and CrashMarker (unhandled-exception-handlers hardening item).
+    /// Must run before <see cref="System.Windows.Forms.Application.Run()"/> (App/TrayApp.cs) so
+    /// SetUnhandledExceptionMode/ThreadException are in effect for the whole message-loop lifetime.
+    ///
+    /// - Application.ThreadException fires for exceptions the WinForms message loop itself catches
+    ///   (SetUnhandledExceptionMode(CatchException) routes them here instead of a blocking WinForms
+    ///   "Continue/Quit" dialog or an immediate process-level crash). WinForms would otherwise just
+    ///   swallow the exception and keep pumping messages once this event returns — that risks
+    ///   continuing on corrupt capture/UI state, so the handler force-terminates itself rather than
+    ///   letting the loop carry on (never-destabilize rule: die cleanly, don't limp on).
+    /// - AppDomain.CurrentDomain.UnhandledException covers every other thread (background Tasks
+    ///   awaited without try/catch, ThreadPool work, the pipe-listener loop, etc.). The CLR
+    ///   terminates the process right after this handler returns (IsTerminating is always true for
+    ///   this event on .NET 8) — nothing more to do than log.
+    /// - TaskScheduler.UnobservedTaskException does NOT crash the process on .NET 8 (unlike .NET
+    ///   Framework's default); a faulted Task nobody awaited would otherwise vanish without a trace
+    ///   the next time it's finalized. Log only.</summary>
+    private static void RegisterUnhandledExceptionHandlers()
+    {
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+
+        Application.ThreadException += (_, e) =>
+        {
+            FileLog.Write("RoeSnip: unhandled UI-thread exception:\n" + e.Exception);
+            CrashMarker.Write(App.SettingsStore.SettingsDirectory, App.UpdateManager.CurrentVersionText);
+            Environment.Exit(1);
+        };
+
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            string details = e.ExceptionObject is Exception ex ? ex.ToString() : e.ExceptionObject?.ToString() ?? "(null)";
+            FileLog.Write("RoeSnip: unhandled exception:\n" + details);
+            CrashMarker.Write(App.SettingsStore.SettingsDirectory, App.UpdateManager.CurrentVersionText);
+            // No explicit Environment.Exit: the CLR terminates the process right after this handler
+            // returns for a genuinely unhandled exception (e.IsTerminating is true on .NET 8).
+        };
+
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            FileLog.Write("RoeSnip: unobserved task exception:\n" + e.Exception);
+        };
     }
 }

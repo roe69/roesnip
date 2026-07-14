@@ -782,6 +782,11 @@ public static class Program
         // wholesale by the self-updater.
         FileLog.Initialize(ConfigPaths.ConfigDirectory);
 
+        // Top-level unhandled-exception handlers (hardening item 6, ported from the WPF app's own
+        // Program.cs): registered before BuildAvaloniaApp/the dispatcher ever starts and before
+        // anything else in Main could fault, so no crash path in this process can die silently.
+        RegisterUnhandledExceptionHandlers();
+
         // `--auto` (dev-gated automation client — AppShell/AutomationServer.cs): handled here,
         // before ANY of the single-instance machinery below (CliOptions.Parse/AppComposition.
         // RunTray/RunTriggerCapture etc.), so a client invocation can never trigger the "normal
@@ -909,5 +914,35 @@ public static class Program
         {
             // best-effort
         }
+    }
+
+    /// <summary>Wires the two process-wide exception funnels an Avalonia app needs so no crash path
+    /// can escape both FileLog and CrashMarker (unhandled-exception-handlers hardening item, ported
+    /// from the WPF app's own Program.cs). Avalonia has no separate dispatcher exception event the
+    /// way WinForms' Application.ThreadException is — UI-thread (Dispatcher) exceptions that aren't
+    /// caught locally surface through AppDomain.UnhandledException just like any other thread's, so
+    /// a single handler there covers both.
+    ///
+    /// - AppDomain.CurrentDomain.UnhandledException covers every thread, including the Avalonia
+    ///   Dispatcher/UI thread. The CLR terminates the process right after this handler returns
+    ///   (IsTerminating is always true for this event on .NET 8) — nothing more to do than log.
+    /// - TaskScheduler.UnobservedTaskException does NOT crash the process on .NET 8 (unlike .NET
+    ///   Framework's default); a faulted Task nobody awaited would otherwise vanish without a trace
+    ///   the next time it's finalized. Log only.</summary>
+    private static void RegisterUnhandledExceptionHandlers()
+    {
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            string details = e.ExceptionObject is Exception ex ? ex.ToString() : e.ExceptionObject?.ToString() ?? "(null)";
+            FileLog.Write("RoeSnip: unhandled exception:\n" + details);
+            CrashMarker.Write(ConfigPaths.ConfigDirectory, AppShell.UpdateManager.CurrentVersionText);
+            // No explicit Environment.Exit: the CLR terminates the process right after this handler
+            // returns for a genuinely unhandled exception (e.IsTerminating is true on .NET 8).
+        };
+
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            FileLog.Write("RoeSnip: unobserved task exception:\n" + e.Exception);
+        };
     }
 }
