@@ -6,7 +6,7 @@
     <RootNamespace>RoeSnip</RootNamespace>
     <AssemblyName>RoeSnip</AssemblyName>
     <!-- Compared against the GitHub Releases tag_name by App/UpdateManager.cs - bump on every release. -->
-    <Version>1.7.0</Version>
+    <Version>1.8.0</Version>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
