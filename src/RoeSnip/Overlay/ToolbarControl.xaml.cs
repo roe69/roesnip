@@ -446,6 +446,33 @@ public partial class ToolbarControl : UserControl
         }
     }
 
+    /// <summary>True when the press landed on the toolbar's own empty chrome (the panel background,
+    /// the group dividers, the row spacing) rather than on any interactive control (a tool/action
+    /// button, a palette swatch, the size/font combo). OverlayWindow uses this to start a
+    /// drag-to-move of the whole panel from an empty spot without ever stealing a click from a
+    /// control. Walks up the visual tree from the hit element: reaching an interactive control
+    /// FIRST means "not draggable"; reaching the toolbar root first means "draggable chrome".</summary>
+    internal bool IsDraggableChrome(DependencyObject? source)
+    {
+        var current = source;
+        while (current is not null)
+        {
+            if (current is System.Windows.Controls.Primitives.ButtonBase
+                or System.Windows.Controls.ComboBox
+                or System.Windows.Controls.Primitives.TextBoxBase
+                or MenuItem)
+            {
+                return false;
+            }
+            if (ReferenceEquals(current, this))
+            {
+                return true;
+            }
+            current = current is Visual ? VisualTreeHelper.GetParent(current) : null;
+        }
+        return false;
+    }
+
     /// <summary>True when the given event source sits inside the size ComboBox — OverlayWindow uses
     /// this to decide whether a toolbar click should yank keyboard focus back to the window (any
     /// toolbar click that is NOT into the size box should, since every other control is

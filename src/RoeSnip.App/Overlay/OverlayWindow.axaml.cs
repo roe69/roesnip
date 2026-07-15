@@ -47,6 +47,10 @@ public partial class OverlayWindow : Window
     {
         None, NewSelection, Resize, Move, Annotation, SelectedMove, SelectedResize, SelectedEndpoint,
         SpanningResize, SpanningMove,
+        // Dragging the whole toolbar panel to a new spot by an empty part of its chrome (see
+        // OnPreviewPointerPressed's toolbar branch). Not an area/selected drag — it changes neither
+        // the selection nor any annotation, only Canvas.Left/Top of the toolbar.
+        ToolbarMove,
     }
 
     private readonly CapturedFrame _frame;
@@ -174,6 +178,17 @@ public partial class OverlayWindow : Window
     private bool _textItalic;
 
     private ToolbarControl? _toolbar;
+    // Drag-to-move the toolbar (DragMode.ToolbarMove): the pointer position (window DIP) and the
+    // toolbar's Canvas Left/Top captured at drag start, so each move applies an absolute delta. Once
+    // the user has dragged it, _toolbarManuallyPlaced pins the panel at _manualToolbarLeft/Top so
+    // UpdateToolbarPlacement stops auto-anchoring it to the selection (still re-clamped into view);
+    // reset when the selection is cleared or a brand-new selection drag begins.
+    private Point _toolbarDragStartDip;
+    private double _toolbarDragOriginLeft;
+    private double _toolbarDragOriginTop;
+    private bool _toolbarManuallyPlaced;
+    private double _manualToolbarLeft;
+    private double _manualToolbarTop;
     private TextBox? _activeTextEditor;
     private Point _activeTextEditorOriginPx;
 
@@ -491,6 +506,22 @@ public partial class OverlayWindow : Window
             {
                 Focus();
             }
+            // Drag-to-move: a press on an empty part of the toolbar chrome (not a button/combo/
+            // swatch) grabs the whole panel and moves it. Only while a selection exists (the toolbar
+            // is only shown then) and only for chrome — IsDraggableChrome returns false for every
+            // interactive control, so their own clicks are untouched.
+            if (_selectionPx is not null && _toolbar is { } dragToolbar
+                && dragToolbar.IsDraggableChrome(e.Source))
+            {
+                _dragMode = DragMode.ToolbarMove;
+                _toolbarDragStartDip = e.GetPosition(this);
+                double curLeft = Canvas.GetLeft(dragToolbar);
+                double curTop = Canvas.GetTop(dragToolbar);
+                _toolbarDragOriginLeft = double.IsNaN(curLeft) ? 0 : curLeft;
+                _toolbarDragOriginTop = double.IsNaN(curTop) ? 0 : curTop;
+                CapturePointer(e.Pointer);
+                e.Handled = true;
+            }
             return; // let the toolbar's own controls handle their own click
         }
 
@@ -603,6 +634,7 @@ public partial class OverlayWindow : Window
             // selection, just a different gesture than grabbing a handle.
             _annotations.Deselect();
             _dragMode = DragMode.NewSelection;
+            _toolbarManuallyPlaced = false; // drawing a new region re-anchors the toolbar
             _newSelectionPending = true;
             _dragAnchorPx = px;
             _dragAnchorDip = dip;
@@ -731,6 +763,7 @@ public partial class OverlayWindow : Window
                     // travel this is a color-inspection click, not a drag. The selection work
                     // happens in OnPreviewPointerMoved once the threshold is crossed.
                     _dragMode = DragMode.NewSelection;
+                    _toolbarManuallyPlaced = false; // drawing a new region re-anchors the toolbar
                     _newSelectionPending = true;
                     _dragAnchorPx = px;
                     _dragAnchorDip = dip;
@@ -754,6 +787,30 @@ public partial class OverlayWindow : Window
         var px = ToPhysical(dip);
         _lastHoverPx = px;
         _lastKeyModifiers = e.KeyModifiers;
+
+        if (_dragMode == DragMode.ToolbarMove)
+        {
+            if (_toolbar is { } toolbar)
+            {
+                double actualWidth = ClientSize.Width, actualHeight = ClientSize.Height;
+                double left = _toolbarDragOriginLeft + (dip.X - _toolbarDragStartDip.X);
+                double top = _toolbarDragOriginTop + (dip.Y - _toolbarDragStartDip.Y);
+                if (actualWidth > 0)
+                {
+                    left = Math.Clamp(left, 0, Math.Max(0, actualWidth - toolbar.Bounds.Width));
+                }
+                if (actualHeight > 0)
+                {
+                    top = Math.Clamp(top, 0, Math.Max(0, actualHeight - toolbar.Bounds.Height));
+                }
+                Canvas.SetLeft(toolbar, left);
+                Canvas.SetTop(toolbar, top);
+                _toolbarManuallyPlaced = true;
+                _manualToolbarLeft = left;
+                _manualToolbarTop = top;
+            }
+            return;
+        }
 
         // Color codes only when the color picker is enabled AND not the Pixelate tool — otherwise
         // the loupe is a pure placement/zoom aid with no color readout (WPF OverlayWindow.xaml.cs:1056).
@@ -955,6 +1012,12 @@ public partial class OverlayWindow : Window
             case DragMode.SelectedResize:
             case DragMode.SelectedEndpoint:
                 _annotations.EndDragSelected();
+                break;
+
+            case DragMode.ToolbarMove:
+                // Nothing to finalize: the toolbar was repositioned live in OnPreviewPointerMoved and
+                // _manualToolbarLeft/Top already hold its resting spot. Deliberately NOT an area
+                // drag, so the wasAreaDrag re-placement below won't run and snap it back.
                 break;
         }
 
@@ -1312,6 +1375,7 @@ public partial class OverlayWindow : Window
         }
         CancelActiveTextEditor();
         _annotations.Clear();
+        _toolbarManuallyPlaced = false; // a fresh selection re-anchors the toolbar to the selection
         SetSpanningLocalSelection(null, isSpanning: false, isPrimary: false, virtualRectForLabel: null);
     }
 
@@ -1433,10 +1497,6 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        var n = sel.Normalized();
-        double x = n.Left / _scaleX;
-        double y = n.Bottom / _scaleY + 8.0;
-
         double toolbarWidth = toolbar.Bounds.Width;
         double toolbarHeight = toolbar.Bounds.Height;
         if (toolbarWidth <= 0 || toolbarHeight <= 0)
@@ -1447,13 +1507,30 @@ public partial class OverlayWindow : Window
         }
 
         double actualWidth = ClientSize.Width, actualHeight = ClientSize.Height;
-        if (actualHeight > 0 && y + toolbarHeight > actualHeight)
+        double x, y;
+        if (_toolbarManuallyPlaced)
         {
-            y = n.Top / _scaleY - toolbarHeight - 8.0; // flip above if it would go off the bottom
+            // The user dragged the toolbar to a spot of their own (DragMode.ToolbarMove): keep it
+            // there across selection resizes/nudges instead of re-anchoring to the selection. Still
+            // runs through the same final clamp below so a later window/monitor change can't strand
+            // it off-screen. Reset when the selection is cleared or a new selection drag begins.
+            x = _manualToolbarLeft;
+            y = _manualToolbarTop;
         }
-        if (actualWidth > 0 && x + toolbarWidth > actualWidth)
+        else
         {
-            x = actualWidth - toolbarWidth;
+            var n = sel.Normalized();
+            x = n.Left / _scaleX;
+            y = n.Bottom / _scaleY + 8.0;
+
+            if (actualHeight > 0 && y + toolbarHeight > actualHeight)
+            {
+                y = n.Top / _scaleY - toolbarHeight - 8.0; // flip above if it would go off the bottom
+            }
+            if (actualWidth > 0 && x + toolbarWidth > actualWidth)
+            {
+                x = actualWidth - toolbarWidth;
+            }
         }
 
         // Final clamp: guarantee the panel is fully within the window bounds regardless of what

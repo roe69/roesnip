@@ -550,7 +550,12 @@
          Panel surface follows the roelite-net Modal glass-card recipe (neutral near-black rgba fill +
          single hairline white-alpha border, 12px "popover" radius) — see RlPanelBackgroundBrush for
          why the opacity is pushed well past the site's own 50% glass. -->
-    <Border Background="{StaticResource RlPanelBackgroundBrush}" CornerRadius="12" BorderBrush="{StaticResource RlBorderStrongBrush}" BorderThickness="1">
+    <!-- Cursor=SizeAll on the panel surface itself is the drag-to-move affordance: an empty spot on
+         the chrome (background, dividers, row spacing) shows the move cursor and can be grabbed to
+         reposition the whole toolbar (see OverlayWindow's DragMode.ToolbarMove). Every interactive
+         control overrides this with its own Hand/IBeam cursor, so only genuine chrome reads as
+         draggable. -->
+    <Border Background="{StaticResource RlPanelBackgroundBrush}" CornerRadius="12" BorderBrush="{StaticResource RlBorderStrongBrush}" BorderThickness="1" Cursor="SizeAll">
         <StackPanel Margin="6,5">
             <!-- Row 1 mirrors Row 2's Auto|*|Auto layout so both rows span the same width and the
                  panel reads symmetrically: the tools+size group pins left, undo/redo pin right, the

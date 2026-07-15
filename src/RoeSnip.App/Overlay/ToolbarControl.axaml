@@ -230,8 +230,14 @@
         </Style>
     </UserControl.Styles>
 
+    <!-- Cursor=SizeAll on the panel surface itself is the drag-to-move affordance: an empty spot on
+         the chrome (background, dividers, row spacing) shows the move cursor and can be grabbed to
+         reposition the whole toolbar (see OverlayWindow's DragMode.ToolbarMove). Every interactive
+         control overrides this with its own Hand/IBeam cursor, so only genuine chrome reads as
+         draggable. Mirrors WPF's ToolbarControl.xaml. -->
     <Border Background="{StaticResource RlPanelBackgroundBrush}" CornerRadius="12"
-            BorderBrush="{StaticResource RlBorderStrongBrush}" BorderThickness="1">
+            BorderBrush="{StaticResource RlBorderStrongBrush}" BorderThickness="1"
+            Cursor="SizeAll">
         <StackPanel Margin="6">
             <!-- Row 1: tools + size (left) | Undo/Redo (right), an Auto|*|Auto Grid so both rows
                  span the same width and the panel reads symmetrically — mirrors WPF's own Row 1

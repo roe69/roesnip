@@ -443,6 +443,18 @@ existing WPF test suite is the proof.
       Screens.Primary if nothing matches (e.g. unplugged between capture and toast); WPF resolves
       it directly via the passed MonitorInfo.HMonitor instead of MonitorFromPoint(...,
       MONITOR_DEFAULTTOPRIMARY).
+      2026-07-15 follow-up (drag-to-move toolbar, both apps): the whole toolbar can now be dragged
+      to a new spot by grabbing any empty part of its chrome (panel background/dividers/spacing),
+      which shows a SizeAll cursor. New DragMode.ToolbarMove: OnPreview(Mouse|Pointer)Pressed's
+      existing toolbar-hit branch starts it only when the press lands on chrome, gated by a new
+      ToolbarControl.IsDraggableChrome (walks up from the hit element; any Button/ToggleButton/
+      ComboBox/TextBox/MenuItem ancestor => not draggable, so no control's own click is stolen).
+      The move handler repositions the toolbar live (Canvas.Left/Top) clamped fully inside the
+      window, and sets _toolbarManuallyPlaced so UpdateToolbarPlacement pins it at
+      _manualToolbarLeft/Top (still re-clamped into view) instead of re-anchoring under the
+      selection; reset on ClearSelection and at both NewSelection drag starts so a fresh snip
+      re-anchors normally. Avalonia matched IsDraggableChrome via Button-or-ToggleButton (its
+      ButtonBase isn't in the imported namespaces) rather than WPF's ButtonBase; otherwise 1:1.
 - [x] 13-install-self-update: Single-instance replace-on-run takeover (InstanceSignal.Exit),
       Windows install-to-LOCALAPPDATA + GitHub Releases self-update (own asset name, swap
       discipline, ApplyUpdateLock, idle gate, --self-update-now), version surfaced in
