@@ -1450,16 +1450,24 @@ public partial class OverlayWindow : Window
         if (actualHeight > 0 && y + toolbarHeight > actualHeight)
         {
             y = n.Top / _scaleY - toolbarHeight - 8.0; // flip above if it would go off the bottom
-            if (y < 0)
-            {
-                y = 0;
-            }
         }
         if (actualWidth > 0 && x + toolbarWidth > actualWidth)
         {
             x = actualWidth - toolbarWidth;
         }
-        x = Math.Max(0, x);
+
+        // Final clamp: guarantee the panel is fully within the window bounds regardless of what
+        // the flip/slide above produced. A full-monitor or edge-touching selection can leave no
+        // room outside the selection in either axis, in which case the panel ends up overlapping
+        // the selection rather than being pushed partly off-screen.
+        if (actualWidth > 0)
+        {
+            x = Math.Clamp(x, 0, Math.Max(0, actualWidth - toolbarWidth));
+        }
+        if (actualHeight > 0)
+        {
+            y = Math.Clamp(y, 0, Math.Max(0, actualHeight - toolbarHeight));
+        }
 
         Canvas.SetLeft(toolbar, x);
         Canvas.SetTop(toolbar, y);

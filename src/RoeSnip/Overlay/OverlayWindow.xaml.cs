@@ -1644,22 +1644,40 @@ public partial class OverlayWindow : Window
         double x = n.Left / _scaleX;
         double y = n.Bottom / _scaleY + 8.0;
 
-        double toolbarWidth = toolbar.ActualWidth > 0 ? toolbar.ActualWidth : 500.0;
-        double toolbarHeight = toolbar.ActualHeight > 0 ? toolbar.ActualHeight : 84.0;
+        double toolbarWidth = toolbar.ActualWidth;
+        double toolbarHeight = toolbar.ActualHeight;
+        if (toolbarWidth <= 0 || toolbarHeight <= 0)
+        {
+            // First-ever placement: ActualWidth/Height are still 0 because ShowToolbar() just
+            // added the control to the tree and WPF layout hasn't run yet. Force a measure pass
+            // so the clamp below uses the toolbar's real (palette-dependent) size instead of a
+            // guess that can be narrower than the actual toolbar, which let it clip off-screen.
+            toolbar.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            toolbarWidth = toolbar.DesiredSize.Width > 0 ? toolbar.DesiredSize.Width : 500.0;
+            toolbarHeight = toolbar.DesiredSize.Height > 0 ? toolbar.DesiredSize.Height : 84.0;
+        }
 
         if (ActualHeight > 0 && y + toolbarHeight > ActualHeight)
         {
             y = n.Top / _scaleY - toolbarHeight - 8.0; // flip above if it would go off the bottom
-            if (y < 0)
-            {
-                y = 0;
-            }
         }
         if (ActualWidth > 0 && x + toolbarWidth > ActualWidth)
         {
             x = ActualWidth - toolbarWidth;
         }
-        x = Math.Max(0, x);
+
+        // Final clamp: guarantee the panel is fully within the window bounds regardless of what
+        // the flip/slide above produced. A full-monitor or edge-touching selection can leave no
+        // room outside the selection in either axis, in which case the panel ends up overlapping
+        // the selection rather than being pushed partly off-screen.
+        if (ActualWidth > 0)
+        {
+            x = Math.Clamp(x, 0, Math.Max(0, ActualWidth - toolbarWidth));
+        }
+        if (ActualHeight > 0)
+        {
+            y = Math.Clamp(y, 0, Math.Max(0, ActualHeight - toolbarHeight));
+        }
 
         Canvas.SetLeft(toolbar, x);
         Canvas.SetTop(toolbar, y);
