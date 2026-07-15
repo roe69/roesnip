@@ -13,7 +13,7 @@ namespace RoeSnip.Sharing;
 
 /// <summary>The small topmost, non-activating result toast for one share upload (ROESNIP SHARE UX):
 /// created by <see cref="ShareFlowPresenter"/> on the tray/UI thread the moment a Share click fires,
-/// positioned bottom-right of the PRIMARY monitor's work area (physical pixels via Win32
+/// positioned bottom-right of the CAPTURE monitor's work area (physical pixels via Win32
 /// SetWindowPos, never WPF DIP properties - same "mixed-DPI discipline" FlashDimmer/RegionOutline
 /// already use in this codebase), and driven through exactly one of its three terminal-ish states:
 /// Uploading -&gt; (Success | Failure). Mouse-only controls throughout (no hover-reveal, per this
@@ -25,6 +25,7 @@ namespace RoeSnip.Sharing;
 /// keyboard messages normally.</summary>
 public partial class ShareResultWindow : Window
 {
+    private readonly RoeSnip.Capture.MonitorInfo _monitor;
     private Action? _onCancelRequested;
     private string? _cleanUrl;
     private string? _openUrl;
@@ -38,10 +39,11 @@ public partial class ShareResultWindow : Window
     /// file path - that would otherwise be written into a window nobody can see.</summary>
     public bool IsClosed { get; private set; }
 
-    public ShareResultWindow(string providerName)
+    public ShareResultWindow(string providerName, RoeSnip.Capture.MonitorInfo monitor)
     {
         InitializeComponent();
         HeaderText.Text = providerName;
+        _monitor = monitor;
 
         _autoDismissTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
         _autoDismissTimer.Tick += (_, _) => { _autoDismissTimer.Stop(); Close(); };
@@ -158,6 +160,7 @@ public partial class ShareResultWindow : Window
     private void CopyButton_Click(object sender, RoutedEventArgs e)
     {
         CopyCleanUrlToClipboard();
+        Close();
     }
 
     private void CopyCleanUrlToClipboard()
@@ -227,19 +230,19 @@ public partial class ShareResultWindow : Window
         return string.Concat(text.AsSpan(0, head), "…", text.AsSpan(text.Length - tail, tail));
     }
 
-    /// <summary>Positions and sizes this window at the PRIMARY monitor's work-area bottom-right
-    /// corner, in physical pixels, before <see cref="Window.Show"/> is ever called - same
-    /// "EnsureHandle, SetWindowPos, then Show" ordering FlashDimmer.FlashWindow.PrepareHidden uses so
-    /// there is no visible jump. Best-effort: on any failure this silently falls back to WPF's own
-    /// default placement rather than surfacing a positioning error for what is a non-load-bearing
-    /// toast.</summary>
+    /// <summary>Positions and sizes this window at the CAPTURE monitor's (the one passed into the
+    /// constructor) work-area bottom-right corner, in physical pixels, before <see cref="Window.Show"/>
+    /// is ever called - same "EnsureHandle, SetWindowPos, then Show" ordering
+    /// FlashDimmer.FlashWindow.PrepareHidden uses so there is no visible jump. Best-effort: on any
+    /// failure this silently falls back to WPF's own default placement rather than surfacing a
+    /// positioning error for what is a non-load-bearing toast.</summary>
     private void PositionBottomRight()
     {
         try
         {
             IntPtr hwnd = new WindowInteropHelper(this).EnsureHandle();
 
-            IntPtr hMonitor = NativeMethods.MonitorFromPoint(default, NativeMethods.MONITOR_DEFAULTTOPRIMARY);
+            IntPtr hMonitor = _monitor.HMonitor;
             var monitorInfo = new NativeMethods.MONITORINFOEX
             {
                 cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFOEX>(),

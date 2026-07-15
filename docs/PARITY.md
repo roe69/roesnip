@@ -432,6 +432,17 @@ existing WPF test suite is the proof.
       linux/mac degradation: Sharing/* is pure BCL already portable via item 11; this item's own
       UI (ToolbarControl, the two new windows, OverlayController) is ordinary Avalonia control code
       with no OS-specific branches.
+      2026-07-15 follow-up (two bugfixes, both apps): (a) ShareResultWindow's Copy button now
+      closes the toast after copying (was copy-only, requiring a separate manual dismiss). (b) the
+      toast is now positioned on the CAPTURE monitor's work area instead of always the primary
+      one — ShareFlowPresenter.StartUpload/ShareResultWindow's constructor both gained a
+      MonitorInfo parameter, threaded from the 4 call sites (toolbar Share on both apps' toolbar
+      windows; RequestShare/BeginShareHandoff on both apps' recording sessions — the Avalonia
+      RecordingShareHandoff record gained a Monitor field). Avalonia resolves the monitor via the
+      same Screens.All bounds-match OverlayWindow.TryPlaceOnScreen already uses, falling back to
+      Screens.Primary if nothing matches (e.g. unplugged between capture and toast); WPF resolves
+      it directly via the passed MonitorInfo.HMonitor instead of MonitorFromPoint(...,
+      MONITOR_DEFAULTTOPRIMARY).
 - [x] 13-install-self-update: Single-instance replace-on-run takeover (InstanceSignal.Exit),
       Windows install-to-LOCALAPPDATA + GitHub Releases self-update (own asset name, swap
       discipline, ApplyUpdateLock, idle gate, --self-update-now), version surfaced in

@@ -5,15 +5,17 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using RoeSnip.App.Overlay;
+using RoeSnip.Core.Capture;
 using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.App.Sharing;
 
 /// <summary>The small topmost, non-activating result toast for one share upload (ROESNIP SHARE UX):
 /// created by <see cref="ShareFlowPresenter"/> on the Avalonia UI thread the moment a Share click
-/// fires, positioned bottom-right of the PRIMARY screen's work area - same physical-pixel-before-
+/// fires, positioned bottom-right of the CAPTURE screen's work area - same physical-pixel-before-
 /// Show() recipe as TrayApp.ShowToast, grown from that primitive into a real 3-state window - and
 /// driven through exactly one of Uploading -&gt; (Success | Failure). Mouse-only controls throughout
 /// (no hover-reveal, per this app's standing no-hidden-controls rule); Esc/Ctrl+C are wired too since
@@ -27,6 +29,7 @@ public partial class ShareResultWindow : Window
     private static readonly IBrush StatusMutedBrush = new SolidColorBrush(Color.FromRgb(0x71, 0x71, 0x7B));
     private static readonly IBrush StatusErrorBrush = new SolidColorBrush(Color.FromRgb(0xDC, 0x26, 0x26));
 
+    private readonly MonitorInfo? _monitor;
     private Action? _onCancelRequested;
     private string? _cleanUrl;
     private string? _openUrl;
@@ -41,15 +44,17 @@ public partial class ShareResultWindow : Window
 
     /// <summary>Parameterless overload for Avalonia's XAML runtime loader only (AVLN3001 - the
     /// compiled .axaml needs a public no-arg constructor to be reachable via avares://, even though
-    /// every real call site uses the parameterized one below).</summary>
-    public ShareResultWindow() : this("RoeSnip")
+    /// every real call site uses the parameterized one below). No capture monitor to place against,
+    /// so this falls back to the primary screen exactly like a monitor that fails to match.</summary>
+    public ShareResultWindow() : this("RoeSnip", null)
     {
     }
 
-    public ShareResultWindow(string providerName)
+    public ShareResultWindow(string providerName, MonitorInfo? monitor)
     {
         InitializeComponent();
         HeaderText.Text = providerName;
+        _monitor = monitor;
 
         _autoDismissTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
         _autoDismissTimer.Tick += (_, _) => { _autoDismissTimer.Stop(); Close(); };
@@ -150,7 +155,11 @@ public partial class ShareResultWindow : Window
         }
     }
 
-    private void CopyButton_Click(object? sender, RoutedEventArgs e) => _ = CopyCleanUrlToClipboardAsync();
+    private void CopyButton_Click(object? sender, RoutedEventArgs e)
+    {
+        _ = CopyCleanUrlToClipboardAsync();
+        Close();
+    }
 
     private async System.Threading.Tasks.Task CopyCleanUrlToClipboardAsync()
     {
@@ -213,23 +222,40 @@ public partial class ShareResultWindow : Window
         return string.Concat(text.AsSpan(0, head), "…", text.AsSpan(text.Length - tail, tail));
     }
 
-    /// <summary>Positions this window at the PRIMARY screen's work-area bottom-right corner, in
+    /// <summary>Positions this window at the CAPTURE screen's work-area bottom-right corner, in
     /// physical pixels, before <see cref="Window.Show"/> is ever called - the exact math TrayApp.
-    /// ShowToast already uses (Screens.Primary.WorkingArea + Scaling), just applied to a real
-    /// compiled window instead of one built ad hoc in code. Best-effort: any failure silently falls
-    /// back to Avalonia's own default placement.</summary>
+    /// ShowToast used to use (WorkingArea + Scaling), just resolved against the monitor the capture
+    /// came from instead of always the primary one. Screen correlation mirrors OverlayWindow.
+    /// TryPlaceOnScreen's own bounds-matching (no monitor passed, or none matches - e.g. unplugged
+    /// between capture and toast - falls back to the primary screen, since the toast still needs to
+    /// show somewhere). Best-effort: any failure silently falls back to Avalonia's own default
+    /// placement.</summary>
     private void PositionBottomRight()
     {
         try
         {
-            var primary = Screens.Primary;
-            if (primary is null)
+            Screen? screen = null;
+            if (_monitor is { } monitor)
+            {
+                var bounds = monitor.BoundsPx;
+                foreach (var candidate in Screens.All)
+                {
+                    var b = candidate.Bounds;
+                    if (b.X == bounds.Left && b.Y == bounds.Top && b.Width == bounds.Width && b.Height == bounds.Height)
+                    {
+                        screen = candidate;
+                        break;
+                    }
+                }
+            }
+            screen ??= Screens.Primary;
+            if (screen is null)
             {
                 return;
             }
 
-            double scale = primary.Scaling;
-            var workingArea = primary.WorkingArea;
+            double scale = screen.Scaling;
+            var workingArea = screen.WorkingArea;
             int x = workingArea.X + workingArea.Width - (int)Math.Round((Width + 16) * scale);
             int y = workingArea.Y + workingArea.Height - (int)Math.Round((Height + 16) * scale);
             Position = new PixelPoint(x, y);

@@ -44,6 +44,7 @@ public static class ShareFlowPresenter
     public static void StartUpload(
         ShareProviderConfig config,
         ShareUploadRequest request,
+        RoeSnip.Capture.MonitorInfo monitor,
         string? keptFilePathOnFailure,
         Action? onSuccess,
         Action? onFailure,
@@ -53,7 +54,7 @@ public static class ShareFlowPresenter
             ? (ShareProviderCatalog.ResolveSpec(config)?.Name ?? "Share")
             : config.DisplayName;
 
-        var window = new ShareResultWindow(providerName);
+        var window = new ShareResultWindow(providerName, monitor);
         var cts = new CancellationTokenSource();
         window.ShowUploading(() => cts.Cancel());
         window.Show();

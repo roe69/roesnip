@@ -67,7 +67,7 @@ public static class RecordingController
 /// <summary>Result of <see cref="RecordingSession.BeginShareHandoff"/> - the finished take's temp
 /// file plus everything the orchestration layer's own upload needs (Sharing/ShareManager.UploadAsync
 /// takes a stream, a file name and a content type, none of which this class needs to know about).</summary>
-public sealed record RecordingShareHandoff(string TempPath, RecordingFormat Format, string FileName, string ContentType);
+public sealed record RecordingShareHandoff(string TempPath, RecordingFormat Format, string FileName, string ContentType, MonitorInfo Monitor);
 
 /// <summary>One in-progress recording flow - a three-phase state machine mirroring the WPF app's own
 /// RecordingSession (Recording/RecordingController.cs):
@@ -685,7 +685,9 @@ public sealed class RecordingSession
         _saving = false;
         RearmForAnotherTake(); // chrome is back in Setup from here - mirrors RequestShare's own doc comment
 
-        return new RecordingShareHandoff(tempPath, _format, fileName, contentType);
+        // _monitor is readonly on this port (no cross-monitor handoff mid-take), so unlike the WPF
+        // app's RequestShare this needs no local captured before rearming.
+        return new RecordingShareHandoff(tempPath, _format, fileName, contentType, _monitor);
     }
 
     private void CleanupTempFile()

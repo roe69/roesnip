@@ -218,6 +218,7 @@ public sealed class RecordingOrchestrator
         RoeSnip.App.Sharing.ShareFlowPresenter.StartUpload(
             config,
             request,
+            handoff.Monitor,
             keptFilePathOnFailure: handoff.TempPath,
             onSuccess: () =>
             {

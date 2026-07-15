@@ -1472,7 +1472,7 @@ public static class OverlayController
             string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}.png";
             var request = new RoeSnip.Core.Sharing.ShareUploadRequest(
                 new System.IO.MemoryStream(pngBytes, writable: false), fileName, "image/png");
-            RoeSnip.Sharing.ShareFlowPresenter.StartUpload(config, request, keptFilePathOnFailure: null, onSuccess: null, onFailure: null);
+            RoeSnip.Sharing.ShareFlowPresenter.StartUpload(config, request, toolbarWindow.Monitor, keptFilePathOnFailure: null, onSuccess: null, onFailure: null);
         }
 
         /// <summary>Esc's two-stage behavior, decided here because only the session can see every

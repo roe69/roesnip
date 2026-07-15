@@ -1622,6 +1622,10 @@ internal sealed class RecordingSession
         string ext = _format == RecordingFormat.Mp4 ? ".mp4" : ".gif";
         string contentType = _format == RecordingFormat.Mp4 ? "video/mp4" : "image/gif";
         string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}{ext}";
+        // Captured before RearmForAnotherTake() below for the same reason as the locals above —
+        // _monitor is mutated by a brand-new take (HandoffToMonitor/spanning rebuild), so a bare
+        // field read after rearming could report the NEXT take's monitor instead of this one's.
+        MonitorInfo monitor = _monitor;
 
         _sharing = false;
         RearmForAnotherTake(); // chrome is back in Setup from here — see this method's own doc comment for why
@@ -1644,6 +1648,7 @@ internal sealed class RecordingSession
         RoeSnip.Sharing.ShareFlowPresenter.StartUpload(
             config,
             request,
+            monitor,
             keptFilePathOnFailure: tempPath,
             onSuccess: () =>
             {

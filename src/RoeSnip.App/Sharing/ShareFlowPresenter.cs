@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using RoeSnip.App.Overlay;
+using RoeSnip.Core.Capture;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Sharing;
 
@@ -34,6 +35,7 @@ public static class ShareFlowPresenter
     public static void StartUpload(
         ShareProviderConfig config,
         ShareUploadRequest request,
+        MonitorInfo? monitor,
         string? keptFilePathOnFailure,
         Action? onSuccess,
         Action? onFailure,
@@ -43,7 +45,7 @@ public static class ShareFlowPresenter
             ? (ShareProviderCatalog.ResolveSpec(config)?.Name ?? "Share")
             : config.DisplayName;
 
-        var window = new ShareResultWindow(providerName);
+        var window = new ShareResultWindow(providerName, monitor);
         var cts = new CancellationTokenSource();
         window.ShowUploading(() => cts.Cancel());
         window.Show();

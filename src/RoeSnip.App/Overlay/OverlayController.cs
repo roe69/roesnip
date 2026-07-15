@@ -1123,7 +1123,7 @@ public static class OverlayController
             string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}.png";
             var request = new RoeSnip.Core.Sharing.ShareUploadRequest(
                 new System.IO.MemoryStream(pngBytes, writable: false), fileName, "image/png");
-            RoeSnip.App.Sharing.ShareFlowPresenter.StartUpload(config, request, keptFilePathOnFailure: null, onSuccess: null, onFailure: null);
+            RoeSnip.App.Sharing.ShareFlowPresenter.StartUpload(config, request, toolbarWindow.Monitor, keptFilePathOnFailure: null, onSuccess: null, onFailure: null);
         }
 
         /// <summary>O8 audit fix: OnCommand's callers (key handlers, toolbar button clicks) cannot
