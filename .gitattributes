@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Git hooks run through sh (Git for Windows' bash) — CRLF would break the interpreter line.
+.githooks/** text eol=lf

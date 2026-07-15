@@ -1,0 +1,51 @@
+#!/bin/sh
+# Local replacement for the old CI workflow (.github/workflows/ci.yml, removed): instead of a
+# multi-minute build+test on every push to GitHub, verify locally that the whole solution still
+# COMPILES (Release, the same config a release build uses) before a push leaves this machine.
+# Compiling the solution also compiles every test project, so a broken test file is still caught;
+# the full test RUN is deliberately not part of this gate (RoeSnip.Tests alone takes ~4 min) — run
+# `dotnet test RoeSnip.sln` by hand when a change warrants it.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+# A build failure aborts the push (exit 1); fix it and push again. Nothing to bypass routinely,
+# but `git push --no-verify` skips this if you ever truly need to.
+
+zero=0000000000000000000000000000000000000000
+need_build=0
+
+# Only build when the pushed commits actually touch build inputs — a docs-only push (README,
+# docs/**, this hook) skips the build, mirroring the old workflow's paths filter.
+while read -r local_ref local_sha remote_ref remote_sha; do
+	[ "$local_sha" = "$zero" ] && continue # branch deletion: nothing to build
+
+	if [ "$remote_sha" = "$zero" ]; then
+		# New branch on the remote: diff against main if we have it, else this commit alone.
+		base=$(git merge-base "$local_sha" origin/main 2>/dev/null || echo "")
+	else
+		base="$remote_sha"
+	fi
+
+	if [ -n "$base" ]; then
+		changed=$(git diff --name-only "$base" "$local_sha")
+	else
+		changed=$(git diff-tree --no-commit-id --name-only -r "$local_sha")
+	fi
+
+	if printf '%s\n' "$changed" | grep -Eq '^(src/|tests/|RoeSnip\.sln$|.*\.props$)'; then
+		need_build=1
+	fi
+done
+
+if [ "$need_build" -eq 0 ]; then
+	echo "pre-push: no build-relevant changes — skipping solution build."
+	exit 0
+fi
+
+echo "pre-push: building RoeSnip.sln (Release) before push..."
+if dotnet build RoeSnip.sln -c Release -v q -nologo; then
+	echo "pre-push: build OK — pushing."
+	exit 0
+fi
+
+echo "pre-push: build FAILED — push aborted. Fix the build, then push again (or --no-verify to skip)."
+exit 1
