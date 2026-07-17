@@ -221,6 +221,10 @@ public static class OverlayController
             EnsureApplication();
             FlashDimmer.ShowAll(monitors);
             s_flashUsers++;
+            // Flash-phase Esc coverage, focus-independent (see FlashEscapeHook's doc): alive until
+            // ReleaseFlash or the real session's SessionKeyboardHook takes over. Install failure is
+            // non-fatal inside the ctor itself.
+            s_flashEscapeHook ??= new FlashEscapeHook(OnFlashEscape);
             return true;
         }
         catch (Exception ex)
@@ -229,6 +233,18 @@ public static class OverlayController
             try { FlashDimmer.HideAll(); } catch { /* best-effort */ }
             return false;
         }
+    }
+
+    /// <summary>Flash-phase Esc hook lifetime (UI thread only): installed by TryShowFlash, removed
+    /// on whichever comes first of flow end (ReleaseFlash), flash-phase cancel (OnFlashEscape), or
+    /// the OverlaySession opening (hand-off to its full SessionKeyboardHook — the ctor calls this
+    /// so there is never a double-hook window).</summary>
+    private static FlashEscapeHook? s_flashEscapeHook;
+
+    internal static void DisposeFlashEscapeHook()
+    {
+        s_flashEscapeHook?.Dispose();
+        s_flashEscapeHook = null;
     }
 
     /// <summary>Backstop pair to a successful <see cref="TryShowFlash"/>: called from
@@ -243,8 +259,13 @@ public static class OverlayController
         }
         if (--s_flashUsers == 0)
         {
+            DisposeFlashEscapeHook();
             try { FlashDimmer.HideAll(); }
             catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
+            // No-op unless focus is genuinely stranded on a parked flash window (a flow that never
+            // opened a session — capture failed/timed out — with a WON foreground claim): hand it
+            // back so the keyboard doesn't look dead until the user clicks another app.
+            FlashDimmer.TryRestoreForegroundFromFlash();
         }
     }
 
@@ -260,8 +281,12 @@ public static class OverlayController
             return;
         }
         s_flashCancelRequested = true;
+        DisposeFlashEscapeHook();
         try { FlashDimmer.HideAll(); }
         catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
+        // The flash's foreground claim may have WON — without this, focus stays on a parked,
+        // key-swallowing flash window after a flash-phase cancel and the keyboard looks dead.
+        FlashDimmer.TryRestoreForegroundFromFlash();
     }
 
     private static bool ConsumeFlashCancelRequest()
@@ -595,6 +620,11 @@ public static class OverlayController
             _notifier = notifier;
             _monitors = OrderCursorMonitorFirst(monitors);
             _virtualDesktopBounds = ComputeVirtualDesktopBounds(_monitors);
+
+            // Hand-off from the flash phase: the Esc-only flash hook (if any) is removed before the
+            // session hook installs, so there is never a moment with two LL hooks (or an Esc routed
+            // to the stale flash path once a real session exists).
+            DisposeFlashEscapeHook();
 
             // Installed before any window is constructed/shown/receives input, so session keys are
             // covered for the session's entire visible lifetime. Every path out of RunAsync —
