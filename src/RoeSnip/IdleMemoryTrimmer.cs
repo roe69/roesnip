@@ -61,9 +61,22 @@ internal static class IdleMemoryTrimmer
         }
     }
 
-    /// <summary>Runs the collection immediately if the app is genuinely idle; a busy state (live
-    /// overlay session, in-flight capture, active recording) just skips — whichever flow is running
-    /// schedules a fresh trim when IT finishes, so nothing is lost by not rescheduling here.</summary>
+    // One background trim at a time (UI-thread s_scheduled coalescing can't see the background
+    // hop's lifetime): a second sweep arriving while one is mid-collect is dropped — the running
+    // one is already doing the work.
+    private static int s_trimRunning;
+
+    /// <summary>Checks idleness on the UI thread, then runs the collection on a BACKGROUND thread;
+    /// a busy state (live overlay session, in-flight capture, active recording) just skips —
+    /// whichever flow is running schedules a fresh trim when IT finishes, so nothing is lost by not
+    /// rescheduling here.
+    ///
+    /// Off the UI thread (post-sleep stuck-UI fix): GC.WaitForPendingFinalizers is UNBOUNDED — a
+    /// finalizer wedged on a dead post-resume D3D/WIC COM object used to hang the whole pump (tray
+    /// menu stuck open, hotkey dead) from a sweep that dequeued at ApplicationIdle, including idle
+    /// moments inside the tray menu's modal tracking loop. The blocking collects themselves still
+    /// suspend all managed threads briefly (process-wide, unavoidable from any thread — the class
+    /// doc's accepted trade-off), but a wedged finalizer now strands only this throwaway thread.</summary>
     private static void TrimNow()
     {
         if (Overlay.OverlayController.IsSessionActive
@@ -72,23 +85,43 @@ internal static class IdleMemoryTrimmer
         {
             return;
         }
+        if (System.Threading.Interlocked.CompareExchange(ref s_trimRunning, 1, 0) != 0)
+        {
+            return;
+        }
 
-        var watch = System.Diagnostics.Stopwatch.StartNew();
-        // Aggressive = full blocking compacting Gen2 + LOH compaction + decommit unused segments
-        // back to the OS — exactly the "give the memory back, we won't need it for hours" hint a
-        // resident tray app wants after a burst.
-        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-        // The burst's biggest NATIVE cost hides behind tiny managed shells: every frozen
-        // BitmapSource preview holds ~15 MB of WIC memory that only a FINALIZER releases (measured:
-        // private bytes kept climbing ~50-160 MB/snip with the managed heap already at 2 MB before
-        // this pass existed). Run the finalizers, then sweep what they just released.
-        GC.WaitForPendingFinalizers();
-        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
-        // Managed side is now minimal — the other resident chunk is driver-internal scratch memory
-        // cached against the permanently-warm per-monitor D3D11 devices. Hand that back too.
-        Capture.WgcCapturer.TrimCachedDeviceMemory();
-        FileLog.Write(
-            $"RoeSnip: idle memory trim {watch.ElapsedMilliseconds} ms " +
-            $"(managed heap now {GC.GetTotalMemory(false) / (1024 * 1024)} MB)");
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            try
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                // Aggressive = full blocking compacting Gen2 + LOH compaction + decommit unused
+                // segments back to the OS — exactly the "give the memory back, we won't need it for
+                // hours" hint a resident tray app wants after a burst.
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                // The burst's biggest NATIVE cost hides behind tiny managed shells: every frozen
+                // BitmapSource preview holds ~15 MB of WIC memory that only a FINALIZER releases
+                // (measured: private bytes kept climbing ~50-160 MB/snip with the managed heap
+                // already at 2 MB before this pass existed). Run the finalizers, then sweep what
+                // they just released.
+                GC.WaitForPendingFinalizers();
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+                // Managed side is now minimal — the other resident chunk is driver-internal scratch
+                // memory cached against the permanently-warm per-monitor D3D11 devices. Hand that
+                // back too.
+                Capture.WgcCapturer.TrimCachedDeviceMemory();
+                FileLog.Write(
+                    $"RoeSnip: idle memory trim {watch.ElapsedMilliseconds} ms " +
+                    $"(managed heap now {GC.GetTotalMemory(false) / (1024 * 1024)} MB)");
+            }
+            catch (Exception ex)
+            {
+                FileLog.Write($"RoeSnip: idle memory trim failed (non-fatal): {ex.Message}");
+            }
+            finally
+            {
+                System.Threading.Volatile.Write(ref s_trimRunning, 0);
+            }
+        });
     }
 }
