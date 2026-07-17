@@ -66,6 +66,10 @@ internal static class FlashDimmer
     // SetForegroundWindow.
     private static int s_foregroundClaimEpoch;
 
+    // The HWND that was foreground just before ShowAll's best-effort claim — the restore target for
+    // TryRestoreForegroundFromFlash. UI thread writes (ShowAllCore), UI thread reads.
+    private static IntPtr s_foregroundBeforeClaim;
+
     public static void InvalidateForegroundClaim()
     {
         if (!OperatingSystem.IsWindows())
@@ -133,7 +137,10 @@ internal static class FlashDimmer
                     try { window.CloseFlash(); } catch { /* best-effort */ }
                     throw;
                 }
-                s_windows.Add(window);
+                lock (s_watchdogGate) // the watchdog snapshots s_windows from its timer thread
+                {
+                    s_windows.Add(window);
+                }
                 if (presentAsBuilt)
                 {
                     window.ShowOnMonitor();
@@ -161,6 +168,12 @@ internal static class FlashDimmer
     [SupportedOSPlatform("windows")]
     private static void ShowAllCore(IReadOnlyList<MonitorInfo> monitors)
     {
+        // Snapshot the pre-claim foreground FIRST (before anything moves on-screen or negotiates
+        // focus) so a flash-phase exit that never opens a session can hand focus back — see
+        // TryRestoreForegroundFromFlash.
+        try { s_foregroundBeforeClaim = NativeMethods.GetForegroundWindow(); }
+        catch { s_foregroundBeforeClaim = IntPtr.Zero; }
+
         bool coldBuild = !Matches(monitors);
         var buildOrder = coldBuild ? OrderCursorMonitorFirst(monitors) : monitors;
         EnsureCreated(buildOrder, presentAsBuilt: coldBuild);
@@ -210,6 +223,9 @@ internal static class FlashDimmer
         // layout/render operation without dispatching lower-priority queued work (matches the WPF
         // reference's own Dispatcher.CurrentDispatcher.Invoke(..., DispatcherPriority.Loaded)).
         Dispatcher.UIThread.Invoke(static () => { }, DispatcherPriority.Loaded);
+
+        // Something is presented now — start the stuck-dim dead-man (see the watchdog block below).
+        ArmWatchdog();
     }
 
     private static FlashWindow? FindWindow(string deviceName)
@@ -259,6 +275,11 @@ internal static class FlashDimmer
         HideForMonitorCore(deviceName);
     }
 
+    // Per-window exception isolation in the two Hide*Core methods (stuck-dim fix, ported from the
+    // WPF app): one failed SetWindowPos must not abort hiding the remaining monitors — the callers
+    // all swallow the exception, so before this a single throw stranded every later window dimmed
+    // with s_flashUsers already at zero and AnyVisible then blocking every future prewarm rebuild
+    // until process restart.
     [SupportedOSPlatform("windows")]
     private static void HideForMonitorCore(string deviceName)
     {
@@ -266,7 +287,8 @@ internal static class FlashDimmer
         {
             if (string.Equals(window.Monitor.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
             {
-                window.HideFlash();
+                try { window.HideFlash(); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: hiding a flash window failed: {ex.Message}"); }
             }
         }
     }
@@ -288,7 +310,121 @@ internal static class FlashDimmer
     {
         foreach (var window in s_windows)
         {
-            window.HideFlash();
+            try { window.HideFlash(); }
+            catch (Exception ex) { FileLog.Write($"RoeSnip: hiding a flash window failed: {ex.Message}"); }
+        }
+    }
+
+    /// <summary>Focus hygiene for the flash-phase exits that never open a session (Esc during the
+    /// flash, capture failed/timed out): the flash's best-effort foreground claim may have WON, and
+    /// the window it landed on is then merely parked off-screen — permanently visible, focusable and
+    /// key-swallowing — so the system's keyboard looked dead until the user clicked another app.
+    /// If (and only if) the current foreground is one of our flash windows, hand focus back to
+    /// whatever was foreground before ShowAll claimed it. Bumps the claim epoch first so an
+    /// in-flight background claim can't re-steal afterwards. UI thread; best-effort. No-ops on
+    /// non-Windows per this class's convention.</summary>
+    public static void TryRestoreForegroundFromFlash()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        InvalidateForegroundClaim();
+        try
+        {
+            IntPtr foreground = NativeMethods.GetForegroundWindow();
+            if (foreground == IntPtr.Zero)
+            {
+                return;
+            }
+            bool foregroundIsFlash = false;
+            foreach (var window in s_windows)
+            {
+                if (window.CachedHwnd == foreground)
+                {
+                    foregroundIsFlash = true;
+                    break;
+                }
+            }
+            if (!foregroundIsFlash)
+            {
+                return; // focus is somewhere legitimate — never yank it
+            }
+            IntPtr previous = s_foregroundBeforeClaim;
+            if (previous != IntPtr.Zero)
+            {
+                SetForegroundWindow(previous);
+            }
+        }
+        catch { /* best-effort, same contract as the claim itself */ }
+    }
+
+    // ---------- Dead-man watchdog (stuck-dim backstop, ported from the WPF app) ----------
+    //
+    // Belt-and-braces behind every architectural fix above: if a flash window has been presented
+    // continuously for far longer than any legitimate flow can keep it (the capture deadline plus
+    // overlay construction is well under half of this), force-park it from a background thread.
+    // The park is a raw async SetWindowPos (SwpAsyncWindowPos: POSTS the move rather than blocking
+    // on the window's possibly-wedged owner thread) — never an Avalonia Hide(), which would destroy
+    // the warm composited surface the park-don't-hide design depends on. Zero cost while parked:
+    // the timer only runs while something is presented and disarms itself when nothing is.
+    private const int WatchdogMaxPresentedMs = 30_000;
+    private static readonly object s_watchdogGate = new();
+    private static Timer? s_watchdogTimer;
+
+    private static void ArmWatchdog()
+    {
+        lock (s_watchdogGate)
+        {
+            s_watchdogTimer ??= new Timer(WatchdogTick, null, Timeout.Infinite, Timeout.Infinite);
+            s_watchdogTimer.Change(5_000, 5_000);
+        }
+    }
+
+    private static void WatchdogTick(object? state)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return; // unreachable (ArmWatchdog only runs from ShowAllCore) — analyzer guard
+        }
+        try
+        {
+            FlashWindow[] snapshot;
+            lock (s_watchdogGate)
+            {
+                snapshot = s_windows.ToArray();
+            }
+            bool anyPresented = false;
+            long now = Environment.TickCount64;
+            foreach (var window in snapshot)
+            {
+                if (!window.IsPresented)
+                {
+                    continue;
+                }
+                if (now - window.PresentedSinceTick > WatchdogMaxPresentedMs)
+                {
+                    FileLog.Write(
+                        $"RoeSnip: flash watchdog force-parking a dim window stuck on " +
+                        $"{window.Monitor.DeviceName} for over {WatchdogMaxPresentedMs / 1000} s.");
+                    window.ForceParkFromWatchdogThread();
+                }
+                else
+                {
+                    anyPresented = true;
+                }
+            }
+            if (!anyPresented)
+            {
+                lock (s_watchdogGate)
+                {
+                    s_watchdogTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: flash watchdog tick failed (non-fatal): {ex.Message}");
         }
     }
 
@@ -317,7 +453,10 @@ internal static class FlashDimmer
                 FileLog.Write($"RoeSnip: closing a flash dimmer window failed: {ex.Message}");
             }
         }
-        s_windows.Clear();
+        lock (s_watchdogGate) // the watchdog snapshots s_windows from its timer thread
+        {
+            s_windows.Clear();
+        }
     }
 
     [DllImport("user32.dll")]
@@ -360,6 +499,16 @@ internal static class FlashDimmer
         /// of once this window is permanently Show()n. True only while this window's real HWND has
         /// actually been moved onto its monitor's bounds.</summary>
         public bool IsPresented { get; private set; }
+
+        /// <summary>Environment.TickCount64 of the most recent move on-screen — the watchdog's
+        /// "how long has this dim been up" clock. Only meaningful while IsPresented.</summary>
+        public long PresentedSinceTick { get; private set; }
+
+        /// <summary>The HWND cached at PrepareHidden — lets the watchdog's timer thread (and
+        /// TryRestoreForegroundFromFlash's identity check) address this window without touching any
+        /// Avalonia API (TryGetPlatformHandle is UI-thread territory in spirit; a plain IntPtr
+        /// field read is not).</summary>
+        public IntPtr CachedHwnd => _hwnd;
 
         private bool _closingForReal;
         private IntPtr _hwnd;
@@ -470,7 +619,35 @@ internal static class FlashDimmer
             int x = onScreen ? b.Left : OffScreenX;
             NativeMethods.SetWindowPos(
                 _hwnd, NativeMethods.HwndTopmost, x, b.Top, b.Width, b.Height, NativeMethods.SwpNoActivate);
+            if (onScreen)
+            {
+                PresentedSinceTick = Environment.TickCount64;
+            }
             IsPresented = onScreen;
+        }
+
+        /// <summary>The dead-man watchdog's force-park — the ONLY member of this class that runs
+        /// off the UI thread. Raw SetWindowPos with SwpAsyncWindowPos: the move request is POSTED
+        /// to the window's owner thread rather than delivered synchronously, so this can never
+        /// deadlock on that thread's (possibly wedged) message queue; a raw Win32 call on a cached
+        /// HWND has no managed/Avalonia thread affinity, which is exactly why this deliberately
+        /// avoids Avalonia's Position property (that would need a Dispatcher.UIThread.Post — which
+        /// only helps when the UI thread pumps; the raw call works even when it doesn't).
+        /// IsPresented is a plain bool write — benign cross-thread worst case is one redundant
+        /// park.</summary>
+        [SupportedOSPlatform("windows")]
+        public void ForceParkFromWatchdogThread()
+        {
+            var hwnd = _hwnd;
+            if (hwnd == IntPtr.Zero)
+            {
+                return;
+            }
+            var b = Monitor.BoundsPx;
+            NativeMethods.SetWindowPos(
+                hwnd, NativeMethods.HwndTopmost, OffScreenX, b.Top, b.Width, b.Height,
+                NativeMethods.SwpNoActivate | NativeMethods.SwpAsyncWindowPos);
+            IsPresented = false;
         }
 
         [SupportedOSPlatform("windows")]
@@ -516,6 +693,10 @@ internal static class FlashDimmer
 
         public static readonly IntPtr HwndTopmost = new(-1);
         public const uint SwpNoActivate = 0x0010;
+        public const uint SwpAsyncWindowPos = 0x4000;
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
