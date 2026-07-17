@@ -142,8 +142,17 @@ internal static class OverlayWindowPool
                     // UI thread stolen for a full pool rebuild (see PrewarmOverlayPool's own guard,
                     // which this deferred callback lacks entirely since it calls EnsureBuilt
                     // directly). Re-schedule instead of dropping the reprovision on the floor, so the
-                    // pool still gets rebuilt once the live session actually finishes.
-                    if (OverlayController.IsSessionActive)
+                    // pool still gets rebuilt once the live session actually finishes. The flash/gate
+                    // checks (post-sleep stall fix) extend the same reasoning to a capture flow whose
+                    // capture is in flight on the thread pool: the dispatcher goes idle during that
+                    // wait now, so this ContextIdle item CAN dequeue mid-flow — rebuilding then would
+                    // steal the hot path between flash-show and overlay-show.
+                    // (Recording exemption: a recording holds the transferred gate for minutes but
+                    // never uses the overlay hot path — rebuilding during one is long-standing
+                    // behavior, and re-scheduling against it would spin at ContextIdle for the
+                    // whole take.)
+                    if (OverlayController.IsSessionActive || FlashDimmer.AnyVisible
+                        || (CaptureGate.IsBusy && !Recording.RecordingController.IsActive))
                     {
                         ScheduleReprovision(dispatcher, monitors);
                         return;

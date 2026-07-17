@@ -355,8 +355,9 @@ public sealed class TrayApp : ITrayNotifier
         RoeSnip.Overlay.OverlayController.MarkTriggerTimestamp();
 
         // Instant-response flash (r5-latency): dim every monitor within milliseconds of the
-        // trigger, BEFORE the capture+tonemap stretch inside RunCaptureFlowAsync blocks this UI
-        // thread. The frozen preview the real overlay later shows equals the live screen, so the
+        // trigger, BEFORE RunCaptureFlowAsync starts the pool-side capture (the pump stays live
+        // during it — post-sleep stall fix; the flash covers the capture latency visually).
+        // The frozen preview the real overlay later shows equals the live screen, so the
         // flash-to-overlay swap is visually seamless; OverlayController hides each monitor's flash
         // as that monitor's real overlay window renders. The ReleaseFlash in ObserveCaptureTask's
         // finally is the backstop that guarantees the flash never outlives the flow on ANY exit

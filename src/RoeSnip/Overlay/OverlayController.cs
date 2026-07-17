@@ -160,7 +160,20 @@ public static class OverlayController
     /// see OverlayWindowPool.TryTake).</summary>
     public static void PrewarmOverlayPool(IReadOnlyList<MonitorInfo> monitors)
     {
-        if (monitors.Count == 0 || s_activeSession is not null)
+        // In-flight-flow guard (post-sleep stall fix): with the capture on the thread pool this UI
+        // thread pumps during the flash phase, so a display-change/post-resume refresh can dispatch
+        // BETWEEN flash-show and overlay-show — a wholesale pool rebuild there would insert
+        // ~80-103 ms/monitor of UI-thread work into the hot path, and its nested Loaded pumps could
+        // even resume the capture continuation INSIDE the rebuild (session-inside-rebuild
+        // reentrancy). AnyVisible covers flash-up flows; CaptureGate.IsBusy covers ROESNIP_NO_FLASH
+        // and flash-show-failed flows. Bailing is safe: after a session the pool is rebuilt via
+        // Finish's ScheduleReprovision anyway, and a stale pool merely degrades to the designed
+        // construct-on-demand fallback. A RECORDING also holds the gate (transferred, for minutes)
+        // but never touches the overlay hot path — rebuilding during one is the long-standing
+        // behavior and stays allowed, hence the IsActive exemption.
+        if (monitors.Count == 0 || s_activeSession is not null
+            || FlashDimmer.AnyVisible
+            || (CaptureGate.IsBusy && !Recording.RecordingController.IsActive))
         {
             return;
         }
@@ -260,6 +273,11 @@ public static class OverlayController
         if (--s_flashUsers == 0)
         {
             DisposeFlashEscapeHook();
+            // A flash flow that died WITHOUT constructing a session (deadline, zero frames, gate
+            // bounce) must not leak a pending flash-Esc into whatever session runs next — before
+            // this, a stale flag silently insta-cancelled the next pick-mode overlay. Safe on
+            // success paths: a real session consumed the flag before this finally-side call runs.
+            s_flashCancelRequested = false;
             try { FlashDimmer.HideAll(); }
             catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
             // No-op unless focus is genuinely stranded on a parked flash window (a flow that never
@@ -640,8 +658,9 @@ public static class OverlayController
 
             // Esc pressed while only the flash dimmer was up: the user already cancelled this
             // capture before the overlay could appear — honor it instead of flashing a full
-            // overlay set for a frame.
-            if (ConsumeFlashCancelRequest())
+            // overlay set for a frame. Pick-mode sessions never had a flash phase, so they never
+            // consume the flag (same isolation reasoning as TakeResponseBaseTimestamp below).
+            if (!_pickOnlyMode && ConsumeFlashCancelRequest())
             {
                 Finish(null);
                 return _completion.Task;
