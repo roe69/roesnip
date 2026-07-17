@@ -1199,11 +1199,57 @@ because a correct implementation needs live hardware this repo cannot exercise.
   click triggers capture where WPF requires a double click. Accepted API-level divergence.
 - ROESNIP_NO_FLASH is meaningful only where the flash architecture exists (Windows after
   item 18); it stays unimplemented elsewhere.
+- Resume-from-sleep capture-stack re-warm (post-sleep resilience pass, see Notes) is
+  Windows-only: Microsoft.Win32.SystemEvents.PowerModeChanged has no Linux/macOS analog
+  wired here, and there is genuinely nothing to invalidate on those platforms anyway — the
+  portal and scksnap backends hold no permanently-warm per-monitor device/framepool cache
+  the way WgcCapturer does. Non-Windows degrades to a no-op (the first post-wake capture
+  provisions on demand, which is those backends' normal path). Same for the flash Esc
+  WH_KEYBOARD_LL hook and the flash watchdog's raw SetWindowPos: both live behind the flash
+  architecture, which is itself Windows-only.
 - Wayland portal robustness and mixed-DPI portal slicing remain in PLAN-XPLAT.md section 7;
   both need live Linux hardware and are deliberately not duplicated as items here.
 
 ## Notes
 
+- Post-sleep resilience pass (2026-07-17): WPF commits 8f1dd59 / 1c89e0d / b9e0bc1 /
+  ee8ad3f / ae4f44a (capture hotkey after PC sleep dimmed the screen but the selector
+  stalled/never appeared; UI thread could freeze with a stuck tray menu) ported to this app
+  in the same session, per concern:
+  (1) Capture+tonemap off the UI thread with a 15 s deadline (AppComposition.CaptureDeadline;
+      RunCaptureFlowAsync + pick mode) — abandoned captures dispose their frames in a
+      continuation, the gate is freed by the normal finally. One deviation: no
+      ClearPendingOverlayTrigger call on the deadline path, because this app has no
+      pending-trigger/overlay-pool machinery to clear.
+  (2) IdleMemoryTrimmer's collects/finalizer-wait/DXGI-trim hop to a background thread with
+      an overlap guard (s_trimRunning); trigger and busy-checks stay on the UI thread.
+  (3) PowerModeChanged(Resume) handler in TrayApp (#if WINDOWS; Microsoft.Win32.SystemEvents
+      is NOT inbox for a plain net8.0-windows TFM, so the package is referenced explicitly on
+      the windows TFM only): notes a 30 s Core CaptureCache grace window (DD failures not
+      memoized — the grace landed in Core's CaptureCache, the copy this app's
+      FallbackCaptureBackend marks through; the WPF app marks through its own
+      src/RoeSnip/Capture/CaptureCache.cs, fixed separately, so nothing double-applies),
+      then after a 3 s settle delay invalidates every cached WGC slot under its gate
+      (new Platform.Windows WgcCapturer.InvalidateAll) and re-prewarms per monitor, then
+      refreshes the monitor cache + flash windows (RefreshMonitorCacheInBackground gained
+      the WPF version's prewarmFlash parameter). Non-Windows: no-op (see Platform
+      limitations).
+  (4) Flash dimmer hardening, all four belts: per-window try/catch in the hide paths,
+      pre-claim foreground snapshot + TryRestoreForegroundFromFlash on flash-phase exits,
+      Esc-only WH_KEYBOARD_LL hook (new Overlay/FlashEscapeHook.cs) alive from TryShowFlash
+      until ReleaseFlash / flash cancel / session start, and the >30 s dead-man watchdog
+      force-parking via raw async SetWindowPos on the cached HWND. One structural deviation:
+      this app has no session-wide LL keyboard hook (OverlayWindow's ordinary Avalonia
+      KeyDown handlers own session keys), so the WPF "session ctor removes the flash hook
+      before installing its full hook" hand-off becomes simply disposing the flash hook in
+      the OverlaySession ctor.
+  (5) ae4f44a's busy balloon ported (rate-limited "capture already in progress" toast on a
+      dropped trigger); its DisplaySettingsChanged debounce deliberately NOT ported — this
+      app has no DisplaySettingsChanged subscription at all (monitor-set changes are picked
+      up lazily by the next trigger's flash cold-build, per
+      RefreshMonitorCacheInBackground's doc), so there is no burst rebuild to coalesce and
+      no surface to debounce. If a display-change hook is ever added here, add it debounced
+      from day one.
 - Core's FallbackCaptureBackend has stale-memo self-healing the WPF CaptureService lacks;
   the port is ahead of WPF there. No action, do not "fix" the divergence backwards.
 - The two apps keep deliberately distinct identities everywhere: settings dir
