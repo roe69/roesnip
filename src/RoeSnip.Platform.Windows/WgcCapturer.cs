@@ -106,12 +106,49 @@ public sealed class WgcCapturer : IScreenCapturer
     private static readonly ConcurrentDictionary<string, MonitorSlot> s_slots =
         new(StringComparer.OrdinalIgnoreCase);
 
+    // Upper bound on waiting for a slot's Gate before declaring its holder wedged. Far above every
+    // legitimate hold (a full capture worst-cases well under this; keepalive/prewarm re-provisions
+    // are ~100 ms) but well under the flow-level capture deadline, so a retry after a
+    // deadline-abandoned capture gets a FRESH slot instead of stacking forever on the wedged one.
+    private const int SlotGateTimeoutMs = 6_000;
+
+    /// <summary>Enters the monitor's slot Gate with a bound (wedge fix — see SlotGateTimeoutMs).
+    /// If the wait times out, the current slot's holder is wedged in a driver call: the slot is
+    /// ORPHANED (conditionally removed from s_slots, so only this exact instance is dropped) and a
+    /// fresh slot is created and entered — retries then actually retry with fresh resources instead
+    /// of blocking a thread per attempt behind a gate that will never open. The orphaned slot's
+    /// resources are deliberately left to its wedged holder (its own catch disposes them if the
+    /// driver call ever returns; if not, they leak once — strictly better than a permanent stall).
+    /// Caller MUST Monitor.Exit the returned slot's Gate in a finally.</summary>
+    private static MonitorSlot AcquireSlotGate(string deviceName)
+    {
+        var slot = s_slots.GetOrAdd(deviceName, _ => new MonitorSlot());
+        if (Monitor.TryEnter(slot.Gate, SlotGateTimeoutMs))
+        {
+            return slot;
+        }
+
+        FileLog.Write(
+            $"RoeSnip: WGC slot gate for {deviceName} still held after {SlotGateTimeoutMs} ms - " +
+            "orphaning the wedged slot and provisioning a fresh one.");
+        ((ICollection<KeyValuePair<string, MonitorSlot>>)s_slots)
+            .Remove(new KeyValuePair<string, MonitorSlot>(deviceName, slot));
+        var fresh = s_slots.GetOrAdd(deviceName, _ => new MonitorSlot());
+        if (!Monitor.TryEnter(fresh.Gate, SlotGateTimeoutMs))
+        {
+            // Only possible if the replacement wedged just as fast — give up on this capture; the
+            // omit-the-monitor contract (FallbackCaptureBackend) handles it.
+            throw new CaptureException($"WGC capture stack is wedged for monitor {deviceName}.");
+        }
+        return fresh;
+    }
+
     public CapturedFrame Capture(MonitorInfo monitor)
     {
         try
         {
-            var slot = s_slots.GetOrAdd(monitor.DeviceName, _ => new MonitorSlot());
-            lock (slot.Gate)
+            var slot = AcquireSlotGate(monitor.DeviceName);
+            try
             {
                 bool fromCache = IsReusable(slot.Resources, monitor);
                 if (!fromCache)
@@ -152,6 +189,10 @@ public sealed class WgcCapturer : IScreenCapturer
                     slot.Resources = null;
                     throw;
                 }
+            }
+            finally
+            {
+                Monitor.Exit(slot.Gate);
             }
         }
         catch (CaptureException)
@@ -241,12 +282,31 @@ public sealed class WgcCapturer : IScreenCapturer
     /// only — never call on the UI thread, the Gate waits are unbounded by design.</summary>
     public static void InvalidateAll()
     {
-        foreach (var slot in s_slots.Values)
+        foreach (var entry in s_slots)
         {
-            lock (slot.Gate)
+            var slot = entry.Value;
+            if (Monitor.TryEnter(slot.Gate, SlotGateTimeoutMs))
             {
-                slot.Resources?.Dispose();
-                slot.Resources = null;
+                try
+                {
+                    slot.Resources?.Dispose();
+                    slot.Resources = null;
+                }
+                finally
+                {
+                    Monitor.Exit(slot.Gate);
+                }
+            }
+            else
+            {
+                // The holder is wedged (post-resume, exactly when wedges happen) — orphan the slot
+                // rather than blocking the whole re-warm behind it; see AcquireSlotGate's doc for
+                // the orphaning contract.
+                FileLog.Write(
+                    $"RoeSnip: WGC invalidate: slot gate for {entry.Key} held past {SlotGateTimeoutMs} ms - " +
+                    "orphaning the wedged slot.");
+                ((ICollection<KeyValuePair<string, MonitorSlot>>)s_slots)
+                    .Remove(new KeyValuePair<string, MonitorSlot>(entry.Key, slot));
             }
         }
     }
@@ -283,11 +343,16 @@ public sealed class WgcCapturer : IScreenCapturer
         {
             foreach (var slot in s_slots.Values)
             {
-                // Same Gate a real capture (or Prewarm) holds for its whole duration (class doc) —
-                // this can never fight a real capture: it either runs cleanly between captures, or
-                // simply waits its turn for whichever monitor happens to be capturing right now,
-                // exactly like Prewarm already does today.
-                lock (slot.Gate)
+                // Same Gate a real capture (or Prewarm) holds for its whole duration (class doc).
+                // TryEnter-skip, never a blocking lock (wedge fix): a capture wedged in a driver
+                // call holds its Gate indefinitely, and a blocking wait here — with
+                // s_keepaliveRunning latched — would permanently disable the keepalive for EVERY
+                // monitor. A slot that is mid-capture needs no health check this tick anyway.
+                if (!Monitor.TryEnter(slot.Gate))
+                {
+                    continue;
+                }
+                try
                 {
                     var resources = slot.Resources;
                     if (resources is null)
@@ -327,6 +392,10 @@ public sealed class WgcCapturer : IScreenCapturer
                                 $"capture will retry): {ex.Message}");
                         }
                     }
+                }
+                finally
+                {
+                    Monitor.Exit(slot.Gate);
                 }
             }
         }

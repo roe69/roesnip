@@ -12,9 +12,12 @@ namespace RoeSnip.Core.Capture;
 /// monitors are captured in PARALLEL (each capturer call is independent); per monitor, try
 /// capturers in the given priority order, skipping any this monitor's <see cref="CaptureCache"/>
 /// entry says is already known-broken; on the first success, return it; on total failure across all
-/// capturers, log to stderr and omit the monitor. The FIRST failure of a given capturer for a given
-/// monitor persists a cache entry so future captures (including after a relaunch) skip straight past
-/// it.</summary>
+/// capturers, log to stderr and omit the monitor. A failure of a given capturer for a given monitor
+/// persists a cache entry ONLY once a later capturer in the order actually succeeds AND the failure
+/// itself proves that capturer permanently broken (<see cref="CaptureException.IndicatesPermanentlyBroken"/>) —
+/// a transient failure (access lost, a timeout, a deadline-abandoned capture still holding a device
+/// slot) falls back for that capture only and is never memoized, so it can never poison future
+/// captures (including after a relaunch).</summary>
 public sealed class FallbackCaptureBackend : ICaptureBackend
 {
     private readonly Func<IReadOnlyList<MonitorInfo>> _enumerate;
@@ -102,7 +105,7 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
     {
         skippedAnyByMemo = false;
         lastCapturerFailureMessage = null;
-        var failedSlots = new List<int>();
+        var failedSlots = new List<(int Index, bool IndicatesPermanentlyBroken)>();
         for (int i = 0; i < _capturersInPriorityOrder.Count; i++)
         {
             string capturerKey = $"{monitor.DeviceName}::{i}"; // per-capturer-slot memo, not just per-monitor
@@ -120,22 +123,32 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
             {
                 var frame = _capturersInPriorityOrder[i].Capture(monitor);
                 // Persist "skip capturer #j" memos ONLY now that a later capturer has actually
-                // succeeded: the skip provably loses nothing (the Windows DD-black-frame case).
-                // Failures with no working alternative are treated as transient and not recorded,
-                // so a bad day (missing portal, X hiccup) can never poison future sessions.
-                foreach (int j in failedSlots)
+                // succeeded, AND ONLY for a failure that PROVES that capturer is permanently broken
+                // here (ex.IndicatesPermanentlyBroken — today, Windows DD's all-zero-frame quirk).
+                // A transient failure (ghost display mid-wake, a deadline-abandoned capture still
+                // holding a device slot, access lost, a timeout) must not poison the memo forever —
+                // it falls back to the next capturer for this capture only, unmemoized.
+                foreach (var (j, indicatesPermanentlyBroken) in failedSlots)
                 {
-                    _cache.MarkDesktopDuplicationBroken($"{monitor.DeviceName}::{j}");
+                    if (indicatesPermanentlyBroken)
+                    {
+                        _cache.MarkDesktopDuplicationBroken($"{monitor.DeviceName}::{j}");
+                    }
                 }
                 return frame;
             }
             catch (CaptureException ex)
             {
-                failedSlots.Add(i);
+                failedSlots.Add((i, ex.IndicatesPermanentlyBroken));
                 if (isLastCapturer) lastCapturerFailureMessage = ex.Message;
+                string suffix = isLastCapturer
+                    ? " Omitting this monitor."
+                    : ex.IndicatesPermanentlyBroken
+                        ? " Falling back to the next capturer (and skipping this capturer for this monitor from now on)."
+                        : " Falling back to the next capturer for this capture (transient failure - not memoized).";
                 FileLog.Write(
                     $"RoeSnip: capturer #{i} failed for monitor {monitor.Index} ({monitor.DeviceName}): " +
-                    $"{ex.Message}.{(isLastCapturer ? " Omitting this monitor." : " Falling back to the next capturer.")}");
+                    $"{ex.Message}.{suffix}");
             }
         }
         return null;
