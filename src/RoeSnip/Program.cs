@@ -519,6 +519,13 @@ public static class AppComposition
     // can't stack an overlay set over a pick-mode session or vice versa — two overlay stacks must
     // never coexist (one would screenshot the other's UI).
 
+    /// <summary>Upper bound on how long a trigger waits for CaptureAll before abandoning it (see
+    /// the deadline block inside RunCaptureFlowAsync). Chosen well above the worst LEGITIMATE case
+    /// (every capture-internal timeout on every monitor, serialized on a cold threadpool, is still
+    /// single-digit seconds) so it only ever fires on a genuinely wedged driver call — which has no
+    /// native timeout of its own and would otherwise hold the flash dim and CaptureGate forever.</summary>
+    internal static readonly TimeSpan CaptureDeadline = TimeSpan.FromSeconds(15);
+
     /// <summary>The interactive capture flow: capture all monitors, run the overlay, then handle
     /// the cross-cutting follow-ups (HDR auto-save / Save-HDR button, "saved" balloon). Called by
     /// WP-C's HotkeyManager (on hotkey) and TrayApp's "Capture" menu item, passing itself as
@@ -588,8 +595,49 @@ public static class AppComposition
             // stderr just before the overlay is shown.
             var totalWatch = System.Diagnostics.Stopwatch.StartNew();
 
+            // Off the UI thread (post-sleep stall fix): this used to run CaptureAll() inline on the
+            // dispatcher thread, so a slow capture (stale post-resume D3D/WGC state can burn multiple
+            // 1200 ms frame-wait timeouts per monitor; a wedged driver call has no timeout at all)
+            // froze the whole pump — flash stuck on screen with every hide path queued behind the
+            // block, Esc undeliverable, tray menu stuck open. The capture stack is thread-agnostic
+            // (warmup has always run this exact CaptureAll on its own background thread; the WGC
+            // frame pool is CreateFreeThreaded), so hop it to the pool and keep the UI thread
+            // pumping; the await resumes on the captured UI context for RunOverlay below.
             var captureService = new Capture.CaptureService();
-            var frames = captureService.CaptureAll();
+            var captureTask = Task.Run(() => captureService.CaptureAll());
+
+            // Deadline, not a cancel (native driver calls aren't cancellable): a capture still
+            // running after this long is wedged (post-resume worst case of every real timeout in the
+            // stack is well under it). Give the user their screen back — the flash hides via
+            // ObserveCaptureTask's ReleaseFlash the moment this method returns — and let the
+            // abandoned task's continuation below dispose whatever frames eventually arrive. The
+            // gate is released by the finally on this same early return; the abandoned task never
+            // touches the gate, so a later trigger can't have its gate freed out from under it.
+            if (await Task.WhenAny(captureTask, Task.Delay(CaptureDeadline)) != captureTask)
+            {
+                FileLog.Write(
+                    $"RoeSnip: capture did not complete within {CaptureDeadline.TotalSeconds:0} s; " +
+                    "abandoning this trigger (the GPU/driver may still be waking after sleep).");
+                notifier?.ShowError("Capture is taking too long (graphics driver may be waking up). Press the hotkey to try again.");
+                ClearPendingOverlayTrigger?.Invoke();
+                _ = captureTask.ContinueWith(static t =>
+                {
+                    if (t.Status == TaskStatus.RanToCompletion)
+                    {
+                        foreach (var frame in t.Result)
+                        {
+                            frame.Dispose();
+                        }
+                    }
+                    else
+                    {
+                        _ = t.Exception; // observe so the late fault can't crash the finalizer thread
+                    }
+                }, TaskScheduler.Default);
+                return;
+            }
+
+            var frames = await captureTask;
             long captureMs = totalWatch.ElapsedMilliseconds;
             if (frames.Count == 0)
             {
@@ -612,12 +660,14 @@ public static class AppComposition
                 // Tone-map the per-monitor previews in parallel — each frame is independent, and
                 // even though ToneMapper already parallelizes over rows internally, overlapping
                 // the frames still shaves the per-frame scan/setup serialization on a
-                // multi-monitor machine. Fixed slots keep preview order == frame order.
+                // multi-monitor machine. Fixed slots keep preview order == frame order. Same
+                // off-the-UI-thread hop as the capture above: the AVX2 tonemap of three full-res
+                // HDR monitors is tens of milliseconds of pure compute the pump doesn't need to eat.
                 var previews = new Imaging.SdrImage[frames.Count];
-                Parallel.For(0, frames.Count, i =>
+                await Task.Run(() => Parallel.For(0, frames.Count, i =>
                 {
                     previews[i] = Imaging.SdrImage.FromCapturedFrame(frames[i], toneMapOpts);
-                });
+                }));
 
                 var monitorsWithPreview = new List<(Capture.CapturedFrame Frame, Imaging.SdrImage Preview)>(frames.Count);
                 for (int i = 0; i < frames.Count; i++)
