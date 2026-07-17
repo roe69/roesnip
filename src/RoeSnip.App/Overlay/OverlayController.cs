@@ -207,6 +207,11 @@ public static class OverlayController
         if (--s_flashUsers == 0)
         {
             DisposeFlashEscapeHook();
+            // A flash flow that died WITHOUT constructing a session (deadline, zero frames, gate
+            // bounce) must not leak a pending flash-Esc into whatever session runs next — before
+            // this, a stale flag silently insta-cancelled the next pick-mode overlay. Safe on
+            // success paths: a real session consumed the flag before this finally-side call runs.
+            s_flashCancelRequested = false;
             try { FlashDimmer.HideAll(); }
             catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
             // No-op unless focus is genuinely stranded on a parked flash window (a flow that never
@@ -506,8 +511,11 @@ public static class OverlayController
             // Item 18: Esc pressed while only the flash dimmer was up — the user already cancelled
             // this capture before the overlay could appear. Honor it instead of flashing a full
             // overlay set for a frame; FlashDimmer.HideAll() already ran synchronously from
-            // OnFlashEscape, so there's nothing left to hide here.
-            if (ConsumeFlashCancelRequest())
+            // OnFlashEscape, so there's nothing left to hide here. Pick-mode sessions never had a
+            // flash phase, so they never consume the flag (same isolation reasoning as
+            // TakeResponseBaseTimestamp above — a leaked flag would otherwise silently insta-cancel
+            // the next pick-mode overlay).
+            if (!_pickOnlyMode && ConsumeFlashCancelRequest())
             {
                 Finish(null);
                 return _completion.Task;

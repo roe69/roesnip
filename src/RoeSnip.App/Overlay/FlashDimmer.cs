@@ -19,8 +19,9 @@ namespace RoeSnip.App.Overlay;
 /// always-topmost, capture-excluded window per monitor showing ONLY the same dim the real
 /// OverlayWindow's DimPath uses (#8A000000 — see OverlayWindow.axaml) plus a crosshair cursor: no
 /// preview, no toolbar, no per-session state. TrayApp.TriggerCapture calls TryShowFlash within
-/// milliseconds of the trigger, BEFORE the capture+tonemap stretch that otherwise blocks the UI
-/// thread for the app's whole "hotkey to overlay" latency; because the frozen preview the real
+/// milliseconds of the trigger, BEFORE the capture+tonemap stretch (which runs on the thread pool
+/// with a deadline while this thread keeps pumping — see RunCaptureFlowAsync) that otherwise
+/// dominates the app's whole "hotkey to overlay" latency; because the frozen preview the real
 /// overlay then shows equals the live screen (same dim, same pixels), each monitor's flash is hidden
 /// the moment that monitor's real OverlayWindow has been shown, with no visible seam.
 ///
@@ -59,9 +60,10 @@ internal static class FlashDimmer
 
     // Foreground-claim epoch (ported from the WPF reference): ShowAll's best-effort background-
     // thread SetForegroundWindow call is deliberately unsynchronized with the rest of the flow so it
-    // can run CONCURRENTLY with the UI thread's blocking capture+tonemap stretch. If that call is
-    // delayed past the point the real overlay session claims its OWN foreground, it must not steal
-    // focus back — InvalidateForegroundClaim bumps this epoch right before any real foreground
+    // can run concurrently with the capture+tonemap stretch (thread pool) and whatever the UI thread
+    // pumps meanwhile. If that call is delayed past the point the real overlay session claims its OWN
+    // foreground, it must not steal focus back — InvalidateForegroundClaim bumps this epoch right
+    // before any real foreground
     // claim, and the background task checks it hasn't moved before actually calling
     // SetForegroundWindow.
     private static int s_foregroundClaimEpoch;
@@ -153,9 +155,14 @@ internal static class FlashDimmer
         }
     }
 
-    /// <summary>Shows the dim on every monitor and flushes layout+render before returning: the
-    /// capture flow that follows BLOCKS the UI thread for its whole capture+tonemap stretch, during
-    /// which no dispatcher work runs, so the dim must actually reach the screen NOW.</summary>
+    /// <summary>Shows the dim on every monitor and flushes layout+render before returning, so the
+    /// dim is guaranteed on-screen when ShowAll returns — hotkey-to-dim latency stays deterministic
+    /// instead of depending on when the pump next renders. NOTE (post-sleep stall fix): the
+    /// capture+tonemap stretch that follows now runs on the THREAD POOL — this UI thread keeps
+    /// pumping during it, so dispatcher work (another trigger, display-change handlers, queued idle
+    /// items) CAN interleave with a capture in flight; guards that assume "nothing runs mid-capture"
+    /// are wrong now (see the foreground-snapshot guard just below, and OverlayController's
+    /// in-flight-flow reasoning where applicable).</summary>
     public static void ShowAll(IReadOnlyList<MonitorInfo> monitors)
     {
         if (!OperatingSystem.IsWindows())
@@ -170,9 +177,31 @@ internal static class FlashDimmer
     {
         // Snapshot the pre-claim foreground FIRST (before anything moves on-screen or negotiates
         // focus) so a flash-phase exit that never opens a session can hand focus back — see
-        // TryRestoreForegroundFromFlash.
-        try { s_foregroundBeforeClaim = NativeMethods.GetForegroundWindow(); }
-        catch { s_foregroundBeforeClaim = IntPtr.Zero; }
+        // TryRestoreForegroundFromFlash. Skipped when the current foreground is already one of OUR
+        // flash windows (review-caught): the UI thread pumps during the capture wait now, so a
+        // repeat trigger's ShowAll can run after the FIRST trigger's claim already won — snapshotting
+        // then would record a flash window as the "restore target" and the restore would park focus
+        // right back on the invisible key-swallowing window (the exact dead-keyboard bug the restore
+        // exists to fix). Keeping the earlier snapshot preserves the genuine pre-claim app; on
+        // exception the previous value is likewise kept rather than zeroed.
+        try
+        {
+            IntPtr fg = NativeMethods.GetForegroundWindow();
+            bool fgIsFlash = false;
+            foreach (var window in s_windows)
+            {
+                if (window.CachedHwnd == fg)
+                {
+                    fgIsFlash = true;
+                    break;
+                }
+            }
+            if (!fgIsFlash)
+            {
+                s_foregroundBeforeClaim = fg;
+            }
+        }
+        catch { /* keep the previous snapshot */ }
 
         bool coldBuild = !Matches(monitors);
         var buildOrder = coldBuild ? OrderCursorMonitorFirst(monitors) : monitors;
@@ -194,9 +223,13 @@ internal static class FlashDimmer
             first ??= window;
         }
 
-        // Best-effort activation, off the UI thread (ported from the WPF reference): a raw HWND
-        // SetForegroundWindow has no dispatcher-thread affinity, so it runs CONCURRENTLY with the UI
-        // thread's blocking capture+tonemap stretch that follows rather than waiting behind it.
+        // Best-effort activation, off the UI thread (ported from the WPF reference): the background
+        // thread (not a dispatcher item) is kept even now that the capture runs on the thread pool
+        // and this UI thread pumps during it — a cold ~60 ms foreground negotiation must stall
+        // neither the dim flush below (synchronous call) nor the freshly-pumping UI thread
+        // (dispatcher-queued call), and a raw HWND-based Win32 SetForegroundWindow has no
+        // dispatcher-thread affinity. Concurrency with the rest of the flow is handled by the
+        // s_foregroundClaimEpoch guard (see its doc).
         if (first is not null)
         {
             var handle = first.TryGetPlatformHandle();
@@ -351,10 +384,21 @@ internal static class FlashDimmer
                 return; // focus is somewhere legitimate — never yank it
             }
             IntPtr previous = s_foregroundBeforeClaim;
-            if (previous != IntPtr.Zero)
+            if (previous == IntPtr.Zero)
             {
-                SetForegroundWindow(previous);
+                return;
             }
+            // Defense-in-depth against a poisoned snapshot: never "restore" onto one of our own
+            // flash windows (see ShowAll's snapshot guard for how that could otherwise happen).
+            foreach (var window in s_windows)
+            {
+                if (window.CachedHwnd == previous)
+                {
+                    return;
+                }
+            }
+            SetForegroundWindow(previous);
+            s_foregroundBeforeClaim = IntPtr.Zero; // one restore per snapshot — never reuse across flows
         }
         catch { /* best-effort, same contract as the claim itself */ }
     }
@@ -371,11 +415,16 @@ internal static class FlashDimmer
     private const int WatchdogMaxPresentedMs = 30_000;
     private static readonly object s_watchdogGate = new();
     private static Timer? s_watchdogTimer;
+    // Bumped by every ArmWatchdog (under the gate): a tick that concluded "nothing presented" from
+    // a snapshot taken BEFORE a fresh arm must not disarm the timer that arm just scheduled — the
+    // disarm below is generation-checked (same epoch pattern as s_foregroundClaimEpoch).
+    private static int s_watchdogGeneration;
 
     private static void ArmWatchdog()
     {
         lock (s_watchdogGate)
         {
+            s_watchdogGeneration++;
             s_watchdogTimer ??= new Timer(WatchdogTick, null, Timeout.Infinite, Timeout.Infinite);
             s_watchdogTimer.Change(5_000, 5_000);
         }
@@ -390,9 +439,11 @@ internal static class FlashDimmer
         try
         {
             FlashWindow[] snapshot;
+            int generation;
             lock (s_watchdogGate)
             {
                 snapshot = s_windows.ToArray();
+                generation = s_watchdogGeneration;
             }
             bool anyPresented = false;
             long now = Environment.TickCount64;
@@ -418,7 +469,12 @@ internal static class FlashDimmer
             {
                 lock (s_watchdogGate)
                 {
-                    s_watchdogTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+                    // Only disarm if no ShowAll re-armed since this tick's snapshot (see
+                    // s_watchdogGeneration) — a stale conclusion must not cancel a fresh arm.
+                    if (generation == s_watchdogGeneration)
+                    {
+                        s_watchdogTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+                    }
                 }
             }
         }

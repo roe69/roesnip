@@ -406,8 +406,9 @@ public sealed class TrayApp : ITrayNotifier
         Overlay.OverlayController.MarkTriggerTimestamp();
 
         // Instant-response flash (item 18, Windows only — see Overlay/FlashDimmer.cs): dim every
-        // monitor within milliseconds of the trigger, BEFORE the capture+tonemap stretch inside
-        // RunCaptureFlowAsync blocks this UI thread. TryShowFlash itself no-ops (returns false) on
+        // monitor within milliseconds of the trigger, BEFORE RunCaptureFlowAsync starts the
+        // pool-side capture (the dispatcher pump stays live during it — post-sleep stall fix; the
+        // flash covers the capture latency visually). TryShowFlash itself no-ops (returns false) on
         // non-Windows and when ROESNIP_NO_FLASH=1 is set, so this is unconditionally safe to call —
         // those cases simply fall straight through to the direct capture-then-show path, which is
         // also the PERMANENT behavior on Linux/macOS. The ReleaseFlash in ObserveCaptureTask's
