@@ -75,13 +75,27 @@ public sealed class CaptureService
             }
             catch (CaptureException primaryEx)
             {
-                // First failure for this monitor: log it and persist the memo so later captures
-                // (including after an app relaunch) skip the doomed primary attempt entirely.
-                _cache.MarkDesktopDuplicationBroken(monitor.DeviceName);
-                FileLog.Write(
-                    $"RoeSnip: Desktop Duplication capture failed for monitor {monitor.Index} " +
-                    $"({monitor.DeviceName}): {primaryEx.Message}. Falling back to WGC " +
-                    "(and skipping Desktop Duplication for this monitor from now on; memo persisted to capture-cache.json).");
+                // Persist the skip memo ONLY for failures that prove DD is permanently broken here
+                // (the all-zero-frame quirk). Transient failures — ghost displays mid-wake, a
+                // deadline-abandoned capture still holding the output's one duplication slot,
+                // access lost, timeouts — used to poison the memo forever (field-observed: a
+                // "WinDisc" ghost display persisted in capture-cache.json); they now fall back to
+                // WGC for this capture only.
+                if (primaryEx.IndicatesPermanentlyBroken)
+                {
+                    _cache.MarkDesktopDuplicationBroken(monitor.DeviceName);
+                    FileLog.Write(
+                        $"RoeSnip: Desktop Duplication capture failed for monitor {monitor.Index} " +
+                        $"({monitor.DeviceName}): {primaryEx.Message}. Falling back to WGC " +
+                        "(and skipping Desktop Duplication for this monitor from now on; memo persisted to capture-cache.json).");
+                }
+                else
+                {
+                    FileLog.Write(
+                        $"RoeSnip: Desktop Duplication capture failed for monitor {monitor.Index} " +
+                        $"({monitor.DeviceName}): {primaryEx.Message}. Falling back to WGC for this " +
+                        "capture (transient failure - not memoized).");
+                }
             }
         }
 

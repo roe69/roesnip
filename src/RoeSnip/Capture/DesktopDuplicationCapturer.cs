@@ -122,9 +122,12 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
             // CaptureService engage the WGC fallback).
             if (FrameSanity.IsAllZero(pixels))
             {
+                // The ONE failure that proves DD is permanently broken here — the memo's whole
+                // purpose (see CaptureException.IndicatesPermanentlyBroken).
                 throw new CaptureException(
                     $"Desktop Duplication delivered an all-zero (black) frame for monitor {monitor.DeviceName} " +
-                    "(known NVIDIA + HDR driver quirk).");
+                    "(known NVIDIA + HDR driver quirk).")
+                { IndicatesPermanentlyBroken = true };
             }
 
             return new CapturedFrame(format, (int)srcDesc.Width, (int)srcDesc.Height, (int)mapped.RowPitch, pixels, monitor);
