@@ -309,8 +309,34 @@ public static class OverlayController
         {
             var settings = AppComposition.LoadSettingsOrDefault();
 
+            // Same off-the-UI-thread hop + deadline as RunCaptureFlowAsync's capture (post-sleep
+            // stall fix — see the doc there): pick mode shares the identical CaptureAll stretch and
+            // previously froze the dispatcher the identical way when a post-resume capture stalled.
             var captureService = new CaptureService();
-            var frames = captureService.CaptureAll();
+            var captureTask = Task.Run(() => captureService.CaptureAll());
+            if (await Task.WhenAny(captureTask, Task.Delay(AppComposition.CaptureDeadline)) != captureTask)
+            {
+                FileLog.Write(
+                    $"RoeSnip: pick-mode capture did not complete within " +
+                    $"{AppComposition.CaptureDeadline.TotalSeconds:0} s; abandoning this pick request.");
+                _ = captureTask.ContinueWith(static t =>
+                {
+                    if (t.Status == TaskStatus.RanToCompletion)
+                    {
+                        foreach (var frame in t.Result)
+                        {
+                            frame.Dispose();
+                        }
+                    }
+                    else
+                    {
+                        _ = t.Exception; // observe so the late fault can't crash the finalizer thread
+                    }
+                }, TaskScheduler.Default);
+                return;
+            }
+
+            var frames = await captureTask;
             if (frames.Count == 0)
             {
                 FileLog.Write("RoeSnip: pick-mode capture failed on every monitor.");
@@ -324,10 +350,14 @@ public static class OverlayController
                     PeakOverride: settings.ToneMapPeakOverride);
 
                 var monitorsWithPreview = new List<(CapturedFrame Frame, SdrImage Preview)>(frames.Count);
-                foreach (var frame in frames)
+                // Off the UI thread like the capture above — full-res tonemaps are pure compute.
+                await Task.Run(() =>
                 {
-                    monitorsWithPreview.Add((frame, SdrImage.FromCapturedFrame(frame, toneMapOpts)));
-                }
+                    foreach (var frame in frames)
+                    {
+                        monitorsWithPreview.Add((frame, SdrImage.FromCapturedFrame(frame, toneMapOpts)));
+                    }
+                });
 
                 var session = new OverlaySession(monitorsWithPreview, settings, notifier: null, pickOnlyMode: true);
                 s_activeSession = session;
