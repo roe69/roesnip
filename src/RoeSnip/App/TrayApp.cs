@@ -1020,6 +1020,19 @@ public sealed class TrayApp : ITrayNotifier
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (_, _) =>
             RefreshMonitorCacheInBackground(prewarmFlash: true);
 
+        // Sleep/resume invalidation (post-sleep stall fix): nothing else in the process knows the
+        // machine slept — the WGC keepalive only catches DeviceRemovedReason (a resume-stale capture
+        // stack usually reports healthy), so the first post-wake hotkey used to pay the whole
+        // staleness discovery (1200 ms frame waits, re-provisions, ghost-display enumeration) on
+        // the hot path. Handler stays tiny: SystemEvents delivers on its own broadcast thread.
+        Microsoft.Win32.SystemEvents.PowerModeChanged += (_, e) =>
+        {
+            if (e.Mode == Microsoft.Win32.PowerModes.Resume)
+            {
+                OnSystemResumed();
+            }
+        };
+
         // Cold-start CaptureGate race fix (r5-latency, S5): flag the gate as "warmup pending" BEFORE
         // the warmup thread even starts, so a trigger that fires in the brief window between
         // StartWarmup returning and RunWarmup's first CaptureGate.TryEnter (WarmupCaptureSessions)
@@ -1239,6 +1252,52 @@ public sealed class TrayApp : ITrayNotifier
             RoeSnip.CaptureGate.HeldByWarmup = false;
             RoeSnip.CaptureGate.Exit();
         }
+    }
+
+    /// <summary>Resume-from-sleep recovery (see the PowerModeChanged subscription in StartWarmup).
+    /// Everything here is proactive re-warming so the FIRST post-wake hotkey is as fast as any
+    /// other: note the resume for CaptureCache's DD-memo grace window immediately, then — after a
+    /// short settle delay so the display topology and driver have finished waking (resume fires
+    /// before DP links retrain; enumerating instantly sees ghost displays like "WinDisc") — drop
+    /// every cached WGC device/item/framepool and re-provision fresh ones per current monitor,
+    /// and refresh the monitor cache + flash/pool windows against the settled topology. All on a
+    /// background thread; the per-monitor re-prewarm takes the same slot gates a real capture
+    /// takes, so it can never corrupt a capture the user managed to start first — worst case that
+    /// capture pays the old-style staleness discovery and this pass then cleans up after it.</summary>
+    private void OnSystemResumed()
+    {
+        FileLog.Write("RoeSnip: system resumed from sleep; scheduling capture-stack re-warm.");
+        RoeSnip.Capture.CaptureCache.NotePowerResume();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3));
+                RoeSnip.Capture.WgcCapturer.InvalidateAll();
+                var monitors = RoeSnip.Capture.MonitorEnumerator.Enumerate();
+                foreach (var monitor in monitors)
+                {
+                    try
+                    {
+                        RoeSnip.Capture.WgcCapturer.Prewarm(monitor, throwawayFrame: false);
+                    }
+                    catch (Exception ex)
+                    {
+                        FileLog.Write(
+                            $"RoeSnip: post-resume WGC re-prewarm failed for {monitor.DeviceName} " +
+                            $"(non-fatal; the next capture provisions on demand): {ex.Message}");
+                    }
+                }
+                FileLog.Write($"RoeSnip: post-resume capture-stack re-warm done ({monitors.Count} monitors).");
+            }
+            catch (Exception ex)
+            {
+                FileLog.Write($"RoeSnip: post-resume re-warm failed (non-fatal): {ex.Message}");
+            }
+            // Settled-topology refresh for the flash/pool windows + cached monitor list (outside
+            // the try: even a failed re-warm should not skip this).
+            RefreshMonitorCacheInBackground(prewarmFlash: true);
+        });
     }
 
     /// <summary>Background monitor re-enumeration for <see cref="s_cachedMonitors"/>; optionally

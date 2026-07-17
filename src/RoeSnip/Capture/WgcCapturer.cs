@@ -242,6 +242,28 @@ public sealed class WgcCapturer : IScreenCapturer
         }
     }
 
+    /// <summary>Sleep/resume hook (TrayApp.OnSystemResumed): drops every cached per-monitor
+    /// device/item/framepool outright. After a suspend cycle the cached stack is routinely stale
+    /// (DWM restarts, DP links retrain, the GraphicsCaptureItem's monitor association can be dead)
+    /// in ways DeviceRemovedReason does NOT report — the first post-wake capture then discovered
+    /// the staleness on the hot path by burning its 1200 ms frame wait, re-provisioning, and often
+    /// burning a second wait. Invalidating at the RESUME EVENT (and re-prewarming right after — see
+    /// the caller) moves that discovery to the moment the machine wakes, while the user is still
+    /// looking at the lock screen. Takes each slot's Gate for real (never a TryEnter-skip): a
+    /// capture somehow mid-flight must finish before its resources are yanked. Background thread
+    /// only — never call on the UI thread, the Gate waits are unbounded by design.</summary>
+    public static void InvalidateAll()
+    {
+        foreach (var slot in s_slots.Values)
+        {
+            lock (slot.Gate)
+            {
+                slot.Resources?.Dispose();
+                slot.Resources = null;
+            }
+        }
+    }
+
     /// <summary>Background WGC device-health keepalive (r5-latency round 2, D5). A driver
     /// timeout/reset (TDR) leaves a cached ID3D11Device object alive as a .NET reference but
     /// internally dead; this used to be discovered synchronously on the capture hot path (the
