@@ -78,6 +78,14 @@
     <ProjectReference Include="..\RoeSnip.Core\RoeSnip.Core.csproj" />
   </ItemGroup>
 
+  <!-- Sleep/resume invalidation (TrayApp.OnSystemResumed): Microsoft.Win32.SystemEvents is part of
+       the WindowsDesktop shared framework the WPF app gets for free, but NOT inbox for this plain
+       net8.0-windows TFM — referenced explicitly, windows TFM only (the subscription is #if WINDOWS
+       in TrayApp; Linux/macOS have no power-event seam and degrade to no resume re-warm). -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0-windows10.0.22621.0'">
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="8.0.0" />
+  </ItemGroup>
+
   <!-- Branding (item 14): the same .ico the WPF app embeds as a manifest resource
        (src/RoeSnip/Assets/roesnip.ico), bundled here as an Avalonia asset so TrayApp.AppIcon can
        load it via avares://RoeSnip/Assets/roesnip.ico on every OS/publish shape (including

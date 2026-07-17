@@ -31,6 +31,29 @@ public sealed class CaptureCache
     private readonly object _gate = new();
     private HashSet<string>? _ddBrokenDeviceNames; // null until first use (lazy load)
 
+    // Post-resume grace (sleep-stall fix, ported from the WPF app's own CaptureCache): 0 = never
+    // resumed. Static, not per-instance — the resume event is machine state and CaptureService
+    // creates a fresh backend (and with it fresh cache queries) per capture.
+    private static long s_lastResumeTick;
+    private static readonly long PostResumeGraceMs = 30_000;
+
+    /// <summary>Called by the App shell when the machine resumes from sleep (Windows only today —
+    /// no other platform wires a power event). For the next ~30 s,
+    /// <see cref="MarkDesktopDuplicationBroken"/> is a no-op: the wake transition produces
+    /// TRANSIENT capture failures (ghost "WinDisc" displays mid-topology-settle, secure-desktop
+    /// access denials, DXGI outputs that don't exist yet) that used to poison the persisted
+    /// "DD is broken here" memo FOREVER — this cache is meant to memoize the permanent
+    /// NVIDIA+HDR black-frame quirk, not a driver that hasn't finished waking. A capture during
+    /// the window still falls back to the next capturer normally; it just isn't memoized.</summary>
+    public static void NotePowerResume() =>
+        System.Threading.Volatile.Write(ref s_lastResumeTick, Environment.TickCount64);
+
+    private static bool InPostResumeGrace()
+    {
+        long resumed = System.Threading.Volatile.Read(ref s_lastResumeTick);
+        return resumed != 0 && Environment.TickCount64 - resumed < PostResumeGraceMs;
+    }
+
     /// <summary>Path-taking constructor, used by tests to point at an isolated temp path instead
     /// of the real config directory (same pattern as SettingsStore's path-taking overloads).</summary>
     public CaptureCache(string path)
@@ -54,6 +77,13 @@ public sealed class CaptureCache
     /// rest of the process). Saves only when the entry is actually new.</summary>
     public void MarkDesktopDuplicationBroken(string deviceName)
     {
+        if (InPostResumeGrace())
+        {
+            FileLog.Write(
+                $"RoeSnip: DD failure for {deviceName} within the post-resume grace window - " +
+                "not memoized (transient wake-time failures must not poison the DD-broken cache).");
+            return;
+        }
         lock (_gate)
         {
             EnsureLoaded();

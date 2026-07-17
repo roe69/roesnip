@@ -570,6 +570,24 @@ public sealed class TrayApp : ITrayNotifier
         // capture-backend init itself. RunWarmup clears this in a finally on every exit path.
         CaptureGate.WarmupPending = true;
 
+#if WINDOWS
+        // Sleep/resume invalidation (post-sleep stall fix, ported from the WPF app): nothing else
+        // in the process knows the machine slept — the WGC keepalive only catches
+        // DeviceRemovedReason (a resume-stale capture stack usually reports healthy), so the first
+        // post-wake hotkey used to pay the whole staleness discovery (frame-wait timeouts,
+        // re-provisions, ghost-display enumeration) on the hot path. Handler stays tiny:
+        // SystemEvents delivers on its own broadcast thread. Windows only — no other platform has
+        // a power-event seam here (see docs/PARITY.md); the net8.0 TFM compiles without the
+        // Microsoft.Win32.SystemEvents package entirely.
+        SystemEvents.PowerModeChanged += (_, e) =>
+        {
+            if (e.Mode == PowerModes.Resume)
+            {
+                OnSystemResumed();
+            }
+        };
+#endif
+
         var thread = new Thread(RunWarmup)
         {
             IsBackground = true,
@@ -578,6 +596,54 @@ public sealed class TrayApp : ITrayNotifier
         };
         thread.Start();
     }
+
+#if WINDOWS
+    /// <summary>Resume-from-sleep recovery (see the PowerModeChanged subscription in StartWarmup).
+    /// Everything here is proactive re-warming so the FIRST post-wake hotkey is as fast as any
+    /// other: note the resume for CaptureCache's DD-memo grace window immediately, then — after a
+    /// short settle delay so the display topology and driver have finished waking (resume fires
+    /// before DP links retrain; enumerating instantly sees ghost displays like "WinDisc") — drop
+    /// every cached WGC device/item/framepool and re-provision fresh ones per current monitor,
+    /// and refresh the monitor cache + flash windows against the settled topology. All on a
+    /// background thread; the per-monitor re-prewarm takes the same slot gates a real capture
+    /// takes, so it can never corrupt a capture the user managed to start first — worst case that
+    /// capture pays the old-style staleness discovery and this pass then cleans up after it.</summary>
+    private void OnSystemResumed()
+    {
+        FileLog.Write("RoeSnip: system resumed from sleep; scheduling capture-stack re-warm.");
+        RoeSnip.Core.Capture.CaptureCache.NotePowerResume();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3));
+                RoeSnip.Platform.Windows.WgcCapturer.InvalidateAll();
+                var monitors = new CaptureService().EnumerateMonitors();
+                foreach (var monitor in monitors)
+                {
+                    try
+                    {
+                        RoeSnip.Platform.Windows.WgcCapturer.Prewarm(monitor, throwawayFrame: false);
+                    }
+                    catch (Exception ex)
+                    {
+                        FileLog.Write(
+                            $"RoeSnip: post-resume WGC re-prewarm failed for {monitor.DeviceName} " +
+                            $"(non-fatal; the next capture provisions on demand): {ex.Message}");
+                    }
+                }
+                FileLog.Write($"RoeSnip: post-resume capture-stack re-warm done ({monitors.Count} monitors).");
+            }
+            catch (Exception ex)
+            {
+                FileLog.Write($"RoeSnip: post-resume re-warm failed (non-fatal): {ex.Message}");
+            }
+            // Settled-topology refresh for the flash windows + cached monitor list (outside the
+            // try: even a failed re-warm should not skip this).
+            RefreshMonitorCacheInBackground(prewarmFlash: true);
+        });
+    }
+#endif
 
     private void RunWarmup()
     {
@@ -648,14 +714,16 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>Item 18: background monitor re-enumeration for <see cref="s_cachedMonitors"/>,
-    /// called after every capture flow (ObserveCaptureTask's finally). No display-change hook yet
-    /// (unlike the WPF reference's SystemEvents.DisplaySettingsChanged subscription) — a monitor set
-    /// change is instead picked up lazily by the next trigger's own TryShowFlash/FlashDimmer.ShowAll
-    /// call, whose cold-build path (FlashDimmer.EnsureCreated's own set-comparison) already handles
-    /// a stale cached list correctly, just without the pre-warm before that one trigger. Acceptable:
-    /// docking/resolution changes are rare compared to the steady-state hot path this item optimizes
-    /// for.</summary>
-    private static void RefreshMonitorCacheInBackground()
+    /// called after every capture flow (ObserveCaptureTask's finally) and by the post-resume
+    /// re-warm (OnSystemResumed, with <paramref name="prewarmFlash"/> so the parked flash windows
+    /// are rebuilt against the settled topology too — PrewarmFlash itself refuses to touch windows
+    /// while a flash/session is live). No display-change hook yet (unlike the WPF reference's
+    /// SystemEvents.DisplaySettingsChanged subscription) — a monitor set change is instead picked
+    /// up lazily by the next trigger's own TryShowFlash/FlashDimmer.ShowAll call, whose cold-build
+    /// path (FlashDimmer.EnsureCreated's own set-comparison) already handles a stale cached list
+    /// correctly, just without the pre-warm before that one trigger. Acceptable: docking/resolution
+    /// changes are rare compared to the steady-state hot path this item optimizes for.</summary>
+    private static void RefreshMonitorCacheInBackground(bool prewarmFlash = false)
     {
         _ = Task.Run(() =>
         {
@@ -663,6 +731,12 @@ public sealed class TrayApp : ITrayNotifier
             {
                 var monitors = new CaptureService().EnumerateMonitors();
                 Volatile.Write(ref s_cachedMonitors, monitors);
+                if (prewarmFlash && monitors.Count > 0)
+                {
+                    // Marshalled to the UI thread like WarmupFlashWindows — flash windows are
+                    // Avalonia windows.
+                    Dispatcher.UIThread.Post(() => Overlay.OverlayController.PrewarmFlash(monitors));
+                }
             }
             catch (Exception ex)
             {
