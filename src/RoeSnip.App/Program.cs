@@ -457,6 +457,11 @@ public static class AppComposition
     /// Ported from the WPF app's identical AppComposition.CaptureDeadline.</summary>
     internal static readonly TimeSpan CaptureDeadline = TimeSpan.FromSeconds(15);
 
+    // Rate limit for the "capture already in progress" balloon (UI thread only — every caller of
+    // RunCaptureFlowAsync starts it on the Avalonia UI thread, and the awaits before the drop
+    // branch resume on that same captured context).
+    private static long s_lastBusyNoticeTick;
+
     /// <summary>The interactive capture flow: capture all monitors, run the overlay, then handle
     /// the cross-cutting follow-ups (HDR auto-save / Save-HDR button, "saved" balloon). Called by
     /// WP-X2's HotkeyManager (on hotkey) and TrayApp's "Capture" menu item, passing itself as
@@ -509,6 +514,16 @@ public static class AppComposition
         if (!entered)
         {
             FileLog.Write("RoeSnip: capture already in progress; ignoring trigger.");
+            // Diagnosability (post-sleep stall fix, ported from the WPF app): a silently swallowed
+            // trigger reads as "the hotkey does nothing" — say why, rate-limited so hotkey
+            // auto-repeat can't spam balloons. (A trigger during a RECORDING never reaches here —
+            // TrayApp.TriggerCapture routes that to stop-and-save before this method is called.)
+            long now = Environment.TickCount64;
+            if (now - s_lastBusyNoticeTick >= 5_000)
+            {
+                s_lastBusyNoticeTick = now;
+                notifier?.ShowError("A capture is already in progress. Finish or cancel it (Esc) first.");
+            }
             return;
         }
 
