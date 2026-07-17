@@ -526,6 +526,10 @@ public static class AppComposition
     /// native timeout of its own and would otherwise hold the flash dim and CaptureGate forever.</summary>
     internal static readonly TimeSpan CaptureDeadline = TimeSpan.FromSeconds(15);
 
+    // Rate limit for the "capture already in progress" balloon (UI thread only — every caller of
+    // RunCaptureFlowAsync starts it there and the drop branch runs before any await).
+    private static long s_lastBusyNoticeTick;
+
     /// <summary>The interactive capture flow: capture all monitors, run the overlay, then handle
     /// the cross-cutting follow-ups (HDR auto-save / Save-HDR button, "saved" balloon). Called by
     /// WP-C's HotkeyManager (on hotkey) and TrayApp's "Capture" menu item, passing itself as
@@ -579,6 +583,16 @@ public static class AppComposition
             // Review fix: same reasoning as the RunOverlay-null branch above — this trigger is being
             // dropped and will never construct an OverlaySession.
             ClearPendingOverlayTrigger?.Invoke();
+            // Diagnosability (post-sleep stall fix): a silently swallowed trigger reads as "the
+            // hotkey does nothing" — say why, rate-limited so hotkey auto-repeat can't spam
+            // balloons. (A trigger during a RECORDING never reaches here — TrayApp routes that to
+            // stop-and-save before this method is called.)
+            long now = Environment.TickCount64;
+            if (now - s_lastBusyNoticeTick >= 5_000)
+            {
+                s_lastBusyNoticeTick = now;
+                notifier?.ShowError("A capture is already in progress. Finish or cancel it (Esc) first.");
+            }
             return;
         }
 

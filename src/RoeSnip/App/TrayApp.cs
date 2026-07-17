@@ -38,6 +38,9 @@ public sealed class TrayApp : ITrayNotifier
     private EventHandler? _activeBalloonClickHandler;
     private SettingsWindow? _settingsWindow;
     private AutomationServer? _automationServer;
+    // Trailing-edge coalescer for DisplaySettingsChanged bursts — see the subscription in
+    // StartWarmup. Created lazily on the first event, restarted on every later one.
+    private System.Threading.Timer? _displayChangeDebounce;
     // Latches the click-to-update fallback balloon to once per release version: a persistently
     // failing download is retried every periodic tick (desirable - the network hiccup or the
     // asset could be transient), but re-showing the balloon on every one of those retries would
@@ -1017,8 +1020,21 @@ public sealed class TrayApp : ITrayNotifier
     {
         // WM_DISPLAYCHANGE-style invalidation: keep the cached monitor list (and the pre-created
         // flash windows, via the prewarm) in sync with docking/undocking/resolution changes.
+        // Trailing-edge debounced (post-sleep stall fix): resume/dock transitions fire this in
+        // BURSTS (one event per link retrain/mode set), and each refresh used to queue a wholesale
+        // flash+overlay-pool rebuild (~100 ms + ~80-103 ms per monitor) on the UI thread — several
+        // seconds of serialized rebuild work landing exactly as the user returns to the machine.
+        // Coalescing to one refresh 1 s after the LAST event rebuilds once, against the settled
+        // topology; the single-event case (resolution change, docking) gains at most 1 s of the
+        // already-accepted "stale list costs one flash on outdated bounds" window (s_cachedMonitors
+        // doc), and the final topology always wins because the timer restarts on every event.
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (_, _) =>
-            RefreshMonitorCacheInBackground(prewarmFlash: true);
+        {
+            var timer = _displayChangeDebounce ??= new System.Threading.Timer(
+                _ => RefreshMonitorCacheInBackground(prewarmFlash: true),
+                null, Timeout.Infinite, Timeout.Infinite);
+            timer.Change(1_000, Timeout.Infinite);
+        };
 
         // Sleep/resume invalidation (post-sleep stall fix): nothing else in the process knows the
         // machine slept — the WGC keepalive only catches DeviceRemovedReason (a resume-stale capture
