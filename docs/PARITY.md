@@ -1250,6 +1250,42 @@ because a correct implementation needs live hardware this repo cannot exercise.
       RefreshMonitorCacheInBackground's doc), so there is no burst rebuild to coalesce and
       no surface to debounce. If a display-change hook is ever added here, add it debounced
       from day one.
+- Post-sleep resilience review-fix pass (2026-07-17): WPF commits e952622 / 91135bd /
+  81174da / f5a605d (adversarial review findings against the pass above) ported in the same
+  session:
+  (1) e952622, flash/pool layer: FlashDimmer.ShowAll no longer overwrites
+      s_foregroundBeforeClaim when the current foreground is already one of its own flash
+      windows (a repeat trigger while the now-off-thread capture pumps could otherwise
+      snapshot the first trigger's own claim); TryRestoreForegroundFromFlash refuses a
+      flash-window restore target and clears the snapshot after a successful restore. The
+      watchdog disarm is generation-checked (s_watchdogGeneration) so a stale tick can't
+      cancel a fresh ArmWatchdog. OverlayController.ReleaseFlash's last-out branch clears a
+      stale flash-Esc cancel flag, and pick-mode sessions no longer consume it at all. Stale
+      "capture blocks the UI thread" comments rewritten to the pumping model. This app has no
+      OverlayWindowPool (item 18 landed the flash dimmer alone, scope-reduced per that item's
+      own note above) — the WPF diff's PrewarmOverlayPool/ContextIdle-reprovision in-flight-flow
+      guards have nothing to port to here.
+  (2) 91135bd, capture stack: RoeSnip.Core.Capture.CaptureException gained an init-only
+      IndicatesPermanentlyBroken flag; only Platform.Windows's DesktopDuplicationCapturer sets
+      it (the all-zero-frame NVIDIA+HDR quirk). Core's FallbackCaptureBackend now persists a
+      capturer-slot memo only when a later capturer succeeds AND the failed one's exception has
+      the flag set — a transient failure (access lost, a timeout, a deadline-abandoned capture
+      still holding a device slot) falls back for that capture only and is never memoized.
+      Platform.Windows's WgcCapturer slot gates are wedge-proof the same way as WPF's: a bounded
+      6 s AcquireSlotGate orphans a wedged slot and provisions a fresh one, KeepaliveTick
+      TryEnter-skips a wedged slot instead of blocking every monitor's keepalive, and
+      InvalidateAll bounds its waits and orphans on timeout.
+  (3) 81174da, trimmer + teardown: IdleMemoryTrimmer's TrimBody moved off Task.Run onto a
+      dedicated RoeSnip-IdleTrim background thread, with a 30 s System.Threading.Timer watchdog
+      around GC.WaitForPendingFinalizers that re-opens s_trimRunning and sets
+      s_finalizerWaitUnsafe on expiry so later trims skip the finalizer pass. TrayApp now keeps
+      its #if WINDOWS PowerModeChanged handler in a field and detaches it in ExitApplication.
+      This app has no DisplaySettingsChanged subscription to mirror (per the busy-balloon note
+      above) — only the power handler applies here.
+  (4) f5a605d, tests: tests/RoeSnip.Core.Tests/FallbackCaptureBackendTests.cs updated to set
+      IndicatesPermanentlyBroken = true on the fakes that expect memoization, plus a new
+      CaptureAll_TransientPrimaryFailure_FallsBackButIsNotMemoized asserting the primary is
+      retried on the second call and the cache stays unmarked.
 - Core's FallbackCaptureBackend has stale-memo self-healing the WPF CaptureService lacks;
   the port is ahead of WPF there. No action, do not "fix" the divergence backwards.
 - The two apps keep deliberately distinct identities everywhere: settings dir
