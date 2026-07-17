@@ -66,17 +66,27 @@ internal static class IdleMemoryTrimmer
     // one is already doing the work.
     private static int s_trimRunning;
 
-    /// <summary>Checks idleness on the UI thread, then runs the collection on a BACKGROUND thread;
-    /// a busy state (live overlay session, in-flight capture, active recording) just skips —
-    /// whichever flow is running schedules a fresh trim when IT finishes, so nothing is lost by not
-    /// rescheduling here.
+    // Set once a WaitForPendingFinalizers call has been observed wedged past its watchdog (a
+    // finalizer stuck on a dead post-resume D3D/WIC COM object never returns): all later trims
+    // skip the finalizer pass (keeping the aggressive collect + DXGI trim, so most of the value
+    // survives) instead of stranding one more thread per trim.
+    private static volatile bool s_finalizerWaitUnsafe;
+
+    /// <summary>Checks idleness on the UI thread, then runs the collection on a DEDICATED
+    /// background thread; a busy state (live overlay session, in-flight capture, active recording)
+    /// just skips — whichever flow is running schedules a fresh trim when IT finishes, so nothing
+    /// is lost by not rescheduling here.
     ///
     /// Off the UI thread (post-sleep stuck-UI fix): GC.WaitForPendingFinalizers is UNBOUNDED — a
     /// finalizer wedged on a dead post-resume D3D/WIC COM object used to hang the whole pump (tray
     /// menu stuck open, hotkey dead) from a sweep that dequeued at ApplicationIdle, including idle
     /// moments inside the tray menu's modal tracking loop. The blocking collects themselves still
     /// suspend all managed threads briefly (process-wide, unavoidable from any thread — the class
-    /// doc's accepted trade-off), but a wedged finalizer now strands only this throwaway thread.</summary>
+    /// doc's accepted trade-off). A dedicated thread (not Task.Run) keeps a wedge from eating a
+    /// shared threadpool worker the capture hot path now depends on; a watchdog around the
+    /// finalizer wait detects the wedge, re-opens s_trimRunning so future trims still run, and
+    /// flips <see cref="s_finalizerWaitUnsafe"/> so they skip the unsafe pass (damage capped at
+    /// the one already-stranded thread).</summary>
     private static void TrimNow()
     {
         if (Overlay.OverlayController.IsSessionActive
@@ -90,38 +100,64 @@ internal static class IdleMemoryTrimmer
             return;
         }
 
-        System.Threading.Tasks.Task.Run(() =>
+        var thread = new System.Threading.Thread(TrimBody)
         {
-            try
+            IsBackground = true,
+            Name = "RoeSnip-IdleTrim",
+        };
+        thread.Start();
+    }
+
+    private static void TrimBody()
+    {
+        bool flagReleasedByWatchdog = false;
+        try
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            // Aggressive = full blocking compacting Gen2 + LOH compaction + decommit unused
+            // segments back to the OS — exactly the "give the memory back, we won't need it for
+            // hours" hint a resident tray app wants after a burst.
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            if (!s_finalizerWaitUnsafe)
             {
-                var watch = System.Diagnostics.Stopwatch.StartNew();
-                // Aggressive = full blocking compacting Gen2 + LOH compaction + decommit unused
-                // segments back to the OS — exactly the "give the memory back, we won't need it for
-                // hours" hint a resident tray app wants after a burst.
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
                 // The burst's biggest NATIVE cost hides behind tiny managed shells: every frozen
                 // BitmapSource preview holds ~15 MB of WIC memory that only a FINALIZER releases
                 // (measured: private bytes kept climbing ~50-160 MB/snip with the managed heap
                 // already at 2 MB before this pass existed). Run the finalizers, then sweep what
-                // they just released.
+                // they just released — under a watchdog, see the class doc.
+                using var wedgeWatchdog = new System.Threading.Timer(static _ =>
+                {
+                    s_finalizerWaitUnsafe = true;
+                    System.Threading.Volatile.Write(ref s_trimRunning, 0);
+                    FileLog.Write(
+                        "RoeSnip: idle memory trim wedged in WaitForPendingFinalizers (stuck finalizer, " +
+                        "likely a dead post-resume D3D/WIC object); future trims will skip the finalizer pass.");
+                }, null, 30_000, System.Threading.Timeout.Infinite);
                 GC.WaitForPendingFinalizers();
+                flagReleasedByWatchdog = s_finalizerWaitUnsafe; // the watchdog may have fired and re-opened the flag
+                wedgeWatchdog.Change(System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
                 GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
-                // Managed side is now minimal — the other resident chunk is driver-internal scratch
-                // memory cached against the permanently-warm per-monitor D3D11 devices. Hand that
-                // back too.
-                Capture.WgcCapturer.TrimCachedDeviceMemory();
-                FileLog.Write(
-                    $"RoeSnip: idle memory trim {watch.ElapsedMilliseconds} ms " +
-                    $"(managed heap now {GC.GetTotalMemory(false) / (1024 * 1024)} MB)");
             }
-            catch (Exception ex)
-            {
-                FileLog.Write($"RoeSnip: idle memory trim failed (non-fatal): {ex.Message}");
-            }
-            finally
+            // Managed side is now minimal — the other resident chunk is driver-internal scratch
+            // memory cached against the permanently-warm per-monitor D3D11 devices. Hand that
+            // back too.
+            Capture.WgcCapturer.TrimCachedDeviceMemory();
+            FileLog.Write(
+                $"RoeSnip: idle memory trim {watch.ElapsedMilliseconds} ms " +
+                $"(managed heap now {GC.GetTotalMemory(false) / (1024 * 1024)} MB)");
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: idle memory trim failed (non-fatal): {ex.Message}");
+        }
+        finally
+        {
+            // If the watchdog already re-opened the flag (and a later trim may be running), don't
+            // stomp that trim's claim — only release what this thread still owns.
+            if (!flagReleasedByWatchdog)
             {
                 System.Threading.Volatile.Write(ref s_trimRunning, 0);
             }
-        });
+        }
     }
 }

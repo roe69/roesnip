@@ -39,8 +39,14 @@ public sealed class TrayApp : ITrayNotifier
     private SettingsWindow? _settingsWindow;
     private AutomationServer? _automationServer;
     // Trailing-edge coalescer for DisplaySettingsChanged bursts — see the subscription in
-    // StartWarmup. Created lazily on the first event, restarted on every later one.
+    // StartWarmup. Created lazily on the first event, restarted on every later one; disposed in
+    // the post-Run teardown so it can't fire against torn-down state.
     private System.Threading.Timer? _displayChangeDebounce;
+    // SystemEvents handlers kept in fields so the post-Run teardown can DETACH them (same pattern
+    // as RecordingController's display-change handler): SystemEvents is a process-global static,
+    // and a post-teardown event would otherwise poke the disposed debounce timer / UI marshal.
+    private EventHandler? _displaySettingsChangedHandler;
+    private Microsoft.Win32.PowerModeChangedEventHandler? _powerModeChangedHandler;
     // Latches the click-to-update fallback balloon to once per release version: a persistently
     // failing download is retried every periodic tick (desirable - the network hiccup or the
     // asset could be transient), but re-showing the balloon on every one of those retries would
@@ -327,6 +333,17 @@ public sealed class TrayApp : ITrayNotifier
         _automationServer?.Stop();
         _notifyIcon.Visible = false;
         _hotkeyManager.Dispose();
+        // SystemEvents is process-global: detach BEFORE disposing what the handlers touch, so a
+        // display/power broadcast landing during teardown can't poke the disposed timer/marshal.
+        if (_displaySettingsChangedHandler is not null)
+        {
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= _displaySettingsChangedHandler;
+        }
+        if (_powerModeChangedHandler is not null)
+        {
+            Microsoft.Win32.SystemEvents.PowerModeChanged -= _powerModeChangedHandler;
+        }
+        _displayChangeDebounce?.Dispose();
         _uiThreadMarshal.Dispose();
 
         return 0;
@@ -1029,26 +1046,28 @@ public sealed class TrayApp : ITrayNotifier
         // topology; the single-event case (resolution change, docking) gains at most 1 s of the
         // already-accepted "stale list costs one flash on outdated bounds" window (s_cachedMonitors
         // doc), and the final topology always wins because the timer restarts on every event.
-        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (_, _) =>
+        _displaySettingsChangedHandler = (_, _) =>
         {
             var timer = _displayChangeDebounce ??= new System.Threading.Timer(
                 _ => RefreshMonitorCacheInBackground(prewarmFlash: true),
                 null, Timeout.Infinite, Timeout.Infinite);
             timer.Change(1_000, Timeout.Infinite);
         };
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += _displaySettingsChangedHandler;
 
         // Sleep/resume invalidation (post-sleep stall fix): nothing else in the process knows the
         // machine slept — the WGC keepalive only catches DeviceRemovedReason (a resume-stale capture
         // stack usually reports healthy), so the first post-wake hotkey used to pay the whole
         // staleness discovery (1200 ms frame waits, re-provisions, ghost-display enumeration) on
         // the hot path. Handler stays tiny: SystemEvents delivers on its own broadcast thread.
-        Microsoft.Win32.SystemEvents.PowerModeChanged += (_, e) =>
+        _powerModeChangedHandler = (_, e) =>
         {
             if (e.Mode == Microsoft.Win32.PowerModes.Resume)
             {
                 OnSystemResumed();
             }
         };
+        Microsoft.Win32.SystemEvents.PowerModeChanged += _powerModeChangedHandler;
 
         // Cold-start CaptureGate race fix (r5-latency, S5): flag the gate as "warmup pending" BEFORE
         // the warmup thread even starts, so a trigger that fires in the brief window between
