@@ -58,6 +58,14 @@ public sealed class TrayApp : ITrayNotifier
     private SettingsWindow? _openSettingsWindow;
     private AutomationServer? _automationServer;
     private bool _exiting;
+#if WINDOWS
+    // Kept in a field so ExitApplication can DETACH it (SystemEvents is process-global): a
+    // broadcast landing after teardown must not run a resume re-warm against a shut-down app.
+    // Ported from the WPF app's identical field/detach pair; the App has no
+    // DisplaySettingsChanged subscription to mirror (see docs/PARITY.md), so only this one
+    // applies here.
+    private PowerModeChangedEventHandler? _powerModeChangedHandler;
+#endif
 
     // Latches the click-to-update fallback toast to once per release version: a persistently
     // failing download is retried every periodic tick (desirable - the network hiccup or the
@@ -518,6 +526,14 @@ public sealed class TrayApp : ITrayNotifier
 
         _pipeListenerCts?.Cancel();
         _hotkeyManager?.Dispose();
+#if WINDOWS
+        // SystemEvents is process-global: detach BEFORE the lifetime shuts down, so a power
+        // broadcast landing during teardown can't fire OnSystemResumed against a torn-down app.
+        if (_powerModeChangedHandler is not null)
+        {
+            SystemEvents.PowerModeChanged -= _powerModeChangedHandler;
+        }
+#endif
         if (_trayIcon is not null)
         {
             try
@@ -580,13 +596,14 @@ public sealed class TrayApp : ITrayNotifier
         // SystemEvents delivers on its own broadcast thread. Windows only — no other platform has
         // a power-event seam here (see docs/PARITY.md); the net8.0 TFM compiles without the
         // Microsoft.Win32.SystemEvents package entirely.
-        SystemEvents.PowerModeChanged += (_, e) =>
+        _powerModeChangedHandler = (_, e) =>
         {
             if (e.Mode == PowerModes.Resume)
             {
                 OnSystemResumed();
             }
         };
+        SystemEvents.PowerModeChanged += _powerModeChangedHandler;
 #endif
 
         var thread = new Thread(RunWarmup)
