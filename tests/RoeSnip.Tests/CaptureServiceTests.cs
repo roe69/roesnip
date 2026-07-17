@@ -117,7 +117,10 @@ public class CaptureServiceTests : IDisposable
     public void CaptureAll_PrimaryFailure_IsMemoized_SecondCallSkipsPrimary()
     {
         var monitors = new[] { Monitor(0) };
-        var primary = new FakeCapturer(m => throw new CaptureException("black frame"));
+        // The memo only records failures that PROVE the permanent quirk (all-zero frame) — see
+        // CaptureException.IndicatesPermanentlyBroken; transient failures are covered below.
+        var primary = new FakeCapturer(m =>
+            throw new CaptureException("black frame") { IndicatesPermanentlyBroken = true });
         var fallback = new FakeCapturer(Frame);
         var cache = NewCache();
         var service = new CaptureService(primary, fallback, cache);
@@ -133,7 +136,8 @@ public class CaptureServiceTests : IDisposable
     public void CaptureAll_PrimaryFailureMemo_PersistsAcrossCacheInstances()
     {
         var monitors = new[] { Monitor(0) };
-        var failingPrimary = new FakeCapturer(m => throw new CaptureException("black frame"));
+        var failingPrimary = new FakeCapturer(m =>
+            throw new CaptureException("black frame") { IndicatesPermanentlyBroken = true });
         var fallback1 = new FakeCapturer(Frame);
         new CaptureService(failingPrimary, fallback1, NewCache()).CaptureAll(monitors);
 
@@ -146,6 +150,26 @@ public class CaptureServiceTests : IDisposable
         Assert.Single(frames);
         Assert.Empty(primary2.CalledFor);
         Assert.Equal(new[] { monitors[0].DeviceName }, fallback2.CalledFor);
+    }
+
+    [Fact]
+    public void CaptureAll_TransientPrimaryFailure_FallsBackButIsNotMemoized()
+    {
+        var monitors = new[] { Monitor(0) };
+        // Plain CaptureException (IndicatesPermanentlyBroken unset) = transient/environmental
+        // failure (ghost wake-time display, duplication slot held by an abandoned capture, access
+        // lost): every call still falls back to WGC, but the doomed-primary memo must NOT persist.
+        var primary = new FakeCapturer(m => throw new CaptureException("transient failure"));
+        var fallback = new FakeCapturer(Frame);
+        var cache = NewCache();
+        var service = new CaptureService(primary, fallback, cache);
+
+        service.CaptureAll(monitors);
+        service.CaptureAll(monitors);
+
+        Assert.Equal(2, primary.CalledFor.Count);  // second call still tries the primary
+        Assert.Equal(2, fallback.CalledFor.Count);
+        Assert.False(cache.IsDesktopDuplicationBroken(monitors[0].DeviceName));
     }
 
     [Fact]
