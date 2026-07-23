@@ -47,6 +47,11 @@ public sealed class TrayApp : ITrayNotifier
     // and a post-teardown event would otherwise poke the disposed debounce timer / UI marshal.
     private EventHandler? _displaySettingsChangedHandler;
     private Microsoft.Win32.PowerModeChangedEventHandler? _powerModeChangedHandler;
+    // Dedup for OnSystemResumed: it can now fire from TWO sources for one wake (the
+    // PowerRegisterSuspendResumeNotification callback — see SuspendResumeNotifications — and the
+    // SystemEvents belt, which on some machines delivers PBT_APMRESUMESUSPEND shortly after
+    // PBT_APMRESUMEAUTOMATIC). Environment.TickCount64 of the last handled resume; 0 = never.
+    private long _lastResumeHandledTick;
     // Latches the click-to-update fallback balloon to once per release version: a persistently
     // failing download is retried every periodic tick (desirable - the network hiccup or the
     // asset could be transient), but re-showing the balloon on every one of those retries would
@@ -343,6 +348,7 @@ public sealed class TrayApp : ITrayNotifier
         {
             Microsoft.Win32.SystemEvents.PowerModeChanged -= _powerModeChangedHandler;
         }
+        RoeSnip.Interop.SuspendResumeNotifications.Unregister();
         _displayChangeDebounce?.Dispose();
         _uiThreadMarshal.Dispose();
 
@@ -1049,7 +1055,7 @@ public sealed class TrayApp : ITrayNotifier
         _displaySettingsChangedHandler = (_, _) =>
         {
             var timer = _displayChangeDebounce ??= new System.Threading.Timer(
-                _ => RefreshMonitorCacheInBackground(prewarmFlash: true),
+                _ => RefreshMonitorCacheInBackground(prewarmFlash: true, reprovisionWgc: true),
                 null, Timeout.Infinite, Timeout.Infinite);
             timer.Change(1_000, Timeout.Infinite);
         };
@@ -1064,10 +1070,17 @@ public sealed class TrayApp : ITrayNotifier
         {
             if (e.Mode == Microsoft.Win32.PowerModes.Resume)
             {
-                OnSystemResumed();
+                OnSystemResumed("SystemEvents.PowerModeChanged");
             }
         };
         Microsoft.Win32.SystemEvents.PowerModeChanged += _powerModeChangedHandler;
+
+        // SystemEvents alone is NOT a working resume signal on this class of machine: it never maps
+        // PBT_APMRESUMEAUTOMATIC (the broadcast modern wakes actually deliver), and a 2026-07-23
+        // log audit found 10 wakes with ZERO PowerModeChanged(Resume) deliveries — the re-warm
+        // below had never run once. The callback-based power registration hears every wake; the
+        // SystemEvents subscription above stays as a belt, deduped inside OnSystemResumed.
+        RoeSnip.Interop.SuspendResumeNotifications.Register(OnSystemResumed);
 
         // Cold-start CaptureGate race fix (r5-latency, S5): flag the gate as "warmup pending" BEFORE
         // the warmup thread even starts, so a trigger that fires in the brief window between
@@ -1300,9 +1313,19 @@ public sealed class TrayApp : ITrayNotifier
     /// background thread; the per-monitor re-prewarm takes the same slot gates a real capture
     /// takes, so it can never corrupt a capture the user managed to start first — worst case that
     /// capture pays the old-style staleness discovery and this pass then cleans up after it.</summary>
-    private void OnSystemResumed()
+    private void OnSystemResumed(string source)
     {
-        FileLog.Write("RoeSnip: system resumed from sleep; scheduling capture-stack re-warm.");
+        // One wake can now signal twice (power callback + SystemEvents belt) — handle the first,
+        // skip the echo. Exchange-then-compare is race-safe: of two concurrent callers exactly one
+        // observes the stale tick.
+        long now = Environment.TickCount64;
+        long last = System.Threading.Interlocked.Exchange(ref _lastResumeHandledTick, now);
+        if (last != 0 && now - last < 10_000)
+        {
+            return;
+        }
+
+        FileLog.Write($"RoeSnip: system resumed from sleep ({source}); scheduling capture-stack re-warm.");
         RoeSnip.Capture.CaptureCache.NotePowerResume();
         _ = Task.Run(async () =>
         {
@@ -1311,19 +1334,7 @@ public sealed class TrayApp : ITrayNotifier
                 await Task.Delay(TimeSpan.FromSeconds(3));
                 RoeSnip.Capture.WgcCapturer.InvalidateAll();
                 var monitors = RoeSnip.Capture.MonitorEnumerator.Enumerate();
-                foreach (var monitor in monitors)
-                {
-                    try
-                    {
-                        RoeSnip.Capture.WgcCapturer.Prewarm(monitor, throwawayFrame: false);
-                    }
-                    catch (Exception ex)
-                    {
-                        FileLog.Write(
-                            $"RoeSnip: post-resume WGC re-prewarm failed for {monitor.DeviceName} " +
-                            $"(non-fatal; the next capture provisions on demand): {ex.Message}");
-                    }
-                }
+                ReprovisionWgcSlots(monitors);
                 FileLog.Write($"RoeSnip: post-resume capture-stack re-warm done ({monitors.Count} monitors).");
             }
             catch (Exception ex)
@@ -1331,15 +1342,50 @@ public sealed class TrayApp : ITrayNotifier
                 FileLog.Write($"RoeSnip: post-resume re-warm failed (non-fatal): {ex.Message}");
             }
             // Settled-topology refresh for the flash/pool windows + cached monitor list (outside
-            // the try: even a failed re-warm should not skip this).
-            RefreshMonitorCacheInBackground(prewarmFlash: true);
+            // the try: even a failed re-warm should not skip this). No reprovisionWgc here — the
+            // pass above just did it, and monitors that re-attach AFTER this point (DP links
+            // routinely retrain one by one for seconds after resume) raise DisplaySettingsChanged,
+            // whose debounced refresh DOES re-provision (see StartWarmup's subscription).
+            RefreshMonitorCacheInBackground(prewarmFlash: true, reprovisionWgc: false);
+        });
+    }
+
+    /// <summary>Re-provisions WgcCapturer's cached per-monitor item/device for every monitor, in
+    /// parallel (the slots are per-monitor gated, so this mirrors CaptureService's own per-monitor
+    /// parallelism). Parallel matters here: post-wake the Windows capture broker can be sick in a
+    /// way that makes item creation block on COM server activation for up to its full 120 s
+    /// timeout (observed live 2026-07-22: CO_E_SERVER_EXEC_FAILURE surfacing exactly 120 s after
+    /// the call) — sequential prewarm would serialize that worst case per monitor.</summary>
+    private static void ReprovisionWgcSlots(System.Collections.Generic.IReadOnlyList<RoeSnip.Capture.MonitorInfo> monitors)
+    {
+        Parallel.ForEach(monitors, monitor =>
+        {
+            try
+            {
+                RoeSnip.Capture.WgcCapturer.Prewarm(monitor, throwawayFrame: false);
+            }
+            catch (Exception ex)
+            {
+                FileLog.Write(
+                    $"RoeSnip: WGC re-prewarm failed for {monitor.DeviceName} " +
+                    $"(non-fatal; the next capture provisions on demand): {ex.Message}");
+            }
         });
     }
 
     /// <summary>Background monitor re-enumeration for <see cref="s_cachedMonitors"/>; optionally
     /// re-prewarns the flash windows on the UI thread (display-change path — PrewarmFlash itself
-    /// refuses to touch windows while a flash/session is live).</summary>
-    private void RefreshMonitorCacheInBackground(bool prewarmFlash)
+    /// refuses to touch windows while a flash/session is live). With
+    /// <paramref name="reprovisionWgc"/> it also re-provisions WgcCapturer's cached per-monitor
+    /// resources — the display-change path needs this because after a wake the monitors re-attach
+    /// STAGGERED (observed on every wake in the log: 1 monitor, then all 3 about 4 s later), so
+    /// the post-resume re-warm's own pass misses the late arrivals; without this, their stale/empty
+    /// slots got discovered on the hotkey hot path, where a post-sleep-sick capture broker turned
+    /// item creation into a 120 s COM activation hang and the user saw a frozen gray flash until
+    /// the 15 s CaptureDeadline gave up (the 2026-07-22 23:57 incident). Prewarm is a cheap
+    /// in-memory no-op when a slot is already healthy, so passing it on every display change is
+    /// safe.</summary>
+    private void RefreshMonitorCacheInBackground(bool prewarmFlash, bool reprovisionWgc = false)
     {
         _ = Task.Run(() =>
         {
@@ -1347,6 +1393,10 @@ public sealed class TrayApp : ITrayNotifier
             {
                 var monitors = RoeSnip.Capture.MonitorEnumerator.Enumerate();
                 Volatile.Write(ref s_cachedMonitors, monitors);
+                if (reprovisionWgc)
+                {
+                    ReprovisionWgcSlots(monitors);
+                }
                 if (prewarmFlash && monitors.Count > 0)
                 {
                     _uiThreadMarshal?.BeginInvoke(new Action(() =>

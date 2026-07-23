@@ -65,6 +65,11 @@ public sealed class TrayApp : ITrayNotifier
     // DisplaySettingsChanged subscription to mirror (see docs/PARITY.md), so only this one
     // applies here.
     private PowerModeChangedEventHandler? _powerModeChangedHandler;
+    // Dedup for OnSystemResumed: it can now fire from TWO sources for one wake (the
+    // PowerRegisterSuspendResumeNotification callback — see Platform.Windows
+    // SuspendResumeNotifications — and the SystemEvents belt). Environment.TickCount64 of the
+    // last handled resume; 0 = never. Ported from the WPF app's identical field.
+    private long _lastResumeHandledTick;
 #endif
 
     // Latches the click-to-update fallback toast to once per release version: a persistently
@@ -533,6 +538,7 @@ public sealed class TrayApp : ITrayNotifier
         {
             SystemEvents.PowerModeChanged -= _powerModeChangedHandler;
         }
+        RoeSnip.Platform.Windows.SuspendResumeNotifications.Unregister();
 #endif
         if (_trayIcon is not null)
         {
@@ -600,10 +606,18 @@ public sealed class TrayApp : ITrayNotifier
         {
             if (e.Mode == PowerModes.Resume)
             {
-                OnSystemResumed();
+                OnSystemResumed("SystemEvents.PowerModeChanged");
             }
         };
         SystemEvents.PowerModeChanged += _powerModeChangedHandler;
+
+        // SystemEvents alone is NOT a working resume signal on this class of machine: it never
+        // maps PBT_APMRESUMEAUTOMATIC (the broadcast modern wakes actually deliver), and a
+        // 2026-07-23 log audit of the WPF daily driver found 10 wakes with ZERO
+        // PowerModeChanged(Resume) deliveries — the re-warm below had never run once. The
+        // callback-based power registration hears every wake; the SystemEvents subscription above
+        // stays as a belt, deduped inside OnSystemResumed. Ported from the WPF app.
+        RoeSnip.Platform.Windows.SuspendResumeNotifications.Register(OnSystemResumed);
 #endif
 
         var thread = new Thread(RunWarmup)
@@ -626,9 +640,19 @@ public sealed class TrayApp : ITrayNotifier
     /// background thread; the per-monitor re-prewarm takes the same slot gates a real capture
     /// takes, so it can never corrupt a capture the user managed to start first — worst case that
     /// capture pays the old-style staleness discovery and this pass then cleans up after it.</summary>
-    private void OnSystemResumed()
+    private void OnSystemResumed(string source)
     {
-        FileLog.Write("RoeSnip: system resumed from sleep; scheduling capture-stack re-warm.");
+        // One wake can now signal twice (power callback + SystemEvents belt) — handle the first,
+        // skip the echo. Exchange-then-compare is race-safe: of two concurrent callers exactly one
+        // observes the stale tick.
+        long now = Environment.TickCount64;
+        long last = Interlocked.Exchange(ref _lastResumeHandledTick, now);
+        if (last != 0 && now - last < 10_000)
+        {
+            return;
+        }
+
+        FileLog.Write($"RoeSnip: system resumed from sleep ({source}); scheduling capture-stack re-warm.");
         RoeSnip.Core.Capture.CaptureCache.NotePowerResume();
         _ = Task.Run(async () =>
         {
@@ -637,19 +661,7 @@ public sealed class TrayApp : ITrayNotifier
                 await Task.Delay(TimeSpan.FromSeconds(3));
                 RoeSnip.Platform.Windows.WgcCapturer.InvalidateAll();
                 var monitors = new CaptureService().EnumerateMonitors();
-                foreach (var monitor in monitors)
-                {
-                    try
-                    {
-                        RoeSnip.Platform.Windows.WgcCapturer.Prewarm(monitor, throwawayFrame: false);
-                    }
-                    catch (Exception ex)
-                    {
-                        FileLog.Write(
-                            $"RoeSnip: post-resume WGC re-prewarm failed for {monitor.DeviceName} " +
-                            $"(non-fatal; the next capture provisions on demand): {ex.Message}");
-                    }
-                }
+                ReprovisionWgcSlots(monitors);
                 FileLog.Write($"RoeSnip: post-resume capture-stack re-warm done ({monitors.Count} monitors).");
             }
             catch (Exception ex)
@@ -659,6 +671,48 @@ public sealed class TrayApp : ITrayNotifier
             // Settled-topology refresh for the flash windows + cached monitor list (outside the
             // try: even a failed re-warm should not skip this).
             RefreshMonitorCacheInBackground(prewarmFlash: true);
+
+            // Second pass for late-attaching monitors: after a wake the DP links routinely retrain
+            // one by one for seconds (the WPF log shows 1 monitor, then all 3 about 4 s later, on
+            // every wake), so the pass above can miss monitors that were not attached yet at
+            // settle+3s. The WPF app covers this with its DisplaySettingsChanged subscription; this
+            // app has none (docs/PARITY.md), so a single delayed re-provision pass is its
+            // substitute — a no-op for slots the first pass already provisioned.
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(12));
+                var settled = new CaptureService().EnumerateMonitors();
+                ReprovisionWgcSlots(settled);
+                RefreshMonitorCacheInBackground(prewarmFlash: true);
+            }
+            catch (Exception ex)
+            {
+                FileLog.Write($"RoeSnip: post-resume second re-warm pass failed (non-fatal): {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>Re-provisions WgcCapturer's cached per-monitor item/device for every monitor, in
+    /// parallel (the slots are per-monitor gated, so this mirrors CaptureService's own per-monitor
+    /// parallelism). Parallel matters here: post-wake the Windows capture broker can be sick in a
+    /// way that makes item creation block on COM server activation for up to its full 120 s
+    /// timeout (observed live 2026-07-22 on the WPF daily driver: CO_E_SERVER_EXEC_FAILURE
+    /// surfacing exactly 120 s after the call) — sequential prewarm would serialize that worst
+    /// case per monitor. Ported from the WPF app's identical helper.</summary>
+    private static void ReprovisionWgcSlots(System.Collections.Generic.IReadOnlyList<MonitorInfo> monitors)
+    {
+        Parallel.ForEach(monitors, monitor =>
+        {
+            try
+            {
+                RoeSnip.Platform.Windows.WgcCapturer.Prewarm(monitor, throwawayFrame: false);
+            }
+            catch (Exception ex)
+            {
+                FileLog.Write(
+                    $"RoeSnip: WGC re-prewarm failed for {monitor.DeviceName} " +
+                    $"(non-fatal; the next capture provisions on demand): {ex.Message}");
+            }
         });
     }
 #endif

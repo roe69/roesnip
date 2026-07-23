@@ -1286,6 +1286,27 @@ because a correct implementation needs live hardware this repo cannot exercise.
       IndicatesPermanentlyBroken = true on the fakes that expect memoization, plus a new
       CaptureAll_TransientPrimaryFailure_FallsBackButIsNotMemoized asserting the primary is
       retried on the second call and the cache stays unmarked.
+- Post-sleep resume-detection fix (2026-07-23), both apps: a log audit of the WPF daily
+  driver found SystemEvents.PowerModeChanged(Resume) had NEVER fired (10 wakes, 0
+  deliveries — .NET's SystemEvents does not map PBT_APMRESUMEAUTOMATIC, the broadcast
+  modern wakes actually send), so the whole 2026-07-17 resume re-warm above was dead code
+  at runtime. Fix, ported per concern:
+  (1) Callback-based PowerRegisterSuspendResumeNotification registration (WPF:
+      src/RoeSnip/Interop/SuspendResumeNotifications.cs; App: the Platform.Windows copy)
+      hears PBT_APMRESUMEAUTOMATIC + PBT_APMRESUMESUSPEND; the SystemEvents subscription
+      stays as a belt and OnSystemResumed dedupes the two sources (10 s TickCount64 window).
+      Unregistered in teardown next to the SystemEvents detach.
+  (2) Post-resume per-monitor WGC re-prewarm is now PARALLEL (ReprovisionWgcSlots): a
+      post-wake-sick capture broker can block item creation on COM server activation for its
+      full 120 s timeout (observed live 2026-07-22, CO_E_SERVER_EXEC_FAILURE at exactly
+      +120 s), and the old sequential loop serialized that per monitor.
+  (3) Late-attaching monitors (every logged wake re-attaches staggered: 1 monitor, then all
+      3 about 4 s later, i.e. AFTER the resume settle): WPF covers them by re-provisioning
+      WGC slots from the debounced DisplaySettingsChanged refresh
+      (RefreshMonitorCacheInBackground gained reprovisionWgc; Prewarm is a no-op on healthy
+      slots so it is safe on every display change). This app still has no display-change
+      subscription, so its OnSystemResumed runs a single SECOND re-provision pass ~15 s
+      after resume instead — the accepted substitute until a display-change hook exists.
 - Core's FallbackCaptureBackend has stale-memo self-healing the WPF CaptureService lacks;
   the port is ahead of WPF there. No action, do not "fix" the divergence backwards.
 - The two apps keep deliberately distinct identities everywhere: settings dir
