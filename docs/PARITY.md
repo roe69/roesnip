@@ -1245,10 +1245,109 @@ existing WPF test suite is the proof.
       difference between the two toolkits' theming models, not an inconsistency introduced by this
       pass. (3) Explicitly out of scope on both apps (tracked as follow-ups, not silently
       dropped): Escape during hotkey capture still commits Escape as the new hotkey instead of
-      cancelling capture; WPF's SaveButton_Click still uses blocking MessageBox for validation/save
-      failures instead of Avalonia's inline ValidationErrorText banner; Avalonia still has no window `Icon` set on any of the three
-      windows (WPF sets one on all three) - a real taskbar/alt-tab parity gap, unrelated to color/
-      contrast, not touched here.
+      cancelling capture (fixed for WPF's own MessageBox-vs-banner gap in item 24 below); Avalonia
+      still has no window `Icon` set on any of the three windows (WPF sets one on all three) - a
+      real taskbar/alt-tab parity gap, unrelated to color/contrast, not touched here.
+- [x] 24-settings-legibility-audit: Exhaustive follow-up legibility audit across every user-visible
+      surface in both apps (not just the three settings windows item 23 touched), triggered by a
+      report that the item-23 pass still missed things. Found and fixed:
+      - WPF SettingsWindow.xaml.cs/ShareProviderEditWindow.xaml.cs/ShareProvidersWindow.xaml.cs:
+        every System.Windows.MessageBox.Show call (10 in SettingsWindow, 2 in
+        ShareProviderEditWindow, 2 in ShareProvidersWindow - the exact gap item 23's own tail note
+        flagged as deferred) replaced with a new owned modal, src/RoeSnip/App/OwnedMessageWindow.cs
+        (ShowOk/ShowYesNo, synchronous like WPF's Window.ShowDialog always is), mirroring the
+        Avalonia app's own pre-existing owned-dialog precedent (AppShell/TrayApp.cs and
+        AppShell/ShareProviderEditWindow.axaml.cs's ShowYesNoDialogAsync) - merges
+        Theme/RoeSnipTheme.xaml itself (same per-window pattern every other WPF window uses) and
+        calls DarkTitleBar.Apply, so it gets the exact same dark chrome/caption as every other
+        window instead of system-light MessageBox chrome. No behavior change - same message text,
+        same OK/Yes-No semantics, same modal-blocks-input contract. TrayApp.cs's own MessageBox
+        calls (About, update-check dialogs, PrintScreen consent) were deliberately NOT touched -
+        that file is the hotkey/capture-trigger path a concurrent session owns this same session,
+        out of this pass's territory; they remain the one MessageBox usage left in the WPF app,
+        tracked as a further follow-up.
+      - src/RoeSnip/Overlay/ColorPickerWindow.xaml.cs's CustomFormatDialog (the ad-hoc
+        WindowStyle.ToolWindow "Add/Edit custom color format" dialog) never called
+        DarkTitleBar.Apply - a real DWM caption bar, missed because this dialog predates
+        DarkTitleBar.cs and lives outside the three windows item 23 enumerated. Fixed (one call,
+        same recipe as the other three call sites). Its Avalonia twin
+        (RoeSnip.App/Overlay/ColorPickerWindow.axaml.cs's own CustomFormatDialog) already sidesteps
+        this entirely via WindowDecorations.BorderOnly (no caption drawn at all) - no port needed,
+        Avalonia's approach is simply immune to this class of bug.
+      - src/RoeSnip/Overlay/ColorPickerWindow.xaml had two ToolTip="..." strings (PickButton,
+        GearButton) with nothing to style them - this window has no App.xaml/merged dictionary
+        reachable and never defined its own ToolTip style, so both rendered WPF's default Aero2
+        system-light tooltip. Fixed with a local Window.Resources ToolTip style using this window's
+        own established plain-literal-hex convention (no Rl* tokens - matches its header comment).
+      - src/RoeSnip/Overlay/ToolbarControl.xaml (the pre-existing "reference" dark overlay toolbar,
+        untouched by item 23 by design) was missing TWO implicit styles entirely: ScrollBar (its
+        DarkComboBoxStyle/DarkEditableComboBoxStyle Popups wrap ItemsPresenter in a plain
+        ScrollViewer with no ScrollBar override - invisible for the small size-preset dropdown but
+        a real, visible default light Aero2 scrollbar for FontFamilyComboBox, which lists every
+        installed system font and reliably overflows MaxHeight="260") and ToolTip (~15 ToolTip="..."
+        attributes across every tool/action button plus SizeComboBox and SaveHdrMenuItem, all
+        rendering default Aero2 system-light tooltips over this fully dark, always-on-top overlay).
+        Both fixed by duplicating RoeSnipTheme.xaml's own ScrollBar/ToolTip recipes directly into
+        this file's UserControl.Resources using its own already-declared 17 base tokens - a
+        deliberate duplication, not a repoint, per this file's own standing "don't churn a working,
+        load-bearing overlay control to deduplicate tokens" rule. Avalonia's ToolbarControl.axaml
+        needs no equivalent fix - FluentTheme Dark's own ComboBox popup and ToolTip control themes
+        are already dark (the same empirically-confirmed "no retemplate needed" finding item 23
+        made for ComboBox/CheckBox extends to ScrollBar/ToolTip here).
+      - RoeSnip.App/Overlay/ColorReplaceFlyout.cs's ten quick-pick swatch buttons used
+        `BorderBrush = Brushes.Gray` (a flat #808080, off-palette - the one genuinely new,
+        unauthorized gray this audit found). Fixed to a literal ARGB(0x24,0xFF,0xFF,0xFF) field
+        matching RlBorderStrongBrush/ToolbarControl.axaml's own ".swatch" rest-state border exactly,
+        so the flyout's swatches read as the same product as the toolbar's own persisted palette
+        row instead of a slightly-off imitation.
+      - A real WCAG contrast bug, present in BOTH apps: RlDangerHoverBrush (#DC2626) was being used
+        as TEXT color directly on a dark surface in four places - Avalonia's SettingsWindow.axaml
+        (WaylandHotkeyCaption, ValidationErrorText) and ShareProviderEditWindow.axaml
+        (ValidationErrorText, plus the ErrorBrush field driving TestStatusText's Failed state) - and
+        WPF's ShareProviderEditWindow.xaml.cs (TestStatusText's Failed state, via RoeSnipTheme.xaml's
+        ErrorBrush alias). Computed properly (composited alpha over the real backdrop first, per
+        this audit's own brief): RlDangerHoverBrush measures 4.35:1 as text on the window's pure-
+        black background and 3.66:1 on RlBgElevated - both under the >=4.5:1 body-text bar for
+        13px/12.5px text - because it had only ever been verified as a BUTTON FILL (paired with
+        light text, item 23's own AUDIT CORRECTION) or a non-text border/fill (>=3:1 bar). Fixed by
+        adding one new shared token to both theme files, RlDangerTextBrush (#E05A5A) - not an
+        invented hue: it is the exact value src/RoeSnip/Sharing/ShareResultWindow.xaml had already
+        been using locally for this exact "error text on a dark card" case the whole time (5.78:1 on
+        black, 4.87:1 on RlBgElevated - both pass), promoted to a shared token instead of a one-off
+        local literal, and reused for RoeSnip.App/Sharing/ShareResultWindow.axaml.cs's own
+        StatusErrorBrush (previously a hardcoded #DC2626 duplicate - this was ALSO a genuine WPF/
+        Avalonia color mismatch on top of the contrast failure, since WPF's own ShareResultWindow
+        never had this bug). RlDangerHoverBrush itself is untouched - still used correctly for
+        every button-fill/border call site (DangerButtonStyle, Button.danger:pointerover, the
+        toast's error border) where >=3:1 is the right bar and it already clears it.
+      - Confirmed already correct, no changes needed: WPF SettingsWindow.xaml/ShareProvidersWindow.
+        xaml/ShareProviderEditWindow.xaml (item 23's own work, re-verified); their Avalonia twins;
+        both apps' ShareResultWindow chrome besides the one color fixed above; Avalonia's
+        Application-wide Window/TextBox/ComboBox/CheckBox/Button styles and the ad-hoc Yes/No
+        Window ShareProviderEditWindow.axaml.cs builds in code (genuinely reaches the global Window
+        style with zero local overrides, verified by reading the constructor); both apps' tray
+        context menus (WPF's WinForms ContextMenuStrip and Avalonia's NativeMenu are both OS-owned
+        shell chrome, not app-themeable - accepted like system dialogs; note Avalonia's NativeMenu
+        happens to follow the OS dark-mode setting automatically on Windows 10/11 while WinForms'
+        ContextMenuStrip does not, a pre-existing toolkit-level divergence, not something introduced
+        or fixable here); Avalonia's TrayApp.ShowToast (already fully token-based); every system
+        Open/Save/folder-picker dialog on both apps (WPF's System.Windows.Forms.FolderBrowserDialog/
+        ColorDialog, Avalonia's StorageProvider pickers) and every native MessageBox still in
+        TrayApp.cs (both out of this pass's territory, both accepted OS chrome); the ColorPickerWindow
+        format-row popup, recent-colors swatches, and shade panel (all already token/literal-correct);
+        both apps' scrollbars in the three settings windows (already covered since item 23).
+        RecordingChrome/RegionOutline/FlashDimmer's own parked windows (both apps) were left
+        deliberately unexamined - recording/capture-trigger chrome, explicitly outside this pass's
+        assigned territory (XAML/AXAML/theme/settings-window/provider-window/dialog surfaces only).
+      Build + full solution test suite green (1264 tests: 446 RoeSnip.Tests + 595 Core.Tests + 208
+      App.Tests + 15 Platform.Windows.Tests - no test count change, this is a presentation-only
+      pass). StaticResource/Resources[] key audit: every new or repointed key
+      (RlDangerTextBrush in both RoeSnipTheme.xaml and App.axaml, AccentButtonStyle referenced from
+      the new OwnedMessageWindow.cs) was grepped end-to-end for exact spelling match against its
+      defining dictionary - no live-render harness exists for these windows (same "reviewed by eye"
+      precedent items 12/23 already established), so this plus a green build is the available
+      verification; RoeSnipTheme.xaml's own DEFINITION ORDER rule was preserved (RlDangerTextBrush
+      added to section 1 alongside the other base tokens, before section 2's ErrorBrush).
 
 ## Platform limitations (accepted)
 
@@ -1449,3 +1548,18 @@ because a correct implementation needs live hardware this repo cannot exercise.
   is byte-identical and uncompressed either way - only the download in transit shrinks. Benefit
   starts with updates FROM the release that first ships both assets onward (the release that
   introduces this can only itself ship uncompressed, since nothing before it can request a ".gz").
+- Idle-gap trigger-timing diagnostics (2026-08 idle-latency investigation, both apps'
+  AppComposition.RunCaptureFlowAsync in Program.cs + new RoeSnip.Core.Diagnostics.IdleGapLog):
+  a field-log investigation into "PrtScr is sometimes slow" found capture-to-overlay latency's
+  tail growing with how long the app had sat idle before the hotkey press (real GPU/display
+  power-state wake cost - WgcCapturer's IsReusable/TrimCachedDeviceMemory doc comments describe
+  the same phenomenon from the capture side), but that correlation was only visible after
+  manually cross-referencing timestamps across thousands of log lines. Each app now tracks
+  Environment.TickCount64 at the moment a trigger wins CaptureGate (s_lastTriggerStartTicks, not
+  shared between the apps - tangled up with each app's own gate/dispatcher plumbing) and appends
+  the resulting idle gap (raw ms, via the new shared IdleGapLog.FormatSuffix) to the
+  capture-to-overlay line, the "capture did not complete within Ns" abandon line, and a new
+  "capture failed on every monitor" FileLog line (that failure previously reached the tray
+  balloon but left no trace in roesnip.log). TickCount64, not DateTime/UtcNow, deliberately -
+  monotonic and immune to the wall-clock jump a system RTC can exhibit around sleep/resume
+  (observed once in the field log). No behavior change beyond the added log text.

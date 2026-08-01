@@ -462,6 +462,14 @@ public static class AppComposition
     // branch resume on that same captured context).
     private static long s_lastBusyNoticeTick;
 
+    // Diagnosability (2026-08 idle-latency investigation, ported from the WPF app's identical
+    // field): Environment.TickCount64 timestamp of the last trigger that actually won CaptureGate
+    // (0 = none yet this process). See RoeSnip.Core.Diagnostics.IdleGapLog's doc comment for why
+    // this exists and why the gap is logged. TickCount64 (not DateTime/UtcNow) deliberately —
+    // monotonic and immune to wall-clock jumps a system RTC can exhibit around sleep/resume
+    // (observed once in the WPF app's field log).
+    private static long s_lastTriggerStartTicks;
+
     /// <summary>The interactive capture flow: capture all monitors, run the overlay, then handle
     /// the cross-cutting follow-ups (HDR auto-save / Save-HDR button, "saved" balloon). Called by
     /// WP-X2's HotkeyManager (on hotkey) and TrayApp's "Capture" menu item, passing itself as
@@ -529,6 +537,13 @@ public static class AppComposition
 
         try
         {
+            // Idle-gap diagnosability (see s_lastTriggerStartTicks doc comment): -1 means this is
+            // the first trigger to win the gate since the process started, otherwise the ms since
+            // the previous trigger started — logged alongside this trigger's own timings below.
+            long nowTicks = Environment.TickCount64;
+            long idleMs = s_lastTriggerStartTicks == 0 ? -1 : nowTicks - s_lastTriggerStartTicks;
+            s_lastTriggerStartTicks = nowTicks;
+
             // Hotkey-to-overlay latency instrumentation: this whole stretch (capture + tone-map)
             // is what the user perceives as "the overlay appearing", so it is timed and logged to
             // stderr just before the overlay is shown.
@@ -556,7 +571,8 @@ public static class AppComposition
             {
                 FileLog.Write(
                     $"RoeSnip: capture did not complete within {CaptureDeadline.TotalSeconds:0} s; " +
-                    "abandoning this trigger (the GPU/driver may still be waking after sleep).");
+                    "abandoning this trigger (the GPU/driver may still be waking after sleep)." +
+                    IdleGapLog.FormatSuffix(idleMs));
                 notifier?.ShowError("Capture is taking too long (graphics driver may be waking up). Press the hotkey to try again.");
                 _ = captureTask.ContinueWith(static t =>
                 {
@@ -579,6 +595,7 @@ public static class AppComposition
             long captureMs = totalWatch.ElapsedMilliseconds;
             if (frames.Count == 0)
             {
+                FileLog.Write($"RoeSnip: capture failed on every monitor.{IdleGapLog.FormatSuffix(idleMs)}");
                 notifier?.ShowError(BuildCaptureFailedMessage(captureService));
                 return;
             }
@@ -614,7 +631,8 @@ public static class AppComposition
                 totalWatch.Stop();
                 FileLog.Write(
                     $"RoeSnip: capture-to-overlay {totalWatch.ElapsedMilliseconds} ms " +
-                    $"(capture {captureMs} ms, tonemap {totalWatch.ElapsedMilliseconds - captureMs} ms)");
+                    $"(capture {captureMs} ms, tonemap {totalWatch.ElapsedMilliseconds - captureMs} ms)" +
+                    IdleGapLog.FormatSuffix(idleMs));
 
                 OverlayResult? result = await RunOverlay(monitorsWithPreview, settings, notifier);
 
