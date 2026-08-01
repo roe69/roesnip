@@ -65,6 +65,14 @@ public partial class SettingsWindow : Window
         Action resumeGlobalHotkey)
     {
         InitializeComponent();
+        DarkTitleBar.Apply(this);
+
+        // The window is SizeToContent=Height, so it wants to be exactly as tall as its content and
+        // the ScrollViewer inside only has to do anything on a short screen. Clamping to the work
+        // area (not a hardcoded pixel cap) is what keeps that promise on both a 1440p desktop, where
+        // every section including Sharing is visible without scrolling, and a small laptop, where
+        // the window stops at the taskbar and the scrollbar takes over.
+        MaxHeight = Math.Max(480, SystemParameters.WorkArea.Height - 80);
 
         _original = settings;
         _current = settings;
@@ -332,7 +340,7 @@ public partial class SettingsWindow : Window
             elevatedNow = false;
         }
 
-        ElevationStatusText.Text = $"Currently running as administrator: {(elevatedNow ? "yes" : "no")}";
+        ElevationStatusText.Text = $"Currently: {(elevatedNow ? "running as administrator" : "not elevated")}";
     }
 
     private void ChangeHotkeyButton_Click(object sender, RoutedEventArgs e)

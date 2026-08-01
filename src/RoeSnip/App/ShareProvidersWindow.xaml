@@ -9,27 +9,20 @@
         Foreground="#FFEDEDF0"
         FontFamily="Segoe UI"
         FontSize="13">
-    <!-- Same neutral near-black + one hot orange accent tokens as SettingsWindow.xaml - duplicated
-         locally rather than shared via a ResourceDictionary, matching this codebase's existing
-         per-window resource style (SettingsWindow.xaml does the same). -->
+    <!-- Dark control chrome (Button/CheckBox/ComboBox/etc.) now comes from the shared
+         Theme/RoeSnipTheme.xaml dictionary - the same one SettingsWindow.xaml merges - instead of
+         this window's own plain-property-setter styles, which is what left the ComboBox/Button/
+         CheckBox chrome light regardless of the Background/Foreground values set here. The legacy
+         "MutedBrush"/"PanelBrush"/"BorderBrush2" keys this file's code-behind looks up via
+         Resources["..."] are still defined (as aliases onto the real Rl* tokens) inside that merged
+         dictionary, so nothing in ShareProvidersWindow.xaml.cs needed to change to keep resolving
+         them. -->
     <Window.Resources>
-        <SolidColorBrush x:Key="PanelBrush" Color="#FF18181D"/>
-        <SolidColorBrush x:Key="BorderBrush2" Color="#12FFFFFF"/>
-        <SolidColorBrush x:Key="AccentBrush" Color="#FFFF6B35"/>
-        <SolidColorBrush x:Key="MutedBrush" Color="#FF71717B"/>
-        <SolidColorBrush x:Key="WarnBrush" Color="#FFDC6B2E"/>
-
-        <Style TargetType="Button">
-            <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
-            <Setter Property="Foreground" Value="#FFEDEDF0"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
-            <Setter Property="Padding" Value="10,5"/>
-            <Setter Property="Cursor" Value="Hand"/>
-        </Style>
-
-        <Style TargetType="CheckBox">
-            <Setter Property="Foreground" Value="#FFEDEDF0"/>
-        </Style>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="pack://application:,,,/Theme/RoeSnipTheme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
     </Window.Resources>
 
     <DockPanel Margin="18">

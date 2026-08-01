@@ -52,6 +52,7 @@ public partial class ShareProviderEditWindow : Window
         ShareProviderConfig config, bool isNew, Action<ShareProviderConfig> onSave, Action<string>? onRemove)
     {
         InitializeComponent();
+        DarkTitleBar.Apply(this);
 
         _originalConfig = config;
         _isNew = isNew;

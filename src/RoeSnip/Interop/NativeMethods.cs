@@ -154,6 +154,18 @@ public static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetKeyNameText(int lParam, System.Text.StringBuilder lpString, int cchSize);
 
+    // Dark title bar for the app's three system-chromed windows (Settings, Sharing providers,
+    // Configure provider). WPF never touches the non-client area, so a pure-black window otherwise
+    // wears a bright white caption bar - the one piece of "white on white" the XAML theme cannot
+    // reach. DWMWA_USE_IMMERSIVE_DARK_MODE is 20 on Windows 10 2004+ and Windows 11; on the 19H1
+    // -era builds where it was 19 the call simply returns a non-zero HRESULT and the caption stays
+    // light, which is why DarkTitleBar tries both and ignores failures.
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+    public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    public const int DWMWA_USE_IMMERSIVE_DARK_MODE_LEGACY = 19;
+
     // Broadcasts a policy-change notification (e.g. after writing a Control Panel\Keyboard
     // registry value) so the shell picks it up live instead of only at the next logon. See
     // TrayApp.ResolvePrintScreenConsent's use on the PrintScreenKeyForSnippingEnabled write.

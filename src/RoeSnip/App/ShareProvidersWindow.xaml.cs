@@ -32,6 +32,7 @@ public partial class ShareProvidersWindow : Window
     public ShareProvidersWindow(RoeSnipSettings currentSettings)
     {
         InitializeComponent();
+        DarkTitleBar.Apply(this);
         RefreshList(currentSettings);
     }
 
@@ -79,16 +80,15 @@ public partial class ShareProvidersWindow : Window
             subtitleParts.Add("custom");
         }
 
+        // "untested" is communicated by the word itself (in subtitleParts above) plus the dedicated
+        // UntestedBadgeText banner in the edit window - it no longer gets its own distinct color
+        // (WarnBrush retired, see Theme/RoeSnipTheme.xaml's legacy-alias section).
         var subtitleText = new TextBlock
         {
             Text = string.Join(" - ", subtitleParts),
             FontSize = 11,
             Foreground = (Brush)Resources["MutedBrush"],
         };
-        if (spec is { Verified: false })
-        {
-            subtitleText.Foreground = (Brush)Resources["WarnBrush"];
-        }
 
         var titleStack = new StackPanel();
         titleStack.Children.Add(nameText);

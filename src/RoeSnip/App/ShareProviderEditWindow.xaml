@@ -11,62 +11,36 @@
         Foreground="#FFEDEDF0"
         FontFamily="Segoe UI"
         FontSize="13">
-    <!-- Same tokens as SettingsWindow.xaml/ShareProvidersWindow.xaml - duplicated locally, matching
-         this codebase's existing per-window resource style. -->
+    <!-- Dark control chrome (Button/CheckBox/ComboBox/TextBox/PasswordBox) now comes from the shared
+         Theme/RoeSnipTheme.xaml dictionary - the same one SettingsWindow.xaml/ShareProvidersWindow.xaml
+         merge - instead of this window's own plain-property-setter styles. The legacy "PanelBrush"/
+         "BorderBrush2"/"MutedBrush"/"OkBrush"/"ErrorBrush" keys this file's code-behind looks up via
+         Resources["..."] are still defined (as aliases onto the real Rl* tokens) inside that merged
+         dictionary, so nothing in ShareProviderEditWindow.xaml.cs needed to change to keep resolving
+         them. This window keeps one small window-local style: the shared theme has no Label style
+         (Label isn't used anywhere else in the app), and Label's default WPF chrome already respects
+         a plain Foreground setter fine (unlike ComboBox/Button/CheckBox, which is why those moved to
+         full retemplates) - so it stays a plain TargetType style, just pointed at the shared MutedBrush
+         alias instead of a local literal. -->
     <Window.Resources>
-        <SolidColorBrush x:Key="PanelBrush" Color="#FF18181D"/>
-        <SolidColorBrush x:Key="BorderBrush2" Color="#12FFFFFF"/>
-        <SolidColorBrush x:Key="AccentBrush" Color="#FFFF6B35"/>
-        <SolidColorBrush x:Key="MutedBrush" Color="#FF71717B"/>
-        <SolidColorBrush x:Key="WarnBrush" Color="#FFDC6B2E"/>
-        <SolidColorBrush x:Key="OkBrush" Color="#FF4A9EFF"/>
-        <SolidColorBrush x:Key="ErrorBrush" Color="#FFDC2626"/>
-
-        <Style TargetType="Label">
-            <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
-            <Setter Property="Padding" Value="0,0,0,2"/>
-        </Style>
-
-        <Style TargetType="TextBox">
-            <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
-            <Setter Property="Foreground" Value="#FFEDEDF0"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
-            <Setter Property="Padding" Value="6,4"/>
-            <Setter Property="CaretBrush" Value="#FFEDEDF0"/>
-        </Style>
-
-        <Style TargetType="PasswordBox">
-            <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
-            <Setter Property="Foreground" Value="#FFEDEDF0"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
-            <Setter Property="Padding" Value="6,4"/>
-            <Setter Property="CaretBrush" Value="#FFEDEDF0"/>
-        </Style>
-
-        <Style TargetType="ComboBox">
-            <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
-            <Setter Property="Foreground" Value="#FFEDEDF0"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
-        </Style>
-
-        <Style TargetType="CheckBox">
-            <Setter Property="Foreground" Value="#FFEDEDF0"/>
-            <Setter Property="Margin" Value="0,4"/>
-        </Style>
-
-        <Style TargetType="Button">
-            <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
-            <Setter Property="Foreground" Value="#FFEDEDF0"/>
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush2}"/>
-            <Setter Property="Padding" Value="10,5"/>
-            <Setter Property="Cursor" Value="Hand"/>
-        </Style>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="pack://application:,,,/Theme/RoeSnipTheme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <Style TargetType="Label">
+                <Setter Property="Foreground" Value="{StaticResource MutedBrush}"/>
+                <Setter Property="Padding" Value="0,0,0,2"/>
+            </Style>
+        </ResourceDictionary>
     </Window.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="18">
             <TextBlock x:Name="HeaderText" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4"/>
-            <TextBlock x:Name="UntestedBadgeText" Foreground="{StaticResource WarnBrush}" FontSize="11"
+            <!-- "untested" is not its own color signal anymore (WarnBrush retired) - the leading
+                 "UNTESTED:" word plus this being its own line right under the header already carries
+                 the signal; body text matches NotesText's own MutedBrush exactly. -->
+            <TextBlock x:Name="UntestedBadgeText" Foreground="{StaticResource MutedBrush}" FontSize="11"
                        TextWrapping="Wrap" Margin="0,0,0,6" Visibility="Collapsed"/>
             <TextBlock x:Name="NotesText" Foreground="{StaticResource MutedBrush}" FontSize="11"
                        TextWrapping="Wrap" Margin="0,0,0,12"/>
@@ -83,7 +57,7 @@
             <!-- Custom provider: the full ProviderSpec editable directly - only shown when editing/
                  adding a Custom entry (see ShareProviderConfig.IsCustom). -->
             <StackPanel x:Name="CustomSpecPanel" Visibility="Collapsed" Margin="0,10,0,0">
-                <TextBlock Text="Request" FontWeight="SemiBold" Margin="0,4,0,8"/>
+                <TextBlock Text="Request" Style="{StaticResource SectionHeaderStyle}"/>
 
                 <Label Content="Endpoint URL (may use {Key} tokens - see Template values below)"/>
                 <TextBox x:Name="EndpointBox" Margin="0,0,0,10"/>
@@ -101,8 +75,10 @@
                     <StackPanel Grid.Column="2">
                         <Label Content="Upload kind"/>
                         <ComboBox x:Name="UploadKindCombo" SelectionChanged="UploadKindCombo_SelectionChanged">
-                            <ComboBoxItem Content="Multipart form (most services)"/>
-                            <ComboBoxItem Content="Raw file bytes (e.g. RoeShare)"/>
+                            <!-- Short labels on purpose: this combo sits in a half-width column, and
+                                 the old parenthetical hints ran under the dropdown arrow. -->
+                            <ComboBoxItem Content="Multipart form"/>
+                            <ComboBoxItem Content="Raw file bytes"/>
                         </ComboBox>
                     </StackPanel>
                 </Grid>
@@ -120,7 +96,7 @@
                 <Label Content="Max upload size in MB (blank = unknown/unbounded)"/>
                 <TextBox x:Name="MaxSizeMbBox" Margin="0,0,0,10"/>
 
-                <TextBlock Text="Response" FontWeight="SemiBold" Margin="0,4,0,8"/>
+                <TextBlock Text="Response" Style="{StaticResource SectionHeaderStyle}"/>
                 <Label Content="How to find the URL in a successful response"/>
                 <ComboBox x:Name="ResponseModeCombo" Margin="0,0,0,10" SelectionChanged="ResponseModeCombo_SelectionChanged">
                     <ComboBoxItem Content="JSON path (e.g. data.link)"/>
@@ -136,7 +112,7 @@
                     <TextBox x:Name="ResponseRegexBox" Margin="0,0,0,10"/>
                 </StackPanel>
 
-                <TextBlock Text="Template values" FontWeight="SemiBold" Margin="0,4,0,8"/>
+                <TextBlock Text="Template values" Style="{StaticResource SectionHeaderStyle}"/>
                 <Label Content="One per line: Key=Value (e.g. ApiKey=..., BaseUrl=https://example.com) - referenced above as {Key}"/>
                 <TextBox x:Name="CustomValuesBox" AcceptsReturn="True" TextWrapping="Wrap" Height="56" Margin="0,0,0,10"/>
             </StackPanel>
@@ -150,9 +126,10 @@
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-                <Button x:Name="RemoveButton" Content="Remove" Click="RemoveButton_Click" Margin="0,0,8,0" Visibility="Collapsed"/>
+                <Button x:Name="RemoveButton" Content="Remove" Style="{StaticResource DangerButtonStyle}"
+                        Click="RemoveButton_Click" Margin="0,0,8,0" Visibility="Collapsed"/>
                 <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click" Margin="0,0,8,0"/>
-                <Button x:Name="SaveButton" Content="Save" Click="SaveButton_Click" Background="{StaticResource AccentBrush}" Foreground="#FF180D07"/>
+                <Button x:Name="SaveButton" Content="Save" Style="{StaticResource AccentButtonStyle}" Click="SaveButton_Click"/>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

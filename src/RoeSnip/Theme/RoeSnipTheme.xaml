@@ -1,0 +1,693 @@
+<!-- Shared dark theme for the WPF settings surfaces (SettingsWindow, ShareProvidersWindow,
+     ShareProviderEditWindow). This app has no App.xaml (Program.cs builds System.Windows.Application
+     in code) - there is no application-scope merge point, so every window that wants these styles
+     merges this dictionary explicitly via Window.Resources/MergedDictionaries. UseWPF's implicit
+     **/*.xaml glob already picks this file up as a Page build item; no csproj change needed.
+
+     Root cause this file fixes: the old per-window styles only set plain properties (Background/
+     Foreground/BorderBrush) on TargetType-only styles. WPF's default (Aero2) control templates
+     ignore those in most visual states - the ComboBox toggle + its Popup draw system-light chrome
+     regardless, Button hover/pressed flips to a light system gradient, CheckBox/ScrollBar/ToolTip
+     stay light - which is exactly the white-on-white illegibility this pass exists to remove. Every
+     style below is a full ControlTemplate retemplate, modeled on the already-shipped, already-dark
+     Overlay/ToolbarControl.xaml (DarkComboBoxStyle/DarkComboBoxItemStyle etc). ToolbarControl.xaml
+     itself is left untouched - this file is a separate, deliberate duplication of its 17 base tokens,
+     not a repoint, per the standing minimal-fixes rule (don't churn a working, load-bearing overlay
+     control to deduplicate tokens).
+
+     DEFINITION ORDER IS LOAD-BEARING. A Style referenced by StaticResource (ItemContainerStyle below)
+     must be defined earlier in this same dictionary than its first use, or WPF hands over a deferred
+     reference that detonates as an InvalidCastException/XamlParseException the first time that control
+     is realized (this exact bug crashed ToolbarControl once already - see its own DarkComboBoxItemStyle
+     comment). Order here: (1) base color tokens, (2) legacy alias keys the provider windows' code-
+     behind already looks up via Resources["..."], (3) DarkComboBoxItemStyle, (4) implicit ComboBox
+     style, (5) Button styles, (6) CheckBox, (7) TextBox + ReadOnlyHotkeyBoxStyle, (8) PasswordBox,
+     (9) ScrollBar, (10) ToolTip, (11) ExpanderHeaderToggleStyle, (12) SectionCardStyle/
+     SectionHeaderStyle. Do not reorder without re-checking every StaticResource reference below still
+     points at something already defined above it. -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ============================================================
+         1. BASE COLOR TOKENS - byte-for-byte copies of
+         Overlay/ToolbarControl.xaml:18-65's Rl* brushes. Same key
+         names (do not rename - ShareProvidersWindow/ShareProviderEditWindow
+         and any future window may reference these directly by key).
+         No literal hex anywhere else in this file except here and the
+         one pure-white "on danger red" exception called out at its
+         point of use below (AUDIT CORRECTION, see docs/PARITY.md entry).
+         ============================================================ -->
+    <SolidColorBrush x:Key="RlTextPrimaryBrush" Color="#EDEDF0"/>
+    <!-- rl-text: neutral off-white body/icon color, ~18:1 on black - never pure white. -->
+    <SolidColorBrush x:Key="RlTextMutedBrush" Color="#A2A2AB"/>
+    <!-- rl-text-muted: captions sitting on an ELEVATED card surface (>=4.5:1 there). -->
+    <SolidColorBrush x:Key="RlTextDimBrush" Color="#71717B"/>
+    <!-- rl-text-dim: captions sitting on the pure-black window surface; also the explicit
+         "locked/inert" label color (disabled CheckBox rows), matching the hint caption beneath. -->
+    <SolidColorBrush x:Key="RlTextOnPrimaryBrush" Color="#180D07"/>
+    <!-- dark text/glyphs placed on bright orange fills -->
+    <SolidColorBrush x:Key="RlPrimaryGoldBrush" Color="#FF6B35"/>
+    <!-- the one brand accent: primary buttons, checked glyphs, focus rings, selection tint -->
+    <SolidColorBrush x:Key="RlPrimaryGoldLightBrush" Color="#FF8A5C"/>
+    <!-- primary-button / checked-glyph hover fill -->
+    <SolidColorBrush x:Key="RlGoldBorderSolidBrush" Color="#E5561F"/>
+    <!-- primary-button press fill + solid edge -->
+    <SolidColorBrush x:Key="RlBgSecondaryBrush" Color="#0E0E11"/>
+    <!-- popup/dropdown chrome fill -->
+    <SolidColorBrush x:Key="RlBgElevatedBrush" Color="#18181D"/>
+    <!-- card / input / button fill -->
+    <SolidColorBrush x:Key="RlBorderBrush" Color="#12FFFFFF"/>
+    <!-- rgba(255,255,255,.07): workhorse hairline for cards/inputs/in-card dividers -->
+    <SolidColorBrush x:Key="RlBorderStrongBrush" Color="#24FFFFFF"/>
+    <!-- rgba(255,255,255,.14): emphasized edges - hover borders, popup border, group dividers -->
+    <SolidColorBrush x:Key="RlGhostHoverBrush" Color="#0FFFFFFF"/>
+    <!-- rgba(255,255,255,.06): neutral button hover fill -->
+    <SolidColorBrush x:Key="RlGhostPressedBrush" Color="#1AFFFFFF"/>
+    <!-- rgba(255,255,255,.10): neutral button pressed fill / dropdown row hover / text selection -->
+    <SolidColorBrush x:Key="RlActiveTintBrush" Color="#1FFF6B35"/>
+    <!-- rgba(primary,.12): flat orange tint, not currently used by these windows but kept for
+         parity with the token set every other Rl* surface in the app shares -->
+    <SolidColorBrush x:Key="RlSelectedItemBrush" Color="#33FF6B35"/>
+    <!-- rgba(primary,.20): selected dropdown row fill -->
+    <SolidColorBrush x:Key="RlDangerHoverBrush" Color="#DC2626"/>
+    <!-- solid hover/press fill for the Remove button -->
+    <SolidColorBrush x:Key="RlDropdownArrowBrush" Color="#A2A2AB"/>
+    <!-- ComboBox/Expander chevron -->
+
+    <!-- ============================================================
+         2. LEGACY ALIAS KEYS - ShareProvidersWindow.xaml.cs and
+         ShareProviderEditWindow.xaml.cs look up Resources["PanelBrush"],
+         ["BorderBrush2"], ["MutedBrush"], ["WarnBrush"], ["OkBrush"],
+         ["ErrorBrush"] at runtime. WPF's ResourceDictionary indexer
+         walks merged dictionaries, so keeping these exact key strings
+         defined here (not renamed, not deleted) keeps every one of
+         those lookups compiling and resolving - no .cs change needed
+         for the aliasing itself. Two of these are deliberate VALUE
+         changes vs. the old per-window locals, both restoring a real
+         Rl* token in place of an invented one-off color:
+           - MutedBrush:  was #FF71717B (=RlTextDim) -> now #A2A2AB (=RlTextMuted), since every
+             caption this brush paints now lives inside a card (RlBgElevated bg).
+           - WarnBrush:   was #FFDC6B2E (an invented third accent) -> now #A2A2AB (=RlTextMuted):
+             "untested" stops being a color signal, the word itself plus the dedicated
+             UntestedBadgeText banner already say it.
+           - OkBrush:     was #FF4A9EFF (an invented blue accent) -> now #FF6B35 (=RlPrimaryGold).
+           - ErrorBrush:  was already #FFDC2626, exact match for RlDangerHoverBrush - no value
+             change, just routed through the shared token instead of a local duplicate.
+         Plain literals (not Binding-to-StaticResource.Color indirection) per spec: simpler, and
+         these are static design tokens that never change independently at runtime. -->
+    <SolidColorBrush x:Key="PanelBrush" Color="#18181D"/>
+    <SolidColorBrush x:Key="BorderBrush2" Color="#12FFFFFF"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="#FF6B35"/>
+    <SolidColorBrush x:Key="MutedBrush" Color="#A2A2AB"/>
+    <SolidColorBrush x:Key="WarnBrush" Color="#A2A2AB"/>
+    <SolidColorBrush x:Key="OkBrush" Color="#FF6B35"/>
+    <SolidColorBrush x:Key="ErrorBrush" Color="#DC2626"/>
+
+    <!-- ============================================================
+         3. DarkComboBoxItemStyle - MUST be defined before the implicit
+         ComboBox style below (trap 1: ItemContainerStyle is a forward
+         reference otherwise). Both hover AND selected triggers are
+         required: without the hover trigger, an already-selected row
+         shows no fill until the mouse actually moves over it the first
+         time the popup opens.
+         ============================================================ -->
+    <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="Focusable" Value="True"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                            Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <ContentPresenter/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlSelectedItemBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Foreground" Value="{StaticResource RlTextDimBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================================================
+         4. Implicit ComboBox style (no x:Key) - every ComboBox in
+         every window that merges this dictionary gets it automatically,
+         whether declared in XAML (UpdateFrequencyCombo,
+         DefaultShareProviderCombo, UploadKindCombo, ResponseModeCombo)
+         or built in code (ShareProviderEditWindow's option combos).
+         Fully retemplated end to end - toggle chrome, arrow, AND the
+         Popup surface - because the default template's Popup draws
+         system-themed (light) regardless of Background/Foreground
+         setters, which is the actual root cause of the reported
+         white-on-white dropdowns. Non-editable only: nothing in these
+         three windows needs ToolbarControl's editable-ComboBox variant.
+         ============================================================ -->
+    <Style TargetType="ComboBox">
+        <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="ItemContainerStyle" Value="{StaticResource DarkComboBoxItemStyle}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <!-- Two columns, with the selected-item text confined to the first one: the
+                         arrow needs its own reserved 20px or a long label (e.g. the provider
+                         editor's "Multipart form (most services)" in a half-width column) runs
+                         straight under the chevron. The ToggleButton spans both so the whole box
+                         is still one click target. -->
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="20"/>
+                        </Grid.ColumnDefinitions>
+                        <ToggleButton x:Name="ToggleBtn" Grid.Column="0" Grid.ColumnSpan="2" Focusable="False" ClickMode="Press"
+                                      Background="{TemplateBinding Background}"
+                                      BorderBrush="{TemplateBinding BorderBrush}"
+                                      BorderThickness="{TemplateBinding BorderThickness}"
+                                      IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}"
+                                            CornerRadius="6" SnapsToDevicePixels="True">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="20"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Path Grid.Column="1" Fill="{StaticResource RlDropdownArrowBrush}"
+                                                  Data="M0,0 L4,4 L8,0 Z" Width="8" Height="4" Stretch="Uniform"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </Border>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <ContentPresenter x:Name="ContentSite" Grid.Column="0" IsHitTestVisible="False"
+                                          Content="{TemplateBinding SelectionBoxItem}"
+                                          ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                          ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                          Margin="{TemplateBinding Padding}"
+                                          ClipToBounds="True"
+                                          HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                        <!-- Cursor=Arrow: the popup lives in its own visual tree and would otherwise
+                             inherit whatever cursor the invoking control set. -->
+                        <Popup x:Name="Popup" Placement="Bottom" AllowsTransparency="True"
+                               Focusable="False" PopupAnimation="Slide"
+                               IsOpen="{TemplateBinding IsDropDownOpen}">
+                            <Border Background="{StaticResource RlBgSecondaryBrush}"
+                                    BorderBrush="{StaticResource RlBorderStrongBrush}"
+                                    BorderThickness="1" CornerRadius="8" Cursor="Arrow"
+                                    MinWidth="{TemplateBinding ActualWidth}" MaxHeight="260">
+                                <ScrollViewer Margin="2" SnapsToDevicePixels="True" ScrollViewer.CanContentScroll="True">
+                                    <ItemsPresenter/>
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ToggleBtn" Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsDropDownOpen" Value="True">
+                            <Setter TargetName="ToggleBtn" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="ToggleBtn" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.5"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================================================
+         5. Button styles: implicit neutral (every plain Button - Cancel,
+         Change..., Browse..., Providers..., Configure..., Test,
+         Custom..., Close), keyed AccentButtonStyle (Save, both windows),
+         keyed DangerButtonStyle (Remove).
+         ============================================================ -->
+    <Style TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="12,7"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6" SnapsToDevicePixels="True">
+                        <ContentPresenter x:Name="Content" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Margin="{TemplateBinding Padding}" RecognizesAccessKey="True"
+                                          TextElement.Foreground="{TemplateBinding Foreground}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGhostHoverBrush}"/>
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
+                            <Setter TargetName="Bg" Property="BorderThickness" Value="2"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.5"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="AccentButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Background" Value="{StaticResource RlPrimaryGoldBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource RlTextOnPrimaryBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource RlGoldBorderSolidBrush}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6" SnapsToDevicePixels="True">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Margin="{TemplateBinding Padding}" RecognizesAccessKey="True"
+                                          TextElement.Foreground="{TemplateBinding Foreground}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <!-- Fg intentionally unchanged on hover/press (6.74:1 / 8.22:1 / 5.17:1, all pass). -->
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlPrimaryGoldLightBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGoldBorderSolidBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldLightBrush}"/>
+                            <Setter TargetName="Bg" Property="BorderThickness" Value="2"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.5"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Remove: quiet/neutral at rest (inherits the implicit Button look via BasedOn) - "no
+         permanently-red button sitting on screen", same precedent as ToolbarControl's CancelButtonStyle.
+         AUDIT CORRECTION: RlTextPrimary on RlDangerHoverBrush measures 4.13:1 (fails the >=4.5:1 body
+         bar for a text-label button, unlike the icon-only Cancel X this red is proven safe under) - the
+         hover/press states force literal pure white (#FFFFFFFF) instead, which measures 4.83:1. This is
+         the ONLY place in this file a color is not one of the 17 Rl* tokens. -->
+    <Style x:Key="DangerButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bg" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6" SnapsToDevicePixels="True">
+                        <ContentPresenter x:Name="Content" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          Margin="{TemplateBinding Padding}" RecognizesAccessKey="True"
+                                          TextElement.Foreground="{TemplateBinding Foreground}"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlDangerHoverBrush}"/>
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource RlDangerHoverBrush}"/>
+                            <Setter TargetName="Content" Property="TextElement.Foreground" Value="#FFFFFFFF"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <!-- No separate darker-red token exists; same fill as hover, per spec. -->
+                            <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlDangerHoverBrush}"/>
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource RlDangerHoverBrush}"/>
+                            <Setter TargetName="Content" Property="TextElement.Foreground" Value="#FFFFFFFF"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
+                            <Setter TargetName="Bg" Property="BorderThickness" Value="2"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.5"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================================================
+         6. Implicit CheckBox style - full glyph template. The disabled
+         trigger sets the LABEL's Foreground to RlTextMutedBrush explicitly
+         (not just opacity) so a locked row (RunAtStartupCheckBox while
+         the elevated task owns startup) visually matches the hint
+         caption directly beneath it (RunAtStartupHintText, also
+         RlTextMutedBrush) instead of using a second, uncontrolled gray for
+         the same "this is inert" idea. RlTextDimBrush would only clear
+         3.66:1 on this card's RlBgElevated background, under the 4.5:1
+         body-text floor a 13px row label needs; RlTextMutedBrush clears
+         6.99:1 there.
+         ============================================================ -->
+    <Style TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Margin" Value="0,4"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <StackPanel Orientation="Horizontal">
+                        <Grid Width="16" Height="16" Margin="0,0,8,0" VerticalAlignment="Center">
+                            <Border x:Name="FocusRing" BorderBrush="Transparent" BorderThickness="2"
+                                    CornerRadius="5" Margin="-3"/>
+                            <Border x:Name="Glyph" Background="{StaticResource RlBgElevatedBrush}"
+                                    BorderBrush="{StaticResource RlBorderBrush}" BorderThickness="1"
+                                    CornerRadius="3" SnapsToDevicePixels="True"/>
+                            <Path x:Name="CheckMark" Visibility="Collapsed"
+                                  Data="M2,7 L6,11 L13,3" Stroke="{StaticResource RlTextOnPrimaryBrush}"
+                                  StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  StrokeLineJoin="Round"/>
+                        </Grid>
+                        <ContentPresenter x:Name="LabelPresenter" VerticalAlignment="Center"
+                                          TextElement.Foreground="{TemplateBinding Foreground}"/>
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Glyph" Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Glyph" Property="Background" Value="{StaticResource RlPrimaryGoldBrush}"/>
+                            <Setter TargetName="Glyph" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
+                            <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsChecked" Value="True"/>
+                                <Condition Property="IsMouseOver" Value="True"/>
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="Glyph" Property="Background" Value="{StaticResource RlPrimaryGoldLightBrush}"/>
+                            <Setter TargetName="Glyph" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldLightBrush}"/>
+                        </MultiTrigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="FocusRing" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Glyph" Property="Opacity" Value="0.5"/>
+                            <Setter TargetName="LabelPresenter" Property="TextElement.Foreground" Value="{StaticResource RlTextMutedBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================================================
+         7. Implicit TextBox style + ReadOnlyHotkeyBoxStyle. PART_ContentHost
+         is the one name WPF's own TextBox implementation looks up by name
+         at realize time - omitting it silently breaks text display/editing.
+         CaretBrush/SelectionBrush are plain Style setters (not template-
+         dependent - TextBox reads them directly regardless of template).
+         ============================================================ -->
+    <Style TargetType="TextBox">
+        <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="CaretBrush" Value="{StaticResource RlTextPrimaryBrush}"/>
+        <Setter Property="SelectionBrush" Value="{StaticResource RlGhostPressedBrush}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="Border" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6" SnapsToDevicePixels="True">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                                      VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
+                            <Setter TargetName="Border" Property="BorderThickness" Value="2"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.5"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- HotkeyDisplay only: recessed one shade darker than an editable field (RlBgSecondary vs
+         RlBgElevated) so "this is inert" is communicated by STRUCTURE, not a new color. Not hit-test
+         visible or focusable since it's never directly edited - ChangeHotkeyButton drives capture via
+         the window's own key handlers. -->
+    <Style x:Key="ReadOnlyHotkeyBoxStyle" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+        <Setter Property="Background" Value="{StaticResource RlBgSecondaryBrush}"/>
+        <Setter Property="Cursor" Value="Arrow"/>
+        <Setter Property="IsHitTestVisible" Value="False"/>
+        <Setter Property="Focusable" Value="False"/>
+    </Style>
+
+    <!-- ============================================================
+         8. Implicit PasswordBox style - same recipe as TextBox. WPF's
+         PasswordBox shares no Template with TextBox; it needs its own
+         copy of the border/focus chrome (also PART_ContentHost-named).
+         ============================================================ -->
+    <Style TargetType="PasswordBox">
+        <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="CaretBrush" Value="{StaticResource RlTextPrimaryBrush}"/>
+        <Setter Property="SelectionBrush" Value="{StaticResource RlGhostPressedBrush}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="PasswordBox">
+                    <Border x:Name="Border" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6" SnapsToDevicePixels="True">
+                        <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"
+                                      VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Border" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
+                            <Setter TargetName="Border" Property="BorderThickness" Value="2"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.5"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================================================
+         9. Implicit ScrollBar style - no existing WPF precedent in this
+         app to copy (ToolbarControl's dropdowns never grow past
+         MaxHeight=260 without a real scrollbar showing). Transparent
+         track, thumb only, no arrow buttons (structure, not chrome).
+         Vertical-only: nothing in these three windows scrolls horizontally.
+         Rest-state thumb fill is RlTextDimBrush (not RlBorderStrongBrush -
+         a ~14% white overlay on a near-black backdrop measures roughly
+         1.4:1, under the 3:1 floor a draggable affordance needs to be
+         found without first stumbling onto it with the mouse). Hover/drag
+         both step up to RlTextMutedBrush, the one lighter tier.
+         ============================================================ -->
+    <Style TargetType="ScrollBar">
+        <Setter Property="Width" Value="10"/>
+        <Setter Property="MinWidth" Value="10"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollBar">
+                    <Grid Background="{TemplateBinding Background}">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageUpCommand" Background="Transparent"
+                                              BorderThickness="0" Focusable="False"/>
+                            </Track.DecreaseRepeatButton>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageDownCommand" Background="Transparent"
+                                              BorderThickness="0" Focusable="False"/>
+                            </Track.IncreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb>
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border x:Name="ThumbBg" Background="{StaticResource RlTextDimBrush}"
+                                                    CornerRadius="5" Margin="2,0"/>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="ThumbBg" Property="Background" Value="{StaticResource RlTextMutedBrush}"/>
+                                                </Trigger>
+                                                <Trigger Property="IsDragging" Value="True">
+                                                    <Setter TargetName="ThumbBg" Property="Background" Value="{StaticResource RlTextMutedBrush}"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                        </Track>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================================================
+         10. Implicit ToolTip style - mirrors ToolbarControl's
+         DarkContextMenuStyle recipe (ContextMenu -> ToolTip).
+         ============================================================ -->
+    <Style TargetType="ToolTip">
+        <Setter Property="Background" Value="{StaticResource RlBgSecondaryBrush}"/>
+        <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="HasDropShadow" Value="False"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToolTip">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="1" CornerRadius="6"
+                            Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <ContentPresenter/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================================================
+         11. ExpanderHeaderToggleStyle - WPF has no native Expander.
+         SettingsWindow's "Advanced" disclosure is a plain ToggleButton
+         using this style; the window supplies whatever Content it wants
+         (title + muted subtitle) and toggles the body's Visibility off
+         IsChecked. Chevron reuses the same filled-triangle glyph the
+         ComboBox arrow uses, rotated -90deg (pointing right) collapsed,
+         0deg (pointing down) expanded.
+         ============================================================ -->
+    <Style x:Key="ExpanderHeaderToggleStyle" TargetType="ToggleButton">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        <Setter Property="Padding" Value="10,8"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="HeaderBg" Background="{TemplateBinding Background}"
+                            BorderBrush="Transparent" BorderThickness="2"
+                            CornerRadius="6" SnapsToDevicePixels="True">
+                        <Grid Margin="{TemplateBinding Padding}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ContentPresenter Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                            <Path x:Name="Chevron" Grid.Column="1" Fill="{StaticResource RlDropdownArrowBrush}"
+                                  Data="M0,0 L4,4 L8,0 Z" Width="8" Height="4" Stretch="Uniform"
+                                  VerticalAlignment="Center" Margin="10,0,0,0" RenderTransformOrigin="0.5,0.5">
+                                <Path.RenderTransform>
+                                    <RotateTransform Angle="-90"/>
+                                </Path.RenderTransform>
+                            </Path>
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="HeaderBg" Property="Background" Value="{StaticResource RlGhostHoverBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="HeaderBg" Property="Background" Value="{StaticResource RlGhostPressedBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Chevron" Property="RenderTransform">
+                                <Setter.Value>
+                                    <RotateTransform Angle="0"/>
+                                </Setter.Value>
+                            </Setter>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="HeaderBg" Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ============================================================
+         12. SectionCardStyle / SectionHeaderStyle - the two purely-
+         cosmetic container styles that give every settings group its
+         grouped-card look. Kept as explicit keyed styles (not implicit
+         Border/TextBlock, which are used for far too many unrelated
+         things in these windows to safely blanket-style).
+         ============================================================ -->
+    <Style x:Key="SectionCardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding" Value="14"/>
+    </Style>
+    <Style x:Key="SectionHeaderStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Margin" Value="0,0,0,6"/>
+    </Style>
+
+</ResourceDictionary>
