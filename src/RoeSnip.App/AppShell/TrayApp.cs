@@ -200,10 +200,11 @@ public sealed class TrayApp : ITrayNotifier
         if (s_automationEnabled)
         {
             // Dev-gated automation channel (AppShell/AutomationServer.cs) for driving this app
-            // deterministically from agents/E2E instead of synthetic mouse/UIA. TriggerCapture is
-            // passed by reference (not re-implemented) so a `trigger` command runs the exact same
-            // path the tray icon/hotkey/single-instance signal already do.
-            _automationServer = new AutomationServer(TriggerCapture);
+            // deterministically from agents/E2E instead of synthetic mouse/UIA. TriggerCapture and
+            // the two settings-window hooks are all passed by reference (not re-implemented) so a
+            // `trigger`/`settings` command runs the exact same path the tray icon/hotkey/
+            // single-instance signal already do.
+            _automationServer = new AutomationServer(TriggerCapture, OpenSettingsForAutomation, CloseSettingsForAutomation);
             _automationServer.Start();
         }
 
@@ -500,6 +501,44 @@ public sealed class TrayApp : ITrayNotifier
         window.Closed += (_, _) => _openSettingsWindow = null;
         _openSettingsWindow = window;
         window.Show();
+    }
+
+    /// <summary>Automation-only entry point (AppShell/AutomationServer.cs's `settings`/`open`
+    /// command), ported from the WPF app's own OpenSettingsForAutomation: calls the SAME
+    /// <see cref="OpenSettings"/> the tray icon/menu uses rather than constructing a second window,
+    /// so an automated `screenshot` right after this sees the exact window a human would.
+    /// Idempotent like a second tray click (activates the existing window), so there is currently no
+    /// failure path other than an exception from window construction itself - kept
+    /// string?-returning to match every other `*ForAutomation` hook's error-or-null shape. Only
+    /// reachable through AutomationServer, which the automation gate (ROESNIP_AUTOMATION=1 /
+    /// --automation) alone decides whether to even construct.</summary>
+    internal string? OpenSettingsForAutomation()
+    {
+        try
+        {
+            OpenSettings();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"could not open the settings window: {ex.Message}";
+        }
+    }
+
+    /// <summary>Automation-only entry point (AppShell/AutomationServer.cs's `settings`/`close`
+    /// command): closes the single tracked settings window (same field <see cref="OpenSettings"/>
+    /// maintains), which raises the window's own Closed handler and clears
+    /// <see cref="_openSettingsWindow"/> exactly as a real close would. Errors if there is nothing
+    /// open to close, matching this file's other `*ForAutomation`-style "requires an active X" error
+    /// convention.</summary>
+    internal string? CloseSettingsForAutomation()
+    {
+        if (_openSettingsWindow is null)
+        {
+            return "settings \"close\" requires an open settings window";
+        }
+        _openSettingsWindow.Close();
+        return null;
     }
 
     private async Task ApplyUpdatedSettingsAsync(RoeSnipSettings updated)

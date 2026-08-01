@@ -265,6 +265,31 @@ public class AutomationProtocolTests
         Assert.Null(AutomationProtocol.ValidateArgs("confirm", request));
     }
 
+    [Theory]
+    [InlineData("open")]
+    [InlineData("close")]
+    public void ValidateArgs_Settings_AcceptsKnownActions(string action)
+    {
+        var request = AutomationProtocol.TryParseRequest($"{{\"cmd\":\"settings\",\"action\":\"{action}\"}}", out _)!;
+        Assert.Null(AutomationProtocol.ValidateArgs("settings", request));
+    }
+
+    [Fact]
+    public void ValidateArgs_Settings_RejectsUnknownAction()
+    {
+        var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"settings\",\"action\":\"toggle\"}", out _)!;
+        Assert.NotNull(AutomationProtocol.ValidateArgs("settings", request));
+    }
+
+    [Fact]
+    public void ValidateArgs_Settings_MissingAction_IsRejected()
+    {
+        var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"settings\"}", out _)!;
+        string? error = AutomationProtocol.ValidateArgs("settings", request);
+        Assert.NotNull(error);
+        Assert.Contains("action", error);
+    }
+
     [Fact]
     public void ValidateArgs_UnknownCommand_IsRejected()
     {
@@ -354,14 +379,16 @@ public class AutomationProtocolTests
     // ---------- KnownCommands ----------
 
     [Fact]
-    public void KnownCommands_MatchesTheDocumentedTenCommands()
+    public void KnownCommands_MatchesTheDocumentedElevenCommands()
     {
         // Wire-shape parity with the WPF app (see AutomationProtocol's own doc comment):
         // record/preset/fps/chrome remain KNOWN/validated commands here even though this port's
         // live handlers reject them as "unsupported until recording is ported" — never as
         // "unknown command" — so a future recording port only has to swap the live handlers.
+        // "settings" (settings-legibility-pass) opens/closes the Settings window
+        // (TrayApp.OpenSettingsForAutomation/CloseSettingsForAutomation) for --auto-driven visual QA.
         Assert.Equal(
-            new[] { "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot", "confirm" },
+            new[] { "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot", "confirm", "settings" },
             AutomationProtocol.KnownCommands);
     }
 }

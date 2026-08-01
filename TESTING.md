@@ -452,6 +452,32 @@ progress/result is reported via the presenter's own `ShareResultWindow` toast �
 copied to the clipboard automatically, a failed/cancelled upload names the kept file/error in the
 toast. Requires a selection and at least one enabled share provider (Settings > Sharing).
 
+#### `settings`
+
+`{"cmd":"settings","action":"open"}` or `{"cmd":"settings","action":"close"}`
+
+Settings-legibility-pass addition: opens or closes the Settings window over the SAME
+single-instance path the tray icon's "Settings..." item / a second tray click use
+(`TrayApp.OpenSettings`/`TrayApp._settingsWindow`), rather than constructing a second window — so a
+`screenshot` command issued right after `settings open` captures the exact window a human would see.
+`"open"` is idempotent (activates the existing window instead of stacking a second one, exactly like
+a second tray click) and never errors. `"close"` errors if no settings window is currently open.
+Available in any `mode` — the settings window has no effect on overlay/recording state, so the
+trailing `state` snapshot's `mode` just reflects whatever it already was.
+
+```
+--auto '{"cmd":"settings","action":"open"}'
+```
+```json
+{"ok":true,"mode":"idle", ...}
+```
+```
+--auto '{"cmd":"settings","action":"close"}'
+```
+```json
+{"ok":true,"mode":"idle", ...}
+```
+
 ### Cross-monitor selection (`select` spanning multiple monitors)
 
 `select`'s rect can cross a monitor boundary — e.g. on a 3-monitor layout with `DISPLAY3` at
@@ -673,6 +699,12 @@ reference) — `mode` is `idle`/`overlay` while no recording is active, and `set
   post-close state, not `"overlay"`); the upload's own progress/result — success or failure —
   is reported via a `ShareResultWindow` toast, same as a real click. Requires an active overlay
   session with a selection; errors otherwise.
+- **`settings`** — `{"cmd":"settings","action":"open"}` or `{"cmd":"settings","action":"close"}`.
+  Settings-legibility-pass addition: opens/closes the Settings window over the same single-instance
+  path the tray icon's "Settings..." item uses (`TrayApp.OpenSettings`/`_openSettingsWindow`) rather
+  than constructing a second window, so a `screenshot` right after `settings open` captures the
+  exact window a human would see. `"open"` is idempotent (activates the existing window, never
+  errors); `"close"` errors if none is open. Available in any `mode`.
 
 ### `record` / `preset` / `fps` / `chrome` (item 21 — recording)
 

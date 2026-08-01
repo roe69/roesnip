@@ -48,7 +48,7 @@ public static class AutomationProtocol
     public static readonly IReadOnlyList<string> KnownCommands = new[]
     {
         "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot",
-        "confirm",
+        "confirm", "settings",
     };
 
     /// <summary>Parses one line of the wire protocol: must be a JSON object with a non-empty string
@@ -176,6 +176,14 @@ public static class AutomationProtocol
                 }
                 return null;
 
+            // Settings-window visual-QA hook (settings-legibility-pass), ported from the WPF app's
+            // own AutomationProtocol.ValidateArgs: lets an --auto script open the window for a
+            // `screenshot` command to capture, then close it again, without any synthetic input.
+            case "settings":
+                return TryGetString(request, "action", out string? settingsAction) && settingsAction is "open" or "close"
+                    ? null
+                    : "settings requires \"action\": one of open|close";
+
             default:
                 return $"unknown command \"{cmd}\"";
         }
@@ -302,11 +310,15 @@ internal sealed class AutomationServer
     private static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(5);
 
     private readonly Action _triggerCapture;
+    private readonly Func<string?> _openSettings;
+    private readonly Func<string?> _closeSettings;
     private CancellationTokenSource? _cts;
 
-    public AutomationServer(Action triggerCapture)
+    public AutomationServer(Action triggerCapture, Func<string?> openSettings, Func<string?> closeSettings)
     {
         _triggerCapture = triggerCapture;
+        _openSettings = openSettings;
+        _closeSettings = closeSettings;
     }
 
     /// <summary>True when this launch should start the automation pipe. Checked by TrayApp before
@@ -412,6 +424,7 @@ internal sealed class AutomationServer
                 "escape" => HandleEscape(),
                 "screenshot" => HandleScreenshot(request),
                 "confirm" => HandleConfirm(request),
+                "settings" => HandleSettings(request),
                 _ => AutomationProtocol.BuildError($"unknown command \"{cmd}\""), // unreachable, ValidateArgs already rejected it
             };
         }
@@ -566,6 +579,22 @@ internal sealed class AutomationServer
         string? error = InvokeOnUi<string?>(() => OverlayController.IsSessionActive
             ? OverlayController.ConfirmForAutomation(action, path)
             : "confirm requires an active overlay session");
+        return error is not null
+            ? AutomationProtocol.BuildError(error)
+            : AutomationProtocol.SerializeState(InvokeOnUi(GetStateSnapshot));
+    }
+
+    /// <summary>Settings-legibility-pass automation hook, ported from the WPF app's own
+    /// HandleSettings: opens or closes the Settings window over TrayApp's own single-instance path
+    /// (<see cref="TrayApp.OpenSettingsForAutomation"/> / <see cref="TrayApp.CloseSettingsForAutomation"/>)
+    /// rather than constructing a second window, so a `screenshot` command right after `settings
+    /// open` captures the SAME window a real tray click would show. Independent of overlay/
+    /// recording `mode` - the trailing state snapshot below reflects whatever `mode` already was.</summary>
+    private string HandleSettings(JsonObject request)
+    {
+        string action = (string)request["action"]!;
+
+        string? error = InvokeOnUi<string?>(() => action == "open" ? _openSettings() : _closeSettings());
         return error is not null
             ? AutomationProtocol.BuildError(error)
             : AutomationProtocol.SerializeState(InvokeOnUi(GetStateSnapshot));

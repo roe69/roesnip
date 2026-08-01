@@ -220,10 +220,13 @@ public sealed class TrayApp : ITrayNotifier
         if (automationEnabled)
         {
             // Dev-gated automation channel (App/AutomationServer.cs) for driving this app
-            // deterministically from agents/E2E instead of synthetic mouse/UIA. TriggerCapture is
-            // passed by reference (not re-implemented) so a `trigger` command runs the exact same
-            // path --signal-capture/the tray icon/the hotkey already do.
-            _automationServer = new AutomationServer(System.Windows.Threading.Dispatcher.CurrentDispatcher, TriggerCapture);
+            // deterministically from agents/E2E instead of synthetic mouse/UIA. TriggerCapture and
+            // the two settings-window hooks are all passed by reference (not re-implemented) so a
+            // `trigger`/`settings` command runs the exact same path --signal-capture/the tray icon/
+            // the hotkey already do.
+            _automationServer = new AutomationServer(
+                System.Windows.Threading.Dispatcher.CurrentDispatcher, TriggerCapture,
+                OpenSettingsForAutomation, CloseSettingsForAutomation);
             _automationServer.Start();
         }
 
@@ -482,6 +485,42 @@ public sealed class TrayApp : ITrayNotifier
         window.Closed += (_, _) => _settingsWindow = null;
         window.Show();
         window.Activate();
+    }
+
+    /// <summary>Automation-only entry point (App/AutomationServer.cs's `settings`/`open` command):
+    /// calls the SAME <see cref="OpenSettings"/> a tray click/menu item uses rather than
+    /// constructing a second window, so an automated `screenshot` right after this sees the exact
+    /// window a human would. Idempotent like a second tray click (activates the existing window),
+    /// so there is currently no failure path other than an exception from window construction
+    /// itself - kept string?-returning to match every other `*ForAutomation` hook's error-or-null
+    /// shape in this codebase. Only reachable through AutomationServer, which the automation gate
+    /// (ROESNIP_AUTOMATION=1 / --automation) alone decides whether to even construct.</summary>
+    internal string? OpenSettingsForAutomation()
+    {
+        try
+        {
+            OpenSettings();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"could not open the settings window: {ex.Message}";
+        }
+    }
+
+    /// <summary>Automation-only entry point (App/AutomationServer.cs's `settings`/`close` command):
+    /// closes the single tracked settings window (same field <see cref="OpenSettings"/> maintains),
+    /// which raises the window's own Closed handler and clears <see cref="_settingsWindow"/> exactly
+    /// as a real close (X button / Alt+F4) would. Errors if there is nothing open to close, matching
+    /// this file's other `*ForAutomation`-style "requires an active X" error convention.</summary>
+    internal string? CloseSettingsForAutomation()
+    {
+        if (_settingsWindow is null)
+        {
+            return "settings \"close\" requires an open settings window";
+        }
+        _settingsWindow.Close();
+        return null;
     }
 
     /// <summary>The one-time PrintScreen/Snipping-Tool consent flow (DESIGN.md §2), applicable only

@@ -254,6 +254,31 @@ public class AutomationProtocolTests
         Assert.NotNull(AutomationProtocol.ValidateArgs("confirm", request));
     }
 
+    [Theory]
+    [InlineData("open")]
+    [InlineData("close")]
+    public void ValidateArgs_Settings_AcceptsKnownActions(string action)
+    {
+        var request = AutomationProtocol.TryParseRequest($"{{\"cmd\":\"settings\",\"action\":\"{action}\"}}", out _)!;
+        Assert.Null(AutomationProtocol.ValidateArgs("settings", request));
+    }
+
+    [Fact]
+    public void ValidateArgs_Settings_RejectsUnknownAction()
+    {
+        var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"settings\",\"action\":\"toggle\"}", out _)!;
+        Assert.NotNull(AutomationProtocol.ValidateArgs("settings", request));
+    }
+
+    [Fact]
+    public void ValidateArgs_Settings_MissingAction_IsRejected()
+    {
+        var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"settings\"}", out _)!;
+        string? error = AutomationProtocol.ValidateArgs("settings", request);
+        Assert.NotNull(error);
+        Assert.Contains("action", error);
+    }
+
     [Fact]
     public void ValidateArgs_UnknownCommand_IsRejected()
     {
@@ -363,14 +388,16 @@ public class AutomationProtocolTests
     // ---------- KnownCommands ----------
 
     [Fact]
-    public void KnownCommands_MatchesTheDocumentedTenCommands()
+    public void KnownCommands_MatchesTheDocumentedElevenCommands()
     {
         // "confirm" added by the multimon-selection branch: Copy/Save on the overlay had no
         // automation entry point at all before it (Save's real path pops an interactive dialog,
         // which automation must never do) — see OverlayController.ConfirmForAutomation's own doc
-        // comment.
+        // comment. "settings" added by the settings-legibility-pass: opens/closes the Settings
+        // window (TrayApp.OpenSettingsForAutomation/CloseSettingsForAutomation) so an --auto script
+        // can drive a `screenshot` of it for visual QA without synthetic input.
         Assert.Equal(
-            new[] { "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot", "confirm" },
+            new[] { "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot", "confirm", "settings" },
             AutomationProtocol.KnownCommands);
     }
 }
