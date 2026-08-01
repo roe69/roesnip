@@ -175,9 +175,12 @@ public sealed class RecordingChrome : Window
         indicatorRow.Children.Add(_redDot);
         indicatorRow.Children.Add(_elapsedText);
 
-        _startStopButton = BuildPrimaryButton(string.Empty);
-        _startStopButton.Content = BuildIcon(Icons.Record, TextOnPrimary, filled: true);
-        _startStopButton.Padding = new Thickness(10, 5, 10, 5);
+        // Start carries the SAME record mark as the screenshot toolbar's Record button (cream ring
+        // + red core), on a quiet button like the toolbar's - see the WPF twin's own note.
+        _startStopButton = BuildButton(string.Empty, isDanger: false);
+        _startStopButton.Content = BuildRecordIcon();
+        _startStopButton.Padding = new Thickness(9, 5, 9, 5);
+        _startStopButton.Margin = new Thickness(0, 0, 4, 0);
         ToolTip.SetTip(_startStopButton, "Start recording");
         _startStopButton.Click += (_, _) =>
         {
@@ -281,9 +284,11 @@ public sealed class RecordingChrome : Window
         _restartButton = BuildIconButton(Icons.Restart, "Restart (discards this take)", isDanger: false);
         _restartButton.Click += (_, _) => ShowRestartConfirm();
 
-        _saveButton = BuildPrimaryButton(string.Empty);
-        _saveButton.Content = BuildIcon(Icons.Save, TextOnPrimary);
-        _saveButton.Padding = new Thickness(10, 5, 10, 5);
+        // Save/Copy mirror the toolbar's colour roles: Save quiet with a gold-stroked icon, Copy
+        // the one solid-gold fill with dark ink.
+        _saveButton = BuildButton(string.Empty, isDanger: false);
+        _saveButton.Content = BuildIcon(Icons.Save, PrimaryOrange);
+        _saveButton.Padding = new Thickness(8, 5, 8, 5);
         ToolTip.SetTip(_saveButton, "Save");
         _saveButton.Click += (_, _) => SaveRequested?.Invoke();
 
@@ -294,10 +299,14 @@ public sealed class RecordingChrome : Window
         // on the clipboard as a file so it can be pasted straight into a chat/file manager with no
         // save-then-attach detour. On Windows Ctrl+C does the same thing (ReviewCopyHook); the
         // button is what makes it discoverable, and on Linux/macOS it is the only way in.
-        _copyButton = BuildIconButton(Icons.Copy, "Copy to clipboard (Ctrl+C on Windows)", isDanger: false);
+        _copyButton = BuildPrimaryButton(string.Empty);
+        _copyButton.Content = BuildIcon(Icons.Copy, TextOnPrimary);
+        _copyButton.Padding = new Thickness(8, 5, 8, 5);
+        _copyButton.Margin = new Thickness(4, 0, 0, 0);
+        ToolTip.SetTip(_copyButton, "Copy to clipboard (Ctrl+C on Windows)");
         _copyButton.Click += (_, _) => CopyRequested?.Invoke();
 
-        _cancelButton = BuildIconButton(Icons.Cancel, "Cancel (discards this take)", isDanger: true);
+        _cancelButton = BuildIconButton(Icons.Cancel, "Cancel (discards this take)", isDanger: true, size: 11);
         _cancelButton.Click += (_, _) => CancelRequested?.Invoke();
 
         var actionRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
@@ -404,33 +413,56 @@ public sealed class RecordingChrome : Window
         PositionNearSelection();
     }
 
-    /// <summary>Icon geometries for the action row - identical path data to the WPF twin's own
-    /// Icons class (which in turn reuses ToolbarControl's icon vocabulary), in a 16x16 space. No
-    /// emoji anywhere: they render in the system emoji font, ignore the control's foreground colour
-    /// and change shape between OS versions.</summary>
+    /// <summary>Action-row icons, identical to the WPF twin's own Icons class, which in turn takes
+    /// them from Overlay/ToolbarControl so panel and toolbar read as ONE icon set: same 16x16
+    /// space, same 14px box, same 1.6 round-capped stroke, same path data for Save/Copy/Share/
+    /// Cancel. Record is not a path - it is a cream RING with a small red core (never a solid red
+    /// dot), rebuilt in BuildRecordIcon. No emoji anywhere: they render in the system emoji font,
+    /// ignore the control's foreground colour and change shape between OS versions.</summary>
     private static class Icons
     {
-        public const string Record = "M3,8 A5,5 0 1 0 13,8 A5,5 0 1 0 3,8 Z";   // filled dot
-        public const string Stop = "M4,4 H12 V12 H4 Z";                          // filled square
+        public const string Stop = "M4,4 H12 V12 H4 Z";      // solid square: the universal stop mark
         public const string Pause = "M6,3 V13 M10,3 V13";
-        public const string Play = "M5.5,3 L13,8 L5.5,13 Z";                     // filled triangle
-        public const string Restart = "M2,6 L6,2 M2,6 L6,10 M2,6 H10 A4.5,4.5 0 0 1 10,15 H6";
+        public const string Play = "M5.5,3 L13,8 L5.5,13 Z"; // solid triangle, pairs with Pause
+        public const string Restart = "M3.2,10.5 A5.5,5.5 0 1 1 8,13.5 M8,13.5 L10.6,11.4 M8,13.5 L10.6,15.6";
         public const string Save = "M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11";
         public const string Copy = "M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5";
         public const string Share = "M8,9 V1 M4.5,4.5 L8,1 L11.5,4.5 M1.5,11 V14.5 H14.5 V11";
         public const string Cancel = "M2,2 L14,14 M14,2 L2,14";
     }
 
-    /// <summary>One action-row icon - see the WPF twin's own BuildIcon for the filled-vs-stroked
-    /// split and why the weights are what they are.</summary>
-    private static Avalonia.Controls.Shapes.Path BuildIcon(string data, Color color, bool filled = false)
+    /// <summary>The toolbar's record mark: cream ring, small red core. Deliberately not a solid red
+    /// dot - a filled blob outweighs every line-drawn icon beside it.</summary>
+    private static Grid BuildRecordIcon()
+    {
+        var grid = new Grid();
+        grid.Children.Add(new Ellipse
+        {
+            Width = 13,
+            Height = 13,
+            Stroke = new SolidColorBrush(TextPrimary),
+            StrokeThickness = 1.5,
+        });
+        grid.Children.Add(new Ellipse
+        {
+            Width = 6,
+            Height = 6,
+            Fill = new SolidColorBrush(Color.FromRgb(0xDC, 0x46, 0x46)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        return grid;
+    }
+
+    /// <summary>One action-row icon at the toolbar's own weight - see the WPF twin's BuildIcon.</summary>
+    private static Avalonia.Controls.Shapes.Path BuildIcon(string data, Color color, bool filled = false, double size = 14)
     {
         var path = new Avalonia.Controls.Shapes.Path
         {
             Data = Geometry.Parse(data),
             Stretch = Stretch.Uniform,
-            Width = 13,
-            Height = 13,
+            Width = size,
+            Height = size,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -448,12 +480,12 @@ public sealed class RecordingChrome : Window
         return path;
     }
 
-    /// <summary>Icon-only action button. The label moves into the tooltip rather than disappearing:
-    /// a control with no name at all is not discoverable.</summary>
-    private static Button BuildIconButton(string iconData, string tooltip, bool isDanger, bool filled = false)
+    /// <summary>Icon-only action button; the label moves into the tooltip rather than disappearing,
+    /// since a control with no name at all is not discoverable.</summary>
+    private static Button BuildIconButton(string iconData, string tooltip, bool isDanger, bool filled = false, double size = 14)
     {
         var button = BuildButton(string.Empty, isDanger);
-        button.Content = BuildIcon(iconData, TextPrimary, filled);
+        button.Content = BuildIcon(iconData, TextPrimary, filled, size);
         button.Padding = new Thickness(8, 5, 8, 5);
         ToolTip.SetTip(button, tooltip);
         return button;
@@ -734,8 +766,8 @@ public sealed class RecordingChrome : Window
         _redDot.IsVisible = _state == ChromeState.Recording;
 
         _startStopButton.Content = _state == ChromeState.Recording
-            ? BuildIcon(Icons.Stop, TextOnPrimary, filled: true)
-            : BuildIcon(Icons.Record, TextOnPrimary, filled: true);
+            ? BuildIcon(Icons.Stop, TextPrimary, filled: true, size: 11)
+            : BuildRecordIcon();
         ToolTip.SetTip(_startStopButton, _state == ChromeState.Recording ? "Stop" : "Start recording");
         _startStopButton.IsEnabled = _state != ChromeState.Reviewing;
         _startStopButton.IsVisible = _state != ChromeState.Reviewing;
