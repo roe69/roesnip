@@ -83,16 +83,16 @@ public partial class ShareProvidersWindow : Window
             subtitleParts.Add("custom");
         }
 
+        // Settings redesign pass (docs/PARITY.md item 23): the "untested" case no longer gets a
+        // distinct warning color at all - the word itself plus the dedicated UntestedBadgeText
+        // banner in the edit window already say it; a second color for the same fact is exactly
+        // the "invent a warning color" pattern the design language forbids. WarnBrush is retired.
         var subtitleText = new TextBlock
         {
             Text = string.Join(" - ", subtitleParts),
             FontSize = 11,
             Foreground = MutedBrush,
         };
-        if (spec is { Verified: false })
-        {
-            subtitleText.Foreground = WarnBrush;
-        }
 
         var titleStack = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         titleStack.Children.Add(nameText);
@@ -133,13 +133,16 @@ public partial class ShareProvidersWindow : Window
         };
     }
 
-    // Near-black panel/border tokens matching this port's own SettingsWindow dark palette — kept as
-    // plain static brushes (not a XAML resource dictionary) since only this file's code-built rows
-    // use them.
-    private static readonly IBrush PanelBrush = new SolidColorBrush(Color.FromRgb(0x18, 0x18, 0x1D));
-    private static readonly IBrush BorderBrush2 = new SolidColorBrush(Color.FromArgb(0x12, 0xFF, 0xFF, 0xFF));
-    private static readonly IBrush MutedBrush = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A));
-    private static readonly IBrush WarnBrush = new SolidColorBrush(Color.FromRgb(0xDC, 0x6B, 0x2E));
+    // Settings redesign pass (docs/PARITY.md item 23): these were plain static brushes with their
+    // own hardcoded hex, not one of the app's real Rl* tokens (RlBgElevatedBrush is #18181D vs.
+    // the old PanelBrush's identical-looking but independently-typed-out #18181D, RlBorderBrush
+    // vs. an independently-typed #12FFFFFF, RlTextMutedBrush's real #A2A2AB vs. the old #9A9A9A
+    // approximation). Now resolved from Application.Resources so the code-built provider rows use
+    // the exact same tokens as every XAML-declared control. WarnBrush is retired (see BuildRow).
+    private static IBrush Rl(string key) => (IBrush)Application.Current!.Resources[key]!;
+    private static readonly IBrush PanelBrush = Rl("RlBgElevatedBrush");
+    private static readonly IBrush BorderBrush2 = Rl("RlBorderBrush");
+    private static readonly IBrush MutedBrush = Rl("RlTextMutedBrush");
 
     /// <summary>The row checkbox is a quick toggle only — it never changes credentials, so it's safe
     /// to persist immediately without routing through the full edit form.</summary>

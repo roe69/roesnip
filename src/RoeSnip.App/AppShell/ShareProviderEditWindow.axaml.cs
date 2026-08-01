@@ -403,9 +403,17 @@ public partial class ShareProviderEditWindow : Window
 
     // ---------- Shared dark-palette brushes + the owned Yes/No confirm (Avalonia has no MessageBox) ----------
 
-    private static readonly IBrush MutedBrush = new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0x9A));
-    private static readonly IBrush OkBrush = new SolidColorBrush(Color.FromRgb(0x4A, 0x9E, 0xFF));
-    private static readonly IBrush ErrorBrush = new SolidColorBrush(Color.FromRgb(0xDC, 0x26, 0x26));
+    // Settings redesign pass (docs/PARITY.md item 23): resolved from Application.Resources
+    // instead of independently-typed-out hex, so TestStatusText's three states use the app's
+    // real tokens. Two of these are deliberate VALUE changes, mirroring the WPF app's own
+    // MutedBrush/OkBrush/ErrorBrush alias repoint: OkBrush was #FF4A9EFF (an invented blue
+    // accent) -> now RlPrimaryGoldBrush (the one real brand accent); MutedBrush was the softer
+    // #9A9A9A approximation -> now RlTextMutedBrush's real #A2A2AB; ErrorBrush was already
+    // #DC2626, an exact match for RlDangerHoverBrush, so that one is a routing change only.
+    private static IBrush Rl(string key) => (IBrush)Application.Current!.Resources[key]!;
+    private static readonly IBrush MutedBrush = Rl("RlTextMutedBrush");
+    private static readonly IBrush OkBrush = Rl("RlPrimaryGoldBrush");
+    private static readonly IBrush ErrorBrush = Rl("RlDangerHoverBrush");
 
     /// <summary>Owned Yes/No dialog for the Remove confirmation — Avalonia has no MessageBox.
     /// Distinct from TrayApp.ShowYesNoDialogAsync (that one is deliberately ownerless/topmost, for

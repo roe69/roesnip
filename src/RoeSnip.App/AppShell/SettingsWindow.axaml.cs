@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Settings;
@@ -93,6 +94,22 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         // hotkey; on Cancel/X mid-capture it is what restores the hotkey ChangeHotkeyButton_Click
         // suspended.
         Closed += (_, _) => _resumeGlobalHotkey();
+
+        // Parity with the WPF twin (SettingsWindow.xaml.cs): SizeToContent=Height means the window
+        // wants to be exactly as tall as its content, and the ScrollViewer inside only has to do
+        // anything on a short screen. Clamping to the screen's working area rather than a hardcoded
+        // pixel cap is what keeps every section (Sharing included) visible on a desktop monitor
+        // while still stopping at the taskbar on a small laptop. Screens is only resolvable once the
+        // window has a backing platform handle, hence Opened rather than the constructor body.
+        Opened += (_, _) =>
+        {
+            Screen? screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+            if (screen is not null)
+            {
+                double workAreaHeight = screen.WorkingArea.Height / screen.Scaling;
+                MaxHeight = Math.Max(480, workAreaHeight - 80);
+            }
+        };
     }
 
     private void LoadFromSettings()
@@ -112,6 +129,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         // rule; accepted limitation, docs/PARITY.md).
         bool elevatedSectionSupported = OperatingSystem.IsWindows();
         ElevatedStartupSection.IsVisible = elevatedSectionSupported;
+        ElevatedStartupDivider.IsVisible = elevatedSectionSupported;
 
         bool elevatedTaskInstalled = elevatedSectionSupported && ElevationManager.IsElevatedTaskInstalled();
 
@@ -252,8 +270,17 @@ public partial class SettingsWindow : Avalonia.Controls.Window
             elevatedNow = false;
         }
 
-        ElevationStatusText.Text = $"Currently running as administrator: {(elevatedNow ? "yes" : "no")}";
-        RestartElevatedButton.IsEnabled = !elevatedNow && ElevationManager.IsElevatedTaskInstalled();
+        // Copy shortened from "Currently running as administrator: {yes|no}" (settings redesign
+        // pass, docs/PARITY.md item 23) - same information, reads as a status line under the
+        // caption above instead of a third same-weight line.
+        ElevationStatusText.Text = $"Currently: {(elevatedNow ? "running as administrator" : "not elevated")}";
+
+        // Settings redesign pass: RestartElevatedButton now also HIDES (not just disables) when
+        // there's nothing to restart into, so it doesn't occupy layout as a dead-looking
+        // always-visible control.
+        bool canRestartElevated = !elevatedNow && ElevationManager.IsElevatedTaskInstalled();
+        RestartElevatedButton.IsEnabled = canRestartElevated;
+        RestartElevatedButton.IsVisible = canRestartElevated;
     }
 
     // Avalonia's CheckBox (Avalonia.Controls.Primitives.ToggleButton) has no separate Checked/

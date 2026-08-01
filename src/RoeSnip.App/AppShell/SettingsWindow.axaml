@@ -2,117 +2,165 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="RoeSnip.App.AppShell.SettingsWindow"
         Title="RoeSnip Settings"
-        Width="440" SizeToContent="Height" CanResize="False"
-        WindowStartupLocation="CenterScreen"
-        Background="#FF000000"
-        Foreground="{StaticResource RlTextPrimaryBrush}">
-  <!-- Item 16: OLED-black window background (matches WPF SettingsWindow.xaml:9 literally, not
-       routed through RlBgSecondaryBrush — the near-black CARD tone is deliberately reserved for
-       surfaces that sit ON something, whereas this whole window IS the surface) + the shared
-       App.axaml design tokens for every input/button/accent below, replacing the old generic
-       #FF9A9A9A / #FFFF6B6B guesses with the product's real muted-text and error-red values. -->
-  <Window.Styles>
-    <Style Selector="TextBox">
-      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
-      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
-      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
-      <Setter Property="CaretBrush" Value="{StaticResource RlTextPrimaryBrush}"/>
-      <Setter Property="Padding" Value="6,4"/>
-    </Style>
-    <Style Selector="ComboBox">
-      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
-      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
-      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
-    </Style>
-    <Style Selector="CheckBox">
-      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
-      <Setter Property="Margin" Value="0,4"/>
-    </Style>
-    <Style Selector="Button">
-      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
-      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
-      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
-      <Setter Property="Padding" Value="10,5"/>
-      <Setter Property="Cursor" Value="Hand"/>
-    </Style>
-    <!-- Save is the one primary action in this window, so it alone gets the solid brand-orange
-         fill (WPF's AccentBrush) — every other button here (Cancel, Change..., Browse...,
-         Providers...) stays the quiet neutral panel look above; ONE hot accent, not two. -->
-    <Style Selector="Button.accent">
-      <Setter Property="Background" Value="{StaticResource RlPrimaryGoldBrush}"/>
-      <Setter Property="Foreground" Value="{StaticResource RlTextOnPrimaryBrush}"/>
-      <Setter Property="BorderBrush" Value="{StaticResource RlGoldBorderSolidBrush}"/>
-    </Style>
-  </Window.Styles>
+        Width="480" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterScreen">
+  <!-- Settings redesign pass (docs/PARITY.md item 23), 1:1 with the WPF app's SettingsWindow.xaml
+       layout (§2.1 of the settings spec): a two-row Grid - scrollable content, then a pinned
+       footer - replacing the old single unconstrained StackPanel, with the fields regrouped into
+       Capture/Behavior/Startup/Updates/Sharing cards and a collapsed-by-default Advanced
+       disclosure. Every x:Name below is unchanged from before this pass. Background/Foreground/
+       FontFamily/FontSize are no longer set locally - App.axaml's Application.Styles "Window"
+       selector now supplies them to every window (the one place true 1:1 with WPF is impossible:
+       WPF has no App.xaml/application-scope merge point, so it must set these four attributes on
+       every window individually - see docs/PARITY.md item 23 for the full note). -->
+  <Grid RowDefinitions="*,Auto">
+    <!-- No MaxHeight here: the window itself is clamped to the screen's working area in code-behind
+         (WPF twin does the same via SystemParameters.WorkArea), so the content decides the height
+         and this only starts scrolling on a screen too short to show it all. A fixed pixel cap hid
+         the Sharing section on a 1440p desktop with room to spare. The window title bar already
+         reads "RoeSnip Settings", so no in-window title repeats it. -->
+    <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+      <StackPanel Margin="18,16,18,4">
+        <!-- Capture -->
+        <TextBlock Text="Capture" Classes="section-header"/>
+        <Border Classes="card" Margin="0,0,0,14">
+          <StackPanel>
+            <TextBlock Text="Hotkey" Foreground="{StaticResource RlTextPrimaryBrush}" Margin="0,0,0,6"/>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBox x:Name="HotkeyDisplay" Grid.Column="0" IsReadOnly="True" Margin="0,0,8,0"/>
+              <Button x:Name="ChangeHotkeyButton" Grid.Column="1" Content="Change..." Click="ChangeHotkeyButton_Click"/>
+            </Grid>
 
-  <StackPanel Margin="18" Spacing="4">
-    <TextBlock Text="RoeSnip Settings" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10"/>
+            <!-- Avalonia-only: Windows has no Wayland, so WPF correctly has no equivalent. -->
+            <TextBlock x:Name="WaylandHotkeyCaption" Foreground="{StaticResource RlDangerHoverBrush}" TextWrapping="Wrap"
+                       IsVisible="False" Margin="0,6,0,0" FontSize="11"
+                       Text="Global hotkeys aren't available on Wayland. Bind a keyboard shortcut to `RoeSnip capture` in your desktop settings instead."/>
 
-    <TextBlock Text="Hotkey" Foreground="{StaticResource RlTextMutedBrush}"/>
-    <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-      <TextBox x:Name="HotkeyDisplay" Grid.Column="0" IsReadOnly="True" Margin="0,0,8,0"/>
-      <Button x:Name="ChangeHotkeyButton" Grid.Column="1" Content="Change..." Click="ChangeHotkeyButton_Click"/>
-    </Grid>
+            <Border Height="1" Margin="0,12" Background="{StaticResource RlBorderBrush}"/>
 
-    <TextBlock x:Name="WaylandHotkeyCaption" Foreground="{StaticResource RlDangerHoverBrush}" TextWrapping="Wrap"
-               IsVisible="False" Margin="0,0,0,8"
-               Text="Global hotkeys aren't available on Wayland. Bind a keyboard shortcut to `RoeSnip capture` in your desktop settings instead."/>
+            <TextBlock Text="Save directory" Foreground="{StaticResource RlTextPrimaryBrush}" Margin="0,0,0,6"/>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBox x:Name="SaveDirectoryBox" Grid.Column="0" Margin="0,0,8,0"/>
+              <Button x:Name="BrowseButton" Grid.Column="1" Content="Browse..." Click="BrowseButton_Click"/>
+            </Grid>
 
-    <TextBlock Text="Save directory" Foreground="{StaticResource RlTextMutedBrush}"/>
-    <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-      <TextBox x:Name="SaveDirectoryBox" Grid.Column="0" Margin="0,0,8,0"/>
-      <Button x:Name="BrowseButton" Grid.Column="1" Content="Browse..." Click="BrowseButton_Click"/>
-    </Grid>
+            <Border Height="1" Margin="0,12" Background="{StaticResource RlBorderBrush}"/>
 
-    <CheckBox x:Name="AutoSaveHdrCheckBox" Content="Always save an HDR (.jxr) copy alongside the PNG"/>
-    <CheckBox x:Name="CopyOnSelectCheckBox" Content="Confirming a selection also copies it to the clipboard"/>
-    <CheckBox x:Name="ColorPickerCheckBox" Content="Enable the colour picker (click to pick a colour, loupe colour codes)"/>
-    <CheckBox x:Name="RunAtStartupCheckBox" Content="Start RoeSnip at login"/>
-    <TextBlock x:Name="RunAtStartupHintText" Foreground="{StaticResource RlTextDimBrush}" FontSize="11" TextWrapping="Wrap"
-               IsVisible="False" Margin="20,0,0,4"/>
+            <CheckBox x:Name="AutoSaveHdrCheckBox" Content="Save HDR copy" Margin="0,0,0,4"/>
+            <TextBlock Text="Keep the untouched FP16 .jxr next to the PNG."
+                       Margin="20,0,0,0" FontSize="11" TextWrapping="Wrap"
+                       Foreground="{StaticResource RlTextMutedBrush}"/>
+          </StackPanel>
+        </Border>
 
-    <!-- Item 15: Windows-only elevated startup. Hidden entirely (IsVisible set in code-behind's
-         LoadFromSettings, not just disabled) on Linux/macOS — Scheduled Tasks and UIPI have no
-         portable equivalent, so there is nothing sensible to show here on those OSes. -->
-    <StackPanel x:Name="ElevatedStartupSection" Spacing="2" Margin="0,4,0,0">
-      <CheckBox x:Name="RunElevatedCheckBox" Content="Run as administrator (persists via a Scheduled Task)"
-                IsCheckedChanged="RunElevatedCheckBox_IsCheckedChanged"/>
-      <TextBlock x:Name="ElevationStatusText" Foreground="{StaticResource RlTextDimBrush}" FontSize="11" Margin="20,0,0,0"/>
-      <Button x:Name="RestartElevatedButton" Content="Restart elevated now" Click="RestartElevatedButton_Click"
-              HorizontalAlignment="Left" Margin="20,2,0,0"/>
-    </StackPanel>
+        <!-- Behavior -->
+        <TextBlock Text="Behavior" Classes="section-header"/>
+        <Border Classes="card" Margin="0,0,0,14">
+          <StackPanel>
+            <CheckBox x:Name="CopyOnSelectCheckBox" Content="Copy to clipboard on selection" Margin="0,0,0,4"/>
+            <TextBlock Text="Confirming a selection also copies it, no extra step needed."
+                       Margin="20,0,0,0" FontSize="11" TextWrapping="Wrap"
+                       Foreground="{StaticResource RlTextMutedBrush}"/>
 
-    <TextBlock Text="Check for updates" Foreground="{StaticResource RlTextMutedBrush}" Margin="0,10,0,0"/>
-    <ComboBox x:Name="UpdateFrequencyCombo" HorizontalAlignment="Stretch" Margin="0,0,0,4"/>
-    <TextBlock x:Name="UpdateFrequencyHintText" Foreground="{StaticResource RlTextDimBrush}" FontSize="11"
-               TextWrapping="Wrap" IsVisible="False" Margin="0,0,0,4"/>
+            <Border Height="1" Margin="0,12" Background="{StaticResource RlBorderBrush}"/>
 
-    <TextBlock Text="Advanced tone-map overrides (leave blank for automatic)" Margin="0,10,0,4" Foreground="{StaticResource RlTextDimBrush}"/>
-    <Grid ColumnDefinitions="*,12,*">
-      <StackPanel Grid.Column="0" Spacing="2">
-        <TextBlock Text="Knee (0-1)"/>
-        <TextBox x:Name="KneeOverrideBox"/>
+            <CheckBox x:Name="ColorPickerCheckBox" Content="Colour picker" Margin="0,0,0,4"/>
+            <TextBlock Text="Click to sample a colour, with a magnified loupe and colour codes."
+                       Margin="20,0,0,0" FontSize="11" TextWrapping="Wrap"
+                       Foreground="{StaticResource RlTextMutedBrush}"/>
+          </StackPanel>
+        </Border>
+
+        <!-- Startup -->
+        <TextBlock Text="Startup" Classes="section-header"/>
+        <Border Classes="card" Margin="0,0,0,14">
+          <StackPanel>
+            <CheckBox x:Name="RunAtStartupCheckBox" Content="Start RoeSnip at login" Margin="0,0,0,4"/>
+            <TextBlock x:Name="RunAtStartupHintText" Margin="20,0,0,0" FontSize="11" TextWrapping="Wrap"
+                       Foreground="{StaticResource RlTextMutedBrush}" IsVisible="False"/>
+
+            <!-- Item 15: the elevated-startup section (and this divider above it) are
+                 Windows-only - both hidden entirely on Linux/macOS in code-behind, not just
+                 disabled, so nothing dangles when there's no Scheduled Task concept to show. -->
+            <Border x:Name="ElevatedStartupDivider" Height="1" Margin="0,12" Background="{StaticResource RlBorderBrush}"/>
+
+            <StackPanel x:Name="ElevatedStartupSection">
+              <CheckBox x:Name="RunElevatedCheckBox" Content="Run as administrator" Margin="0,0,0,4"
+                        IsCheckedChanged="RunElevatedCheckBox_IsCheckedChanged"/>
+              <TextBlock Text="Persists through a scheduled task. No UAC prompt at every launch."
+                         Margin="20,0,0,4" FontSize="11" TextWrapping="Wrap"
+                         Foreground="{StaticResource RlTextMutedBrush}"/>
+              <TextBlock x:Name="ElevationStatusText" Margin="20,0,0,4" FontSize="11"
+                         Foreground="{StaticResource RlTextMutedBrush}"/>
+              <!-- Avalonia-only (WPF has no equivalent button, only its one-shot post-enable
+                   prompt) - not added to WPF in this pass, see docs/PARITY.md item 23. Only
+                   occupies layout when there's actually something to restart into. -->
+              <Button x:Name="RestartElevatedButton" Content="Restart elevated now" Click="RestartElevatedButton_Click"
+                      HorizontalAlignment="Left" Margin="20,0,0,0" IsVisible="False"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- Updates -->
+        <TextBlock Text="Check for updates" Classes="section-header"/>
+        <Border Classes="card" Margin="0,0,0,14">
+          <StackPanel>
+            <ComboBox x:Name="UpdateFrequencyCombo" HorizontalAlignment="Stretch"/>
+            <TextBlock x:Name="UpdateFrequencyHintText" Margin="0,6,0,0" FontSize="11" TextWrapping="Wrap"
+                       Foreground="{StaticResource RlTextMutedBrush}" IsVisible="False"/>
+          </StackPanel>
+        </Border>
+
+        <!-- Advanced: collapsed by default, sits outside any card. Avalonia has a native
+             Expander (WPF has none - it hand-rolls a ToggleButton disclosure instead), used
+             directly here per the settings spec rather than a from-scratch custom control. -->
+        <Expander IsExpanded="False" Margin="0,0,0,14">
+          <Expander.Header>
+            <StackPanel>
+              <TextBlock Text="Advanced" FontSize="13" FontWeight="SemiBold"
+                         Foreground="{StaticResource RlTextPrimaryBrush}"/>
+              <TextBlock Text="Tone-map overrides. Leave blank for automatic." Margin="0,2,0,0"
+                         FontSize="11" Foreground="{StaticResource RlTextDimBrush}"/>
+            </StackPanel>
+          </Expander.Header>
+          <Grid Margin="10,10,10,0" ColumnDefinitions="*,12,*">
+            <StackPanel Grid.Column="0">
+              <TextBlock Text="Knee (0-1)" Foreground="{StaticResource RlTextPrimaryBrush}" Margin="0,0,0,6"/>
+              <TextBox x:Name="KneeOverrideBox"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <TextBlock Text="Peak" Foreground="{StaticResource RlTextPrimaryBrush}" Margin="0,0,0,6"/>
+              <TextBox x:Name="PeakOverrideBox"/>
+            </StackPanel>
+          </Grid>
+        </Expander>
+
+        <Border Height="1" Margin="0,0,0,16" Background="{StaticResource RlBorderStrongBrush}"/>
+
+        <!-- Sharing -->
+        <TextBlock Text="Sharing" Classes="section-header"/>
+        <Border Classes="card">
+          <StackPanel>
+            <TextBlock Text="Default share provider" Foreground="{StaticResource RlTextPrimaryBrush}" Margin="0,0,0,6"/>
+            <Grid ColumnDefinitions="*,Auto">
+              <ComboBox x:Name="DefaultShareProviderCombo" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Stretch"
+                        SelectionChanged="DefaultShareProviderCombo_SelectionChanged"/>
+              <Button x:Name="ManageProvidersButton" Grid.Column="1" Content="Providers..." Click="ManageProvidersButton_Click"/>
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <TextBlock x:Name="ValidationErrorText" Foreground="{StaticResource RlDangerHoverBrush}" TextWrapping="Wrap"
+                   IsVisible="False" Margin="0,14,0,0"/>
       </StackPanel>
-      <StackPanel Grid.Column="2" Spacing="2">
-        <TextBlock Text="Peak"/>
-        <TextBox x:Name="PeakOverrideBox"/>
+    </ScrollViewer>
+
+    <Border Grid.Row="1" Background="{StaticResource RlBgElevatedBrush}"
+            BorderBrush="{StaticResource RlBorderStrongBrush}" BorderThickness="0,1,0,0">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="18,12,18,14" Spacing="8">
+        <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click"/>
+        <Button x:Name="SaveButton" Content="Save" Classes="accent" Click="SaveButton_Click"/>
       </StackPanel>
-    </Grid>
-
-    <TextBlock Text="Sharing" FontSize="16" FontWeight="SemiBold" Margin="0,20,0,10"/>
-    <TextBlock Text="Default share provider" Foreground="{StaticResource RlTextMutedBrush}"/>
-    <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-      <ComboBox x:Name="DefaultShareProviderCombo" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Stretch"
-                SelectionChanged="DefaultShareProviderCombo_SelectionChanged"/>
-      <Button x:Name="ManageProvidersButton" Grid.Column="1" Content="Providers..." Click="ManageProvidersButton_Click"/>
-    </Grid>
-
-    <TextBlock x:Name="ValidationErrorText" Foreground="{StaticResource RlDangerHoverBrush}" TextWrapping="Wrap"
-               IsVisible="False" Margin="0,8,0,0"/>
-
-    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,16,0,0">
-      <Button x:Name="CancelButton" Content="Cancel" Click="CancelButton_Click"/>
-      <Button x:Name="SaveButton" Content="Save" Classes="accent" Click="SaveButton_Click"/>
-    </StackPanel>
-  </StackPanel>
+    </Border>
+  </Grid>
 </Window>

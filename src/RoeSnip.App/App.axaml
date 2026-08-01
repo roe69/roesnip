@@ -59,8 +59,162 @@
          opacity: a floating toolbar can't be as translucent as a card sitting on the site's own
          near-black page background. -->
     <SolidColorBrush x:Key="RlDropdownArrowBrush" Color="#A2A2AB"/>
+
+    <!-- Settings redesign pass (docs/PARITY.md item 23): FluentTheme's accent axis is
+         unconfigured by default, so accent-driven states (ComboBox hover/selected row, checked
+         CheckBox, etc.) render in the OS/platform accent color instead of the brand orange -
+         this is the ONE genuine gap the Avalonia side of that audit found (no white-on-white
+         bug here, unlike WPF's default Aero2 templates). Overriding these seven Color keys at
+         Application scope is the documented, stable Avalonia/WinUI-convention mechanism.
+         Light1/Dark1 reuse RlPrimaryGoldLight/RlGoldBorderSolid's own values exactly; Light2/
+         Light3/Dark2/Dark3 have no existing app equivalent to reuse and are mechanically
+         stepped further along the same #FF6B35 hue/lightness ramp FluentTheme expects for its
+         own internal states this app's own controls don't otherwise expose. These four
+         (Light2/Light3/Dark2/Dark3) are the only new literal hex values this pass introduces;
+         none are visible on their own anywhere in the settings windows. -->
+    <Color x:Key="SystemAccentColor">#FF6B35</Color>
+    <Color x:Key="SystemAccentColorLight1">#FF8A5C</Color>
+    <Color x:Key="SystemAccentColorLight2">#FFA37D</Color>
+    <Color x:Key="SystemAccentColorLight3">#FFBC9E</Color>
+    <Color x:Key="SystemAccentColorDark1">#E5561F</Color>
+    <Color x:Key="SystemAccentColorDark2">#C24618</Color>
+    <Color x:Key="SystemAccentColorDark3">#9E3812</Color>
+
+    <!-- Expander header chrome for SettingsWindow's "Advanced" disclosure - FluentTheme's
+         Expander template is already structurally fine, only its header/body background needs
+         to go transparent so it doesn't paint its own default surface over the window's OLED
+         black, and its text needs the app's own token instead of FluentTheme's default. -->
+    <ControlTheme x:Key="{x:Type Expander}" TargetType="Expander" BasedOn="{StaticResource {x:Type Expander}}">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <!-- Flat full-width disclosure row, matching the WPF twin's hand-rolled ToggleButton: without
+           these the Fluent default draws a bordered box that shrink-wraps its header text, so the
+           Advanced row rendered as a stray half-width panel next to full-width section cards. -->
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="HorizontalAlignment" Value="Stretch"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    </ControlTheme>
   </Application.Resources>
   <Application.Styles>
     <FluentTheme />
+
+    <!-- Settings redesign pass (docs/PARITY.md item 23): promoted from SettingsWindow.axaml's
+         own Window.Styles (verbatim) to Application scope so every window in the app - not just
+         SettingsWindow - gets the same dark TextBox/ComboBox/CheckBox/Button chrome for free,
+         including ShareProvidersWindow/ShareProviderEditWindow, which previously had zero
+         window-level styling of their own. The Window selector below is what fixes those two
+         windows' missing Background/Foreground/font as a side effect, and also covers the
+         ad-hoc Yes/No confirmation Window ShareProviderEditWindow builds inline in code (it sets
+         no Background/Foreground of its own and would otherwise stay light-chrome-on-default).
+         Any window that genuinely needs to opt out can still set Background/Foreground locally,
+         which wins over these selectors per normal Avalonia specificity rules. -->
+    <Style Selector="Window">
+      <Setter Property="Background" Value="#FF000000"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="FontSize" Value="13"/>
+    </Style>
+    <Style Selector="TextBox">
+      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+      <Setter Property="CaretBrush" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="SelectionBrush" Value="{StaticResource RlGhostPressedBrush}"/>
+      <Setter Property="Padding" Value="8,6"/>
+    </Style>
+    <Style Selector="TextBox:pointerover">
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
+    </Style>
+    <Style Selector="TextBox:focus">
+      <Setter Property="BorderBrush" Value="{StaticResource RlPrimaryGoldBrush}"/>
+    </Style>
+    <Style Selector="ComboBox">
+      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+      <Setter Property="Padding" Value="8,6"/>
+    </Style>
+    <Style Selector="ComboBox:pointerover /template/ Border#Background">
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
+    </Style>
+    <!-- Disabled inputs must stay DARK. FluentTheme's disabled treatment paints a lighter gray
+         fill from its own theme resources, and because that comes from a template-part setter it
+         beats a control-level Background setter - the empty "No provider configured yet" provider
+         combo rendered as a pale gray slab sitting on a near-black card. These reach the same
+         template parts Fluent does, so the disabled state reads as a dimmed version of the normal
+         box (WPF's twin gets there via an Opacity trigger on an already-dark template). -->
+    <Style Selector="ComboBox:disabled /template/ Border#Background">
+      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+    </Style>
+    <Style Selector="ComboBox:disabled">
+      <Setter Property="Foreground" Value="{StaticResource RlTextDimBrush}"/>
+    </Style>
+    <Style Selector="TextBox:disabled /template/ Border#PART_BorderElement">
+      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+    </Style>
+    <Style Selector="TextBox:disabled">
+      <Setter Property="Foreground" Value="{StaticResource RlTextDimBrush}"/>
+    </Style>
+    <Style Selector="Button:disabled /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextDimBrush}"/>
+    </Style>
+
+    <Style Selector="CheckBox">
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="Margin" Value="0,4"/>
+    </Style>
+    <!-- Locked row (RunAtStartupCheckBox.IsEnabled=false while the elevated task owns startup,
+         SettingsWindow.axaml.cs) - mirrors the WPF theme's corrected disabled-CheckBox trigger
+         (RoeSnipTheme.xaml) so the "this is inert" label reads the same brand-token gray in both
+         apps instead of falling back to FluentTheme's own default disabled treatment. -->
+    <Style Selector="CheckBox:disabled">
+      <Setter Property="Foreground" Value="{StaticResource RlTextMutedBrush}"/>
+    </Style>
+    <Style Selector="Button">
+      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+      <Setter Property="Padding" Value="10,5"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <!-- Save is the one primary action in these windows, so it alone gets the solid brand-orange
+         fill - every other button (Cancel, Change..., Browse..., Providers..., Configure...,
+         Test, Custom..., Close) stays the quiet neutral panel look above; ONE hot accent. -->
+    <Style Selector="Button.accent">
+      <Setter Property="Background" Value="{StaticResource RlPrimaryGoldBrush}"/>
+      <Setter Property="Foreground" Value="{StaticResource RlTextOnPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlGoldBorderSolidBrush}"/>
+    </Style>
+    <!-- Remove: quiet/neutral at rest (inherits the plain Button look above) - "no permanently-
+         red button sitting on screen". Hover forces pure white text on the danger-red fill: WPF's
+         AUDIT CORRECTION measured RlTextPrimary on RlDangerHoverBrush at 4.13:1 (fails the
+         >=4.5:1 body-text bar for a text-label button), while pure white measures 4.83:1. -->
+    <Style Selector="Button.danger:pointerover">
+      <Setter Property="Background" Value="{StaticResource RlDangerHoverBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlDangerHoverBrush}"/>
+      <Setter Property="Foreground" Value="#FFFFFFFF"/>
+    </Style>
+
+    <!-- The two purely-cosmetic container styles that give SettingsWindow's groups their
+         grouped-card look (WPF's SectionCardStyle/SectionHeaderStyle keyed styles, mirrored here
+         as classes since Avalonia styling is class-based rather than x:Key-based for this kind
+         of reusable, non-implicit style). -->
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource RlBorderBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="Padding" Value="14"/>
+    </Style>
+    <Style Selector="TextBlock.section-header">
+      <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Margin" Value="0,0,0,6"/>
+    </Style>
   </Application.Styles>
 </Application>

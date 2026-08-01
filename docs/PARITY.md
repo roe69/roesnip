@@ -1162,6 +1162,94 @@ existing WPF test suite is the proof.
       OS-specific branches outside the already-existing WindowCaptureExclusion seam (which already
       degrades to a documented no-op on Linux/macOS per item 02).
 
+- [x] 23-settings-redesign: Settings/ShareProvidersWindow/ShareProviderEditWindow re-skinned onto
+      the shared Rl* token contract in both apps, fixing the reported white/gray-on-white
+      illegibility (dropdowns especially) and reorganizing SettingsWindow into scannable groups.
+      WPF root cause: the three settings windows styled controls with plain property setters only
+      (Background/Foreground/BorderBrush) on TargetType-only styles, which WPF's default Aero2
+      templates mostly ignore - the ComboBox toggle and its Popup drew system-light chrome
+      regardless, Button hover/pressed flipped to a light system gradient, CheckBox stayed light.
+      WPF gained src/RoeSnip/Theme/RoeSnipTheme.xaml (a plain ResourceDictionary merged into each
+      window's Window.Resources, since this app has no App.xaml/application-scope merge point):
+      full ControlTemplate retemplates for ComboBox/Button/CheckBox/TextBox/PasswordBox/ScrollBar/
+      ToolTip modeled on the already-shipped Overlay/ToolbarControl.xaml dark templates, plus
+      SectionCardStyle/SectionHeaderStyle/ExpanderHeaderToggleStyle (WPF has no native Expander)
+      and the legacy PanelBrush/BorderBrush2/AccentBrush/MutedBrush/WarnBrush/OkBrush/ErrorBrush
+      alias keys the provider windows' code-behind looks up via Resources["..."], repointed at
+      real Rl* tokens (retiring two invented one-off accent colors: WarnBrush's orange and
+      OkBrush's blue) so no .cs lookup needed to change.
+      Avalonia side: the FluentTheme Dark base already renders every stock control legibly (no
+      white-on-white bug there) - the two real gaps were (1) the accent axis being unconfigured,
+      so accent-driven states rendered in the OS/platform accent color instead of brand orange,
+      and (2) ShareProvidersWindow/ShareProviderEditWindow having zero window-level styling plus
+      three hardcoded off-token literal colors (#FF9A9A9A/#FFDC6B2E/#FFFF6B6B). Fixed in
+      App.axaml: seven SystemAccentColor* Color overrides (Light1/Dark1 reuse
+      RlPrimaryGoldLight/RlGoldBorderSolid exactly; Light2/Light3/Dark2/Dark3 are the only new
+      literal hex this pass introduces, stepped along the same #FF6B35 ramp, invisible on their
+      own); the four Style Selector="TextBox|ComboBox|CheckBox|Button" blocks and the Button.accent
+      class promoted from SettingsWindow.axaml's own Window.Styles to Application.Styles, plus a
+      new Style Selector="Window" (Background/Foreground/FontFamily/FontSize) that fixes both
+      other windows' missing styling as a free side effect - including the ad-hoc Yes/No
+      confirmation Window ShareProviderEditWindow builds inline in code; a Button.danger:pointerover
+      style (forces pure white text on the red fill, matching WPF's AUDIT CORRECTION: RlTextPrimary
+      on RlDangerHoverBrush measures 4.13:1, failing the >=4.5:1 body-text bar white measures
+      4.83:1); an Expander ControlTheme override (transparent background, RlTextPrimaryBrush
+      foreground); and Border.card/TextBlock.section-header classes mirroring WPF's
+      SectionCardStyle/SectionHeaderStyle. No ComboBox/CheckBox retemplate needed on this side -
+      confirmed empirically after the accent override that popups/checked states render orange,
+      not platform blue. ShareProvidersWindow.axaml.cs/ShareProviderEditWindow.axaml.cs's static
+      brush fields now resolve via Application.Current.Resources instead of independently-typed
+      hex (same OkBrush-blue/WarnBrush-orange retirement as the WPF alias repoint); RemoveButton
+      gained Classes="danger".
+      SettingsWindow (both apps) regrouped into Capture/Behavior/Startup/Updates/Sharing cards
+      inside a scrollable region with a pinned Save/Cancel footer bar (the WINDOW is clamped to the
+      screen's working area - SystemParameters.WorkArea on WPF, Screens.ScreenFromWindow on
+      Avalonia - so the content decides the height and the ScrollViewer only engages on a screen
+      too short to show it all; the first cut used a fixed MaxHeight=640 on the ScrollViewer, which
+      hid the whole Sharing section below the fold on a 1440p desktop with room to spare and cut
+      the Startup card mid-line), a collapsed-by-default Advanced disclosure (native Expander on
+      Avalonia; hand-rolled ToggleButton on WPF, which has none), unified window width (480, was
+      420 WPF / 440 Avalonia), unified checkbox copy ("Start RoeSnip at login" on both apps,
+      was two different sentences), shortened AutoSaveHdrCheckBox copy ("Save HDR copy" + a new
+      caption replacing the old crammed-in full-sentence label) and ElevationStatusText copy
+      ("Currently: running as administrator|not elevated", was a longer "Currently running as
+      administrator: yes/no" line). No `x:Name` was renamed and no setting/behavior changed in
+      either app - this is a presentation-only pass, same field set, same validation, same save
+      semantics. Every `x:Name` referenced by both apps' code-behind still exists under its
+      original name.
+      Two more fixes came out of driving the built apps and looking at the result (via the new
+      `settings` automation command below, then screenshotting): WPF's three system-chromed windows
+      wore a bright white caption bar over a pure-black window, because the non-client area belongs
+      to DWM and no Style can reach it - App/DarkTitleBar.cs now sets
+      DWMWA_USE_IMMERSIVE_DARK_MODE on SourceInitialized for all three (Avalonia already gets a
+      dark caption from its Dark theme variant, so this closes the gap rather than opening one);
+      and WPF's ComboBox template let a long selected-item label run underneath the dropdown arrow
+      (the arrow now has its own reserved 20px column and the content presenter is clipped to
+      its own), with the provider editor's Upload kind item labels shortened to "Multipart form" /
+      "Raw file bytes" in BOTH apps since they sit in a half-width column.
+      One WPF-only fold-in from the settings spec's §2.3 exception: RestartElevatedButton
+      (Avalonia-only - WPF has no equivalent, only its one-shot post-enable restart prompt) now
+      also sets `IsVisible` (previously only `IsEnabled` toggled), so it stops occupying layout as
+      a dead-looking always-visible control when there's nothing to restart into.
+      Parity gaps, both deliberate and unavoidable, not silently dropped: (1) WPF must duplicate
+      Background/Foreground/FontFamily/FontSize on every window (SettingsWindow.xaml,
+      ShareProvidersWindow.xaml, ShareProviderEditWindow.xaml) since it has no App.xaml/
+      application-scope resource merge point; Avalonia centralizes the identical values in one
+      App.axaml "Window" style selector - same visual result, different mechanism, impossible to
+      unify further without giving the WPF app an App.xaml (out of scope for a styling pass).
+      (2) WPF's ComboBox/Button/CheckBox/TextBox/PasswordBox/ScrollBar/ToolTip needed full
+      ControlTemplate retemplates because Aero2's default templates draw system-light chrome
+      regardless of property setters; Avalonia's FluentTheme Dark templates were already correct,
+      so the equivalent Avalonia work is three narrow fixes (accent color, promoted plain-property
+      styles, two windows' missing root styling) - not a retemplate. This is a real architectural
+      difference between the two toolkits' theming models, not an inconsistency introduced by this
+      pass. (3) Explicitly out of scope on both apps (tracked as follow-ups, not silently
+      dropped): Escape during hotkey capture still commits Escape as the new hotkey instead of
+      cancelling capture; WPF's SaveButton_Click still uses blocking MessageBox for validation/save
+      failures instead of Avalonia's inline ValidationErrorText banner; Avalonia still has no window `Icon` set on any of the three
+      windows (WPF sets one on all three) - a real taskbar/alt-tab parity gap, unrelated to color/
+      contrast, not touched here.
+
 ## Platform limitations (accepted)
 
 These are not work items. They are behaviors whose honest resolution on the named OS is
