@@ -45,7 +45,18 @@ namespace RoeSnip.App.Overlay;
 /// path (direct capture-then-show — see AppShell/TrayApp.TriggerCapture) the PERMANENT behavior on
 /// Linux/macOS: Wayland in particular forbids a client positioning its own window at all, so
 /// off-screen parking cannot exist there (accepted limitation — see docs/PARITY.md). UI (dispatcher)
-/// thread only.</summary>
+/// thread only.
+///
+/// Input policy: the windows deliberately SWALLOW input rather than click through — while the flash
+/// is up the user believes the snip UI is active, so a click must do nothing rather than land in
+/// whatever app is underneath. This swallow comes from being topmost + non-click-through for Win32
+/// hit-testing (clicks go to whatever's topmost under the cursor by z-order); it does NOT depend on
+/// holding OS foreground/activation — ShowAllCore no longer stakes any foreground claim at all
+/// (2026-08-02, ported from the WPF reference's own removal — see its doc comment). Esc is the one
+/// key acted on via a focus-independent WH_KEYBOARD_LL hook (FlashEscapeHook, installed by
+/// OverlayController.TryShowFlash) — it fires regardless of which window has OS focus, so it is
+/// unaffected by the foreground-claim removal; each FlashWindow's own OnKeyDown handler is a
+/// focus-dependent fallback for the same key, in case the hook failed to install.</summary>
 internal static class FlashDimmer
 {
     private static readonly List<FlashWindow> s_windows = new();
@@ -58,14 +69,19 @@ internal static class FlashDimmer
     // acceptable.
     private static bool s_ensuringCreated;
 
-    // Foreground-claim epoch (ported from the WPF reference): ShowAll's best-effort background-
-    // thread SetForegroundWindow call is deliberately unsynchronized with the rest of the flow so it
-    // can run concurrently with the capture+tonemap stretch (thread pool) and whatever the UI thread
-    // pumps meanwhile. If that call is delayed past the point the real overlay session claims its OWN
-    // foreground, it must not steal focus back — InvalidateForegroundClaim bumps this epoch right
-    // before any real foreground
-    // claim, and the background task checks it hasn't moved before actually calling
-    // SetForegroundWindow.
+    // Foreground-claim epoch — NO LONGER LOAD-BEARING (2026-08-02, ported from the WPF reference):
+    // this used to guard ShowAllCore's own best-effort background-thread SetForegroundWindow call
+    // against racing the real overlay session's later, more robust
+    // ForegroundActivator.Activate("session-start") claim. That ShowAllCore-side claim has since
+    // been deleted outright (it was racing ahead of CaptureAll() actually reading pixels and
+    // dismissing tooltips/hover UI that was on screen at hotkey-press time — see ShowAllCore's own
+    // comment at the removal site) — the flash phase now stakes NO foreground claim of any kind.
+    // s_foregroundClaimEpoch, InvalidateForegroundClaim, s_foregroundBeforeClaim and
+    // TryRestoreForegroundFromFlash are all kept anyway, deliberately, as a no-op safety net: with
+    // nothing ever queuing a claim, TryRestoreForegroundFromFlash's own "is the foreground currently
+    // one of our flash windows" check simply never trips in the normal case, so it costs nothing to
+    // leave wired up as cheap insurance against some future change reintroducing a claim here
+    // without reintroducing this guard alongside it.
     private static int s_foregroundClaimEpoch;
 
     // The HWND that was foreground just before ShowAll's best-effort claim — the restore target for
@@ -211,7 +227,6 @@ internal static class FlashDimmer
         // resolved against s_windows BY NAME — see MonitorPresentationOrder.SetsMatch's own doc
         // comment for why a positional assumption here would be wrong.
         var presentationOrder = OrderCursorMonitorFirst(monitors);
-        FlashWindow? first = null;
         foreach (var monitor in presentationOrder)
         {
             var window = FindWindow(monitor.DeviceName);
@@ -220,37 +235,41 @@ internal static class FlashDimmer
                 continue; // shouldn't happen post-EnsureCreated, but never crash the flash path over it
             }
             window.ShowOnMonitor(); // no-op for any window the cold-build path already presented
-            first ??= window;
         }
 
-        // Best-effort activation, off the UI thread (ported from the WPF reference): the background
-        // thread (not a dispatcher item) is kept even now that the capture runs on the thread pool
-        // and this UI thread pumps during it — a cold ~60 ms foreground negotiation must stall
-        // neither the dim flush below (synchronous call) nor the freshly-pumping UI thread
-        // (dispatcher-queued call), and a raw HWND-based Win32 SetForegroundWindow has no
-        // dispatcher-thread affinity. Concurrency with the rest of the flow is handled by the
-        // s_foregroundClaimEpoch guard (see its doc).
-        if (first is not null)
-        {
-            var handle = first.TryGetPlatformHandle();
-            if (handle is not null && handle.Handle != IntPtr.Zero)
-            {
-                IntPtr hwnd = handle.Handle;
-                int claimEpoch = Volatile.Read(ref s_foregroundClaimEpoch);
-                Task.Run(() =>
-                {
-                    try
-                    {
-                        if (Volatile.Read(ref s_foregroundClaimEpoch) != claimEpoch)
-                        {
-                            return; // superseded by a real activation claim — see the field's doc comment
-                        }
-                        SetForegroundWindow(hwnd);
-                    }
-                    catch { /* foreground-lock restrictions — best-effort */ }
-                });
-            }
-        }
+        // Foreground claim REMOVED here (capture-fidelity fix, 2026-08-02 — ported from the WPF
+        // reference, src/RoeSnip/Overlay/FlashDimmer.cs's own ShowAll). This used to fire a
+        // best-effort SetForegroundWindow off a background thread at this exact point (targeting
+        // the cursor monitor's flash window, "first" in the removed code): SetForegroundWindow
+        // reassigns OS foreground activation, which is exactly the Win32 mechanism comctl32
+        // tooltips and most custom hover popups use to self-dismiss (WM_ACTIVATE/WM_ACTIVATEAPP) —
+        // so anything on screen at hotkey-press time (a tooltip, a hover menu) was being silently
+        // dismissed by THIS call, racing ahead of CaptureAll() ever reading pixels, before the
+        // user's own capture had a chance to see it. It is not load-bearing for anything this flow
+        // still needs:
+        //   - Input-swallow comes from being topmost + non-click-through (Reposition's
+        //     SWP_NOACTIVATE never activated anything and never needed to).
+        //   - Esc during the flash phase is covered focus-independently by FlashEscapeHook (a
+        //     WH_KEYBOARD_LL hook installed in TryShowFlash) — it does not depend on this claim.
+        //   - The real overlay session already claims foreground once it opens (OverlayController's
+        //     own _activeWindow.Activate() call, always preceded by InvalidateForegroundClaim() —
+        //     see item 18's comment at that call site), which is always after CaptureAll() has
+        //     returned frames.
+        // Removing it costs zero on every latency number this codebase logs (hotkey-to-dim,
+        // capture-to-overlay): the deleted call was fire-and-forget on a Task.Run queued BEFORE
+        // TrayApp.TriggerCapture reads its own flashWatch stopwatch, so it was never on that clock
+        // to begin with. s_foregroundClaimEpoch / InvalidateForegroundClaim /
+        // s_foregroundBeforeClaim / TryRestoreForegroundFromFlash are all deliberately KEPT (see
+        // s_foregroundClaimEpoch's own doc comment) as a no-op safety net, not because anything
+        // here still queues a claim for them to guard.
+        //
+        // Scope caveat (do not overclaim this as "all tooltips now survive"): this closes the
+        // ACTIVATION-triggered dismissal path only. The ShowOnMonitor loop just above still places a
+        // topmost, non-click-through window over whatever was under the cursor, with SwpNoActivate —
+        // that never claims foreground, but it DOES change what WindowFromPoint(cursor) resolves to,
+        // which can independently make an already-hovering tooltip's own hover-tracking
+        // (TrackMouseEvent) self-dismiss via WM_MOUSELEAVE. That residual path is not touched by this
+        // removal; see docs/CAPTURE-FIDELITY-SPEC.md item 1.
 
         // DispatcherPriority.Loaded sits just below Render, so this flush drains every pending
         // layout/render operation without dispatching lower-priority queued work (matches the WPF
@@ -349,13 +368,13 @@ internal static class FlashDimmer
     }
 
     /// <summary>Focus hygiene for the flash-phase exits that never open a session (Esc during the
-    /// flash, capture failed/timed out): the flash's best-effort foreground claim may have WON, and
-    /// the window it landed on is then merely parked off-screen — permanently visible, focusable and
-    /// key-swallowing — so the system's keyboard looked dead until the user clicked another app.
-    /// If (and only if) the current foreground is one of our flash windows, hand focus back to
-    /// whatever was foreground before ShowAll claimed it. Bumps the claim epoch first so an
-    /// in-flight background claim can't re-steal afterwards. UI thread; best-effort. No-ops on
-    /// non-Windows per this class's convention.</summary>
+    /// flash, capture failed/timed out). NO-OP SAFETY NET as of 2026-08-02 (see
+    /// s_foregroundClaimEpoch's doc comment): ShowAllCore no longer stakes any foreground claim, so
+    /// the "is the foreground one of our flash windows" check below never trips in the normal case —
+    /// this is kept purely as cheap insurance in case some future change reintroduces a claim
+    /// without reintroducing this restore alongside it. Bumps the claim epoch first so an in-flight
+    /// background claim (if one ever existed again) can't re-steal afterwards. UI thread;
+    /// best-effort. No-ops on non-Windows per this class's convention.</summary>
     public static void TryRestoreForegroundFromFlash()
     {
         if (!OperatingSystem.IsWindows())
@@ -587,7 +606,12 @@ internal static class FlashDimmer
             Background = Brushes.Transparent;
             Topmost = true;
             ShowInTaskbar = false;
-            ShowActivated = false; // activation is explicit (ShowAll activates only the first)
+            // Nothing in ShowAllCore ever OS-activates a flash window anymore (2026-08-02, the
+            // background SetForegroundWindow call was deleted outright — see ShowAllCore's own
+            // comment at the removal site). ShowActivated=false just suppresses Avalonia's own
+            // implicit activate-on-Show(), which would otherwise fire once at PrepareHidden's
+            // one-time Show() call even though this window is parked off-screen at that point.
+            ShowActivated = false;
             WindowStartupLocation = WindowStartupLocation.Manual;
             Focusable = true;
             Cursor = new Cursor(StandardCursorType.Cross);
@@ -632,9 +656,20 @@ internal static class FlashDimmer
             // WS_EX_TOOLWINDOW: this window is about to become permanently OS-visible for the app's
             // entire lifetime (parked off-screen or dimming a monitor) — without this it would show
             // up as its own Alt+Tab entry. ShowInTaskbar=false alone only keeps it off the taskbar.
+            //
+            // WS_EX_TRANSPARENT (click-through) is what lets a hovered tooltip survive into the
+            // capture, and it is the half of that fix the foreground-claim removal did not cover:
+            // this window is shown BEFORE the frame is read, and a topmost window that takes part in
+            // hit testing steals WindowFromPoint from whatever the cursor was over, dropping that
+            // window's hover tracking (WM_MOUSELEAVE) and dismissing its tooltip with no dependence
+            // on focus at all. Verified end to end on Windows: a hover tooltip that is up when the
+            // hotkey is pressed now appears in the captured frame. Input is still swallowed for the
+            // flash phase, by FlashMouseSwallowHook rather than by hit testing.
             long exStyle = NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GwlExStyle).ToInt64();
             NativeMethods.SetWindowLongPtr(
-                _hwnd, NativeMethods.GwlExStyle, new IntPtr(exStyle | NativeMethods.WsExToolWindow));
+                _hwnd,
+                NativeMethods.GwlExStyle,
+                new IntPtr(exStyle | NativeMethods.WsExToolWindow | NativeMethods.WsExTransparent));
 
             // CRITICAL: the flash is shown BEFORE the capture runs, so without this every screenshot
             // would contain the flash's own dim baked into the pixels. See
@@ -762,5 +797,6 @@ internal static class FlashDimmer
 
         public const int GwlExStyle = -20;
         public const int WsExToolWindow = 0x00000080;
+        public const int WsExTransparent = 0x00000020; // click-through: invisible to hit testing
     }
 }

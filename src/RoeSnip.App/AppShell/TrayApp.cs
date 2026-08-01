@@ -427,7 +427,14 @@ public sealed class TrayApp : ITrayNotifier
         // those cases simply fall straight through to the direct capture-then-show path, which is
         // also the PERMANENT behavior on Linux/macOS. The ReleaseFlash in ObserveCaptureTask's
         // finally is the backstop that guarantees the flash never outlives the flow on any exit path
-        // (capture failed on every monitor, CaptureGate busy, an unexpected exception).
+        // (capture failed on every monitor, CaptureGate busy, an unexpected exception). The flash no
+        // longer touches OS foreground at all (capture-fidelity fix, 2026-08-02 — see
+        // FlashDimmer.ShowAllCore's own comment at the removal site). This closes the ACTIVATION-
+        // triggered dismissal path only (a tooltip/hover-popup that self-dismisses on
+        // WM_ACTIVATE/WM_ACTIVATEAPP now survives); it does not guarantee every tooltip survives —
+        // any topmost window placed over an already-hovering tooltip can still make that tooltip's
+        // own hover-tracking self-dismiss via WM_MOUSELEAVE with no dependency on foreground at all.
+        // See docs/CAPTURE-FIDELITY-SPEC.md item 1.
         bool flashShown = false;
         try
         {

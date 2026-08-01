@@ -102,6 +102,26 @@ public sealed class Magnifier : FrameworkElement
 
     public string CurrentHex { get; private set; } = string.Empty;
 
+    /// <summary>The candidate crop rectangle currently being dragged, in physical pixels — the same
+    /// value <see cref="SelectionAdorner.SelectionPx"/> gets, mirrored here by every
+    /// <c>SetSelection</c> call site (see OverlayWindow.xaml.cs) so the loupe can draw the same edge
+    /// while zoomed in. Null means "no candidate selection to preview" (nothing extra is drawn even
+    /// if <see cref="ShowSelectionPreview"/> is true). Plain auto-property: no <c>InvalidateVisual</c>
+    /// call needed in the setter because every mouse-move that can change this value also calls
+    /// <see cref="Update"/> in the same handler, which already invalidates.</summary>
+    public RectPhysical? SelectionPx { get; set; }
+
+    /// <summary>Whether <see cref="SelectionPx"/> should currently be drawn as a border inside the
+    /// loupe. Deliberately a separate flag from "is <see cref="SelectionPx"/> non-null" — the caller
+    /// (OverlayWindow's mouse-move handler) sets this to true only during a live
+    /// <c>DragMode.NewSelection</c> drag past the click-threshold, so a stale rect left over from a
+    /// previous selection is never drawn during the pending-click phase, a Move/Resize drag (where
+    /// the whole magnifier is separately hidden), or blur/pixelate region placement (where
+    /// <see cref="SelectionPx"/> holds the unrelated, already-confirmed crop rect, not the region
+    /// being placed). See CAPTURE-FIDELITY-SPEC.md §3 for the full state table this implements.
+    /// Same no-InvalidateVisual reasoning as <see cref="SelectionPx"/> applies.</summary>
+    public bool ShowSelectionPreview { get; set; }
+
     private bool HasSample => _sampleX >= 0 && _sampleY >= 0 && _preview is not null && _frame is not null;
 
     public Magnifier()
@@ -222,6 +242,21 @@ public sealed class Magnifier : FrameworkElement
             }
         }
 
+        // Selection-border preview: while dragging out a new crop selection, show the SAME edge
+        // the real on-screen SelectionAdorner draws, mapped into the loupe's zoomed space, so an
+        // edge can be aligned to the exact pixel. Must render AFTER the swatch grid (an occluding
+        // border reads better on top of flat color) but BEFORE the crosshair block below, which is
+        // the pixel-precision indicator and must stay the topmost/last-drawn element always.
+        if (ShowSelectionPreview && SelectionPx is { } selectionPx)
+        {
+            var mapped = MapSelectionToLoupeRect(selectionPx, cx, cy, _sampleRadius, loupeLeft, loupeTop, swatchDip);
+            var loupeClip = new Rect(loupeLeft, loupeTop, loupeSize, loupeSize);
+            dc.PushClip(new RectangleGeometry(loupeClip));
+            dc.DrawRectangle(null, SelectionAdorner.BorderUnderPen, mapped);
+            dc.DrawRectangle(null, SelectionAdorner.BorderDashPen, mapped);
+            dc.Pop();
+        }
+
         // Crosshair over the center (sampled) pixel: a white ring nested inside a black ring, so
         // it reads against ANY background — a lone white ring vanished on white pixels (and a
         // lone black one would vanish on black), but one of the two always contrasts.
@@ -261,6 +296,31 @@ public sealed class Magnifier : FrameworkElement
             // The clipboard can be transiently locked by another process; click-to-copy is a
             // convenience, not part of the critical Copy/Save path — swallow and let the user retry.
         }
+    }
+
+    /// <summary>Maps a physical-pixel selection rectangle into the loupe's own on-screen DIP square,
+    /// using the exact same per-axis affine the swatch grid uses (<c>swatchX</c>/<c>swatchY</c> in
+    /// <see cref="OnRender"/>): each source pixel coordinate is offset by <paramref name="sampleRadius"/>
+    /// pixels relative to the sampled center (<paramref name="centerX"/>/<paramref name="centerY"/>),
+    /// then scaled by <paramref name="swatchDip"/> and placed at <paramref name="loupeLeft"/>/
+    /// <paramref name="loupeTop"/>. Pulled out as a pure static function (no <c>this</c>, no WPF
+    /// rendering) so the mapping arithmetic is unit-testable without a live FrameworkElement/
+    /// DrawingContext. <paramref name="selection"/> is normalized first since <c>RectPhysical.Right</c>/
+    /// <c>Bottom</c> are one-past-last-pixel boundaries (see <see cref="RectPhysical"/>'s own doc
+    /// comment) and this formula relies on Left &lt;= Right, Top &lt;= Bottom to produce a
+    /// non-inverted <see cref="Rect"/>. Callers are expected to clip the result to the loupe's own
+    /// square themselves (see the <c>PushClip</c> call in <see cref="OnRender"/>) — off-loupe edges
+    /// are not bounds-checked here.</summary>
+    public static Rect MapSelectionToLoupeRect(
+        RectPhysical selection, int centerX, int centerY, int sampleRadius,
+        double loupeLeft, double loupeTop, double swatchDip)
+    {
+        var n = selection.Normalized();
+        double left = loupeLeft + (n.Left - centerX + sampleRadius) * swatchDip;
+        double top = loupeTop + (n.Top - centerY + sampleRadius) * swatchDip;
+        double right = loupeLeft + (n.Right - centerX + sampleRadius) * swatchDip;
+        double bottom = loupeTop + (n.Bottom - centerY + sampleRadius) * swatchDip;
+        return new Rect(new Point(left, top), new Point(right, bottom));
     }
 
     private static (byte R, byte G, byte B) ReadPreviewPixel(SdrImage preview, int x, int y)

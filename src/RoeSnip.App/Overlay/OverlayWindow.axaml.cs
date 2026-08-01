@@ -934,6 +934,16 @@ public partial class OverlayWindow : Window
             }
         }
 
+        // Capture-fidelity spec item 3: computed HERE (after the switch above has settled this
+        // frame's _dragMode/_newSelectionPending/_selectionPx), not merged into the earlier
+        // _magnifier.Update() call above the switch — doing it there would read one frame stale
+        // (e.g. still true during the NewSelection branch's own pending-to-dragging transition this
+        // same call). True only for a genuinely live NewSelection drag past the pending-click
+        // threshold; false for Resize/Move of an existing selection and for the Pixelate tool's
+        // placement loupe (which runs with _dragMode == None) — see Magnifier.ShowSelectionPreview's
+        // own doc comment for the full gating rationale.
+        _magnifier.ShowSelectionPreview = _dragMode == DragMode.NewSelection && !_newSelectionPending;
+
         UpdateCursor();
     }
 
@@ -1358,6 +1368,12 @@ public partial class OverlayWindow : Window
     {
         _selectionPx = rect;
         _adorner.SelectionPx = rect;
+        // Capture-fidelity spec item 3: single source of truth for every call site (plain
+        // NewSelection, spanning distribute via SetSpanningLocalSelection, Move, Resize, clear-to-
+        // null) — this just mirrors what the adorner already receives, so the loupe's border
+        // preview (see ShowSelectionPreview, set separately by the pointer-moved handler) always
+        // agrees with the real on-screen crop edge.
+        _magnifier.SelectionPx = rect;
         _adorner.InvalidateVisual();
         UpdateDimGeometry();
         UpdateToolbarPlacement();

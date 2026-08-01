@@ -15,7 +15,14 @@ namespace RoeSnip.Platform.Windows;
 /// two mechanical changes: the HMONITOR now comes from <see cref="MonitorEnumerator.ParseHMonitor"/>
 /// (Core's MonitorInfo carries BackendKey, not a raw handle), and CapturedFrame gains the 7th
 /// constructor argument <c>sdrWhiteInBufferUnits: monitor.SdrWhiteNits / 80.0</c> (the Windows scRGB
-/// convention, PLAN-XPLAT.md §2.2) for both delivered formats.</summary>
+/// convention, PLAN-XPLAT.md §2.2) for both delivered formats.
+///
+/// Cursor: this path never reads DXGI's separate pointer-shape buffer
+/// (DXGI_OUTDUPL_FRAME_INFO.PointerShapeBufferSize et al.) at all, so screenshots never contain the
+/// OS cursor — a shipped, deliberate, cross-backend product decision (WgcCapturer's
+/// IsCursorCaptureEnabled = false is the same decision on the other backend), not a bug. Contrast
+/// the recording path (RegionRecorder/WindowsRegionCaptureSource), which explicitly wants the
+/// cursor visible. See CAPTURE-FIDELITY-SPEC.md item 2.</summary>
 public sealed class DesktopDuplicationCapturer : IScreenCapturer
 {
     // Total first-frame budget ~240 ms (was 5 × 100 ms = 500 ms). AcquireNextFrame normally

@@ -94,6 +94,23 @@ public sealed class Magnifier : Control
 
     public string CurrentHex { get; private set; } = string.Empty;
 
+    /// <summary>Live selection rect (physical pixels), fed from OverlayWindow.SetSelection —
+    /// mirrors exactly what SelectionAdorner.SelectionPx receives (same call site, single source of
+    /// truth), so the loupe's border preview always agrees with the real on-screen crop edge.
+    /// Capture-fidelity spec item 3. Null (or <see cref="ShowSelectionPreview"/> false) draws
+    /// nothing extra.</summary>
+    public RectPhysical? SelectionPx { get; set; }
+
+    /// <summary>Gates whether <see cref="SelectionPx"/> is actually drawn inside the loupe — true
+    /// only during a LIVE NewSelection drag (see OverlayWindow's pointer-moved handler, which sets
+    /// this AFTER its drag-mode switch settles for the frame, not folded into the earlier
+    /// <see cref="Update"/> call — doing it there would read one frame stale). False during the
+    /// pending-click phase (SelectionPx may still hold an unrelated previous selection), during
+    /// Resize/Move of an existing selection, and while placing the Pixelate tool's region (that
+    /// state's SelectionPx is the confirmed crop rect, not the region being placed) — see
+    /// CAPTURE-FIDELITY-SPEC.md item 3 for the full gating rationale.</summary>
+    public bool ShowSelectionPreview { get; set; }
+
     private bool HasSample => _sampleX >= 0 && _sampleY >= 0 && _preview is not null && _frame is not null;
 
     public Magnifier()
@@ -216,6 +233,20 @@ public sealed class Magnifier : Control
             }
         }
 
+        // Selection-border preview: while dragging out a new crop selection, show the SAME edge
+        // the real on-screen SelectionAdorner draws, mapped into the loupe's zoomed space, so an
+        // edge can be aligned to the exact pixel. Must render AFTER the swatch grid (an occluding
+        // border reads better on top of flat color) but BEFORE the crosshair block below, which is
+        // the pixel-precision indicator and must stay the topmost/last-drawn element always.
+        if (ShowSelectionPreview && SelectionPx is { } selectionPx)
+        {
+            var mapped = MapSelectionToLoupeRect(selectionPx, cx, cy, _sampleRadius, loupeLeft, loupeTop, swatchDip);
+            using (dc.PushClip(new Rect(loupeLeft, loupeTop, loupeSize, loupeSize)))
+            {
+                dc.DrawRectangle(null, SelectionAdorner.BorderPen, mapped);
+            }
+        }
+
         // Crosshair over the center (sampled) pixel.
         double centerX = loupeLeft + loupeSize / 2;
         double centerY = loupeTop + loupeSize / 2;
@@ -229,6 +260,32 @@ public sealed class Magnifier : Control
             dc.DrawText(line, new Point(textX, textY));
             textY += line.Height + LineGapDip;
         }
+    }
+
+    /// <summary>Maps a physical-pixel selection rectangle into the loupe's own on-screen DIP square,
+    /// using the exact same per-axis affine the swatch grid uses (<c>swatchX</c>/<c>swatchY</c> in
+    /// <see cref="Render"/>): each source pixel coordinate is offset by <paramref name="sampleRadius"/>
+    /// pixels relative to the sampled center (<paramref name="centerX"/>/<paramref name="centerY"/>),
+    /// then scaled by <paramref name="swatchDip"/> and placed at <paramref name="loupeLeft"/>/
+    /// <paramref name="loupeTop"/>. Pulled out as a pure static function (no <c>this</c>, no Avalonia
+    /// rendering) so the mapping arithmetic is unit-testable without a live Control/DrawingContext —
+    /// mirrors the WPF app's identically-named, identically-shaped helper
+    /// (src/RoeSnip/Overlay/Magnifier.cs). <paramref name="selection"/> is normalized first since
+    /// <c>RectPhysical.Right</c>/<c>Bottom</c> are one-past-last-pixel boundaries (see
+    /// <see cref="RectPhysical"/>'s own doc comment) and this formula relies on Left &lt;= Right,
+    /// Top &lt;= Bottom to produce a non-inverted <see cref="Rect"/>. Callers are expected to clip
+    /// the result to the loupe's own square themselves (see the <c>PushClip</c> call in
+    /// <see cref="Render"/>) — off-loupe edges are not bounds-checked here.</summary>
+    public static Rect MapSelectionToLoupeRect(
+        RectPhysical selection, int centerX, int centerY, int sampleRadius,
+        double loupeLeft, double loupeTop, double swatchDip)
+    {
+        var n = selection.Normalized();
+        double left = loupeLeft + (n.Left - centerX + sampleRadius) * swatchDip;
+        double top = loupeTop + (n.Top - centerY + sampleRadius) * swatchDip;
+        double right = loupeLeft + (n.Right - centerX + sampleRadius) * swatchDip;
+        double bottom = loupeTop + (n.Bottom - centerY + sampleRadius) * swatchDip;
+        return new Rect(new Point(left, top), new Point(right, bottom));
     }
 
     /// <summary>Click anywhere on the loupe copies the current hex to the clipboard — mirrors WPF's

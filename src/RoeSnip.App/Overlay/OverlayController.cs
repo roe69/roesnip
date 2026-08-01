@@ -167,6 +167,10 @@ public static class OverlayController
             // is non-fatal inside the ctor itself. Windows only — this whole branch is already
             // behind the IsWindows check above.
             s_flashEscapeHook ??= new FlashEscapeHook(OnFlashEscape);
+            // Paired with the flash windows going WS_EX_TRANSPARENT (click-through, so a hovered
+            // tooltip survives into the capture): buttons are swallowed by this hook instead of by
+            // hit testing. Same lifetime as the Esc hook above, disposed by the same paths.
+            s_flashMouseHook ??= new FlashMouseSwallowHook();
             return true;
         }
         catch (Exception ex)
@@ -183,15 +187,21 @@ public static class OverlayController
     /// KeyDown handlers — the ctor calls this so an Esc can never route to the stale flash path
     /// once a real session exists).</summary>
     private static FlashEscapeHook? s_flashEscapeHook;
+    private static FlashMouseSwallowHook? s_flashMouseHook;
 
     internal static void DisposeFlashEscapeHook()
     {
         if (!OperatingSystem.IsWindows())
         {
-            return; // the field is only ever assigned on Windows (TryShowFlash's own OS gate)
+            return; // the fields are only ever assigned on Windows (TryShowFlash's own OS gate)
         }
         s_flashEscapeHook?.Dispose();
         s_flashEscapeHook = null;
+        // Both flash-phase hooks share one lifetime and one disposal path - a system-wide hook that
+        // outlives its phase would swallow real clicks with nothing on screen to explain why, so
+        // this must stay a single call site rather than two that can drift apart.
+        s_flashMouseHook?.Dispose();
+        s_flashMouseHook = null;
     }
 
     /// <summary>Backstop pair to a successful <see cref="TryShowFlash"/>: called from

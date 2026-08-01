@@ -507,6 +507,10 @@ public sealed class WgcCapturer : IScreenCapturer
             framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(
                 resources.WinrtDevice, pixelFormat, 1, resources.Item.Size);
             session = framePool.CreateCaptureSession(resources.Item);
+            // Screenshots deliberately never include the OS cursor (contrast RegionRecorder's video
+            // path, which explicitly turns cursor capture ON) — this is a shipped product decision,
+            // not a bug. See CAPTURE-FIDELITY-SPEC.md item 2 for the full "why doesn't my screenshot
+            // show the cursor" answer, which is unrelated to the tooltip-ordering fix in item 1.
             session.IsCursorCaptureEnabled = false;
             try { session.IsBorderRequired = false; }
             catch { /* property may not exist on older Windows builds, or capability denied — accepted. */ }

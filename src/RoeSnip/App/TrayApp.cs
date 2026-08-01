@@ -389,6 +389,16 @@ public sealed class TrayApp : ITrayNotifier
         // finally is the backstop that guarantees the flash never outlives the flow on ANY exit
         // path (capture failed on every monitor, CaptureGate busy, RunOverlay unavailable,
         // unexpected exception).
+        // Capture-fidelity fix (2026-08-02): the flash no longer touches OS foreground/activation
+        // at all (see FlashDimmer.ShowAll's own comment at the removed SetForegroundWindow call) —
+        // it dims and swallows input purely via topmost + non-click-through hit-testing. This closes
+        // the ACTIVATION-triggered dismissal path only: a tooltip/hover-popup that self-dismisses on
+        // WM_ACTIVATE/WM_ACTIVATEAPP now survives, because nothing here claims foreground anymore.
+        // It does NOT guarantee every tooltip survives — placing any topmost window over an already-
+        // hovering tooltip can still make that tooltip's own hover-tracking (TrackMouseEvent) resolve
+        // WindowFromPoint(cursor) to the new flash window and self-dismiss via WM_MOUSELEAVE, with no
+        // dependency on foreground/activation at all. See docs/CAPTURE-FIDELITY-SPEC.md item 1 for
+        // the full reasoning and why that residual path is not closed by this fix.
         bool flashShown = false;
         try
         {

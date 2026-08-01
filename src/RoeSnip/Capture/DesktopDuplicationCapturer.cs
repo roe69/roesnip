@@ -9,7 +9,13 @@ namespace RoeSnip.Capture;
 
 /// <summary>Primary capture path per DESIGN.md: IDXGIOutput5.DuplicateOutput1, requesting both
 /// FP16 scRGB and BGRA8 sRGB as supported formats and branching on whichever format is actually
-/// delivered (DXGI_OUTDUPL_DESC.ModeDesc.Format) — never on AdvancedColorActive.</summary>
+/// delivered (DXGI_OUTDUPL_DESC.ModeDesc.Format) — never on AdvancedColorActive.
+///
+/// Deliberate, not a gap: this class never reads DXGI_OUTDUPL_FRAME_INFO's separate pointer-shape
+/// buffer, so screenshots taken via this path never include the OS cursor (contrast
+/// Recording/WindowsRegionCaptureSource.cs / RegionRecorder.cs, which explicitly enable cursor
+/// capture for recordings — see CAPTURE-FIDELITY-SPEC.md item 2). A "cursor missing from my
+/// screenshot" report is this, not a bug.</summary>
 public sealed class DesktopDuplicationCapturer : IScreenCapturer
 {
     // Total first-frame budget ~240 ms (was 5 × 100 ms = 500 ms). AcquireNextFrame normally

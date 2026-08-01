@@ -526,6 +526,10 @@ public sealed class WgcCapturer : IScreenCapturer
             framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(
                 resources.WinrtDevice, pixelFormat, 1, resources.Item.Size);
             session = framePool.CreateCaptureSession(resources.Item);
+            // Deliberate, not a gap: screenshots never include the OS cursor (contrast
+            // Recording/WindowsRegionCaptureSource.cs / RegionRecorder.cs, which explicitly enable
+            // cursor capture for recordings). See CAPTURE-FIDELITY-SPEC.md item 2 — a "cursor
+            // missing from my screenshot" report is this, not a bug.
             session.IsCursorCaptureEnabled = false;
             try { session.IsBorderRequired = false; }
             catch { /* property may not exist on older Windows builds, or capability denied — accepted. */ }

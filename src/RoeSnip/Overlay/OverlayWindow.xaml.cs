@@ -1233,6 +1233,17 @@ public partial class OverlayWindow : Window
                 break;
             }
         }
+
+        // Loupe selection-border preview: gate strictly to an in-progress NewSelection drag past
+        // the click threshold (_newSelectionPending false means _selectionPx has actually been
+        // replaced by this drag — see the NewSelection case above). Deliberately computed here,
+        // AFTER the switch, rather than folded into the MagnifierControl.Update(...) call earlier
+        // in this method: SetSelection() above may have just replaced MagnifierControl.SelectionPx
+        // with a stale-vs-this-frame or not-yet-set value depending on drag kind, and OnRender only
+        // actually runs on a later render pass, so reading the flag here is always correct for the
+        // frame about to render. Excludes Move/Resize (magnifier already hidden for those drags,
+        // see IsMagnifierActive) and blur/pixelate placement (DragMode.None there) by construction.
+        MagnifierControl.ShowSelectionPreview = _dragMode == DragMode.NewSelection && !_newSelectionPending;
     }
 
     private void OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -1554,6 +1565,11 @@ public partial class OverlayWindow : Window
     {
         _selectionPx = rect;
         Adorner.SelectionPx = rect;
+        // Mirror to the loupe too: single source of truth for every call site (plain NewSelection,
+        // spanning distribute, Move, Resize, clear-to-null) — see CAPTURE-FIDELITY-SPEC.md §3.
+        // Whether it actually DRAWS is gated separately by MagnifierControl.ShowSelectionPreview,
+        // set at the end of OnPreviewMouseMove.
+        MagnifierControl.SelectionPx = rect;
         Adorner.InvalidateVisual();
         UpdateDimGeometry();
         UpdateToolbarPlacement();

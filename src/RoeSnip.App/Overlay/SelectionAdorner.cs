@@ -24,6 +24,15 @@ public sealed class SelectionAdorner : Control
     private static readonly IBrush HandleFill = Brushes.White;
     private static readonly IBrush BadgeBackground = new SolidColorBrush(Color.FromArgb(0xD0, 0x10, 0x10, 0x12));
 
+    /// <summary>The exact border pen this adorner draws the live crop edge with — widened from a
+    /// per-render allocation to a shared field (capture-fidelity spec item 3) so <see cref="Magnifier"/>
+    /// can reuse the identical stroke when previewing the selection border inside the loupe while
+    /// dragging a new selection, making that preview unambiguously "this is the crop edge" rather than
+    /// a made-up style. Avalonia-side counterpart to the WPF app's two frozen BorderUnderPen/
+    /// BorderDashPen fields — this app keeps its own single-tone border language (not the WPF
+    /// two-tone dash) both here and inside the loupe; see CAPTURE-FIDELITY-SPEC.md item 3.</summary>
+    internal static readonly IPen BorderPen = new Pen(BorderBrushColor, 1.5);
+
     public RectPhysical? SelectionPx { get; set; }
     public double DeviceScaleX { get; set; } = 1.0;
     public double DeviceScaleY { get; set; } = 1.0;
@@ -119,8 +128,7 @@ public sealed class SelectionAdorner : Control
 
         var dipRect = new Rect(r.Left / sx, r.Top / sy, Math.Max(0, r.Width / sx), Math.Max(0, r.Height / sy));
 
-        var borderPen = new Pen(BorderBrushColor, 1.5);
-        dc.DrawRectangle(null, borderPen, dipRect);
+        dc.DrawRectangle(null, BorderPen, dipRect);
 
         double handleDip = HandleSizePx / Math.Max(sx, sy);
         foreach (var (center, real) in HandleCentersWithRealFlag(dipRect))
@@ -133,7 +141,7 @@ public sealed class SelectionAdorner : Control
                 continue;
             }
             var handleRect = new Rect(center.X - handleDip / 2, center.Y - handleDip / 2, handleDip, handleDip);
-            dc.DrawRectangle(HandleFill, borderPen, handleRect);
+            dc.DrawRectangle(HandleFill, BorderPen, handleRect);
         }
 
         if (SuppressBadge)

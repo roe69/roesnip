@@ -238,6 +238,10 @@ public static class OverlayController
             // ReleaseFlash or the real session's SessionKeyboardHook takes over. Install failure is
             // non-fatal inside the ctor itself.
             s_flashEscapeHook ??= new FlashEscapeHook(OnFlashEscape);
+            // Paired with the flash windows going WS_EX_TRANSPARENT (click-through, so a hovered
+            // tooltip survives into the capture): buttons are swallowed by this hook instead of by
+            // hit testing. Same lifetime as the Esc hook above, disposed by the same three paths.
+            s_flashMouseHook ??= new FlashMouseSwallowHook();
             return true;
         }
         catch (Exception ex)
@@ -253,11 +257,17 @@ public static class OverlayController
     /// the OverlaySession opening (hand-off to its full SessionKeyboardHook — the ctor calls this
     /// so there is never a double-hook window).</summary>
     private static FlashEscapeHook? s_flashEscapeHook;
+    private static FlashMouseSwallowHook? s_flashMouseHook;
 
     internal static void DisposeFlashEscapeHook()
     {
         s_flashEscapeHook?.Dispose();
         s_flashEscapeHook = null;
+        // Both flash-phase hooks share one lifetime and one disposal path - a system-wide hook that
+        // outlives its phase would swallow the user's real clicks with nothing on screen to explain
+        // why, so this must stay a single call site rather than two that can drift apart.
+        s_flashMouseHook?.Dispose();
+        s_flashMouseHook = null;
     }
 
     /// <summary>Backstop pair to a successful <see cref="TryShowFlash"/>: called from
@@ -280,9 +290,9 @@ public static class OverlayController
             s_flashCancelRequested = false;
             try { FlashDimmer.HideAll(); }
             catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
-            // No-op unless focus is genuinely stranded on a parked flash window (a flow that never
-            // opened a session — capture failed/timed out — with a WON foreground claim): hand it
-            // back so the keyboard doesn't look dead until the user clicks another app.
+            // No-op safety net as of 2026-08-02 (ShowAll no longer stakes a foreground claim at
+            // all — see FlashDimmer.s_foregroundClaimEpoch's doc comment): kept in case some future
+            // change reintroduces a claim without reintroducing this restore alongside it.
             FlashDimmer.TryRestoreForegroundFromFlash();
         }
     }
@@ -302,8 +312,7 @@ public static class OverlayController
         DisposeFlashEscapeHook();
         try { FlashDimmer.HideAll(); }
         catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
-        // The flash's foreground claim may have WON — without this, focus stays on a parked,
-        // key-swallowing flash window after a flash-phase cancel and the keyboard looks dead.
+        // No-op safety net as of 2026-08-02 — see ReleaseFlash's identical comment above.
         FlashDimmer.TryRestoreForegroundFromFlash();
     }
 
@@ -777,11 +786,12 @@ public static class OverlayController
                     // cursor monitor's window (shown first) is the one activated: it's where the
                     // user is about to interact; mouse-enter re-activates others as always.
                     //
-                    // Review fix: invalidate the flash's own best-effort foreground claim (see
-                    // FlashDimmer.ShowAll) right before staking this one — without it, a flash
-                    // SetForegroundWindow call delayed by thread-pool/AV interference could
-                    // complete AFTER this Activate() and silently steal keyboard focus back onto
-                    // the (still on-screen until its own deferred hide) flash window.
+                    // Harmless no-op safety net as of 2026-08-02: this used to guard against a
+                    // delayed flash-phase SetForegroundWindow call completing AFTER this Activate()
+                    // and stealing focus back — that flash-side claim has since been deleted
+                    // outright (see FlashDimmer.ShowAll's own comment), so there is nothing left for
+                    // this to invalidate in the normal case. Kept as cheap insurance in case some
+                    // future change reintroduces a claim there without reintroducing this guard.
                     FlashDimmer.InvalidateForegroundClaim();
                     ForegroundActivator.Activate(_activeWindow, "session-start");
                 }
@@ -1793,11 +1803,10 @@ public static class OverlayController
                 {
                     s_activeSession = null;
                 }
-                // Same race-closing reason as the session-start Activate() call above: a session
-                // that finishes before ever activating (e.g. ConsumeFlashCancelRequest's early
-                // return) must still invalidate the flash's pending foreground claim, or a
-                // delayed SetForegroundWindow could steal focus onto a now-parked flash window
-                // after everything has already torn down.
+                // Harmless no-op safety net, same reasoning as the session-start Activate() call
+                // above (2026-08-02): ShowAll no longer stakes a flash-phase foreground claim, so
+                // there is nothing left for this to invalidate in the normal case — kept as cheap
+                // insurance in case some future change reintroduces one.
                 FlashDimmer.InvalidateForegroundClaim();
                 try { FlashDimmer.HideAll(); }
                 catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }

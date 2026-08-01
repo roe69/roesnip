@@ -47,8 +47,11 @@ public sealed class SelectionAdorner : FrameworkElement
     // Two-tone border: a dark under-stroke gives contrast on light content, light dashes ride on
     // top — a neutral, non-garish alternative to the old solid cyan line (user feedback). Frozen
     // so WPF can share them across renders. Widths are in DIPs (this is view-layer chrome).
-    private static readonly Pen BorderUnderPen = CreateFrozenPen(Color.FromArgb(0xB0, 0x00, 0x00, 0x00), 1.0, null);
-    private static readonly Pen BorderDashPen = CreateFrozenPen(
+    // Internal (not private): Magnifier reuses these exact frozen instances to draw the loupe's
+    // selection-border preview, so the preview is unambiguously "this is the crop edge" rather than
+    // a new, invented style — see CAPTURE-FIDELITY-SPEC.md §3.
+    internal static readonly Pen BorderUnderPen = CreateFrozenPen(Color.FromArgb(0xB0, 0x00, 0x00, 0x00), 1.0, null);
+    internal static readonly Pen BorderDashPen = CreateFrozenPen(
         Color.FromArgb(0xFF, 0xDC, 0xDC, 0xE0), 1.0, new DashStyle(new double[] { 3, 3 }, 0));
     private static readonly Pen CornerUnderPen = CreateFrozenPen(Color.FromArgb(0xC0, 0x00, 0x00, 0x00), 3.0, null);
     private static readonly Pen CornerPen = CreateFrozenPen(Color.FromArgb(0xFF, 0xF5, 0xF5, 0xF8), 2.0, null);

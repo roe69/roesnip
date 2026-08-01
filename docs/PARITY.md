@@ -1588,6 +1588,26 @@ because a correct implementation needs live hardware this repo cannot exercise.
   font, ignore the control's foreground colour and change shape between OS versions. The finished-
   take prompt's own two buttons stay TEXT ("Done" / "Record another"): they answer a question
   rather than sitting in an action bar, and icons for them would be a guess.
+- Flash phase goes CLICK-THROUGH so hovered content survives the capture (2026-08, both apps'
+  Overlay/FlashDimmer.cs + OverlayController.cs, new Overlay/FlashMouseSwallowHook.cs in each).
+  Removing the flash's SetForegroundWindow claim (same pass) only fixed the ACTIVATION half of the
+  user's "it can't screenshot tooltips" report. The other half is hit testing: the flash is shown
+  BEFORE the frame is read, and a topmost window that participates in hit testing steals
+  WindowFromPoint from whatever the cursor was over, which drops that window's TrackMouseEvent
+  hover state (WM_MOUSELEAVE) and dismisses its tooltip with no dependence on focus at all. The
+  flash windows now carry WS_EX_TRANSPARENT, and the input-swallow they used to get for free from
+  being hit-testable is restored by FlashMouseSwallowHook - a WH_MOUSE_LL hook with the exact
+  lifetime/failure discipline FlashEscapeHook already has, swallowing BUTTONS and wheel only.
+  Movement is deliberately passed through: swallowing it would freeze the cursor (the other half of
+  the same user report) and would defeat the point, since the window under the cursor needs to keep
+  receiving moves to hold its hover state.
+  VERIFIED END TO END on Windows, not just reasoned: a WinForms hover tooltip up at the moment the
+  hotkey is pressed now appears in the captured frame (scratchpad harness tooltip-e2e.ps1 - it has
+  to drive the whole sequence from one detached script, because a tooltip only shows while its own
+  window is active and any interactive shell stealing foreground silently invalidates the test).
+  Accepted trade-off, deliberately not hidden: the flash phase no longer changes the cursor GLYPH
+  (a click-through window is not hit-tested, so the crosshair comes from the real overlay a few
+  tens of ms later instead).
 - Idle-gap trigger-timing diagnostics (2026-08 idle-latency investigation, both apps'
   AppComposition.RunCaptureFlowAsync in Program.cs + new RoeSnip.Core.Diagnostics.IdleGapLog):
   a field-log investigation into "PrtScr is sometimes slow" found capture-to-overlay latency's
@@ -1603,3 +1623,122 @@ because a correct implementation needs live hardware this repo cannot exercise.
   balloon but left no trace in roesnip.log). TickCount64, not DateTime/UtcNow, deliberately -
   monotonic and immune to the wall-clock jump a system RTC can exhibit around sleep/resume
   (observed once in the field log). No behavior change beyond the added log text.
+- Flash-phase foreground claim removed (WPF only, 2026-08-02, src/RoeSnip/Overlay/FlashDimmer.cs
+  ShowAll): a user report ("the app can't see tooltips") traced to FlashDimmer.ShowAll firing a
+  best-effort background-thread SetForegroundWindow the instant it presented the instant dim -
+  that call was racing ahead of AppComposition.RunCaptureFlowAsync's CaptureAll() ever reading
+  pixels, and SetForegroundWindow is exactly the Win32 mechanism comctl32 tooltips and most custom
+  hover popups use to self-dismiss (WM_ACTIVATE/WM_ACTIVATEAPP), so anything on screen at
+  hotkey-press time was gone before the frame was ever captured. Deleted outright, not deferred:
+  the dim's positioning (SWP_NOACTIVATE, unaffected) never needed foreground for its visual effect
+  or its input-swallow (topmost + non-click-through hit-testing does that); Esc during the flash
+  phase is separately covered by the focus-independent FlashEscapeHook (WH_KEYBOARD_LL); and the
+  real overlay session's own ForegroundActivator.Activate("session-start") - a proper 3-tier
+  ladder, strictly more robust than the flash's single best-effort call ever was - already claims
+  foreground once the session opens, which is always after CaptureAll() has returned frames. Net
+  effect: zero change to any latency number this codebase logs (hotkey-to-dim, capture-to-overlay
+  - the deleted call was fire-and-forget on a Task.Run queued BEFORE TrayApp.TriggerCapture reads
+  its own flashWatch stopwatch, so it was never on that clock). **Scope, stated precisely:** this
+  closes the ACTIVATION-triggered dismissal path only (WM_ACTIVATE/WM_ACTIVATEAPP) - a tooltip/
+  hover-popup that self-dismisses on OS foreground change now survives. It does NOT guarantee every
+  tooltip survives: placing any topmost, non-click-through window over an already-hovering tooltip
+  can still make that tooltip's own hover-tracking (TrackMouseEvent) resolve WindowFromPoint(cursor)
+  to the new flash window and self-dismiss via WM_MOUSELEAVE, independent of foreground/activation
+  entirely - the flash window is still topmost and still covers the cursor the instant it's
+  presented. That residual path is NOT closed by this fix; see CAPTURE-FIDELITY-SPEC.md item 1 for
+  the fuller reasoning and the (rejected-for-now) click-through-plus-mouse-hook alternative that
+  would close it. s_foregroundClaimEpoch /
+  InvalidateForegroundClaim / s_foregroundBeforeClaim / TryRestoreForegroundFromFlash are all kept
+  as a no-op safety net (see their own doc comments) rather than deleted, in case some future
+  change reintroduces a claim without reintroducing this guard alongside it.
+  **CORRECTION, verified against the actual Avalonia source (this was wrong in the fix's own
+  planning spec, CAPTURE-FIDELITY-SPEC.md, which claimed "Avalonia has no flash-dimmer subsystem
+  at all"): src/RoeSnip.App/Overlay/FlashDimmer.cs DOES have one** - item 18's own note above
+  ("New RoeSnip.App/Overlay/FlashDimmer.cs ... ported near-verbatim from the WPF reference's
+  src/RoeSnip/Overlay/FlashDimmer.cs") already says so - and it carries this exact same
+  best-effort background-thread SetForegroundWindow call in its own ShowAll (same
+  s_foregroundClaimEpoch/s_foregroundBeforeClaim/TryRestoreForegroundFromFlash machinery, ported
+  verbatim alongside it). **This WPF-only fix therefore did NOT touch it** - the task that made
+  this fix was explicitly scoped off src/RoeSnip.App - so the Avalonia app still has the identical
+  tooltip/hover-UI-dismissal bug this entry describes fixing on the WPF side. Tracked here as an
+  OPEN parity gap requiring the identical deletion (Avalonia ShowAll's own `if (first is not null)
+  { ... Task.Run(() => ... SetForegroundWindow(hwnd)); }` block) in a follow-up pass - do not
+  mark this item done for both apps until that lands.
+  Separately investigated and NOT a bug (see CAPTURE-FIDELITY-SPEC.md items 2 and "what cannot be
+  fixed"): the "cursor becomes unavailable" perception is FlashWindow's crosshair glyph swap
+  (Cursor = Cursors.Cross, unrelated to any hide/clip/capture call - there is none on this path)
+  combined with the topmost window's deliberate total input-swallow, not an actual cursor
+  hide/clip; and DRM/HDCP-protected content rendering black is enforced by the OS/driver
+  compositor against every capture consumer (WGC and Desktop Duplication alike), not fixable from
+  either capture backend, and this codebase relies on the identical mechanism itself
+  (SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) on its own windows).
+- Flash-phase foreground claim removed, Avalonia side (2026-08-02, closes the OPEN parity gap the
+  entry directly above flagged): src/RoeSnip.App/Overlay/FlashDimmer.cs's ShowAllCore carried the
+  identical best-effort background-thread SetForegroundWindow call the WPF fix above deleted (same
+  `if (first is not null) { ...; Task.Run(() => ... SetForegroundWindow(hwnd)); }` shape, ported
+  near-verbatim from the WPF reference alongside item 18) — deleted outright, along with the now-dead
+  `first`/`FlashWindow? first = null;` bookkeeping that existed only to feed it. Same reasoning as
+  the WPF deletion applies unchanged: input-swallow comes from topmost + non-click-through hit-
+  testing (Reposition's SWP_NOACTIVATE, untouched); Esc during the flash phase is covered focus-
+  independently by this app's own FlashEscapeHook (a WH_KEYBOARD_LL hook, same mechanism as WPF's);
+  and the real overlay session already claims foreground once it opens (OverlayController's
+  `_activeWindow.Activate()`, always preceded by `FlashDimmer.InvalidateForegroundClaim()` — this app
+  has no ForegroundActivator 3-tier ladder the way WPF does, just a plain Avalonia Window.Activate()
+  call, which is enough since Avalonia's own Activate() already asks the OS for foreground). Zero
+  latency-number impact for the same reason as WPF: the deleted call was fire-and-forget on a
+  Task.Run queued before TrayApp.TriggerCapture reads its own flashWatch stopwatch. s_foregroundClaimEpoch /
+  InvalidateForegroundClaim / s_foregroundBeforeClaim / TryRestoreForegroundFromFlash are all kept as
+  a no-op safety net, matching the WPF side's own reasoning for keeping them. Doc comments updated at
+  the class summary, s_foregroundClaimEpoch, TryRestoreForegroundFromFlash, ShowAllCore's removal
+  site, and AppShell/TrayApp.cs's TriggerCapture flash-purpose comment — same five touch points the
+  WPF fix updated. Both apps are now at parity on this item; no gap remains open.
+- Cursor doc-comments-only clarification (2026-08-02, both apps, CAPTURE-FIDELITY-SPEC.md item 2):
+  a user report that "the cursor becomes unavailable" and screenshots never show it turned out to be
+  two separate, correct, pre-existing behaviors, not a bug — no functional change on either app.
+  Added cross-reference comments only: src/RoeSnip.Platform.Windows/WgcCapturer.cs (the
+  `session.IsCursorCaptureEnabled = false` line, same one line WPF's own WgcCapturer.cs already had a
+  comment on) and DesktopDuplicationCapturer.cs's class doc (it never reads DXGI's separate pointer-
+  shape buffer at all) both now say plainly that screenshots deliberately never include the OS
+  cursor, unlike the recording path, which explicitly wants it visible — a shipped, deliberate,
+  cross-backend, cross-app product decision. The "cursor unavailable" perception itself needed no
+  code fix on either app (see the note directly above): FlashWindow's cursor glyph swap to a
+  crosshair, combined with the topmost flash window's deliberate total input-swallow.
+- Loupe selection-border preview (2026-08-02, both apps, CAPTURE-FIDELITY-SPEC.md item 3): while
+  dragging out a new selection, the Magnifier loupe now also draws the live candidate crop rect's
+  edges — mapped through the exact same per-axis affine the pixel-swatch grid already uses — so an
+  actively-dragged corner's edges land exactly at the crosshair, letting an edge be aligned to the
+  pixel while zoomed in. `Magnifier` gained `SelectionPx`/`ShowSelectionPreview` plus a pure static
+  `MapSelectionToLoupeRect` helper (identical name/shape in both apps, factored out specifically so
+  the mapping arithmetic is unit-testable without a live rendering surface — new
+  MagnifierSelectionPreviewTests.cs in both tests/RoeSnip.Tests and tests/RoeSnip.App.Tests, byte-
+  identical test bodies modulo namespace), fed from the same `SetSelection` call site that already
+  feeds `SelectionAdorner.SelectionPx` (single source of truth — covers plain NewSelection, the
+  spanning distribute path via `SetSpanningLocalSelection`, Move, Resize, and clear-to-null, since
+  every one of those already funnels through `SetSelection`) and from each app's own pointer-moved
+  handler, which sets `ShowSelectionPreview = _dragMode == DragMode.NewSelection && !_newSelectionPending`
+  AFTER its drag-mode switch settles for the frame (not folded into the earlier `Update()`/loupe-
+  sample call, which would read one frame stale). Each app reuses its OWN existing on-screen crop-
+  edge pen rather than inventing a new style: WPF widened `SelectionAdorner`'s private
+  `BorderUnderPen`/`BorderDashPen` fields to `internal` and draws both (its two-tone dark-understroke-
+  plus-light-dash look); Avalonia extracted its per-render `new Pen(BorderBrushColor, 1.5)` allocation
+  into a shared `internal static readonly IPen BorderPen` field on `SelectionAdorner` and draws that
+  one pen (its existing single-tone look) — deliberately NOT porting WPF's two-tone dash into
+  Avalonia in this pass, an unrelated larger visual-parity change out of scope here.
+  **TODO(parity, no owner assigned yet):** this means the loupe border preview is NOT visually
+  identical across apps (WPF two-tone dark-understroke-plus-light-dash vs. Avalonia single-tone
+  cyan) — same as the two apps' existing on-screen crop borders already weren't. If pixel-identical
+  loupe/crop borders become a requirement, port WPF's `BorderUnderPen`/`BorderDashPen` pair into
+  Avalonia's `SelectionAdorner` (and reuse it here) in one pass covering both the crop border and
+  the loupe preview, rather than treating them as separate asks. Both draw the
+  border between the swatch grid and the crosshair block (never after the crosshair, which must stay
+  the topmost/last-drawn pixel-precision indicator), clipped to exactly the loupe's own square (WPF:
+  `PushClip(new RectangleGeometry(...))`; Avalonia: `PushClip(Rect)` directly) so an edge outside the
+  sampled window is simply clipped with no artifact. Gated to `DragMode.NewSelection` only in both
+  apps, matching each app's existing loupe-visibility behavior during Resize/Move (WPF hides the
+  whole magnifier for those drags via `IsMagnifierActive`/explicit `.Hide()` calls; the new flag is
+  simply never true during them either way) and excluding the Pixelate tool's own placement loupe
+  (that state's `SelectionPx` is the already-confirmed crop rect, not the region being placed, and it
+  runs with `_dragMode == DragMode.None`, which the gate already excludes). **Pre-existing, unrelated
+  gap noted while touching this code, not introduced or fixed by this pass:** Avalonia's magnifier
+  still has no visibility gate at all (it stays up through Resize/Move/annotation drags, unlike
+  WPF's `IsMagnifierActive`-gated hide) — tracked as a separate future parity item.
