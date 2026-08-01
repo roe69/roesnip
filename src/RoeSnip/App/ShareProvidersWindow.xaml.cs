@@ -13,7 +13,6 @@ namespace RoeSnip.App;
 using Brush = System.Windows.Media.Brush;
 using Button = System.Windows.Controls.Button;
 using CheckBox = System.Windows.Controls.CheckBox;
-using MessageBox = System.Windows.MessageBox;
 
 /// <summary>Master list for the Sharing/* subsystem's settings UI (SettingsWindow's "Providers..."
 /// button): every built-in provider (ShareProviderCatalog.BuiltIns), whether configured yet or not,
@@ -198,7 +197,7 @@ public partial class ShareProvidersWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Failed to save provider settings: {ex.Message}", "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Error);
+            OwnedMessageWindow.ShowOk(this, $"Failed to save provider settings: {ex.Message}");
         }
         RefreshList();
     }
@@ -216,7 +215,7 @@ public partial class ShareProvidersWindow : Window
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Failed to remove the provider: {ex.Message}", "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Error);
+            OwnedMessageWindow.ShowOk(this, $"Failed to remove the provider: {ex.Message}");
         }
         RefreshList();
     }

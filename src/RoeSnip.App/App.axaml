@@ -54,6 +54,15 @@
     <!-- rl-danger-600: solid hover fill for Cancel and the exact "error red" used everywhere else
          in the product (matches WPF's ShareProviderEditWindow ErrorBrush) — NOT a softer/lighter
          coral approximation. -->
+    <SolidColorBrush x:Key="RlDangerTextBrush" Color="#E05A5A"/>
+    <!-- AUDIT ADDITION (legibility pass): RlDangerHoverBrush was only ever verified as a button
+         fill (paired with light text) or a non-text border/fill (>=3:1 bar) — used as TEXT sitting
+         directly on a dark surface it measures under the >=4.5:1 body-text bar: 4.35:1 on the
+         window's black background, 3.66:1 on RlBgElevated. This token is the WPF app's own
+         Sharing/ShareResultWindow.xaml #E05A5A (5.78:1 on black, 4.87:1 on RlBgElevated — both
+         pass), reused here rather than inventing a new hue, and used ONLY for danger-colored TEXT
+         (ValidationErrorText/WaylandHotkeyCaption/TestStatusText's Failed state/ShareResultWindow's
+         failure message) — never for RlDangerHoverBrush's own fill/border call sites. -->
     <SolidColorBrush x:Key="RlPanelBackgroundBrush" Color="#EB0E0E11"/>
     <!-- The Modal glass-card recipe (rl-bg-secondary + hairline border) pushed from 50% to ~92%
          opacity: a floating toolbar can't be as translucent as a card sitting on the site's own

@@ -15,6 +15,12 @@ namespace RoeSnip.App.Overlay;
 /// stays out of the unit-testable surface.</summary>
 internal static class ColorReplaceFlyout
 {
+    // Matches ToolbarControl.axaml's own ".swatch" rest-state border exactly (RlBorderStrongBrush,
+    // rgba(255,255,255,.14)) - a literal field here since this quick-pick grid is built entirely in
+    // code with no ResourceDictionary of its own; Brushes.Gray (a flat #808080) was an off-palette
+    // leftover from before the settings-legibility audit.
+    private static readonly IBrush SwatchBorderBrush = new SolidColorBrush(Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF));
+
     public static void Show(Control target, Color initial, Action<Color> onPicked)
     {
         Flyout? flyout = null;
@@ -39,7 +45,7 @@ internal static class ColorReplaceFlyout
                 Margin = new Thickness(2),
                 Padding = new Thickness(0),
                 Background = new SolidColorBrush(color),
-                BorderBrush = Brushes.Gray,
+                BorderBrush = SwatchBorderBrush,
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(4),
                 Focusable = false,

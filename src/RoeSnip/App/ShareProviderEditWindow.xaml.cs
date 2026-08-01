@@ -19,7 +19,6 @@ using Label = System.Windows.Controls.Label;
 using TextBox = System.Windows.Controls.TextBox;
 using ComboBox = System.Windows.Controls.ComboBox;
 using Brush = System.Windows.Media.Brush;
-using MessageBox = System.Windows.MessageBox;
 
 /// <summary>The per-provider detail form: for a built-in provider, just its ProviderSpec.ConfigFields
 /// (e.g. RoeShare's Server URL + API key) plus Enabled/DisplayName - the request shape itself (which
@@ -318,7 +317,7 @@ public partial class ShareProviderEditWindow : Window
 
         if (updated.IsCustom && string.IsNullOrWhiteSpace(updated.CustomSpec?.Endpoint))
         {
-            MessageBox.Show(this, "Enter an endpoint URL before saving.", "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Warning);
+            OwnedMessageWindow.ShowOk(this, "Enter an endpoint URL before saving.");
             return;
         }
 
@@ -328,10 +327,7 @@ public partial class ShareProviderEditWindow : Window
 
     private void RemoveButton_Click(object sender, RoutedEventArgs e)
     {
-        var confirm = MessageBox.Show(
-            this, $"Remove '{DisplayNameBox.Text}'? This cannot be undone.",
-            "RoeSnip", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (confirm != MessageBoxResult.Yes)
+        if (!OwnedMessageWindow.ShowYesNo(this, $"Remove '{DisplayNameBox.Text}'? This cannot be undone."))
         {
             return;
         }

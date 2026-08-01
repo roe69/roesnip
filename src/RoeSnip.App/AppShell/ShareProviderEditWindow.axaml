@@ -90,7 +90,7 @@
         <TextBlock x:Name="TestStatusText" VerticalAlignment="Center" TextWrapping="Wrap"/>
       </StackPanel>
 
-      <TextBlock x:Name="ValidationErrorText" Foreground="{StaticResource RlDangerHoverBrush}" TextWrapping="Wrap"
+      <TextBlock x:Name="ValidationErrorText" Foreground="{StaticResource RlDangerTextBrush}" TextWrapping="Wrap"
                  IsVisible="False" Margin="0,8,0,0"/>
 
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,20,0,0">

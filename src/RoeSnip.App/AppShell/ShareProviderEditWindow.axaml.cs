@@ -405,15 +405,19 @@ public partial class ShareProviderEditWindow : Window
 
     // Settings redesign pass (docs/PARITY.md item 23): resolved from Application.Resources
     // instead of independently-typed-out hex, so TestStatusText's three states use the app's
-    // real tokens. Two of these are deliberate VALUE changes, mirroring the WPF app's own
+    // real tokens. Three of these are deliberate VALUE changes, mirroring the WPF app's own
     // MutedBrush/OkBrush/ErrorBrush alias repoint: OkBrush was #FF4A9EFF (an invented blue
     // accent) -> now RlPrimaryGoldBrush (the one real brand accent); MutedBrush was the softer
-    // #9A9A9A approximation -> now RlTextMutedBrush's real #A2A2AB; ErrorBrush was already
-    // #DC2626, an exact match for RlDangerHoverBrush, so that one is a routing change only.
+    // #9A9A9A approximation -> now RlTextMutedBrush's real #A2A2AB; ErrorBrush was originally
+    // routed to RlDangerHoverBrush (#DC2626, an exact match for the old WPF literal) but a later
+    // legibility-audit pass found that value fails as TEXT color here (4.35:1 on this window's
+    // black background, under the >=4.5:1 body-text bar - RlDangerHoverBrush was only ever
+    // verified as a button fill/border) - now RlDangerTextBrush (#E05A5A, 5.78:1 here), the same
+    // correction applied to the WPF theme's own ErrorBrush alias.
     private static IBrush Rl(string key) => (IBrush)Application.Current!.Resources[key]!;
     private static readonly IBrush MutedBrush = Rl("RlTextMutedBrush");
     private static readonly IBrush OkBrush = Rl("RlPrimaryGoldBrush");
-    private static readonly IBrush ErrorBrush = Rl("RlDangerHoverBrush");
+    private static readonly IBrush ErrorBrush = Rl("RlDangerTextBrush");
 
     /// <summary>Owned Yes/No dialog for the Remove confirmation — Avalonia has no MessageBox.
     /// Distinct from TrayApp.ShowYesNoDialogAsync (that one is deliberately ownerless/topmost, for

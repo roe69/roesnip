@@ -15,6 +15,35 @@
         FontSize="12"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True">
+    <!-- AUDIT ADDITION (legibility pass): PickButton/GearButton's ToolTip="..." strings had no
+         style to resolve to (this window has no App.xaml/merged dictionary reachable, and never
+         defined one of its own), so both rendered WPF's default Aero2 system-light tooltip chrome
+         over this fully dark, always-on-top window. Same literal-hex convention this whole window
+         already uses (no Rl* StaticResource tokens - see the header doc comment) rather than
+         merging Theme/RoeSnipTheme.xaml, which would pull in styles for controls this window
+         doesn't use. -->
+    <Window.Resources>
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="#FF18181D"/>
+            <Setter Property="Foreground" Value="#FFEDEDF0"/>
+            <Setter Property="BorderBrush" Value="#24FFFFFF"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="6"
+                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <ContentPresenter/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
     <Border BorderBrush="#24FFFFFF" BorderThickness="1">
         <StackPanel>
             <!-- Custom title bar: draggable, "Color Picker" + close X -->

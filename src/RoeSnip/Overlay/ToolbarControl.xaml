@@ -542,6 +542,89 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- AUDIT ADDITION (legibility pass): implicit ScrollBar style, missing until now. Both
+             DarkComboBoxStyle's and DarkEditableComboBoxStyle's Popups wrap their ItemsPresenter in
+             a plain ScrollViewer with no ScrollBar override, so the default (Aero2) vertical
+             ScrollBar - light track/thumb - was drawing regardless of the dark Popup/Border chrome
+             around it. Never actually visible for SizeComboBox/FontFamilyComboBox's own preset rows
+             (both stay under MaxHeight="260"), but FontFamilyComboBox lists every installed system
+             font (FontFamilyChoices) - easily 100+ rows on a real machine - which reliably overflows
+             and shows the scrollbar for real. Same recipe as Theme/RoeSnipTheme.xaml's own
+             ScrollBar style (thumb-only, no track/arrow chrome, RlTextDimBrush rest / RlTextMutedBrush
+             hover-drag) using this file's own already-declared tokens - a deliberate duplication, not
+             a repoint, matching this file's standing "don't churn a working, load-bearing overlay
+             control to deduplicate tokens" precedent (see this file's header comment). -->
+        <Style TargetType="ScrollBar">
+            <Setter Property="Width" Value="10"/>
+            <Setter Property="MinWidth" Value="10"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="{TemplateBinding Background}">
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageUpCommand" Background="Transparent"
+                                                  BorderThickness="0" Focusable="False"/>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageDownCommand" Background="Transparent"
+                                                  BorderThickness="0" Focusable="False"/>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border x:Name="ThumbBg" Background="{StaticResource RlTextDimBrush}"
+                                                        CornerRadius="5" Margin="2,0"/>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="ThumbBg" Property="Background" Value="{StaticResource RlTextMutedBrush}"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsDragging" Value="True">
+                                                        <Setter TargetName="ThumbBg" Property="Background" Value="{StaticResource RlTextMutedBrush}"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- AUDIT ADDITION (legibility pass): implicit ToolTip style, missing until now. Nearly
+             every tool/action button on this toolbar (SelectToolButton through CancelButton,
+             SizeComboBox, ShareButton/ShareMenuButton, SaveHdrMenuItem) sets a plain ToolTip="..."
+             string - WPF's default ToolTip template is the same Aero2 system-light chrome as every
+             other unstyled control in this codebase, so every one of these tooltips was rendering a
+             bright system popup over this fully dark, on-screen capture overlay. Same recipe as
+             Theme/RoeSnipTheme.xaml's own ToolTip style, using this file's own already-declared
+             tokens - a deliberate duplication, not a repoint (see this file's header comment). -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="{StaticResource RlBgSecondaryBrush}"/>
+            <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource RlBorderStrongBrush}"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="6"
+                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <ContentPresenter/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
 
     <!-- Double-stacked layout: row 1 is everything that CONFIGURES a drawing (tool, size, text

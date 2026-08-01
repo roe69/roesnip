@@ -25,9 +25,14 @@ public partial class ShareResultWindow : Window
 {
     // Local color fields rather than an App.axaml resource lookup from code - mirrors TrayApp.
     // ShowToast's own "duplicate as literal fields" convention (see that method's doc comment);
-    // values match RlTextDimBrush/RlDangerHoverBrush exactly.
+    // StatusMutedBrush matches RlTextDimBrush exactly. StatusErrorBrush matches RlDangerTextBrush
+    // (#E05A5A), NOT RlDangerHoverBrush (#DC2626) - a legibility-audit pass found RlDangerHoverBrush
+    // measures 3.66:1 as TEXT on this window's RlBgElevated background (under the >=4.5:1 body-text
+    // bar; it was only ever verified as a button fill/border). #E05A5A passes at 4.87:1 here, and is
+    // the same value the WPF app's own ShareResultWindow.xaml has always used for this exact
+    // "failure message on a dark card" case - this was a real WPF/Avalonia color mismatch besides.
     private static readonly IBrush StatusMutedBrush = new SolidColorBrush(Color.FromRgb(0x71, 0x71, 0x7B));
-    private static readonly IBrush StatusErrorBrush = new SolidColorBrush(Color.FromRgb(0xDC, 0x26, 0x26));
+    private static readonly IBrush StatusErrorBrush = new SolidColorBrush(Color.FromRgb(0xE0, 0x5A, 0x5A));
 
     private readonly MonitorInfo? _monitor;
     private Action? _onCancelRequested;

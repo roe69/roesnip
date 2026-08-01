@@ -567,6 +567,13 @@ public partial class ColorPickerWindow : Window
             FontSize = 12;
             UseLayoutRounding = true;
 
+            // WindowStyle.ToolWindow still draws a real DWM caption bar (unlike the owning
+            // ColorPickerWindow's own WindowStyle="None" self-drawn title bar) - without this it
+            // rendered a bright system-light strip above this otherwise fully dark dialog. Same
+            // fix as DarkTitleBar's three other call sites (SettingsWindow/ShareProvidersWindow/
+            // ShareProviderEditWindow).
+            DarkTitleBar.Apply(this);
+
             _nameBox = DarkTextBox(name ?? string.Empty);
             _formatBox = DarkTextBox(format ?? "new Color (R = %Re, G = %Gr, B = %Bl)");
             _formatBox.FontFamily = new FontFamily("Consolas");

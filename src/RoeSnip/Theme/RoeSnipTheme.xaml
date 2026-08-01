@@ -73,6 +73,18 @@
     <!-- solid hover/press fill for the Remove button -->
     <SolidColorBrush x:Key="RlDropdownArrowBrush" Color="#A2A2AB"/>
     <!-- ComboBox/Expander chevron -->
+    <SolidColorBrush x:Key="RlDangerTextBrush" Color="#E05A5A"/>
+    <!-- AUDIT ADDITION (legibility pass): RlDangerHoverBrush measures under the >=4.5:1 body-text
+         bar when used as TEXT sitting directly on a dark surface - 4.35:1 on the pure-black window
+         background, 3.66:1 on RlBgElevated - because it was only ever verified as a BUTTON FILL
+         paired with light text (see DangerButtonStyle's own AUDIT CORRECTION above) or as a
+         non-text border/fill (>=3:1 bar). This is the same #E05A5A this codebase's own
+         Sharing/ShareResultWindow.xaml already used locally for exactly this "error text on a dark
+         card" case (5.78:1 on black, 4.87:1 on RlBgElevated - both pass) - reused here as a shared
+         token rather than inventing a new hue, and used ONLY for the ErrorBrush alias below
+         (TestStatusText's Failed state), never for RlDangerHoverBrush's own button-fill/border
+         call sites. -->
+
 
     <!-- ============================================================
          2. LEGACY ALIAS KEYS - ShareProvidersWindow.xaml.cs and
@@ -91,8 +103,11 @@
              "untested" stops being a color signal, the word itself plus the dedicated
              UntestedBadgeText banner already say it.
            - OkBrush:     was #FF4A9EFF (an invented blue accent) -> now #FF6B35 (=RlPrimaryGold).
-           - ErrorBrush:  was already #FFDC2626, exact match for RlDangerHoverBrush - no value
-             change, just routed through the shared token instead of a local duplicate.
+           - ErrorBrush:  was #FFDC2626 (exact match for RlDangerHoverBrush) -> now #E05A5A
+             (=RlDangerTextBrush, AUDIT CORRECTION added above): ErrorBrush's only call site
+             (ShareProviderEditWindow.xaml.cs TestStatusText's Failed state) paints TEXT directly on
+             the window's black background, where RlDangerHoverBrush measures 4.35:1 - under the
+             >=4.5:1 body-text bar. RlDangerTextBrush passes at 5.78:1 there.
          Plain literals (not Binding-to-StaticResource.Color indirection) per spec: simpler, and
          these are static design tokens that never change independently at runtime. -->
     <SolidColorBrush x:Key="PanelBrush" Color="#18181D"/>
@@ -101,7 +116,7 @@
     <SolidColorBrush x:Key="MutedBrush" Color="#A2A2AB"/>
     <SolidColorBrush x:Key="WarnBrush" Color="#A2A2AB"/>
     <SolidColorBrush x:Key="OkBrush" Color="#FF6B35"/>
-    <SolidColorBrush x:Key="ErrorBrush" Color="#DC2626"/>
+    <SolidColorBrush x:Key="ErrorBrush" Color="#E05A5A"/>
 
     <!-- ============================================================
          3. DarkComboBoxItemStyle - MUST be defined before the implicit

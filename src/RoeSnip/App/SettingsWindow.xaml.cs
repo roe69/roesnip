@@ -489,11 +489,8 @@ public partial class SettingsWindow : Window
 
         if (enable && nowInstalled && !wasInstalled)
         {
-            var restart = System.Windows.MessageBox.Show(
-                this,
-                "Elevated startup is enabled. Restart RoeSnip as administrator now?",
-                "RoeSnip", MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (restart == MessageBoxResult.Yes)
+            if (OwnedMessageWindow.ShowYesNo(
+                this, "Elevated startup is enabled. Restart RoeSnip as administrator now?"))
             {
                 RestartElevatedNow();
             }
@@ -524,9 +521,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show(
-                this, $"Failed to update elevated startup: {ex.Message}",
-                "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Warning);
+            OwnedMessageWindow.ShowOk(this, $"Failed to update elevated startup: {ex.Message}");
         }
     }
 
@@ -570,9 +565,7 @@ public partial class SettingsWindow : Window
                     ? "Failed to enable elevated startup."
                     : "Failed to disable elevated startup.";
                 string fullMessage = detail is null ? baseMessage : $"{baseMessage}\n\n{detail}";
-                System.Windows.MessageBox.Show(
-                    this, fullMessage,
-                    "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Warning);
+                OwnedMessageWindow.ShowOk(this, fullMessage);
             }
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
@@ -581,9 +574,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show(
-                this, $"Failed to update elevated startup: {ex.Message}",
-                "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Warning);
+            OwnedMessageWindow.ShowOk(this, $"Failed to update elevated startup: {ex.Message}");
         }
     }
 
@@ -599,9 +590,7 @@ public partial class SettingsWindow : Window
         // failed, so check again directly rather than trusting the caller alone.
         if (!ElevationManager.IsElevatedTaskInstalled())
         {
-            System.Windows.MessageBox.Show(
-                this, "Cannot restart elevated: the scheduled task is not installed.",
-                "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Warning);
+            OwnedMessageWindow.ShowOk(this, "Cannot restart elevated: the scheduled task is not installed.");
             return;
         }
 
@@ -627,9 +616,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show(
-                this, $"Failed to restart RoeSnip elevated: {ex.Message}",
-                "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Warning);
+            OwnedMessageWindow.ShowOk(this, $"Failed to restart RoeSnip elevated: {ex.Message}");
             return;
         }
 
@@ -656,8 +643,7 @@ public partial class SettingsWindow : Window
     {
         if (!TryValidateToneMapOverrides(out double? kneeOverride, out double? peakOverride, out string? validationError))
         {
-            System.Windows.MessageBox.Show(
-                this, validationError, "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Warning);
+            OwnedMessageWindow.ShowOk(this, validationError ?? "Invalid tone-map override.");
             return;
         }
 
@@ -691,9 +677,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show(
-                this, $"Could not create the save directory: {ex.Message}",
-                "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Warning);
+            OwnedMessageWindow.ShowOk(this, $"Could not create the save directory: {ex.Message}");
         }
 
         try
@@ -706,9 +690,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show(
-                this, $"Failed to update the Windows startup entry: {ex.Message}",
-                "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Warning);
+            OwnedMessageWindow.ShowOk(this, $"Failed to update the Windows startup entry: {ex.Message}");
         }
 
         try
@@ -717,9 +699,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show(
-                this, $"Failed to save settings: {ex.Message}",
-                "RoeSnip", MessageBoxButton.OK, MessageBoxImage.Error);
+            OwnedMessageWindow.ShowOk(this, $"Failed to save settings: {ex.Message}");
             return;
         }
 
