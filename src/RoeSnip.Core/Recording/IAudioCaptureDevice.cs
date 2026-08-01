@@ -47,8 +47,18 @@ public static class AudioCaptureDeviceRegistry
 {
     private static readonly List<(Func<bool> IsSupported, Func<bool, bool, IAudioCaptureDevice?> Factory)> _candidates = new();
 
+    // Registration happens from [ModuleInitializer]s, which run whenever the CLR first touches the
+    // owning assembly - that can land while another thread is already in TryStart, and an unguarded
+    // List enumeration then throws "Collection was modified" (it did, on a release build's test leg).
+    private static readonly object _gate = new();
+
     public static void Register(Func<bool> isSupported, Func<bool, bool, IAudioCaptureDevice?> factory)
-        => _candidates.Add((isSupported, factory));
+    {
+        lock (_gate)
+        {
+            _candidates.Add((isSupported, factory));
+        }
+    }
 
     /// <summary>Mirrors the WPF app's own <c>AudioCaptureEngine.TryStart(microphone, systemAudio)</c>
     /// contract exactly: null when no candidate matches this OS (Linux/macOS today, before either
@@ -57,7 +67,16 @@ public static class AudioCaptureDeviceRegistry
     /// null (a real device/COM failure).</summary>
     public static IAudioCaptureDevice? TryStart(bool microphone, bool systemAudio)
     {
-        foreach (var (isSupported, factory) in _candidates)
+        // Snapshot under the lock, then run the candidates outside it: IsSupported/Factory are
+        // caller-supplied delegates that open COM devices, and holding a lock across those would
+        // let one platform's device init block every other registrant.
+        (Func<bool> IsSupported, Func<bool, bool, IAudioCaptureDevice?> Factory)[] candidates;
+        lock (_gate)
+        {
+            candidates = _candidates.ToArray();
+        }
+
+        foreach (var (isSupported, factory) in candidates)
         {
             if (isSupported()) return factory(microphone, systemAudio);
         }

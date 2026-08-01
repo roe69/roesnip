@@ -11,11 +11,20 @@ public static class CaptureBackendRegistry
 {
     private static readonly List<(Func<bool> IsSupported, Func<ICaptureBackend> Factory)> _candidates = new();
 
+    // Same guard as AudioCaptureDeviceRegistry: a [ModuleInitializer] can register while another
+    // thread is mid-enumeration, which throws "Collection was modified".
+    private static readonly object _gate = new();
+
     /// <summary>Called by each Platform.* project's own [ModuleInitializer]. Order of registration
     /// across assemblies is unspecified (same caveat as PLAN.md §4's ModuleInitializer note) — this
     /// is safe here because selection filters by IsSupported(), not by registration order.</summary>
     public static void Register(Func<bool> isSupported, Func<ICaptureBackend> factory)
-        => _candidates.Add((isSupported, factory));
+    {
+        lock (_gate)
+        {
+            _candidates.Add((isSupported, factory));
+        }
+    }
 
     /// <summary>Returns the first registered candidate whose IsSupported() is true. Throws
     /// PlatformNotSupportedException if none match (e.g. Core.Tests running with zero Platform.*
@@ -23,7 +32,13 @@ public static class CaptureBackendRegistry
     /// instead of going through this registry at all).</summary>
     public static ICaptureBackend CreateForCurrentPlatform()
     {
-        foreach (var (isSupported, factory) in _candidates)
+        (Func<bool> IsSupported, Func<ICaptureBackend> Factory)[] candidates;
+        lock (_gate)
+        {
+            candidates = _candidates.ToArray();
+        }
+
+        foreach (var (isSupported, factory) in candidates)
         {
             if (isSupported()) return factory();
         }

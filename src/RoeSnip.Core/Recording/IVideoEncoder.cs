@@ -75,10 +75,19 @@ public static class Mp4VideoEncoderRegistry
         Func<bool> IsSupported,
         Func<string, int, int, int, bool, GifSizePreset, IVideoEncoder> Factory)> _candidates = new();
 
+    // Same guard as AudioCaptureDeviceRegistry: a [ModuleInitializer] can register while another
+    // thread is mid-enumeration, which throws "Collection was modified".
+    private static readonly object _gate = new();
+
     public static void Register(
         Func<bool> isSupported,
         Func<string, int, int, int, bool, GifSizePreset, IVideoEncoder> factory)
-        => _candidates.Add((isSupported, factory));
+    {
+        lock (_gate)
+        {
+            _candidates.Add((isSupported, factory));
+        }
+    }
 
     /// <summary>Mirrors <c>Mp4Encoder.Create</c>'s own parameter shape exactly (tempFilePath, width,
     /// height, fps, withAudio, preset) so whoever wires RecordingController onto this seam can swap
@@ -87,7 +96,14 @@ public static class Mp4VideoEncoderRegistry
     public static IVideoEncoder Create(
         string tempFilePath, int width, int height, int fps, bool withAudio, GifSizePreset preset)
     {
-        foreach (var (isSupported, factory) in _candidates)
+        (Func<bool> IsSupported,
+         Func<string, int, int, int, bool, GifSizePreset, IVideoEncoder> Factory)[] candidates;
+        lock (_gate)
+        {
+            candidates = _candidates.ToArray();
+        }
+
+        foreach (var (isSupported, factory) in candidates)
         {
             if (isSupported()) return factory(tempFilePath, width, height, fps, withAudio, preset);
         }
