@@ -1572,6 +1572,22 @@ because a correct implementation needs live hardware this repo cannot exercise.
   Accepted platform gap: Ctrl+C without focus needs a low-level keyboard hook, which is a Windows
   mechanism - on Linux/macOS the Avalonia port's Copy BUTTON is the only route (X11/Wayland/macOS
   would each need their own global-shortcut plumbing, not wired here).
+- Recording chrome follow-ups (2026-08, both apps' Recording/RecordingChrome.cs +
+  ReviewCopyHook.cs), all three on direct user feedback after the flow above shipped:
+  (a) Ctrl+C is no longer SWALLOWED by the review hook - it passes through so whatever has focus
+  still gets its own copy. Swallowing was the original choice to avoid two writers racing for the
+  clipboard, but it could never protect a user who meant to copy something else (the hook copies
+  the recording either way), it only stopped the other app doing its job. (b) Everything that
+  CONFIGURES a take (audio toggles, quality row, fps row, size estimate) is hidden once a take
+  exists rather than shown greyed out - it is all baked into the encoder at Start and cannot be
+  changed, so Recording/Reviewing now show just the clock and the live actions. The panel shrinking
+  between states is deliberate and preferred over a dead half-panel over the recorded area.
+  (c) The action row is ICONS, not text labels: 16x16 stroke paths reusing ToolbarControl's own
+  icon vocabulary verbatim for Save/Copy/Share/Cancel, with the former label moved into a tooltip
+  (an unnamed control is not discoverable). Explicitly NOT emoji - they render in the system emoji
+  font, ignore the control's foreground colour and change shape between OS versions. The finished-
+  take prompt's own two buttons stay TEXT ("Done" / "Record another"): they answer a question
+  rather than sitting in an action bar, and icons for them would be a guess.
 - Idle-gap trigger-timing diagnostics (2026-08 idle-latency investigation, both apps'
   AppComposition.RunCaptureFlowAsync in Program.cs + new RoeSnip.Core.Diagnostics.IdleGapLog):
   a field-log investigation into "PrtScr is sometimes slow" found capture-to-overlay latency's

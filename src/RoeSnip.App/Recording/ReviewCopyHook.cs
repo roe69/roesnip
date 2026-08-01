@@ -14,9 +14,8 @@ namespace RoeSnip.App.Recording;
 /// way in (X11/Wayland/macOS each need their own global-shortcut mechanism, and neither has one
 /// wired in this port - documented in docs/PARITY.md).
 ///
-/// The keystroke is SWALLOWED: while a take is waiting on a decision, Ctrl+C means "copy the
-/// recording", and letting it through as well would leave two writers racing for the clipboard.
-/// The hook lives only from entering Reviewing to leaving it.</summary>
+/// The keystroke PASSES THROUGH (CallNextHookEx) rather than being swallowed - see the WPF twin's
+/// own doc comment. The hook lives only from entering Reviewing to leaving it.</summary>
 internal sealed class ReviewCopyHook : IDisposable
 {
     private const int WH_KEYBOARD_LL = 13;
@@ -105,7 +104,7 @@ internal sealed class ReviewCopyHook : IDisposable
                     && (GetAsyncKeyState(VkMenu) & 0x8000) == 0)
                 {
                     _onCopy();
-                    return (IntPtr)1; // swallow - see the class doc comment
+                    // Deliberately NOT swallowed - see the WPF twin's own note.
                 }
             }
             catch (Exception ex)

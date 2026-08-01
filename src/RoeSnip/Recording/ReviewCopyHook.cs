@@ -14,10 +14,11 @@ namespace RoeSnip.Recording;
 /// only for the phase that needs it, install failure is non-fatal (the chrome's own Copy button
 /// remains), the delegate is rooted for the hook's lifetime, Dispose is idempotent.
 ///
-/// The keystroke is SWALLOWED. While a take is waiting on a decision, Ctrl+C means "copy the
-/// recording", and letting it through as well would leave two writers racing for the clipboard with
-/// whichever finished last winning - a nondeterministic result is worse than a decided one. The
-/// hook lives only from entering Reviewing to leaving it, so a plain Ctrl+C elsewhere is unaffected.
+/// The keystroke PASSES THROUGH (CallNextHookEx) rather than being swallowed: whatever has focus
+/// still receives its own Ctrl+C. Swallowing was tried first and was strictly worse - it could not
+/// protect a user who meant to copy something else (this hook copies the recording regardless), it
+/// only stopped the other app from doing its job. The hook lives only from entering Reviewing to
+/// leaving it, so Ctrl+C outside that window is untouched.
 /// </summary>
 internal sealed class ReviewCopyHook : IDisposable
 {
@@ -79,7 +80,9 @@ internal sealed class ReviewCopyHook : IDisposable
                     && (GetAsyncKeyState(0x12) & 0x8000) == 0) // VK_MENU (Alt)
                 {
                     _onCopy();
-                    return (IntPtr)1; // swallow - see the class doc comment
+                    // Deliberately NOT swallowed: the app underneath still gets its own Ctrl+C.
+                    // Swallowing never protected a user who meant to copy something else (this
+                    // hook copied the recording either way), it only broke the other app's copy.
                 }
             }
             catch (Exception ex)

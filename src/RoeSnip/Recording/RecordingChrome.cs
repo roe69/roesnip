@@ -120,6 +120,8 @@ internal sealed class RecordingChrome : Window
     private readonly Slider _fpsSlider;
     private readonly TextBlock _fpsValueLabel;
     private readonly StackPanel _fpsRow;
+    private readonly TextBlock _qualityHeader;
+    private readonly TextBlock _fpsHeader;
     // Debounces FpsChanged/SettingsStore.Save while the slider is actively being dragged — see
     // RestartFpsDebounce's own doc comment.
     private readonly DispatcherTimer _fpsDebounceTimer;
@@ -241,7 +243,10 @@ internal sealed class RecordingChrome : Window
 
         // Start/Stop is a single button whose label and raised event depend on _state - a real
         // toggle-like control rather than two separately-shown buttons, so its position never jumps.
-        _startStopButton = BuildPrimaryButton("Start");
+        _startStopButton = BuildPrimaryButton(string.Empty);
+        _startStopButton.Content = BuildIcon(Icons.Record, TextOnPrimary, filled: true);
+        _startStopButton.Padding = new Thickness(10, 5, 10, 5);
+        _startStopButton.ToolTip = "Start recording";
         _startStopButton.Click += (_, _) =>
         {
             if (_state == ChromeState.Setup) StartRequested?.Invoke();
@@ -251,7 +256,7 @@ internal sealed class RecordingChrome : Window
 
         // Pause/Resume is its own button (not folded into Start/Stop) - Stop must remain reachable
         // while paused (it ends the take into review), so the two need independent labels/events.
-        _pauseResumeButton = BuildButton("Pause", isDanger: false);
+        _pauseResumeButton = BuildIconButton(Icons.Pause, "Pause", isDanger: false);
         _pauseResumeButton.Click += (_, _) =>
         {
             if (_paused) ResumeRequested?.Invoke();
@@ -368,18 +373,21 @@ internal sealed class RecordingChrome : Window
             Margin = new Thickness(0, 3, 0, 0),
         };
 
-        _restartButton = BuildButton("Restart", isDanger: false);
+        _restartButton = BuildIconButton(Icons.Restart, "Restart (discards this take)", isDanger: false);
         _restartButton.Click += (_, _) => ShowRestartConfirm();
         AutomationProperties.SetAutomationId(_restartButton, "RecordingRestartButton");
 
-        _saveButton = BuildPrimaryButton("Save");
+        _saveButton = BuildPrimaryButton(string.Empty);
+        _saveButton.Content = BuildIcon(Icons.Save, TextOnPrimary);
+        _saveButton.Padding = new Thickness(10, 5, 10, 5);
+        _saveButton.ToolTip = "Save";
         _saveButton.Click += (_, _) => SaveRequested?.Invoke();
         AutomationProperties.SetAutomationId(_saveButton, "RecordingSaveButton");
 
         // Share sits beside Save (both Reviewing-only) - a quiet (non-primary) button since Save is
         // still the one action every take needs, Share is an optional extra on top of it. See
         // ShareRequested's own doc comment for why this button only raises an event.
-        _shareButton = BuildButton("Share", isDanger: false);
+        _shareButton = BuildIconButton(Icons.Share, "Share", isDanger: false);
         _shareButton.Click += (_, _) => ShareRequested?.Invoke();
         AutomationProperties.SetAutomationId(_shareButton, "RecordingShareButton");
 
@@ -387,11 +395,11 @@ internal sealed class RecordingChrome : Window
         // on the clipboard as a file so it can be pasted straight into Discord/Slack/Explorer with
         // no save-then-attach detour. Ctrl+C does the same thing (ReviewCopyHook) - the button is
         // here because a keyboard-only affordance would be invisible.
-        _copyButton = BuildButton("Copy", isDanger: false);
+        _copyButton = BuildIconButton(Icons.Copy, "Copy to clipboard (Ctrl+C)", isDanger: false);
         _copyButton.Click += (_, _) => CopyRequested?.Invoke();
         AutomationProperties.SetAutomationId(_copyButton, "RecordingCopyButton");
 
-        _cancelButton = BuildButton("Cancel", isDanger: true);
+        _cancelButton = BuildIconButton(Icons.Cancel, "Cancel (discards this take)", isDanger: true);
         _cancelButton.Click += (_, _) => CancelRequested?.Invoke();
         AutomationProperties.SetAutomationId(_cancelButton, "RecordingCancelButton");
 
@@ -407,9 +415,11 @@ internal sealed class RecordingChrome : Window
         _normalPanel = new StackPanel { Margin = new Thickness(12, 8, 12, 8) };
         _normalPanel.Children.Add(indicatorRow);
         _normalPanel.Children.Add(_audioRow);
-        _normalPanel.Children.Add(BuildRowHeader("Quality"));
+        _qualityHeader = BuildRowHeader("Quality");
+        _normalPanel.Children.Add(_qualityHeader);
         _normalPanel.Children.Add(_sizeRow);
-        _normalPanel.Children.Add(BuildRowHeader("FPS"));
+        _fpsHeader = BuildRowHeader("FPS");
+        _normalPanel.Children.Add(_fpsHeader);
         _normalPanel.Children.Add(_fpsRow);
         _normalPanel.Children.Add(_estimateText);
         _normalPanel.Children.Add(actionRow);
@@ -491,6 +501,65 @@ internal sealed class RecordingChrome : Window
 
         UpdateEstimate();
         ApplyState();
+    }
+
+    /// <summary>Icon geometries for the action row, in the same 16x16 coordinate space and the same
+    /// stroke-not-glyph style as Overlay/ToolbarControl.xaml's own IconStyle paths - Save/Copy/
+    /// Share/Cancel reuse that file's exact path data so the two surfaces read as one icon set. No
+    /// emoji anywhere: they render in the system emoji font, ignore the control's foreground colour
+    /// and change shape between Windows versions.</summary>
+    private static class Icons
+    {
+        public const string Record = "M3,8 A5,5 0 1 0 13,8 A5,5 0 1 0 3,8 Z";   // filled dot
+        public const string Stop = "M4,4 H12 V12 H4 Z";                          // filled square
+        public const string Pause = "M6,3 V13 M10,3 V13";
+        public const string Play = "M5.5,3 L13,8 L5.5,13 Z";                     // filled triangle
+        public const string Restart = "M2,6 L6,2 M2,6 L6,10 M2,6 H10 A4.5,4.5 0 0 1 10,15 H6";
+        public const string Save = "M8,1 V9 M4.5,5.5 L8,9 L11.5,5.5 M1.5,11 V14.5 H14.5 V11";
+        public const string Copy = "M5.5,5.5 H14.5 V14.5 H5.5 Z M10.5,5.5 V1.5 H1.5 V10.5 H5.5";
+        public const string Share = "M8,9 V1 M4.5,4.5 L8,1 L11.5,4.5 M1.5,11 V14.5 H14.5 V11";
+        public const string Cancel = "M2,2 L14,14 M14,2 L2,14";
+    }
+
+    /// <summary>One action-row icon. <paramref name="filled"/> is for the solid shapes (record dot,
+    /// stop square, play triangle) that read as blobs rather than outlines; everything else is a
+    /// 1.6-thick round-capped stroke, the same weight ToolbarControl's IconStyle uses.</summary>
+    private static System.Windows.Shapes.Path BuildIcon(string data, Color color, bool filled = false)
+    {
+        var path = new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse(data),
+            Stretch = Stretch.Uniform,
+            Width = 13,
+            Height = 13,
+            HorizontalAlignment = HAlign.Center,
+            VerticalAlignment = VAlign.Center,
+        };
+        if (filled)
+        {
+            path.Fill = new SolidColorBrush(color);
+        }
+        else
+        {
+            path.Stroke = new SolidColorBrush(color);
+            path.StrokeThickness = 1.6;
+            path.StrokeStartLineCap = PenLineCap.Round;
+            path.StrokeEndLineCap = PenLineCap.Round;
+            path.StrokeLineJoin = PenLineJoin.Round;
+        }
+        return path;
+    }
+
+    /// <summary>Icon-only action button. The label moves into the tooltip rather than disappearing:
+    /// an icon row is only readable at a glance once you already know it, and a control with no
+    /// name at all is not discoverable.</summary>
+    private static Button BuildIconButton(string iconData, string tooltip, bool isDanger, bool filled = false)
+    {
+        var button = BuildButton(string.Empty, isDanger);
+        button.Content = BuildIcon(iconData, TextPrimary, filled);
+        button.Padding = new Thickness(8, 5, 8, 5);
+        button.ToolTip = tooltip;
+        return button;
     }
 
     private static Button BuildButton(string text, bool isDanger)
@@ -977,7 +1046,10 @@ internal sealed class RecordingChrome : Window
 
         // Hidden (not disabled) in Reviewing: a grayed "Start" sitting next to the enabled
         // "Resume" would show two begin-recording controls in contradictory states.
-        _startStopButton.Content = _state == ChromeState.Recording ? "Stop" : "Start";
+        _startStopButton.Content = _state == ChromeState.Recording
+            ? BuildIcon(Icons.Stop, TextOnPrimary, filled: true)
+            : BuildIcon(Icons.Record, TextOnPrimary, filled: true);
+        _startStopButton.ToolTip = _state == ChromeState.Recording ? "Stop" : "Start recording";
         _startStopButton.IsEnabled = _state != ChromeState.Reviewing;
         _startStopButton.Visibility = _state == ChromeState.Reviewing ? Visibility.Collapsed : Visibility.Visible;
 
@@ -989,20 +1061,26 @@ internal sealed class RecordingChrome : Window
         _pauseResumeButton.Visibility = _state is ChromeState.Recording or ChromeState.Reviewing
             ? Visibility.Visible : Visibility.Collapsed;
 
-        // Audio config is fixed per take (baked into the encoder at Start) - only editable before
-        // the first Start of the current take, i.e. in Setup. Disabled (not hidden) once running so
-        // the panel doesn't resize; GIF hides the whole row regardless (see the ctor).
-        _micToggle.IsEnabled = _state == ChromeState.Setup;
-        _systemAudioToggle.IsEnabled = _state == ChromeState.Setup;
-
-        // Size preset is likewise fixed per take (baked into GifEncoder.Create/Mp4Encoder.Create at
-        // Start) - only editable in Setup. Disabled on the whole row (not hidden) once running,
-        // mirroring the audio toggles above; the row itself is always visible now (both formats).
-        _sizeRow.IsEnabled = _state == ChromeState.Setup;
-
-        // FPS is likewise fixed per take (baked into RegionRecorder/GifEncoder.Create/Mp4Encoder.Create
-        // at Start via RecordingSession._targetFps) - same Setup-only editability as the size row.
-        _fpsRow.IsEnabled = _state == ChromeState.Setup;
+        // Everything that CONFIGURES a take - audio toggles, quality preset, fps - is baked into the
+        // encoder at Start and cannot be changed afterwards, so once a take exists it is HIDDEN
+        // rather than left on screen greyed out. It used to stay visible-but-disabled to stop the
+        // panel resizing, but a dead half-panel over the recorded area is worse than a panel that
+        // shrinks: Recording and Reviewing then show only the take's clock and the actions that
+        // still do something. (GIF hides the audio row in every state - see the ctor.)
+        bool configurable = _state == ChromeState.Setup;
+        _micToggle.IsEnabled = configurable;
+        _systemAudioToggle.IsEnabled = configurable;
+        if (_format != RecordingFormat.Gif)
+        {
+            _audioRow.Visibility = configurable ? Visibility.Visible : Visibility.Collapsed;
+        }
+        _qualityHeader.Visibility = configurable ? Visibility.Visible : Visibility.Collapsed;
+        _sizeRow.Visibility = configurable ? Visibility.Visible : Visibility.Collapsed;
+        _fpsHeader.Visibility = configurable ? Visibility.Visible : Visibility.Collapsed;
+        _fpsRow.Visibility = configurable ? Visibility.Visible : Visibility.Collapsed;
+        // The size estimate is a projection for a take you are about to make; once one exists it is
+        // describing a hypothetical, so it goes with the settings it belongs to.
+        _estimateText.Visibility = configurable ? Visibility.Visible : Visibility.Collapsed;
 
         // Every action below is HIDDEN, not just disabled, in the states it does not apply to: a row
         // of grayed-out buttons is noise to read past, and this panel sits on top of whatever the
@@ -1043,7 +1121,10 @@ internal sealed class RecordingChrome : Window
     public void SetPaused(bool paused)
     {
         _paused = paused;
-        _pauseResumeButton.Content = paused ? "Resume" : "Pause";
+        _pauseResumeButton.Content = paused
+            ? BuildIcon(Icons.Play, TextPrimary, filled: true)
+            : BuildIcon(Icons.Pause, TextPrimary);
+        _pauseResumeButton.ToolTip = paused ? "Resume" : "Pause";
         _redDot.Fill = paused ? Brushes.Transparent : new SolidColorBrush(DangerSolid);
         _redDot.Stroke = paused ? new SolidColorBrush(DangerSolid) : null;
         _redDot.StrokeThickness = paused ? 1.5 : 0;
