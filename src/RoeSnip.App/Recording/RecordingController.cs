@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Clipboard;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Recording;
 using RoeSnip.Core.Recording.Gif;
@@ -561,7 +562,7 @@ public sealed class RecordingSession
         if (finalPath is not null && rearmAfterSave)
         {
             _notifier?.ShowSavedBalloon(finalPath);
-            RearmForAnotherTake();
+            AwaitAnotherTakeChoice($"Saved {Path.GetFileName(finalPath)}. Record another from this area?");
             return finalPath;
         }
 
@@ -606,8 +607,85 @@ public sealed class RecordingSession
     private void RearmForAnotherTake()
     {
         _tempPath = null;
+        AwaitingAnotherTakeChoice = false;
         SetPhase(Phase.Setup);
     }
+
+    /// <summary>True while a finished take (saved, copied or shared) is waiting on the user's
+    /// "Record another?" answer. Mirrors the WPF app: finishing a take used to re-arm the session
+    /// silently, leaving a recording panel on screen as if a new take had been started for you.</summary>
+    public bool AwaitingAnotherTakeChoice { get; private set; }
+
+    /// <summary>Raised when a take finishes, carrying the prompt text the chrome should show. The
+    /// orchestration layer owns the chrome, so it renders this - same division of labour as
+    /// <see cref="PhaseChanged"/>.</summary>
+    public event Action<string>? TakeFinished;
+
+    private void AwaitAnotherTakeChoice(string message)
+    {
+        _tempPath = null;
+        AwaitingAnotherTakeChoice = true;
+        TakeFinished?.Invoke(message);
+    }
+
+    /// <summary>"Record another" on the finished-take prompt.</summary>
+    public void RecordAnotherTake()
+    {
+        if (!AwaitingAnotherTakeChoice) return;
+        RearmForAnotherTake();
+    }
+
+    /// <summary>"Done" on the finished-take prompt - the take is already saved/copied/uploaded, so
+    /// there is nothing left to discard.</summary>
+    public void FinishAfterTake()
+    {
+        if (!AwaitingAnotherTakeChoice) return;
+        AwaitingAnotherTakeChoice = false;
+        TeardownSession(finalPath: null, encoderAbandoned: false);
+    }
+
+    /// <summary>Reviewing state's Copy: hard-stops the still-alive pipeline exactly like the share
+    /// handoff (a soft-stopped encoder has not finalized its container yet, so copying before the
+    /// join would hand out a truncated recording), moves the finished file somewhere that outlives
+    /// this session, and parks on the "Record another?" prompt. Returns the staged path for the
+    /// caller to hand to the platform clipboard, or null if there was nothing to copy.</summary>
+    public string? BeginClipboardHandoff()
+    {
+        if (_phase != Phase.Reviewing || _saving)
+        {
+            return null;
+        }
+        _saving = true;
+
+        try
+        {
+            bool joined = HardStopCaptureIfNeeded();
+            if (!joined)
+            {
+                _notifier?.ShowError("Recording could not be copied: the encoder did not stop in time.");
+                TeardownSession(finalPath: null, encoderAbandoned: true);
+                return null;
+            }
+
+            return ClipboardStaging.Stage(_tempPath!, DateTime.Now);
+        }
+        catch (Exception ex)
+        {
+            // The take is NOT discarded on failure - the same data-loss rule Share follows.
+            FileLog.Write($"RoeSnip: staging the recording for the clipboard failed: {ex}");
+            _notifier?.ShowError($"Could not copy the recording: {ex.Message}");
+            return null;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    /// <summary>Called by the orchestrator once the staged file is actually on the clipboard, so the
+    /// prompt only claims success after the platform clipboard agreed.</summary>
+    public void CompleteClipboardHandoff()
+        => AwaitAnotherTakeChoice("Copied to the clipboard. Record another from this area?");
 
     public void CancelAndDiscard()
     {
@@ -683,7 +761,9 @@ public sealed class RecordingSession
         string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}{ext}";
 
         _saving = false;
-        RearmForAnotherTake(); // chrome is back in Setup from here - mirrors RequestShare's own doc comment
+        // Ends the same way Save does: the take is finished, so ask rather than silently re-arming
+        // (the upload itself continues in the background either way).
+        AwaitAnotherTakeChoice("Uploading this take. Record another from this area?");
 
         // _monitor is readonly on this port (no cross-monitor handoff mid-take), so unlike the WPF
         // app's RequestShare this needs no local captured before rearming.

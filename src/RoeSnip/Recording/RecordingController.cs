@@ -8,6 +8,7 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using RoeSnip.App;
 using RoeSnip.Capture;
+using RoeSnip.Core.Clipboard;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Imaging;
 using RoeSnip.Core.Recording.Gif;
@@ -266,6 +267,15 @@ internal sealed class RecordingSession
     // SEPARATE flag rather than reusing _saving outright (their guard windows don't nest the same
     // way: Share never re-enters itself via a nested message pump the way Save's SaveFileDialog does).
     private bool _sharing;
+    // Reviewing-only Ctrl+C hook (see ReviewCopyHook), installed by StopCaptureToReview and
+    // disposed by every path that leaves Reviewing.
+    private ReviewCopyHook? _reviewCopyHook;
+    // Same reentrancy role as _saving/_sharing, for the Copy path's own irreversible hard stop.
+    private bool _copying;
+    // True while the post-save/post-copy "Record another?" prompt is up: the take is finished and
+    // the session is waiting on the user instead of silently re-arming. Guards the same entry
+    // points _saving/_sharing guard, since none of Save/Share/Copy can run again from here.
+    private bool _awaitingAnotherTakeChoice;
 
     public RecordingSession(
         MonitorInfo monitor, RectPhysical selectionPx, RecordingFormat format,
@@ -372,6 +382,9 @@ internal sealed class RecordingSession
             // exact subscription as the missing wire — see RequestShare's own doc comment for the
             // full hard-stop/upload/re-arm design.
             _chrome.ShareRequested += RequestShare;
+            _chrome.CopyRequested += RequestCopyToClipboard;
+            _chrome.RecordAnotherRequested += RearmForAnotherTake;
+            _chrome.DoneRequested += () => TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: false);
             _chrome.CancelRequested += CancelAndDiscard;
             _chrome.MicToggled += v => SetAudioToggle(mic: v, systemAudio: null);
             _chrome.SystemAudioToggled += v => SetAudioToggle(mic: null, systemAudio: v);
@@ -891,6 +904,14 @@ internal sealed class RecordingSession
 
     private void AdvanceOnPrtScr()
     {
+        // The finished-take prompt owns the key first: PrtScr there means "record another", which is
+        // exactly what the same press did back when a save re-armed the session automatically.
+        if (_awaitingAnotherTakeChoice)
+        {
+            RearmForAnotherTake();
+            return;
+        }
+
         switch (_phase)
         {
             case Phase.Setup:
@@ -1209,6 +1230,7 @@ internal sealed class RecordingSession
                     _notifier?.ShowError("Audio capture unavailable; resuming video only.");
                 }
             }
+            DisposeReviewCopyHook(); // back to a live take - Ctrl+C has nothing finished to copy
             _phase = Phase.Capturing;
             _chrome!.EnterRecording(); // resets the paused visuals itself
         }
@@ -1386,6 +1408,24 @@ internal sealed class RecordingSession
         // could ever succeed).
         _chrome!.SetShareAvailable(ResolveFreshDefaultShareProvider() is not null);
         _chrome!.EnterReviewing();
+
+        // Ctrl+C copies the take while it waits here. A low-level hook, not a key handler: the
+        // chrome never takes focus (see ReviewCopyHook's own doc comment). Scoped to Reviewing -
+        // installed here, disposed by every path that leaves this phase.
+        _reviewCopyHook?.Dispose();
+        _reviewCopyHook = new ReviewCopyHook(() =>
+            // ALWAYS post, never call inline even though the callback arrives on this same UI
+            // thread: a hook callback runs inside an input-synchronous call, where any outgoing
+            // COM/WinRT call is refused with RPC_E_CANTCALLOUT_ININPUTSYNCCALL (0x8001010D) - the
+            // hard stop's WGC Stop() hit exactly that, abandoned the encoder thread and lost the
+            // take. Posting lets the hook return first so the work runs on a clean UI-thread turn.
+            _chrome?.Dispatcher.BeginInvoke(new Action(RequestCopyToClipboard)));
+    }
+
+    private void DisposeReviewCopyHook()
+    {
+        _reviewCopyHook?.Dispose();
+        _reviewCopyHook = null;
     }
 
     /// <summary>Sharing/* subsystem: the single fresh-disk-state provider lookup shared by
@@ -1428,7 +1468,10 @@ internal sealed class RecordingSession
         _mp4TempPath = null;
         _gifTempPath = null;
 
+        DisposeReviewCopyHook();
+        _awaitingAnotherTakeChoice = false;
         _phase = Phase.Setup;
+        _chrome!.HideDonePrompt();
         _chrome!.EnterSetup();
         _outline?.SetInteractionMode(allowResize: true); // back to setup - the region can be reshaped again
     }
@@ -1454,8 +1497,11 @@ internal sealed class RecordingSession
     /// outcome tears the session down as before.</summary>
     private void SaveAndFinish(bool rearmAfterSave = true)
     {
-        if (_phase != Phase.Reviewing || _saving || _sharing)
+        if (_phase != Phase.Reviewing || _saving || _sharing || _awaitingAnotherTakeChoice)
         {
+            // _awaitingAnotherTakeChoice: the take is already finished and the "Record another?"
+            // prompt is up; PrtScr from there means "another take" (AdvanceOnPrtScr), never a
+            // second save of a file that has already been moved to its final path.
             // _saving: the save dialog below runs a nested message pump on this thread, so a
             // PrtScr press while it is open dispatches straight back into this method with _phase
             // still Reviewing — without this guard the reentrant call could save/re-arm first and
@@ -1505,11 +1551,29 @@ internal sealed class RecordingSession
         if (finalPath is not null && rearmAfterSave)
         {
             _notifier?.ShowSavedBalloon(finalPath);
-            RearmForAnotherTake();
+            AwaitAnotherTakeChoice($"Saved {Path.GetFileName(finalPath)}. Record another from this area?");
             return;
         }
 
         TeardownSession(finalPath, dialogCancelled, encoderAbandoned: false);
+    }
+
+    /// <summary>The take is finished (saved, or copied to the clipboard) - ask instead of assuming.
+    /// This replaces an immediate <see cref="RearmForAnotherTake"/>, which silently put the session
+    /// back into Setup and left a recording panel sitting on screen as if a new take had been
+    /// started for you. The session parks here until the user picks "Record another" (re-arm, same
+    /// region) or "Done" (teardown); PrtScr from here means "another", the same key that would have
+    /// started the next take under the old auto-re-arm behaviour.</summary>
+    private void AwaitAnotherTakeChoice(string message)
+    {
+        _mp4TempPath = null;
+        _gifTempPath = null;
+
+        DisposeReviewCopyHook(); // the take is gone from here; Ctrl+C has nothing left to copy
+        _awaitingAnotherTakeChoice = true;
+        _chrome!.ShowDonePrompt(message);
+        _chrome!.Show(); // may have been Hidden to own the save dialog
+        _outline?.SetInteractionMode(allowResize: false); // no live take to reshape while deciding
     }
 
     /// <summary>After a successful save: back to Setup with the SAME selected region instead of
@@ -1522,7 +1586,10 @@ internal sealed class RecordingSession
         _mp4TempPath = null;
         _gifTempPath = null;
 
+        DisposeReviewCopyHook();
+        _awaitingAnotherTakeChoice = false;
         _phase = Phase.Setup;
+        _chrome!.HideDonePrompt();
         _chrome!.EnterSetup();
         _chrome!.Show(); // was Hidden to own the save dialog
         _outline?.SetInteractionMode(allowResize: true); // new take - the region can be reshaped again
@@ -1590,9 +1657,62 @@ internal sealed class RecordingSession
     ///
     /// A hard-stop failure (wedged encoder) is handled exactly like SaveAndFinish's own failure
     /// branch: error balloon, tear the whole session down, nothing to upload.</summary>
+    /// <summary>Reviewing state's Copy button, and Ctrl+C via <see cref="ReviewCopyHook"/>: puts the
+    /// finished take on the clipboard as a FILE (CF_HDROP), so it pastes straight into Discord,
+    /// Slack, Explorer or a mail client without a save-then-attach detour. Windows has no animated
+    /// image clipboard format, so a file reference is the only thing a GIF or MP4 can travel as.
+    ///
+    /// Because the clipboard holds a PATH, not the bytes, the file has to outlive this session -
+    /// handing over a path we are about to delete would leave a clipboard entry that pastes nothing.
+    /// So the take is MOVED out of its session temp path into a staging directory that teardown
+    /// never touches, and stale entries there are pruned on the way in (see ClipboardStaging).
+    ///
+    /// Same irreversible hard stop as Share, for the same reason: the soft-stopped encoder is still
+    /// alive and its container is not finalized until the encoder thread is joined, so copying the
+    /// file before that would hand out a truncated recording. Once that succeeds Resume is gone, and
+    /// the take is finished - hence the same "Record another?" prompt a save ends with.</summary>
+    private void RequestCopyToClipboard()
+    {
+        if (_phase != Phase.Reviewing || _saving || _sharing || _copying || _awaitingAnotherTakeChoice)
+        {
+            return; // same reentrancy reasoning as SaveAndFinish's own guard
+        }
+
+        _copying = true;
+        try
+        {
+            bool joined = HardStopCaptureIfNeeded();
+            if (!joined)
+            {
+                _notifier?.ShowError("Recording could not be copied: the encoder did not stop in time.");
+                TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: false); // already messaged above
+                return;
+            }
+
+            string tempPath = _format == RecordingFormat.Mp4 ? _mp4TempPath! : _gifTempPath!;
+            string staged = ClipboardStaging.Stage(tempPath, DateTime.Now);
+            ClipboardService.CopyFileToClipboard(staged);
+
+            FileLog.Write($"RoeSnip: recording copied to the clipboard as {staged}");
+            // No balloon: the prompt below already says it, right where the user is looking.
+            AwaitAnotherTakeChoice("Copied to the clipboard. Record another from this area?");
+        }
+        catch (Exception ex)
+        {
+            // The take is NOT discarded on failure - the same data-loss rule Share follows. It is
+            // still sitting in Reviewing with Save and Share both available.
+            FileLog.Write($"RoeSnip: copying the recording to the clipboard failed: {ex}");
+            _notifier?.ShowError($"Could not copy the recording to the clipboard: {ex.Message}");
+        }
+        finally
+        {
+            _copying = false;
+        }
+    }
+
     private void RequestShare()
     {
-        if (_phase != Phase.Reviewing || _saving || _sharing)
+        if (_phase != Phase.Reviewing || _saving || _sharing || _copying || _awaitingAnotherTakeChoice)
         {
             return; // same reentrancy reasoning as SaveAndFinish's own guard — see _sharing's own doc comment
         }
@@ -1622,13 +1742,15 @@ internal sealed class RecordingSession
         string ext = _format == RecordingFormat.Mp4 ? ".mp4" : ".gif";
         string contentType = _format == RecordingFormat.Mp4 ? "video/mp4" : "image/gif";
         string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}{ext}";
-        // Captured before RearmForAnotherTake() below for the same reason as the locals above —
-        // _monitor is mutated by a brand-new take (HandoffToMonitor/spanning rebuild), so a bare
-        // field read after rearming could report the NEXT take's monitor instead of this one's.
+        // Captured before the prompt below for the same reason as the locals above — _monitor is
+        // mutated by a brand-new take (HandoffToMonitor/spanning rebuild), so a bare field read
+        // after re-arming could report the NEXT take's monitor instead of this one's.
         MonitorInfo monitor = _monitor;
 
         _sharing = false;
-        RearmForAnotherTake(); // chrome is back in Setup from here — see this method's own doc comment for why
+        // Ends the same way Save does: the take is finished, so ask rather than silently re-arming
+        // (the upload itself continues in the background either way).
+        AwaitAnotherTakeChoice("Uploading this take. Record another from this area?");
 
         Stream stream;
         try
@@ -1671,6 +1793,9 @@ internal sealed class RecordingSession
             return;
         }
         FileLog.Write($"RoeSnip: recording session ending (saved={finalPath is not null})");
+
+        DisposeReviewCopyHook(); // a system-wide keyboard hook must never outlive its session
+        _awaitingAnotherTakeChoice = false;
 
         try { _outline?.CloseOutline(); }
         catch (Exception ex) { FileLog.Write($"RoeSnip: closing the recording outline failed (non-fatal): {ex.Message}"); }
@@ -2476,6 +2601,19 @@ internal sealed class RecordingSession
                 if (_phase != Phase.Reviewing) return $"cannot share while recording is {_phase}";
                 if (_saving || _sharing) return "cannot share: a save or share is already in progress";
                 _chrome!.InvokeShare();
+                return null;
+            case "copy":
+                if (_phase != Phase.Reviewing) return $"cannot copy while recording is {_phase}";
+                if (_saving || _sharing || _copying) return "cannot copy: a save, share or copy is already in progress";
+                _chrome!.InvokeCopy();
+                return null;
+            case "another":
+                if (!_awaitingAnotherTakeChoice) return "cannot record another: no finished take is waiting on a choice";
+                _chrome!.InvokeRecordAnother();
+                return null;
+            case "done":
+                if (!_awaitingAnotherTakeChoice) return "cannot finish: no finished take is waiting on a choice";
+                _chrome!.InvokeDone();
                 return null;
             case "cancel":
                 _chrome!.InvokeCancel();

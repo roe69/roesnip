@@ -4,6 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
+using RoeSnip.Core.Clipboard;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Imaging;
 
@@ -89,6 +90,35 @@ public static class ClipboardService
         }
     }
 
+    /// <summary>Puts a FILE on the clipboard, the way a file manager's own Copy does, so Ctrl+V
+    /// pastes it into a chat client / file manager / mail client. This is how a recording is copied:
+    /// there is no animated-image clipboard format on any of these platforms, so a GIF or MP4 can
+    /// only travel as a file reference - which also means the file has to keep existing afterwards,
+    /// so callers stage a durable copy rather than handing over a path they are about to delete.
+    ///
+    /// Windows takes the same direct CF_HDROP path the image copy above uses (the shell format every
+    /// paste target understands); everywhere else goes through Avalonia's own file data format.</summary>
+    public static async Task CopyFileAsync(Visual owner, string fullPath)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            CopyFileWindows(fullPath);
+            return;
+        }
+
+        var topLevel = TopLevel.GetTopLevel(owner)
+            ?? throw new InvalidOperationException("No TopLevel available for clipboard access.");
+        var clipboard = topLevel.Clipboard
+            ?? throw new InvalidOperationException("No clipboard available on this platform.");
+
+        var storageFile = await topLevel.StorageProvider.TryGetFileFromPathAsync(new Uri(fullPath))
+            ?? throw new InvalidOperationException($"Could not resolve {fullPath} for the clipboard.");
+
+        var dataTransfer = new DataTransfer();
+        dataTransfer.Add(DataTransferItem.Create(DataFormat.File, storageFile));
+        await clipboard.SetDataAsync(dataTransfer);
+    }
+
     private static async Task CopyPngViaAvaloniaAsync(Visual owner, byte[] pngBytes)
     {
         var clipboard = (TopLevel.GetTopLevel(owner)
@@ -116,6 +146,8 @@ public static class ClipboardService
     private const uint GMEM_MOVEABLE = 0x0002;
     private const uint CF_UNICODETEXT = 13;
     private const uint CF_DIBV5 = 17;
+    // CF_HDROP: the "these are files" shell format, the only way a GIF/MP4 reaches the clipboard.
+    private const uint CF_HDROP = 15;
 
     [DllImport("user32.dll", SetLastError = true)] private static extern bool OpenClipboard(IntPtr hWndNewOwner);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool CloseClipboard();
@@ -158,6 +190,30 @@ public static class ClipboardService
         public uint bV5ProfileData;
         public uint bV5ProfileSize;
         public uint bV5Reserved;
+    }
+
+    private static void CopyFileWindows(string fullPath)
+    {
+        byte[] payload = DropFilesPayload.Build(new[] { fullPath });
+
+        if (!OpenClipboard(IntPtr.Zero))
+        {
+            throw new InvalidOperationException("Failed to open the clipboard (it may be locked by another process).");
+        }
+
+        try
+        {
+            if (!EmptyClipboard())
+            {
+                throw new InvalidOperationException("Failed to empty the clipboard.");
+            }
+
+            SetGlobalClipboardData(CF_HDROP, payload);
+        }
+        finally
+        {
+            CloseClipboard();
+        }
     }
 
     private static void CopyImageWindows(SdrImage image, byte[] pngBytes)

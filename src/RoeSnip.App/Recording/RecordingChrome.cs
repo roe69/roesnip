@@ -96,6 +96,14 @@ public sealed class RecordingChrome : Window
     private readonly Button _cancelButton;
     private readonly StackPanel _normalPanel;
     private readonly StackPanel _confirmPanel;
+    private readonly Button _copyButton;
+    // "Saved. Record another?" - the take is finished and the user decides what happens next,
+    // instead of the session silently re-arming itself for a take they may not want.
+    private readonly StackPanel _donePanel;
+    private readonly TextBlock _doneText;
+    private readonly Button _doneYesButton;
+    private readonly Button _doneNoButton;
+    private bool _showingDonePrompt;
 
     public event Action? StartRequested;
     public event Action? StopRequested;
@@ -104,6 +112,14 @@ public sealed class RecordingChrome : Window
     public event Action? RestartConfirmed;
     public event Action? SaveRequested;
     public event Action? ShareRequested;
+    /// <summary>Reviewing state's Copy button (and, on Windows, the Ctrl+C hook) - puts the finished
+    /// take on the clipboard as a file. Same division of labour as SaveRequested/ShareRequested: the
+    /// chrome only raises the request, RecordingController owns the temp path and does the work.</summary>
+    public event Action? CopyRequested;
+    /// <summary>"Record another" on the post-save prompt - re-arm for a new take, same region.</summary>
+    public event Action? RecordAnotherRequested;
+    /// <summary>"Done" on the post-save prompt - tear the session down.</summary>
+    public event Action? DoneRequested;
     public event Action? CancelRequested;
     public event Action<bool>? MicToggled;
     public event Action<bool>? SystemAudioToggled;
@@ -266,6 +282,13 @@ public sealed class RecordingChrome : Window
         _shareButton = BuildButton("Share", isDanger: false);
         _shareButton.Click += (_, _) => ShareRequested?.Invoke();
 
+        // Copy sits beside Save/Share (all three Reviewing-only), quiet like Share: it puts the take
+        // on the clipboard as a file so it can be pasted straight into a chat/file manager with no
+        // save-then-attach detour. On Windows Ctrl+C does the same thing (ReviewCopyHook); the
+        // button is what makes it discoverable, and on Linux/macOS it is the only way in.
+        _copyButton = BuildButton("Copy", isDanger: false);
+        _copyButton.Click += (_, _) => CopyRequested?.Invoke();
+
         _cancelButton = BuildButton("Cancel", isDanger: true);
         _cancelButton.Click += (_, _) => CancelRequested?.Invoke();
 
@@ -274,6 +297,7 @@ public sealed class RecordingChrome : Window
         actionRow.Children.Add(_pauseResumeButton);
         actionRow.Children.Add(_restartButton);
         actionRow.Children.Add(_saveButton);
+        actionRow.Children.Add(_copyButton);
         actionRow.Children.Add(_shareButton);
         actionRow.Children.Add(_cancelButton);
 
@@ -311,9 +335,39 @@ public sealed class RecordingChrome : Window
         _confirmPanel.Children.Add(confirmText);
         _confirmPanel.Children.Add(confirmRow);
 
+        // Post-save prompt, in the same window and for the same reason as the restart confirm above:
+        // one capture-excluded window, so nothing new can bake itself into a following take.
+        _doneText = new TextBlock
+        {
+            FontSize = 13,
+            Foreground = new SolidColorBrush(TextPrimary),
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 220,
+        };
+        _doneYesButton = BuildPrimaryButton("Record another");
+        _doneYesButton.Click += (_, _) =>
+        {
+            HideDonePrompt();
+            RecordAnotherRequested?.Invoke();
+        };
+        _doneNoButton = BuildButton("Done", isDanger: false);
+        _doneNoButton.Click += (_, _) =>
+        {
+            HideDonePrompt();
+            DoneRequested?.Invoke();
+        };
+        var doneRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        doneRow.Children.Add(_doneNoButton);
+        doneRow.Children.Add(_doneYesButton);
+
+        _donePanel = new StackPanel { Margin = new Thickness(12, 8, 12, 8), IsVisible = false };
+        _donePanel.Children.Add(_doneText);
+        _donePanel.Children.Add(doneRow);
+
         var root = new Grid();
         root.Children.Add(_normalPanel);
         root.Children.Add(_confirmPanel);
+        root.Children.Add(_donePanel);
 
         Content = new Border
         {
@@ -577,6 +631,23 @@ public sealed class RecordingChrome : Window
     /// reference's own senior-review fix (see RecordingChrome.cs's SetShareAvailable doc comment).</summary>
     public void SetShareAvailable(bool available) => _shareAvailable = available;
 
+    /// <summary>Shown after a take has been finished (saved, or copied to the clipboard) instead of
+    /// silently re-arming for another one: the session stays put until the user picks. The message
+    /// names what just happened so "Record another" is an informed choice.</summary>
+    public void ShowDonePrompt(string message)
+    {
+        _doneText.Text = message;
+        _showingDonePrompt = true;
+        _showingRestartConfirm = false;
+        ApplyState();
+    }
+
+    public void HideDonePrompt()
+    {
+        _showingDonePrompt = false;
+        ApplyState();
+    }
+
     private void ShowRestartConfirm()
     {
         _showingRestartConfirm = true;
@@ -592,7 +663,8 @@ public sealed class RecordingChrome : Window
     private void ApplyState()
     {
         _confirmPanel.IsVisible = _showingRestartConfirm;
-        _normalPanel.IsVisible = !_showingRestartConfirm;
+        _donePanel.IsVisible = _showingDonePrompt;
+        _normalPanel.IsVisible = !_showingRestartConfirm && !_showingDonePrompt;
 
         _redDot.IsVisible = _state == ChromeState.Recording;
 
@@ -607,9 +679,18 @@ public sealed class RecordingChrome : Window
         _sizeRow.IsEnabled = _state == ChromeState.Setup;
         _fpsRow.IsEnabled = _state == ChromeState.Setup;
 
-        _restartButton.IsEnabled = _state != ChromeState.Setup;
-        _saveButton.IsEnabled = _state == ChromeState.Reviewing;
-        _shareButton.IsEnabled = _state == ChromeState.Reviewing && _shareAvailable;
+        _restartButton.IsVisible = _state != ChromeState.Setup;
+        // Every action below is HIDDEN, not just disabled, in the states it does not apply to (1:1
+        // with the WPF twin): a row of grayed-out buttons is noise to read past, and this panel sits
+        // on top of whatever the user is recording.
+        _saveButton.IsVisible = _state == ChromeState.Reviewing;
+        // Share additionally needs a provider to exist - it stays out of the row entirely until it
+        // can actually work, rather than sitting there permanently disabled.
+        _shareButton.IsVisible = _state == ChromeState.Reviewing && _shareAvailable;
+
+        // Copy needs a finished take exactly like Save does, and unlike Share it has nothing to
+        // depend on beyond that (the clipboard is always there).
+        _copyButton.IsVisible = _state == ChromeState.Reviewing;
 
         RequestReposition();
     }
@@ -677,6 +758,18 @@ public sealed class RecordingChrome : Window
     public void InvokeSave() => SaveRequested?.Invoke();
     public void InvokeShare() => ShareRequested?.Invoke();
     public void InvokeCancel() => CancelRequested?.Invoke();
+    public void InvokeCopy() => CopyRequested?.Invoke();
+    // The post-save prompt's two answers.
+    public void InvokeRecordAnother()
+    {
+        HideDonePrompt();
+        RecordAnotherRequested?.Invoke();
+    }
+    public void InvokeDone()
+    {
+        HideDonePrompt();
+        DoneRequested?.Invoke();
+    }
     public void InvokeRestartConfirmed() => RestartConfirmed?.Invoke();
 
     public void InvokeSizePreset(GifSizePreset preset) => SelectSizePreset(preset);

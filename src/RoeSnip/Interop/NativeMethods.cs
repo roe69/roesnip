@@ -275,6 +275,9 @@ public static class NativeMethods
 
     public const uint GMEM_MOVEABLE = 0x0002;
     public const uint CF_DIBV5 = 17;
+    // CF_HDROP: the "these are files" format Explorer's own Copy uses. The only way a GIF/MP4 can
+    // reach the clipboard - Windows has no animated-image format. See ClipboardService.
+    public const uint CF_HDROP = 15;
     // "PNG" is the well-known registered clipboard format name recognized by browsers, Discord,
     // Paint.NET, etc. Call RegisterClipboardFormat("PNG") to get its uFormat value at runtime.
 

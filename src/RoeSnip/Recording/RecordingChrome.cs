@@ -138,9 +138,15 @@ internal sealed class RecordingChrome : Window
     // ShareRequested" (Start() always subscribes unconditionally, so that old check was always true
     // and never reflected whether a click could actually succeed).
     private bool _shareAvailable;
+    private readonly Button _copyButton;
     private readonly Button _cancelButton;
     private readonly StackPanel _normalPanel;
     private readonly StackPanel _confirmPanel;
+    // "Saved. Record another?" - the take is finished and the user decides what happens next,
+    // instead of the session silently re-arming itself for a take they may not want.
+    private readonly StackPanel _donePanel;
+    private readonly TextBlock _doneText;
+    private bool _showingDonePrompt;
     private readonly Grid _root;
 
     /// <summary>Setup state's Start button.</summary>
@@ -155,6 +161,14 @@ internal sealed class RecordingChrome : Window
     public event Action? RestartConfirmed;
     /// <summary>Reviewing state's Save button.</summary>
     public event Action? SaveRequested;
+    /// <summary>Reviewing state's Copy button (and the Ctrl+C hook) - puts the finished take on the
+    /// clipboard as a file. Same division of labour as SaveRequested/ShareRequested: the chrome only
+    /// raises the request, RecordingController owns the temp path and does the work.</summary>
+    public event Action? CopyRequested;
+    /// <summary>"Record another" on the post-save prompt - re-arm for a new take, same region.</summary>
+    public event Action? RecordAnotherRequested;
+    /// <summary>"Done" on the post-save prompt - tear the session down.</summary>
+    public event Action? DoneRequested;
     /// <summary>Reviewing state's Share button (Sharing/* subsystem) - uploads the finished take.
     /// Zero-arg, same shape as SaveRequested: this chrome only RAISES the request, it never touches
     /// Sharing/ShareManager itself, because it has no reference to the take's temp file path (that
@@ -369,6 +383,14 @@ internal sealed class RecordingChrome : Window
         _shareButton.Click += (_, _) => ShareRequested?.Invoke();
         AutomationProperties.SetAutomationId(_shareButton, "RecordingShareButton");
 
+        // Copy sits beside Save/Share (all three Reviewing-only), quiet like Share: it puts the take
+        // on the clipboard as a file so it can be pasted straight into Discord/Slack/Explorer with
+        // no save-then-attach detour. Ctrl+C does the same thing (ReviewCopyHook) - the button is
+        // here because a keyboard-only affordance would be invisible.
+        _copyButton = BuildButton("Copy", isDanger: false);
+        _copyButton.Click += (_, _) => CopyRequested?.Invoke();
+        AutomationProperties.SetAutomationId(_copyButton, "RecordingCopyButton");
+
         _cancelButton = BuildButton("Cancel", isDanger: true);
         _cancelButton.Click += (_, _) => CancelRequested?.Invoke();
         AutomationProperties.SetAutomationId(_cancelButton, "RecordingCancelButton");
@@ -378,6 +400,7 @@ internal sealed class RecordingChrome : Window
         actionRow.Children.Add(_pauseResumeButton);
         actionRow.Children.Add(_restartButton);
         actionRow.Children.Add(_saveButton);
+        actionRow.Children.Add(_copyButton);
         actionRow.Children.Add(_shareButton);
         actionRow.Children.Add(_cancelButton);
 
@@ -420,9 +443,42 @@ internal sealed class RecordingChrome : Window
         _confirmPanel.Children.Add(confirmText);
         _confirmPanel.Children.Add(confirmRow);
 
+        // Post-save prompt, in the same window and for the same reason as the restart confirm above:
+        // one WDA-excluded HWND, so nothing new can bake itself into a following take.
+        _doneText = new TextBlock
+        {
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 13,
+            Foreground = new SolidColorBrush(TextPrimary),
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 220,
+        };
+        var doneYes = BuildPrimaryButton("Record another");
+        doneYes.Click += (_, _) =>
+        {
+            HideDonePrompt();
+            RecordAnotherRequested?.Invoke();
+        };
+        AutomationProperties.SetAutomationId(doneYes, "RecordingAnotherButton");
+        var doneNo = BuildButton("Done", isDanger: false);
+        doneNo.Click += (_, _) =>
+        {
+            HideDonePrompt();
+            DoneRequested?.Invoke();
+        };
+        AutomationProperties.SetAutomationId(doneNo, "RecordingDoneButton");
+        var doneRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        doneRow.Children.Add(doneNo);
+        doneRow.Children.Add(doneYes);
+
+        _donePanel = new StackPanel { Margin = new Thickness(12, 8, 12, 8), Visibility = Visibility.Collapsed };
+        _donePanel.Children.Add(_doneText);
+        _donePanel.Children.Add(doneRow);
+
         _root = new Grid();
         _root.Children.Add(_normalPanel);
         _root.Children.Add(_confirmPanel);
+        _root.Children.Add(_donePanel);
 
         Content = new Border
         {
@@ -878,6 +934,23 @@ internal sealed class RecordingChrome : Window
     /// already applies to its own sibling Share button.</summary>
     internal void SetShareAvailable(bool available) => _shareAvailable = available;
 
+    /// <summary>Shown after a take has been finished (saved, or copied to the clipboard) instead of
+    /// silently re-arming for another one: the session stays put until the user picks. The message
+    /// names what just happened so "Record another" is an informed choice.</summary>
+    public void ShowDonePrompt(string message)
+    {
+        _doneText.Text = message;
+        _showingDonePrompt = true;
+        _showingRestartConfirm = false;
+        ApplyState();
+    }
+
+    public void HideDonePrompt()
+    {
+        _showingDonePrompt = false;
+        ApplyState();
+    }
+
     private void ShowRestartConfirm()
     {
         _showingRestartConfirm = true;
@@ -896,7 +969,9 @@ internal sealed class RecordingChrome : Window
     private void ApplyState()
     {
         _confirmPanel.Visibility = _showingRestartConfirm ? Visibility.Visible : Visibility.Collapsed;
-        _normalPanel.Visibility = _showingRestartConfirm ? Visibility.Collapsed : Visibility.Visible;
+        _donePanel.Visibility = _showingDonePrompt ? Visibility.Visible : Visibility.Collapsed;
+        _normalPanel.Visibility = _showingRestartConfirm || _showingDonePrompt
+            ? Visibility.Collapsed : Visibility.Visible;
 
         _redDot.Visibility = _state == ChromeState.Recording ? Visibility.Visible : Visibility.Collapsed;
 
@@ -929,11 +1004,15 @@ internal sealed class RecordingChrome : Window
         // at Start via RecordingSession._targetFps) - same Setup-only editability as the size row.
         _fpsRow.IsEnabled = _state == ChromeState.Setup;
 
-        // Restart only makes sense once something has actually been captured.
-        _restartButton.IsEnabled = _state != ChromeState.Setup;
+        // Every action below is HIDDEN, not just disabled, in the states it does not apply to: a row
+        // of grayed-out buttons is noise to read past, and this panel sits on top of whatever the
+        // user is recording. Setup shows Start + Cancel; Recording adds Stop/Pause/Restart;
+        // Reviewing shows what you can do with a finished take. (Start already hid itself in
+        // Reviewing for the same reason - two begin-recording controls read as contradictory.)
+        _restartButton.Visibility = _state != ChromeState.Setup ? Visibility.Visible : Visibility.Collapsed;
 
         // Save only finalizes a take that has already been stopped.
-        _saveButton.IsEnabled = _state == ChromeState.Reviewing;
+        _saveButton.Visibility = _state == ChromeState.Reviewing ? Visibility.Visible : Visibility.Collapsed;
 
         // Share likewise only makes sense once a take exists to upload (Reviewing) - AND only once
         // an enabled share provider actually resolves (Finding 1c, senior review). Used to check
@@ -943,7 +1022,15 @@ internal sealed class RecordingChrome : Window
         // time Reviewing is (re-)entered - see SetShareAvailable's own doc comment - matching the
         // "no clickable-but-broken button" rule ToolbarControl.SetShareProviders already applies to
         // its own sibling Share button.
-        _shareButton.IsEnabled = _state == ChromeState.Reviewing && _shareAvailable;
+        // Share additionally needs a provider to exist: an always-visible button that can only ever
+        // say "configure a provider first" is the clickable-but-broken control this codebase
+        // already rejects elsewhere, so it stays out of the row entirely until it can work.
+        _shareButton.Visibility = _state == ChromeState.Reviewing && _shareAvailable
+            ? Visibility.Visible : Visibility.Collapsed;
+
+        // Copy needs a finished take exactly like Save does, and unlike Share it has nothing to
+        // depend on beyond that (the clipboard is always there).
+        _copyButton.Visibility = _state == ChromeState.Reviewing ? Visibility.Visible : Visibility.Collapsed;
 
         RequestReposition();
     }
@@ -1009,6 +1096,19 @@ internal sealed class RecordingChrome : Window
     // input, same reasoning as every other Invoke* method here.
     internal void InvokeShare() => _shareButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
     internal void InvokeCancel() => _cancelButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    internal void InvokeCopy() => _copyButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    // The post-save prompt's two answers. Its buttons are built inline in the ctor (like the restart
+    // confirm's), so these raise the events directly rather than holding two more fields.
+    internal void InvokeRecordAnother()
+    {
+        HideDonePrompt();
+        RecordAnotherRequested?.Invoke();
+    }
+    internal void InvokeDone()
+    {
+        HideDonePrompt();
+        DoneRequested?.Invoke();
+    }
 
     internal void InvokeSizePreset(GifSizePreset preset)
     {

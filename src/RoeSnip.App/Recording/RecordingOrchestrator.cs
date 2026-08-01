@@ -65,6 +65,9 @@ public sealed class RecordingOrchestrator
     private readonly RecordingChrome _chrome;
     private readonly RegionOutline? _outline; // Windows-only - see that class's own doc comment
     private readonly DispatcherTimer _elapsedTimer;
+    // Reviewing-only Ctrl+C hook (Windows only - see ReviewCopyHook), installed on entering
+    // Reviewing and disposed by every path that leaves it.
+    private ReviewCopyHook? _reviewCopyHook;
 
     private RecordingOrchestrator(RecordingSession session, RoeSnipSettings settings, ITrayNotifier? notifier)
     {
@@ -92,6 +95,9 @@ public sealed class RecordingOrchestrator
         _chrome.RestartConfirmed += () => _session.Restart();
         _chrome.SaveRequested += () => Save();
         _chrome.ShareRequested += () => RequestShare();
+        _chrome.CopyRequested += () => RequestCopyToClipboard();
+        _chrome.RecordAnotherRequested += () => _session.RecordAnotherTake();
+        _chrome.DoneRequested += () => _session.FinishAfterTake();
         _chrome.CancelRequested += () => _session.CancelAndDiscard();
         _chrome.MicToggled += on => _session.SetAudioToggle(on, null);
         _chrome.SystemAudioToggled += on => _session.SetAudioToggle(null, on);
@@ -99,6 +105,7 @@ public sealed class RecordingOrchestrator
         _chrome.FpsChanged += fps2 => _session.SetFps(fps2);
 
         _session.PhaseChanged += OnPhaseChanged;
+        _session.TakeFinished += message => _chrome.ShowDonePrompt(message);
         _session.PausedChanged += _chrome.SetPaused;
         _session.Ended += OnEnded;
 
@@ -125,10 +132,13 @@ public sealed class RecordingOrchestrator
         switch (phase)
         {
             case RecordingSession.RecordingSessionPhase.Setup:
+                DisposeReviewCopyHook();
+                _chrome.HideDonePrompt();
                 _chrome.EnterSetup();
                 _outline?.SetInteractionMode(allowResize: true);
                 break;
             case RecordingSession.RecordingSessionPhase.Capturing:
+                DisposeReviewCopyHook(); // a live take has nothing finished to copy
                 _chrome.EnterRecording();
                 _outline?.SetInteractionMode(allowResize: false);
                 break;
@@ -140,13 +150,24 @@ public sealed class RecordingOrchestrator
                 // _settingsAtStart snapshot) matters here specifically.
                 _chrome.SetShareAvailable(ResolveFreshDefaultShareProvider() is not null);
                 _chrome.EnterReviewing();
+                // Ctrl+C copies the take while it waits here (Windows only - see ReviewCopyHook).
+                DisposeReviewCopyHook();
+                _reviewCopyHook = ReviewCopyHook.TryInstall(() =>
+                    Dispatcher.UIThread.Post(RequestCopyToClipboard));
                 break;
         }
+    }
+
+    private void DisposeReviewCopyHook()
+    {
+        _reviewCopyHook?.Dispose();
+        _reviewCopyHook = null;
     }
 
     private void OnEnded()
     {
         _elapsedTimer.Stop();
+        DisposeReviewCopyHook(); // a system-wide keyboard hook must never outlive its session
         _chrome.CloseChrome();
         _outline?.CloseOutline();
         if (ReferenceEquals(s_active, this))
@@ -185,6 +206,38 @@ public sealed class RecordingOrchestrator
     /// ShareResultWindow now owns progress/result reporting, and the temp file is deleted ONLY via
     /// the presenter's onSuccess callback (the DATA-LOSS RULE), kept with its full path named in the
     /// Failure state on any other outcome.</summary>
+    /// <summary>Chrome's Copy button (and, on Windows, Ctrl+C): the session hard-stops and stages
+    /// the finished take, this puts it on the platform clipboard, and only then does the session
+    /// park on its "Record another?" prompt - a failed clipboard write must not claim success.
+    /// The take is never discarded on failure: it has already been staged out of the temp path, and
+    /// the path is named in the error so it can be recovered by hand.</summary>
+    private void RequestCopyToClipboard()
+    {
+        string? staged = _session.BeginClipboardHandoff();
+        if (staged is null)
+        {
+            return; // reentrant call, or the encoder failed to stop (already messaged by the session)
+        }
+
+        _ = CopyStagedFileAsync(staged);
+    }
+
+    private async Task CopyStagedFileAsync(string staged)
+    {
+        try
+        {
+            await ClipboardService.CopyFileAsync(_chrome, staged);
+            FileLog.Write($"RoeSnip: recording copied to the clipboard as {staged}");
+            _session.CompleteClipboardHandoff();
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: copying the recording to the clipboard failed: {ex}");
+            _notifier?.ShowError($"Could not copy the recording to the clipboard: {ex.Message} It was kept at: {staged}");
+            _session.CompleteClipboardHandoff();
+        }
+    }
+
     private void RequestShare()
     {
         var config = ResolveFreshDefaultShareProvider();
@@ -403,6 +456,18 @@ public sealed class RecordingOrchestrator
             case "share":
                 if (!s.IsReviewing) return "cannot share while recording is not Reviewing";
                 active._chrome.InvokeShare();
+                return null;
+            case "copy":
+                if (!s.IsReviewing) return "cannot copy while recording is not Reviewing";
+                active._chrome.InvokeCopy();
+                return null;
+            case "another":
+                if (!s.AwaitingAnotherTakeChoice) return "cannot record another: no finished take is waiting on a choice";
+                active._chrome.InvokeRecordAnother();
+                return null;
+            case "done":
+                if (!s.AwaitingAnotherTakeChoice) return "cannot finish: no finished take is waiting on a choice";
+                active._chrome.InvokeDone();
                 return null;
             case "cancel":
                 active._chrome.InvokeCancel();

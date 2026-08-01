@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using RoeSnip.Core.Clipboard;
 using RoeSnip.Interop;
 
 namespace RoeSnip.Imaging;
@@ -74,6 +75,35 @@ public static class ClipboardService
             uint pngFormat = NativeMethods.RegisterClipboardFormat("PNG");
             SetGlobalClipboardData(pngFormat, pngBytes);
             SetGlobalClipboardData(NativeMethods.CF_DIBV5, dibBytes);
+        }
+        finally
+        {
+            NativeMethods.CloseClipboard();
+        }
+    }
+
+    /// <summary>Puts a FILE on the clipboard (CF_HDROP), the way copying it in Explorer does, so
+    /// Ctrl+V pastes it into Discord/Slack/Explorer/a mail client. This is how a recording gets
+    /// copied: Windows has no animated-image clipboard format, so a GIF or MP4 can only travel as a
+    /// file reference, and the file therefore has to keep existing after this returns - callers
+    /// stage a copy somewhere durable rather than handing over a path they are about to delete.</summary>
+    public static void CopyFileToClipboard(string fullPath)
+    {
+        byte[] payload = DropFilesPayload.Build(new[] { fullPath });
+
+        if (!NativeMethods.OpenClipboard(IntPtr.Zero))
+        {
+            throw new InvalidOperationException("Failed to open the clipboard (it may be locked by another process).");
+        }
+
+        try
+        {
+            if (!NativeMethods.EmptyClipboard())
+            {
+                throw new InvalidOperationException("Failed to empty the clipboard.");
+            }
+
+            SetGlobalClipboardData(NativeMethods.CF_HDROP, payload);
         }
         finally
         {

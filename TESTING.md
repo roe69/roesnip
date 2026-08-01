@@ -356,7 +356,8 @@ the current phase if not in `setup`.
 
 #### `chrome`
 
-`{"cmd":"chrome","action":"start"}` — one of `start`/`stop`/`save`/`share`/`cancel`/`pause`/`resume`.
+`{"cmd":"chrome","action":"start"}` — one of `start`/`stop`/`save`/`copy`/`share`/`cancel`/`pause`/
+`resume`/`another`/`done`.
 
 Raises the same button `Click` event a real mouse click on that chrome button would — `start`/
 `stop` share one button exactly like the real UI (`start` valid only in `setup`, `stop` only in
@@ -365,6 +366,20 @@ paused (valid from `capturing` or `reviewing` — a soft-stopped take is a pause
 `RecordingSession.Resume`'s own doc comment); `save` requires `reviewing`; `cancel` is valid in any
 phase. An action invalid for the current phase errors with that phase instead of silently no-op'ing
 the way a disabled button would.
+
+`copy` requires `reviewing` and errors if a save/share/copy is already running. It hard-stops the
+pipeline (same finalize `save` uses), moves the finished take into the clipboard staging directory
+(`%TEMP%\RoeSnip\clipboard`, pruned after a day — the clipboard carries a PATH, so the file has to
+outlive the session) and puts it on the clipboard as CF_HDROP, i.e. exactly what copying the file in
+Explorer produces. Verify it from PowerShell with
+`[System.Windows.Forms.Clipboard]::GetFileDropList()`, and clear the clipboard first so a stale
+entry can't masquerade as a fresh copy. The same thing happens on Ctrl+C while `reviewing`
+(`ReviewCopyHook`, a WH_KEYBOARD_LL hook because the chrome never takes focus) — that path is NOT
+reachable through this pipe, so testing it needs a real synthetic keystroke.
+
+`another`/`done` answer the "Record another?" prompt that `save`/`copy`/`share` now park on instead
+of silently re-arming: `another` re-arms into `setup` with the same region (PrtScr does the same),
+`done` tears the session down. Both error unless a finished take is actually waiting on a choice.
 
 `share` (Sharing/* subsystem, added alongside the toolbar's own Share wiring) requires `reviewing`
 and errors if a save or share is already in progress. It hard-stops the still-alive pipeline (same

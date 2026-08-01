@@ -1548,6 +1548,30 @@ because a correct implementation needs live hardware this repo cannot exercise.
   is byte-identical and uncompressed either way - only the download in transit shrinks. Benefit
   starts with updates FROM the release that first ships both assets onward (the release that
   introduces this can only itself ship uncompressed, since nothing before it can request a ".gz").
+- Recording finish flow + copy-to-clipboard (2026-08, both apps: Recording/RecordingChrome.cs,
+  RecordingController.cs, RoeSnip.App's RecordingOrchestrator.cs, both AutomationServer.cs, new
+  RoeSnip.Core/Clipboard/{DropFilesPayload,ClipboardStaging}.cs and both apps' ReviewCopyHook.cs):
+  (a) finishing a take (Save, Copy or Share) no longer silently re-arms the session for another
+  one - it parks on an inline "Record another from this area?" prompt in the SAME capture-excluded
+  chrome window (the restart-confirm's own precedent, so no second window can bake itself into a
+  following take), with "Record another" re-arming to Setup with the same region and "Done" tearing
+  down. PrtScr on that prompt means "another", which is what the same key did under the old
+  auto-re-arm. (b) A finished take can be copied to the clipboard as a FILE (CF_HDROP on Windows,
+  Avalonia's DataFormat.File elsewhere) - there is no animated-image clipboard format anywhere, so
+  a GIF/MP4 can only travel as a file reference, which is also why the take is MOVED into a staging
+  directory that outlives the session (pruned after a day) rather than handed over as a temp path
+  about to be deleted. (c) Chrome buttons are now HIDDEN, not merely disabled, in states where they
+  do not apply (Setup shows Start + Cancel only; Save/Copy live in Reviewing; Share only when a
+  provider actually resolves), on the user's "buttons should only be shown when relevant" note.
+  TWO real bugs were caught only by driving the built app, both fixed and worth remembering:
+  GetKeyState reports the CALLING THREAD's input state and always read "Ctrl is up" inside the hook
+  (GetAsyncKeyState is the correct API there), and doing the hard stop inline in the hook callback
+  hit RPC_E_CANTCALLOUT_ININPUTSYNCCALL (0x8001010D) - a hook callback is an input-synchronous
+  context where outgoing COM/WinRT calls are refused, which abandoned the encoder thread and lost
+  the take; the work is now always POSTED to the dispatcher.
+  Accepted platform gap: Ctrl+C without focus needs a low-level keyboard hook, which is a Windows
+  mechanism - on Linux/macOS the Avalonia port's Copy BUTTON is the only route (X11/Wayland/macOS
+  would each need their own global-shortcut plumbing, not wired here).
 - Idle-gap trigger-timing diagnostics (2026-08 idle-latency investigation, both apps'
   AppComposition.RunCaptureFlowAsync in Program.cs + new RoeSnip.Core.Diagnostics.IdleGapLog):
   a field-log investigation into "PrtScr is sometimes slow" found capture-to-overlay latency's
