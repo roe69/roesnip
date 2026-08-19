@@ -11,10 +11,11 @@
 
 tmp=$(mktemp); out=$(mktemp); trap 'rm -f "$tmp" "$out"' EXIT
 [ -n "$AI_TELLS_MODE" ] && echo "pre-commit hook: $AI_TELLS_MODE" >&2
-# One pass over the whole staged diff: emit "<file>: <added line>" (skips .githooks/ and binaries).
+# One pass over the whole staged diff: emit "<file>: <added line>" (skips the hooks dir itself and binaries).
+hooksdir=$(git config core.hooksPath); hooksdir=${hooksdir:-.githooks}; hooksdir=${hooksdir%/}
 git diff --cached -U0 --diff-filter=ACMR --no-color --no-ext-diff \
-  | LC_ALL=C awk '
-      /^\+\+\+ b\// { f=substr($0,7); skip=(f ~ /^\.githooks\//); next }
+  | LC_ALL=C awk -v hd="$hooksdir/" '
+      /^\+\+\+ b\// { f=substr($0,7); skip=(index(f,hd)==1); next }
       /^\+\+\+ / { next }
       /^\+/ { if (!skip) print f ": " substr($0,2) }' > "$tmp"
 [ -s "$tmp" ] || exit 0
