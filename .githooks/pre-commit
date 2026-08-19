@@ -1,0 +1,30 @@
+#!/bin/sh
+# Blocks staged ADDED lines that carry obvious AI tells / mangled encoding:
+# em/en dashes, curly quotes, ellipsis char, emoji, checkmarks, zero-width and
+# non-breaking spaces, BOM, U+FFFD, mojibake (UTF-8 read as Latin-1), AI credit lines.
+# Only newly added lines are checked, so pre-existing text does not block you;
+# fix the line (plain '-', straight quotes, ASCII) and re-stage.
+# Per-commit escape hatch for docs that legitimately need typography:
+#   ALLOW_UNICODE=1 git commit ...   (mojibake + AI credit lines stay blocked)
+# Enable once per clone:  git config core.hooksPath .githooks
+. "$(dirname "$0")/ai-tells.sh"
+
+tmp=$(mktemp); out=$(mktemp); trap 'rm -f "$tmp" "$out"' EXIT
+[ -n "$AI_TELLS_MODE" ] && echo "pre-commit hook: $AI_TELLS_MODE" >&2
+# One pass over the whole staged diff: emit "<file>: <added line>" (skips .githooks/ and binaries).
+git diff --cached -U0 --diff-filter=ACMR --no-color --no-ext-diff \
+  | LC_ALL=C awk '
+      /^\+\+\+ b\// { f=substr($0,7); skip=(f ~ /^\.githooks\//); next }
+      /^\+\+\+ / { next }
+      /^\+/ { if (!skip) print f ": " substr($0,2) }' > "$tmp"
+[ -s "$tmp" ] || exit 0
+scan_ai_tells "$tmp" > "$out"
+if [ -s "$out" ]; then
+  echo "pre-commit hook: AI tells / non-ASCII garbage in staged changes:" >&2
+  cut -c1-200 "$out" | head -60 >&2
+  n=$(wc -l < "$out"); [ "$n" -gt 60 ] && echo "  ... $n hits total" >&2
+  echo "Use plain '-', straight quotes and ASCII text (CLAUDE.md hard rule 10); remove AI credit lines." >&2
+  [ -z "$AI_TELLS_MODE" ] && echo "Docs that genuinely need typography: ALLOW_UNICODE=1 git commit ...  (never --no-verify)" >&2
+  exit 1
+fi
+exit 0

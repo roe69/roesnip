@@ -1,15 +1,18 @@
 #!/bin/sh
-# Blocks commits whose message credits an AI as author/co-author.
-# Commit messages reach players (see CLAUDE.md "Commit messages"), and this
-# repo does not credit AI tooling in git history.
+# Blocks commit messages that credit an AI (Co-Authored-By: Claude, "Generated
+# with Claude Code", noreply@anthropic.com) or carry AI tells / mangled text
+# (em dashes, curly quotes, emoji, mojibake ...). Commit messages reach players.
+# Escape hatch: ALLOW_UNICODE=1 (typography only).
 # Enable once per clone:  git config core.hooksPath .githooks
-msg_file="$1"
-ai='(claude|anthropic|chatgpt|openai|copilot|gemini|cursor|codex)'
-if grep -v '^[[:space:]]*#' "$msg_file" | grep -iE \
-  "^[[:space:]]*(co-)?authored-by:.*$ai|^[[:space:]]*signed-off-by:.*$ai|generated (with|by).*$ai|noreply@anthropic\.com" \
-  >/dev/null; then
-  echo "commit-msg hook: commit message credits an AI (Co-Authored-By / Generated with ...)." >&2
-  echo "AI co-author trailers are not allowed in this repo - remove the line and retry." >&2
+. "$(dirname "$0")/ai-tells.sh"
+tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
+grep -v '^[[:space:]]*#' "$1" > "$tmp"
+out=$(scan_ai_tells "$tmp")
+if [ -n "$out" ]; then
+  echo "commit-msg hook: AI tells in commit message:" >&2
+  echo "$out" >&2
+  echo "Plain ASCII, no AI co-author / generated-with lines. Fix the message and retry." >&2
+  [ -z "$AI_TELLS_MODE" ] && echo "(ALLOW_UNICODE=1 relaxes typography only; AI credit lines are always blocked)" >&2
   exit 1
 fi
 exit 0
