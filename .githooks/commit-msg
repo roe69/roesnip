@@ -4,6 +4,7 @@
 # (em dashes, curly quotes, emoji, mojibake ...). Commit messages reach players.
 # Escape hatch: ALLOW_UNICODE=1 (typography only).
 # Enable once per clone:  git config core.hooksPath .githooks
+trap "" PIPE   # keep going (and reach exit 1) even if whoever reads our stderr goes away
 . "$(dirname "$0")/ai-tells.sh"
 tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
 grep -v '^[[:space:]]*#' "$1" > "$tmp"
