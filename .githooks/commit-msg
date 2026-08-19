@@ -1,0 +1,15 @@
+#!/bin/sh
+# Blocks commits whose message credits an AI as author/co-author.
+# Commit messages reach players (see CLAUDE.md "Commit messages"), and this
+# repo does not credit AI tooling in git history.
+# Enable once per clone:  git config core.hooksPath .githooks
+msg_file="$1"
+ai='(claude|anthropic|chatgpt|openai|copilot|gemini|cursor|codex)'
+if grep -v '^[[:space:]]*#' "$msg_file" | grep -iE \
+  "^[[:space:]]*(co-)?authored-by:.*$ai|^[[:space:]]*signed-off-by:.*$ai|generated (with|by).*$ai|noreply@anthropic\.com" \
+  >/dev/null; then
+  echo "commit-msg hook: commit message credits an AI (Co-Authored-By / Generated with ...)." >&2
+  echo "AI co-author trailers are not allowed in this repo - remove the line and retry." >&2
+  exit 1
+fi
+exit 0
