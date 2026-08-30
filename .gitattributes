@@ -1,5 +1,50 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# LF in the repo and LF in the working tree, on every machine. Git for Windows
+# ships core.autocrlf=true in its SYSTEM config, which checks files out as CRLF
+# and then warns on every add that it is about to convert them back; eol=lf
+# settles it here, so nothing depends on per-machine config and no checkout,
+# status or add ever has a line ending to report. A file already committed with
+# CRLF keeps it - git does not renormalize those, so nothing shows as modified.
+* text=auto eol=lf
 
-# Git hooks run through sh (Git for Windows' bash) — CRLF would break the interpreter line.
-.githooks/** text eol=lf
+# Binaries are declared, not sniffed. text=auto calls a file text when it finds
+# no NUL in the first 8000 bytes - that is how a 14 KB PDF ended up with 659
+# CRLFs written into it by a checkout, before this list existed.
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.bmp   binary
+*.webp  binary
+*.ico   binary
+*.icns  binary
+*.ttf   binary
+*.otf   binary
+*.eot   binary
+*.woff  binary
+*.woff2 binary
+*.mp3   binary
+*.mp4   binary
+*.wav   binary
+*.zip   binary
+*.gz    binary
+*.7z    binary
+*.jar   binary
+*.class binary
+*.asar  binary
+*.exe   binary
+*.dll   binary
+*.dylib binary
+*.so    binary
+*.node  binary
+*.jks   binary
+*.p12   binary
+*.pfx   binary
+
+# Batch files MUST check out with CRLF. cmd.exe resolves `goto :label` by seeking
+# through the file, and on an LF-only .bat that seek lands mid-line once the target
+# label sits far enough in - build.bat failed with "cannot find the batch label
+# specified - cross_compile" the moment a block was added above :find_zig, even
+# though the label was plainly there. CRLF makes label resolution reliable.
+*.bat text eol=crlf
+*.cmd text eol=crlf

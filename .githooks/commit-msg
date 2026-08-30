@@ -1,12 +1,15 @@
 #!/bin/sh
 # Blocks commit messages that credit an AI (Co-Authored-By: Claude, "Generated
-# with Claude Code", noreply@anthropic.com) or carry AI tells / mangled text
-# (em dashes, curly quotes, emoji, mojibake ...). Commit messages reach players.
+# with Claude Code", a claude.ai/code session link, noreply@anthropic.com) or
+# carry AI tells / mangled text (em dashes, curly quotes, emoji, mojibake, and
+# the HTML-entity or backslash-escape spellings of those). Commit messages
+# reach players.
 # Escape hatch: ALLOW_UNICODE=1 (typography only).
 # Enable once per clone:  git config core.hooksPath .githooks
 trap "" PIPE   # keep going (and reach exit 1) even if whoever reads our stderr goes away
 . "$(dirname "$0")/ai-tells.sh"
-tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
+tmp=$(mktemp) || exit 1
+trap 'rm -f "$tmp"' EXIT
 grep -v '^[[:space:]]*#' "$1" > "$tmp"
 out=$(scan_ai_tells "$tmp")
 if [ -n "$out" ]; then

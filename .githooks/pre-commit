@@ -1,7 +1,12 @@
 #!/bin/sh
-# Blocks staged ADDED lines that carry obvious AI tells / mangled encoding:
-# em/en dashes, curly quotes, ellipsis char, emoji, checkmarks, zero-width and
-# non-breaking spaces, BOM, U+FFFD, mojibake (UTF-8 read as Latin-1), AI credit lines.
+# Blocks staged ADDED lines (and new/renamed file names) that carry obvious AI
+# tells or mangled encoding: em/en dashes, curly quotes, ellipsis, emoji,
+# checkmarks, bullets, zero-width and non-breaking spaces, bidi controls, BOM,
+# U+FFFD, mojibake, AI credit lines - and the ASCII spellings of all of those
+# (&mdash;, &#8212;, a backslash-u escape, %E2%80%94), which are 7-bit ASCII in
+# the source and still render as the character they encode. Anything else with
+# a byte >= 0x80 is blocked too; see .githooks/ai-tells.sh for the one exempt
+# character.
 # Only newly added lines are checked, so pre-existing text does not block you;
 # fix the line (plain '-', straight quotes, ASCII) and re-stage.
 # Per-commit escape hatch for docs that legitimately need typography:
@@ -10,22 +15,33 @@
 trap "" PIPE   # keep going (and reach exit 1) even if whoever reads our stderr goes away
 . "$(dirname "$0")/ai-tells.sh"
 
-tmp=$(mktemp); out=$(mktemp); trap 'rm -f "$tmp" "$out"' EXIT
+tmp=$(mktemp) || exit 1
+out=$(mktemp) || exit 1
+trap 'rm -f "$tmp" "$out"' EXIT
 [ -n "$AI_TELLS_MODE" ] && echo "pre-commit hook: $AI_TELLS_MODE" >&2
-# One pass over the whole staged diff: emit "<file>: <added line>" (skips the hooks dir itself and binaries).
 hooksdir=$(git config core.hooksPath); hooksdir=${hooksdir:-.githooks}; hooksdir=${hooksdir%/}
-git diff --cached -U0 --diff-filter=ACMR --no-color --no-ext-diff \
+# One pass over the whole staged diff: emit "<file>: <added line>" (skips the
+# hooks dir itself and binaries). The prefixes and quotePath are pinned because
+# diff.noprefix / diff.mnemonicPrefix / core.quotePath are per-clone settings
+# that would otherwise rename the "+++ b/" header out from under the parser -
+# which loses the file column AND the hooks-dir skip.
+git -c core.quotePath=false diff --cached -U0 --diff-filter=ACMR --no-color \
+    --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ \
   | LC_ALL=C awk -v hd="$hooksdir/" '
       /^\+\+\+ b\// { f=substr($0,7); skip=(index(f,hd)==1); next }
       /^\+\+\+ / { next }
       /^\+/ { if (!skip) print f ": " substr($0,2) }' > "$tmp"
+# A file name is content too, and never shows up as a "+" line. Only new and
+# renamed paths: an existing bad name is not this commit's to fix.
+git -c core.quotePath=false diff --cached --name-only --diff-filter=AR \
+  | LC_ALL=C awk -v hd="$hooksdir/" 'index($0, hd) != 1 { print $0 ": (filename)" }' >> "$tmp"
 [ -s "$tmp" ] || exit 0
 scan_ai_tells "$tmp" > "$out"
 if [ -s "$out" ]; then
   echo "pre-commit hook: AI tells / non-ASCII garbage in staged changes:" >&2
   cut -c1-200 "$out" | head -60 >&2
   n=$(wc -l < "$out"); [ "$n" -gt 60 ] && echo "  ... $n hits total" >&2
-  echo "Use plain '-', straight quotes and ASCII text (CLAUDE.md hard rule 10); remove AI credit lines." >&2
+  echo "Use plain '-', straight quotes and ASCII text - and the character itself, never an entity or a backslash escape; remove AI credit lines." >&2
   [ -z "$AI_TELLS_MODE" ] && echo "Docs that genuinely need typography: ALLOW_UNICODE=1 git commit ...  (never --no-verify)" >&2
   exit 1
 fi
