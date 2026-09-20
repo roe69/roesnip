@@ -357,7 +357,7 @@ the current phase if not in `setup`.
 #### `chrome`
 
 `{"cmd":"chrome","action":"start"}` — one of `start`/`stop`/`save`/`copy`/`share`/`cancel`/`pause`/
-`resume`/`another`/`done`.
+`resume`/`another`/`done`/`copyagain`/`saveagain`.
 
 Raises the same button `Click` event a real mouse click on that chrome button would — `start`/
 `stop` share one button exactly like the real UI (`start` valid only in `setup`, `stop` only in
@@ -380,6 +380,15 @@ reachable through this pipe, so testing it needs a real synthetic keystroke.
 `another`/`done` answer the "Record another?" prompt that `save`/`copy`/`share` now park on instead
 of silently re-arming: `another` re-arms into `setup` with the same region (PrtScr does the same),
 `done` tears the session down. Both error unless a finished take is actually waiting on a choice.
+
+`copyagain`/`saveagain` are the same prompt's other two buttons, added because the clipboard is
+shared state and a finished take used to be unreachable the moment anything else copied. `copyagain`
+puts the take's file back on the clipboard (same CF_HDROP as `copy`; verify it the same way);
+`saveagain` COPIES it to a path from the save dialog - or, under `ROESNIP_RECORD_AUTOSAVE`, straight
+into that directory, which is how to drive it without UIA against a native file picker. Neither
+dismisses the prompt; both re-word it to name what they just did. Both error unless a finished take
+is waiting on a choice AND it still has a file to act on (a SHARED take does not - the upload's
+success callback deletes the only copy).
 
 `share` (Sharing/* subsystem, added alongside the toolbar's own Share wiring) requires `reviewing`
 and errors if a save or share is already in progress. It hard-stops the still-alive pipeline (same

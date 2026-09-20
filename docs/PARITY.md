@@ -1586,8 +1586,28 @@ because a correct implementation needs live hardware this repo cannot exercise.
   icon vocabulary verbatim for Save/Copy/Share/Cancel, with the former label moved into a tooltip
   (an unnamed control is not discoverable). Explicitly NOT emoji - they render in the system emoji
   font, ignore the control's foreground colour and change shape between OS versions. The finished-
-  take prompt's own two buttons stay TEXT ("Done" / "Record another"): they answer a question
-  rather than sitting in an action bar, and icons for them would be a guess.
+  take prompt's own buttons stay TEXT: they answer a question rather than sitting in an action
+  bar, and icons for them would be a guess.
+- Finished-take prompt gains "Copy again" and "Save" (2026-09, both apps' Recording/
+  RecordingChrome.cs + RecordingController.cs, RoeSnip.App's RecordingOrchestrator.cs, both
+  AutomationServer.cs): on direct user feedback - the clipboard is shared state, so anything that
+  copies between finishing a take and pasting it wipes the take out, and the only recovery was
+  recording it again. The prompt now carries the finished take's real path (the saved file, or the
+  clipboard staging copy) and offers both actions on their own row ABOVE the Done/Record another
+  answers; neither dismisses the prompt, both re-word it to report what they did. Save COPIES, never
+  moves - the same file is what Copy again hands to the clipboard, and a move would leave a
+  clipboard entry pointing at nothing. The Windows Ctrl+C review hook now SURVIVES into the prompt
+  and routes to Copy again there (it used to be disposed on the way in, back when a finished take
+  really was out of reach). A SHARED take is the one case with no path: its only copy is deleted by
+  the upload's success callback, so both buttons are hidden rather than left clickable-but-broken -
+  the same rule the Share button itself follows. New automation actions `copyagain`/`saveagain`.
+  Avalonia port: same two buttons, driven by the orchestrator, whose Save uses Avalonia's own
+  SaveFilePickerAsync (built like OverlayController.TryPickSavePathAsync). That does NOT close item
+  21e - RecordingSession.SaveOutput still has no dialog, so the REVIEWING-state Save button remains
+  ROESNIP_RECORD_AUTOSAVE-only; the prompt's Save can have a picker because it only copies an
+  already-finished file instead of finalizing a live take. Verified end to end on Windows only (the
+  automation pipe: record -> copy -> copyagain -> CF_HDROP re-checked -> saveagain -> file written,
+  staged copy intact); the Avalonia path is compile-verified and unit-tested, not run on Linux/macOS.
 - Flash phase goes CLICK-THROUGH so hovered content survives the capture (2026-08, both apps'
   Overlay/FlashDimmer.cs + OverlayController.cs, new Overlay/FlashMouseSwallowHook.cs in each).
   Removing the flash's SetForegroundWindow claim (same pass) only fixed the ACTIVATION half of the

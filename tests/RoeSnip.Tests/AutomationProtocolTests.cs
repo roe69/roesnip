@@ -187,6 +187,10 @@ public class AutomationProtocolTests
     [InlineData("cancel")]
     [InlineData("pause")]
     [InlineData("resume")]
+    [InlineData("another")]
+    [InlineData("done")]
+    [InlineData("copyagain")]
+    [InlineData("saveagain")]
     public void ValidateArgs_Chrome_AcceptsKnownActions(string action)
     {
         var request = AutomationProtocol.TryParseRequest($"{{\"cmd\":\"chrome\",\"action\":\"{action}\"}}", out _)!;

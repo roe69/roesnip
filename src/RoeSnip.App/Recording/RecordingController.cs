@@ -562,7 +562,7 @@ public sealed class RecordingSession
         if (finalPath is not null && rearmAfterSave)
         {
             _notifier?.ShowSavedBalloon(finalPath);
-            AwaitAnotherTakeChoice($"Saved {Path.GetFileName(finalPath)}. Record another from this area?");
+            AwaitAnotherTakeChoice($"Saved {Path.GetFileName(finalPath)}. Record another from this area?", finalPath);
             return finalPath;
         }
 
@@ -608,6 +608,7 @@ public sealed class RecordingSession
     {
         _tempPath = null;
         AwaitingAnotherTakeChoice = false;
+        FinishedTakePath = null;
         SetPhase(Phase.Setup);
     }
 
@@ -616,14 +617,21 @@ public sealed class RecordingSession
     /// silently, leaving a recording panel on screen as if a new take had been started for you.</summary>
     public bool AwaitingAnotherTakeChoice { get; private set; }
 
+    /// <summary>Where the take parked on that prompt actually lives - the saved file, or the
+    /// clipboard staging copy - so the prompt's own "Copy again" and "Save" have something to act
+    /// on. Null when nothing re-usable is left (a shared take, whose only copy the upload deletes
+    /// on success), which is what hides those two buttons.</summary>
+    public string? FinishedTakePath { get; private set; }
+
     /// <summary>Raised when a take finishes, carrying the prompt text the chrome should show. The
     /// orchestration layer owns the chrome, so it renders this - same division of labour as
     /// <see cref="PhaseChanged"/>.</summary>
     public event Action<string>? TakeFinished;
 
-    private void AwaitAnotherTakeChoice(string message)
+    private void AwaitAnotherTakeChoice(string message, string? finishedTakePath)
     {
         _tempPath = null;
+        FinishedTakePath = finishedTakePath;
         AwaitingAnotherTakeChoice = true;
         TakeFinished?.Invoke(message);
     }
@@ -641,6 +649,7 @@ public sealed class RecordingSession
     {
         if (!AwaitingAnotherTakeChoice) return;
         AwaitingAnotherTakeChoice = false;
+        FinishedTakePath = null;
         TeardownSession(finalPath: null, encoderAbandoned: false);
     }
 
@@ -684,8 +693,8 @@ public sealed class RecordingSession
 
     /// <summary>Called by the orchestrator once the staged file is actually on the clipboard, so the
     /// prompt only claims success after the platform clipboard agreed.</summary>
-    public void CompleteClipboardHandoff()
-        => AwaitAnotherTakeChoice("Copied to the clipboard. Record another from this area?");
+    public void CompleteClipboardHandoff(string stagedPath)
+        => AwaitAnotherTakeChoice("Copied to the clipboard. Record another from this area?", stagedPath);
 
     public void CancelAndDiscard()
     {
@@ -720,6 +729,7 @@ public sealed class RecordingSession
 
         CleanupTempFile();
         _tempPath = null;
+        FinishedTakePath = null;
         SetPhase(Phase.Setup);
     }
 
@@ -763,7 +773,9 @@ public sealed class RecordingSession
         _saving = false;
         // Ends the same way Save does: the take is finished, so ask rather than silently re-arming
         // (the upload itself continues in the background either way).
-        AwaitAnotherTakeChoice("Uploading this take. Record another from this area?");
+        // No re-usable path: the upload's own success callback deletes this file, and what the
+        // user wants back on the clipboard after a share is the URL, which the presenter owns.
+        AwaitAnotherTakeChoice("Uploading this take. Record another from this area?", finishedTakePath: null);
 
         // _monitor is readonly on this port (no cross-monitor handoff mid-take), so unlike the WPF
         // app's RequestShare this needs no local captured before rearming.
@@ -795,6 +807,8 @@ public sealed class RecordingSession
             return;
         }
         FileLog.Write($"RoeSnip: recording session ending (saved={finalPath is not null})");
+        AwaitingAnotherTakeChoice = false;
+        FinishedTakePath = null;
 
         if (finalPath is not null)
         {

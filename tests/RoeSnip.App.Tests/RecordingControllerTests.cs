@@ -1,3 +1,4 @@
+using System.IO;
 using RoeSnip.App.Recording;
 using RoeSnip.Core.Capture;
 using RoeSnip.Core.Recording;
@@ -136,6 +137,83 @@ public class RecordingSessionSetupPhaseTests
         Assert.True(ended);
         Assert.False(RecordingController.IsActive);
         Assert.Null(RecordingController.Active);
+    }
+
+    [Fact]
+    public void FreshSession_HasNoFinishedTakePath()
+    {
+        var session = NewSetupSession();
+        try
+        {
+            Assert.False(session.AwaitingAnotherTakeChoice);
+            Assert.Null(session.FinishedTakePath);
+        }
+        finally
+        {
+            session.CancelAndDiscard();
+        }
+    }
+
+    /// <summary>Pins what the finished-take prompt's "Copy again" and "Save" act on: a copied take
+    /// parks on the prompt carrying the STAGED path (the copy that outlives the session), not the
+    /// temp path the session is about to forget.</summary>
+    [Fact]
+    public void CompleteClipboardHandoff_ParksOnThePrompt_CarryingTheStagedPath()
+    {
+        var session = NewSetupSession();
+        try
+        {
+            string staged = Path.Combine(Path.GetTempPath(), "roesnip_staged_take.gif");
+            string? prompt = null;
+            session.TakeFinished += m => prompt = m;
+
+            session.CompleteClipboardHandoff(staged);
+
+            Assert.True(session.AwaitingAnotherTakeChoice);
+            Assert.Equal(staged, session.FinishedTakePath);
+            Assert.NotNull(prompt);
+        }
+        finally
+        {
+            session.CancelAndDiscard();
+        }
+    }
+
+    /// <summary>The other half of that contract: re-arming drops the finished take, so Copy again /
+    /// Save can never act on the PREVIOUS take once a new one is being set up.</summary>
+    [Fact]
+    public void RecordAnotherTake_ClearsTheFinishedTakePath()
+    {
+        var session = NewSetupSession();
+        try
+        {
+            session.CompleteClipboardHandoff(Path.Combine(Path.GetTempPath(), "roesnip_staged_take.gif"));
+
+            session.RecordAnotherTake();
+
+            Assert.False(session.AwaitingAnotherTakeChoice);
+            Assert.Null(session.FinishedTakePath);
+            Assert.True(session.IsSetup);
+        }
+        finally
+        {
+            session.CancelAndDiscard();
+        }
+    }
+
+    [Fact]
+    public void FinishAfterTake_ClearsTheFinishedTakePath_AndEndsTheSession()
+    {
+        var session = NewSetupSession();
+        session.CompleteClipboardHandoff(Path.Combine(Path.GetTempPath(), "roesnip_staged_take.gif"));
+        bool ended = false;
+        session.Ended += () => ended = true;
+
+        session.FinishAfterTake();
+
+        Assert.True(ended);
+        Assert.False(session.AwaitingAnotherTakeChoice);
+        Assert.Null(session.FinishedTakePath);
     }
 
     [Fact]

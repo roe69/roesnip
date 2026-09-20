@@ -157,9 +157,9 @@ public static class AutomationProtocol
             case "chrome":
                 return TryGetString(request, "action", out string? action)
                        && action is "start" or "stop" or "save" or "share" or "copy" or "cancel"
-                           or "pause" or "resume" or "another" or "done"
+                           or "pause" or "resume" or "another" or "done" or "copyagain" or "saveagain"
                     ? null
-                    : "chrome requires \"action\": one of start|stop|save|share|copy|cancel|pause|resume|another|done";
+                    : "chrome requires \"action\": one of start|stop|save|share|copy|cancel|pause|resume|another|done|copyagain|saveagain";
 
             case "screenshot":
                 if (!TryGetString(request, "path", out string? path) || string.IsNullOrWhiteSpace(path))

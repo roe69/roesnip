@@ -105,6 +105,9 @@ public sealed class RecordingChrome : Window
     private readonly TextBlock _doneText;
     private readonly Button _doneYesButton;
     private readonly Button _doneNoButton;
+    private readonly Button _doneCopyAgainButton;
+    private readonly Button _doneSaveButton;
+    private readonly StackPanel _doneReuseRow;
     private bool _showingDonePrompt;
 
     public event Action? StartRequested;
@@ -122,6 +125,14 @@ public sealed class RecordingChrome : Window
     public event Action? RecordAnotherRequested;
     /// <summary>"Done" on the post-save prompt - tear the session down.</summary>
     public event Action? DoneRequested;
+    /// <summary>"Copy again" on the post-save prompt - put the finished take back on the clipboard.
+    /// The clipboard is shared state: anything else that copies between finishing a take and
+    /// pasting it wipes it out, and until now the only recovery was recording the take again.</summary>
+    public event Action? CopyAgainRequested;
+    /// <summary>"Save" on the post-save prompt - write another copy of the finished take to a path
+    /// the user picks. Same chrome-only-raises-it division of labour as <see cref="SaveRequested"/>;
+    /// the take's path lives in RecordingSession, the picker in RecordingOrchestrator.</summary>
+    public event Action? SaveAgainRequested;
     public event Action? CancelRequested;
     public event Action<bool>? MicToggled;
     public event Action<bool>? SystemAudioToggled;
@@ -379,8 +390,25 @@ public sealed class RecordingChrome : Window
         doneRow.Children.Add(_doneNoButton);
         doneRow.Children.Add(_doneYesButton);
 
+        // What can still be done with the finished take, on its own row ABOVE the prompt's two
+        // answers: these act on the take, they do not answer "record another?", and neither
+        // dismisses the prompt - copying twice or saving a second copy is a normal thing to want.
+        // Text, not icons, for the same reason Done/Record another are (PARITY.md): this panel is a
+        // question, not the action bar. Hidden outright when the take has no re-usable file left
+        // (a shared take, whose only copy is deleted once the upload succeeds).
+        _doneCopyAgainButton = BuildButton("Copy again", isDanger: false);
+        ToolTip.SetTip(_doneCopyAgainButton, "Put this take back on the clipboard (Ctrl+C on Windows)");
+        _doneCopyAgainButton.Click += (_, _) => CopyAgainRequested?.Invoke();
+        _doneSaveButton = BuildButton("Save", isDanger: false);
+        ToolTip.SetTip(_doneSaveButton, "Save this take to a file");
+        _doneSaveButton.Click += (_, _) => SaveAgainRequested?.Invoke();
+        _doneReuseRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        _doneReuseRow.Children.Add(_doneCopyAgainButton);
+        _doneReuseRow.Children.Add(_doneSaveButton);
+
         _donePanel = new StackPanel { Margin = new Thickness(12, 8, 12, 8), IsVisible = false };
         _donePanel.Children.Add(_doneText);
+        _donePanel.Children.Add(_doneReuseRow);
         _donePanel.Children.Add(doneRow);
 
         var root = new Grid();
@@ -731,8 +759,9 @@ public sealed class RecordingChrome : Window
     /// <summary>Shown after a take has been finished (saved, or copied to the clipboard) instead of
     /// silently re-arming for another one: the session stays put until the user picks. The message
     /// names what just happened so "Record another" is an informed choice.</summary>
-    public void ShowDonePrompt(string message)
+    public void ShowDonePrompt(string message, bool takeAvailable = true)
     {
+        _doneReuseRow.IsVisible = takeAvailable;
         _doneText.Text = message;
         _showingDonePrompt = true;
         _showingRestartConfirm = false;
@@ -880,6 +909,8 @@ public sealed class RecordingChrome : Window
         HideDonePrompt();
         RecordAnotherRequested?.Invoke();
     }
+    public void InvokeCopyAgain() => CopyAgainRequested?.Invoke();
+    public void InvokeSaveAgain() => SaveAgainRequested?.Invoke();
     public void InvokeDone()
     {
         HideDonePrompt();

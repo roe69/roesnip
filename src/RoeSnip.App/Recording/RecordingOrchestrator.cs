@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using RoeSnip.App.AppShell;
 using RoeSnip.App.Overlay;
@@ -68,6 +69,9 @@ public sealed class RecordingOrchestrator
     // Reviewing-only Ctrl+C hook (Windows only - see ReviewCopyHook), installed on entering
     // Reviewing and disposed by every path that leaves it.
     private ReviewCopyHook? _reviewCopyHook;
+    // Reentrancy guard for the finished-take prompt's own Save: the picker is awaited, so a second
+    // click (or automation call) would otherwise open a second one over the first.
+    private bool _resavingFinishedTake;
 
     private RecordingOrchestrator(RecordingSession session, RoeSnipSettings settings, ITrayNotifier? notifier)
     {
@@ -98,6 +102,8 @@ public sealed class RecordingOrchestrator
         _chrome.CopyRequested += () => RequestCopyToClipboard();
         _chrome.RecordAnotherRequested += () => _session.RecordAnotherTake();
         _chrome.DoneRequested += () => _session.FinishAfterTake();
+        _chrome.CopyAgainRequested += () => CopyFinishedTakeAgain();
+        _chrome.SaveAgainRequested += () => SaveFinishedTakeCopy();
         _chrome.CancelRequested += () => _session.CancelAndDiscard();
         _chrome.MicToggled += on => _session.SetAudioToggle(on, null);
         _chrome.SystemAudioToggled += on => _session.SetAudioToggle(null, on);
@@ -105,7 +111,8 @@ public sealed class RecordingOrchestrator
         _chrome.FpsChanged += fps2 => _session.SetFps(fps2);
 
         _session.PhaseChanged += OnPhaseChanged;
-        _session.TakeFinished += message => _chrome.ShowDonePrompt(message);
+        _session.TakeFinished += message =>
+            _chrome.ShowDonePrompt(message, takeAvailable: _session.FinishedTakePath is not null);
         _session.PausedChanged += _chrome.SetPaused;
         _session.Ended += OnEnded;
 
@@ -132,6 +139,9 @@ public sealed class RecordingOrchestrator
         switch (phase)
         {
             case RecordingSession.RecordingSessionPhase.Setup:
+                // Re-armed for a new take: the finished one is out of reach, so Ctrl+C has nothing
+                // left to copy. The hook deliberately SURVIVES the finished-take prompt, which is
+                // not a phase change - see CopyOnCtrlC.
                 DisposeReviewCopyHook();
                 _chrome.HideDonePrompt();
                 _chrome.EnterSetup();
@@ -153,7 +163,7 @@ public sealed class RecordingOrchestrator
                 // Ctrl+C copies the take while it waits here (Windows only - see ReviewCopyHook).
                 DisposeReviewCopyHook();
                 _reviewCopyHook = ReviewCopyHook.TryInstall(() =>
-                    Dispatcher.UIThread.Post(RequestCopyToClipboard));
+                    Dispatcher.UIThread.Post(CopyOnCtrlC));
                 break;
         }
     }
@@ -228,14 +238,150 @@ public sealed class RecordingOrchestrator
         {
             await ClipboardService.CopyFileAsync(_chrome, staged);
             FileLog.Write($"RoeSnip: recording copied to the clipboard as {staged}");
-            _session.CompleteClipboardHandoff();
+            _session.CompleteClipboardHandoff(staged);
         }
         catch (Exception ex)
         {
             FileLog.Write($"RoeSnip: copying the recording to the clipboard failed: {ex}");
             _notifier?.ShowError($"Could not copy the recording to the clipboard: {ex.Message} It was kept at: {staged}");
-            _session.CompleteClipboardHandoff();
+            // Still park on the prompt WITH the staged path: the file is real and already out of
+            // the temp path, so "Copy again" is exactly the retry this failure needs.
+            _session.CompleteClipboardHandoff(staged);
         }
+    }
+
+    /// <summary>Where the review Ctrl+C hook lands (Windows only). Reviewing means "copy this
+    /// take"; the finished-take prompt means "put it back on the clipboard" - the same key, because
+    /// to the user it is the same take and the same intent.</summary>
+    private void CopyOnCtrlC()
+    {
+        if (_session.AwaitingAnotherTakeChoice)
+        {
+            CopyFinishedTakeAgain();
+            return;
+        }
+        RequestCopyToClipboard();
+    }
+
+    /// <summary>"Copy again" on the finished-take prompt, and Ctrl+C while it is up. The clipboard
+    /// is shared state - anything else that copies between finishing a take and pasting it wipes it
+    /// out - so the take stays re-copyable for as long as the prompt is on screen.</summary>
+    private void CopyFinishedTakeAgain()
+    {
+        if (!_session.AwaitingAnotherTakeChoice || _session.FinishedTakePath is not { } path)
+        {
+            return;
+        }
+        if (!File.Exists(path))
+        {
+            _notifier?.ShowError($"The recording is no longer at {path}.");
+            return;
+        }
+
+        _ = CopyFinishedTakeAgainAsync(path);
+    }
+
+    private async Task CopyFinishedTakeAgainAsync(string path)
+    {
+        try
+        {
+            await ClipboardService.CopyFileAsync(_chrome, path);
+            FileLog.Write($"RoeSnip: recording re-copied to the clipboard from {path}");
+            // Re-word the prompt: a button that deliberately does not dismiss it has no other way
+            // to report back.
+            _chrome.ShowDonePrompt(
+                $"Copied {Path.GetFileName(path)} to the clipboard. Record another from this area?");
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: re-copying the recording to the clipboard failed: {ex}");
+            _notifier?.ShowError($"Could not copy the recording to the clipboard: {ex.Message}");
+        }
+    }
+
+    /// <summary>"Save" on the finished-take prompt. COPIES rather than moves: the same file is what
+    /// Copy again hands to the clipboard (and, after a plain Save, is already the user's own file),
+    /// so moving it would break the other button and could strand a clipboard entry pointing at
+    /// nothing. A cancelled picker leaves the prompt exactly as it was.</summary>
+    private void SaveFinishedTakeCopy()
+    {
+        if (!_session.AwaitingAnotherTakeChoice || _resavingFinishedTake
+            || _session.FinishedTakePath is not { } path)
+        {
+            return;
+        }
+        if (!File.Exists(path))
+        {
+            _notifier?.ShowError($"The recording is no longer at {path}.");
+            return;
+        }
+
+        _resavingFinishedTake = true;
+        _ = SaveFinishedTakeCopyAsync(path);
+    }
+
+    private async Task SaveFinishedTakeCopyAsync(string path)
+    {
+        try
+        {
+            string? target = await PickSavePathAsync(Path.GetExtension(path));
+            if (target is null)
+            {
+                return; // cancelled - the take is untouched and the prompt is still up
+            }
+
+            File.Copy(path, target, overwrite: true);
+            _notifier?.ShowSavedBalloon(target);
+            _chrome.ShowDonePrompt($"Saved {Path.GetFileName(target)}. Record another from this area?");
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: saving a second copy of the recording failed: {ex}");
+            _notifier?.ShowError($"Failed to save recording: {ex.Message}");
+        }
+        finally
+        {
+            _resavingFinishedTake = false;
+        }
+    }
+
+    /// <summary>Avalonia's own save picker, built the same way OverlayController.TryPickSavePathAsync
+    /// builds the screenshot one (same suggested directory, same overwrite prompt). Note this does
+    /// NOT close item 21e: RecordingSession.SaveOutput still has no dialog, so the Reviewing-state
+    /// Save button stays ROESNIP_RECORD_AUTOSAVE-only. The prompt's Save can have one because it
+    /// only copies an already-finished file instead of finalizing a live take.</summary>
+    private async Task<string?> PickSavePathAsync(string extension)
+    {
+        string ext = extension.TrimStart('.');
+        var settings = SettingsStore.Load();
+        try
+        {
+            Directory.CreateDirectory(settings.SaveDirectory);
+        }
+        catch (Exception)
+        {
+            // Fall through and let the picker itself surface a directory problem, if any.
+        }
+
+        IStorageFolder? startLocation = null;
+        try
+        {
+            startLocation = await _chrome.StorageProvider.TryGetFolderFromPathAsync(settings.SaveDirectory);
+        }
+        catch (Exception)
+        {
+            // A missing/inaccessible start folder just means the picker opens at its default.
+        }
+
+        var file = await _chrome.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            SuggestedStartLocation = startLocation,
+            SuggestedFileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}",
+            DefaultExtension = ext,
+            ShowOverwritePrompt = true,
+        });
+
+        return file?.TryGetLocalPath();
     }
 
     private void RequestShare()
@@ -460,6 +606,17 @@ public sealed class RecordingOrchestrator
             case "copy":
                 if (!s.IsReviewing) return "cannot copy while recording is not Reviewing";
                 active._chrome.InvokeCopy();
+                return null;
+            case "copyagain":
+                if (!s.AwaitingAnotherTakeChoice) return "cannot copy again: no finished take is waiting on a choice";
+                if (s.FinishedTakePath is null) return "cannot copy again: this take has no file left to copy";
+                active._chrome.InvokeCopyAgain();
+                return null;
+            case "saveagain":
+                if (!s.AwaitingAnotherTakeChoice) return "cannot save again: no finished take is waiting on a choice";
+                if (s.FinishedTakePath is null) return "cannot save again: this take has no file left to save";
+                if (active._resavingFinishedTake) return "cannot save again: a save is already in progress";
+                active._chrome.InvokeSaveAgain();
                 return null;
             case "another":
                 if (!s.AwaitingAnotherTakeChoice) return "cannot record another: no finished take is waiting on a choice";
