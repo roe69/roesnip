@@ -380,10 +380,84 @@ public class AutomationProtocolTests
         Assert.DoesNotContain('–', json); // en dash
     }
 
+    // ---------- lastcapture / tray ----------
+
+    [Theory]
+    [InlineData("status")]
+    [InlineData("copy")]
+    [InlineData("save")]
+    public void ValidateArgs_LastCapture_AcceptsKnownActions(string action)
+    {
+        var request = AutomationProtocol.TryParseRequest($"{{\"cmd\":\"lastcapture\",\"action\":\"{action}\"}}", out _)!;
+        Assert.Null(AutomationProtocol.ValidateArgs("lastcapture", request));
+    }
+
+    [Fact]
+    public void ValidateArgs_LastCapture_RejectsAnUnknownAction()
+    {
+        var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"lastcapture\",\"action\":\"delete\"}", out _)!;
+        Assert.NotNull(AutomationProtocol.ValidateArgs("lastcapture", request));
+    }
+
+    [Fact]
+    public void ValidateArgs_LastCaptureSave_PathIsOptional()
+    {
+        // Unlike `confirm save` there is no picker to suppress - the tray's own Save writes to the
+        // configured save directory - so a path-less save is a legitimate request.
+        var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"lastcapture\",\"action\":\"save\"}", out _)!;
+        Assert.Null(AutomationProtocol.ValidateArgs("lastcapture", request));
+    }
+
+    [Fact]
+    public void ValidateArgs_LastCaptureSave_RejectsAnEmptyPathWhenOneIsGiven()
+    {
+        var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"lastcapture\",\"action\":\"save\",\"path\":\"  \"}", out _)!;
+        Assert.NotNull(AutomationProtocol.ValidateArgs("lastcapture", request));
+    }
+
+    [Theory]
+    [InlineData("menu")]
+    [InlineData("closemenu")]
+    public void ValidateArgs_Tray_AcceptsKnownActions(string action)
+    {
+        var request = AutomationProtocol.TryParseRequest($"{{\"cmd\":\"tray\",\"action\":\"{action}\"}}", out _)!;
+        Assert.Null(AutomationProtocol.ValidateArgs("tray", request));
+    }
+
+    [Fact]
+    public void ValidateArgs_Tray_RejectsAnUnknownAction()
+    {
+        var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"tray\",\"action\":\"open\"}", out _)!;
+        Assert.NotNull(AutomationProtocol.ValidateArgs("tray", request));
+    }
+
+    [Fact]
+    public void SerializeKeptCapture_NothingKept_ReportsOkWithANullCapture()
+    {
+        // "nothing is being held" is an answer, not an error - only copy/save fail on it.
+        string json = AutomationProtocol.SerializeKeptCapture(null);
+
+        Assert.Contains("\"ok\":true", json);
+        Assert.Contains("\"kept\":null", json);
+        Assert.Contains("\"savedPath\":null", json);
+    }
+
+    [Fact]
+    public void SerializeKeptCapture_WithACaptureAndASavedPath_EmitsBoth()
+    {
+        string json = AutomationProtocol.SerializeKeptCapture(
+            new AutomationProtocol.KeptCaptureDto(640, 480, "2026-09-20 18:42:07"), savedPath: "C:\\shots\\a.png");
+
+        Assert.Contains("\"width\":640", json);
+        Assert.Contains("\"height\":480", json);
+        Assert.Contains("2026-09-20 18:42:07", json);
+        Assert.Contains("a.png", json);
+    }
+
     // ---------- KnownCommands ----------
 
     [Fact]
-    public void KnownCommands_MatchesTheDocumentedElevenCommands()
+    public void KnownCommands_MatchesTheDocumentedCommandList()
     {
         // Wire-shape parity with the WPF app (see AutomationProtocol's own doc comment):
         // record/preset/fps/chrome remain KNOWN/validated commands here even though this port's
@@ -391,8 +465,15 @@ public class AutomationProtocolTests
         // "unknown command" — so a future recording port only has to swap the live handlers.
         // "settings" (settings-legibility-pass) opens/closes the Settings window
         // (TrayApp.OpenSettingsForAutomation/CloseSettingsForAutomation) for --auto-driven visual QA.
+        // "lastcapture" and "tray" came with the kept still capture. "lastcapture" is live
+        // here; "tray" is wire-shape only, since this port's tray menu is a native menu the
+        // OS owns and cannot be opened programmatically.
         Assert.Equal(
-            new[] { "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot", "confirm", "settings" },
+            new[]
+            {
+                "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot",
+                "confirm", "settings", "lastcapture", "tray",
+            },
             AutomationProtocol.KnownCommands);
     }
 }

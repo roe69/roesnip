@@ -1608,6 +1608,34 @@ because a correct implementation needs live hardware this repo cannot exercise.
   already-finished file instead of finalizing a live take. Verified end to end on Windows only (the
   automation pipe: record -> copy -> copyagain -> CF_HDROP re-checked -> saveagain -> file written,
   staged copy intact); the Avalonia path is compile-verified and unit-tested, not run on Linux/macOS.
+- The last STILL capture stays reachable from the tray (2026-09, new
+  RoeSnip.Core/Clipboard/LastCapture.cs, both apps' Program.cs + TrayApp.cs + AutomationServer.cs,
+  RoeSnip.App's Overlay/ClipboardService.cs): the other half of the finished-take prompt's Copy
+  again / Save, for a capture that has no prompt at all. A still's post-capture UI is the overlay's
+  own toolbar, and Copy or Save CLOSES the overlay, so the rendered crop used to be gone the moment
+  anything else took the clipboard. The resident now keeps it - the pixels, in memory, one at a
+  time, replaced by the next capture and dropped on exit (no temp file: the bytes are already what
+  went to the clipboard, and a file would be one more thing to prune and to leak) - and the tray
+  menu grows "Copy again (W x H, HH:mm)" and "Save last capture" while there is something to act
+  on. Both are absent, not greyed out, when nothing is kept. Neither pops a dialog: Save writes
+  into the configured save directory under the capture's own roesnip_yyyyMMdd_HHmmss.png name
+  (never overwriting an earlier save of the same capture) and the saved balloon/toast hands over
+  the folder - a tray menu is a recovery path, not a "where should this go?" moment. New automation
+  command `lastcapture` (status|copy|save), live in both apps.
+  Two DELIBERATE divergences in the Avalonia port, both forced by what a native menu can do:
+  its items are pushed (LastCapture.Changed) rather than refreshed on a menu-opening hook, which a
+  NativeMenu does not have; and "Copy again" is only offered where a windowless copy can actually
+  work (ClipboardService.CanCopyImageWithoutWindow - Windows and macOS, whose clipboards the OS
+  owns, but NOT X11, where the selection is served by its owning window and a windowless copy would
+  evaporate). "Save last capture" needs no window and is offered everywhere. The new automation
+  command `tray` (menu|closemenu), which drops the WinForms menu for a screenshot, is wire-shape
+  only in the port for the same reason - the OS owns that menu.
+  Verified on Windows through the automation pipe in BOTH apps: capture -> copy -> clipboard
+  clobbered with text -> `lastcapture copy` -> the clipboard image comes back byte-identical to the
+  first one; `lastcapture save` with and without a path. The WPF tray menu was photographed with
+  and without a kept capture (`tray menu` + `screenshot includeExcluded:true`); the port's native
+  menu cannot be photographed that way, so its two items are compile-verified and exercised through
+  their own methods, not seen on screen. Nothing here is run on Linux/macOS.
 - Flash phase goes CLICK-THROUGH so hovered content survives the capture (2026-08, both apps'
   Overlay/FlashDimmer.cs + OverlayController.cs, new Overlay/FlashMouseSwallowHook.cs in each).
   Removing the flash's SetForegroundWindow claim (same pass) only fixed the ACTIVATION half of the

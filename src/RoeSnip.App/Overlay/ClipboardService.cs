@@ -52,6 +52,36 @@ public static class ClipboardService
         await CopyPngViaAvaloniaAsync(owner, pngBytes);
     }
 
+    /// <summary>Whether an image can reach the clipboard with NO window to own it - which is the
+    /// tray menu's situation when it puts the kept capture back (AppShell/TrayApp.cs). True on
+    /// Windows and macOS, where the copy hands the bytes to an OS-owned clipboard and is done;
+    /// false on X11, where the selection is served by its owning window for as long as another
+    /// client might paste it, so a windowless copy would evaporate the moment it was made.</summary>
+    public static bool CanCopyImageWithoutWindow => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS();
+
+    /// <summary>The window-free half of <see cref="CopyImageAsync"/> - the same two platform paths,
+    /// which never used the owner in the first place. Guarded by
+    /// <see cref="CanCopyImageWithoutWindow"/>; callers must not offer the action where that is
+    /// false rather than call this and fail.</summary>
+    public static void CopyImageWithoutWindow(SdrImage image)
+    {
+        byte[] pngBytes = PngWriter.Encode(image);
+
+        if (OperatingSystem.IsWindows())
+        {
+            CopyImageWindows(image, pngBytes);
+            return;
+        }
+        if (OperatingSystem.IsMacOS())
+        {
+            MacPasteboard.SetPng(pngBytes);
+            return;
+        }
+
+        throw new PlatformNotSupportedException(
+            "This platform's clipboard is served by a window, so a copy needs one (see CanCopyImageWithoutWindow).");
+    }
+
     /// <summary>Copies plain text (the color inspector / magnifier hex readout). Returns whether
     /// the copy succeeded — a transiently locked clipboard reports false, never throws.</summary>
     public static async Task<bool> TryCopyTextAsync(Visual owner, string text)

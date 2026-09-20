@@ -59,6 +59,11 @@ Tool, RoeSnip asks once whether to disable that or use Ctrl+PrintScreen
 instead. The hotkey can be changed later from the tray icon's Settings
 window. Launching the exe again triggers a capture on the running instance.
 
+The tray menu keeps the last capture reachable: **Copy again** puts it back on the
+clipboard after something else has taken it, and **Save last capture** writes it to
+the save directory. Both appear only while a capture is being held - it lives in
+memory, one at a time, until the next capture replaces it or RoeSnip exits.
+
 Settings live at `%APPDATA%\RoeSnip\settings.json` (hotkey, save directory,
 auto-HDR-copy, tone-map overrides, run-at-startup, copy-on-select). A missing
 or corrupt file falls back to defaults in memory without being overwritten,

@@ -502,6 +502,46 @@ trailing `state` snapshot's `mode` just reflects whatever it already was.
 {"ok":true,"mode":"idle", ...}
 ```
 
+#### `lastcapture`
+
+`{"cmd":"lastcapture","action":"status"}`, `{"cmd":"lastcapture","action":"copy"}`, or
+`{"cmd":"lastcapture","action":"save"}` (optionally with a `"path"`).
+
+The still capture the resident is holding on to after the overlay closed
+(`RoeSnip.Core/Clipboard/LastCapture.cs`) - the same two actions the tray menu's "Copy again" and
+"Save last capture" items perform, through the same `TrayApp` methods. A still has no post-capture
+prompt the way a recording does (the overlay IS its post-capture UI, and confirming closes it), so
+this is how a capture stays reachable once something else has taken the clipboard.
+
+`status` is a plain read and answers `"kept":null` when nothing is held - that is an answer, not an
+error. `copy` puts the kept pixels back on the clipboard in both formats the original copy used
+(PNG + CF_DIBV5; verify with `[System.Windows.Forms.Clipboard]::GetImage()`, after clobbering the
+clipboard first so a stale entry cannot masquerade as a fresh copy). `save` writes a PNG: to
+`"path"` when one is given, else into the configured save directory under the capture's own
+`roesnip_yyyyMMdd_HHmmss.png` name, never overwriting an earlier save of the same capture (`_2`,
+`_3`, ...). `copy`/`save` error when nothing is being kept.
+
+```
+--auto '{"cmd":"lastcapture","action":"copy"}'
+```
+```json
+{"ok":true,"kept":{"width":640,"height":400,"takenAt":"2026-09-20 18:44:43"},"savedPath":null}
+```
+
+The kept capture lives in memory only - one at a time, replaced by the next capture and gone when
+the process exits - so `status` reports nothing after a restart.
+
+#### `tray`
+
+`{"cmd":"tray","action":"menu"}` or `{"cmd":"tray","action":"closemenu"}`
+
+Drops the REAL tray context menu (the same `ContextMenuStrip` a right-click opens) at the tray
+corner so a `screenshot` can photograph it, with no synthetic mouse input - the same visual-QA
+purpose `settings open` serves for the Settings window. Nothing dismisses it on its own (there is
+no foreground window to lose focus to), so `closemenu` is how it goes away; `closemenu` errors if
+no menu is open. `RoeSnip.App` validates this command for wire-shape parity but has no live
+handler and never will: its tray menu is a native menu the OS owns.
+
 ### Cross-monitor selection (`select` spanning multiple monitors)
 
 `select`'s rect can cross a monitor boundary — e.g. on a 3-monitor layout with `DISPLAY3` at

@@ -48,7 +48,7 @@ public static class AutomationProtocol
     public static readonly IReadOnlyList<string> KnownCommands = new[]
     {
         "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot",
-        "confirm", "settings",
+        "confirm", "settings", "lastcapture", "tray",
     };
 
     /// <summary>Parses one line of the wire protocol: must be a JSON object with a non-empty string
@@ -177,6 +177,34 @@ public static class AutomationProtocol
                 }
                 return null;
 
+            // The capture the resident is holding on to after the overlay closed (Core/Clipboard/
+            // LastCapture.cs) - the same two actions the tray menu offers, plus a "status" read so
+            // a script can check whether anything is being kept at all. "save" takes an OPTIONAL
+            // "path": unlike `confirm save` there is no picker to suppress (the tray's own Save
+            // writes to the configured save directory), so the path is only about writing somewhere
+            // deterministic.
+            case "lastcapture":
+                if (!TryGetString(request, "action", out string? keptAction)
+                    || keptAction is not ("status" or "copy" or "save"))
+                {
+                    return "lastcapture requires \"action\": one of status|copy|save";
+                }
+                if (keptAction == "save" && request["path"] is JsonValue keptPath
+                    && (!keptPath.TryGetValue(out string? keptPathText) || string.IsNullOrWhiteSpace(keptPathText)))
+                {
+                    return "lastcapture \"save\" needs a non-empty \"path\" when one is given";
+                }
+                return null;
+
+            // Tray-menu visual-QA hook: kept in this port's wire contract to match the WPF app
+            // byte for byte (see this class's own doc comment), but it has no live handler here and
+            // never will - this port's tray menu is a NATIVE menu the OS owns, which cannot be
+            // dropped programmatically the way a WinForms ContextMenuStrip can.
+            case "tray":
+                return TryGetString(request, "action", out string? trayAction) && trayAction is "menu" or "closemenu"
+                    ? null
+                    : "tray requires \"action\": one of menu|closemenu";
+
             // Settings-window visual-QA hook (settings-legibility-pass), ported from the WPF app's
             // own AutomationProtocol.ValidateArgs: lets an --auto script open the window for a
             // `screenshot` command to capture, then close it again, without any synthetic input.
@@ -287,6 +315,27 @@ public static class AutomationProtocol
 
         return obj.ToJsonString();
     }
+
+    // ---------- `lastcapture` response shape ----------
+
+    /// <summary>What the resident is holding, as the `lastcapture` response reports it.</summary>
+    public readonly record struct KeptCaptureDto(int Width, int Height, string TakenAt);
+
+    /// <summary>Pure DTO-to-JSON step of the `lastcapture` response. A null <paramref name="kept"/>
+    /// serializes as "kept": null - "nothing is being held" is a legitimate answer to `status`, not
+    /// an error. <paramref name="savedPath"/> is set only by a successful "save".</summary>
+    public static string SerializeKeptCapture(KeptCaptureDto? kept, string? savedPath = null)
+    {
+        var obj = new JsonObject
+        {
+            ["ok"] = true,
+            ["kept"] = kept is { } k
+                ? new JsonObject { ["width"] = k.Width, ["height"] = k.Height, ["takenAt"] = k.TakenAt }
+                : null,
+            ["savedPath"] = savedPath,
+        };
+        return obj.ToJsonString();
+    }
 }
 
 /// <summary>The dev-gated automation pipe server. ONLY constructed and started by
@@ -313,13 +362,19 @@ internal sealed class AutomationServer
     private readonly Action _triggerCapture;
     private readonly Func<string?> _openSettings;
     private readonly Func<string?> _closeSettings;
+    private readonly Func<string?> _copyKeptCapture;
+    private readonly Func<string?, string?> _saveKeptCapture;
     private CancellationTokenSource? _cts;
 
-    public AutomationServer(Action triggerCapture, Func<string?> openSettings, Func<string?> closeSettings)
+    public AutomationServer(
+        Action triggerCapture, Func<string?> openSettings, Func<string?> closeSettings,
+        Func<string?> copyKeptCapture, Func<string?, string?> saveKeptCapture)
     {
         _triggerCapture = triggerCapture;
         _openSettings = openSettings;
         _closeSettings = closeSettings;
+        _copyKeptCapture = copyKeptCapture;
+        _saveKeptCapture = saveKeptCapture;
     }
 
     /// <summary>True when this launch should start the automation pipe. Checked by TrayApp before
@@ -426,6 +481,9 @@ internal sealed class AutomationServer
                 "screenshot" => HandleScreenshot(request),
                 "confirm" => HandleConfirm(request),
                 "settings" => HandleSettings(request),
+                "lastcapture" => HandleLastCapture(request),
+                "tray" => AutomationProtocol.BuildError(
+                    "tray: this port's tray menu is a native menu the OS owns, so it cannot be opened programmatically"),
                 _ => AutomationProtocol.BuildError($"unknown command \"{cmd}\""), // unreachable, ValidateArgs already rejected it
             };
         }
@@ -600,6 +658,38 @@ internal sealed class AutomationServer
             ? AutomationProtocol.BuildError(error)
             : AutomationProtocol.SerializeState(InvokeOnUi(GetStateSnapshot));
     }
+
+    /// <summary>`lastcapture`: reads or acts on the still capture the resident is holding
+    /// (Core/Clipboard/LastCapture.cs) through TrayApp's own Copy again / Save last capture - the
+    /// same calls the tray menu items make. "status" is a plain read, so it answers "kept": null
+    /// rather than erroring when nothing is held; copy/save DO error, because being asked to
+    /// re-copy nothing is a real failure.</summary>
+    private string HandleLastCapture(JsonObject request)
+    {
+        string action = (string)request["action"]!;
+        string? path = request["path"] is JsonValue pv && pv.TryGetValue(out string? p) ? p : null;
+
+        if (action == "status")
+        {
+            return AutomationProtocol.SerializeKeptCapture(InvokeOnUi(ReadKeptCapture));
+        }
+
+        string? error = InvokeOnUi<string?>(() => action == "copy" ? _copyKeptCapture() : _saveKeptCapture(path));
+        if (error is not null)
+        {
+            return AutomationProtocol.BuildError(error);
+        }
+
+        // The saved path is only knowable here when the caller named it: the tray's own Save picks
+        // its own free name in the configured save directory, and reports it in the saved toast.
+        return AutomationProtocol.SerializeKeptCapture(
+            InvokeOnUi(ReadKeptCapture), savedPath: action == "save" ? path : null);
+    }
+
+    private static AutomationProtocol.KeptCaptureDto? ReadKeptCapture() =>
+        RoeSnip.Core.Clipboard.LastCapture.Current is { } kept
+            ? new AutomationProtocol.KeptCaptureDto(kept.Width, kept.Height, kept.TakenLocal.ToString("yyyy-MM-dd HH:mm:ss"))
+            : null;
 
     // ---------- Live state gathering (UI thread only) ----------
 

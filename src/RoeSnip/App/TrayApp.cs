@@ -38,6 +38,10 @@ public sealed class TrayApp : ITrayNotifier
     private EventHandler? _activeBalloonClickHandler;
     private SettingsWindow? _settingsWindow;
     private AutomationServer? _automationServer;
+    // The two kept-capture menu items, held so the menu's Opening handler can re-label them and
+    // hide them when there is nothing kept - see BuildKeptCaptureItems.
+    private ToolStripMenuItem? _copyAgainItem;
+    private ToolStripMenuItem? _saveLastItem;
     // Trailing-edge coalescer for DisplaySettingsChanged bursts — see the subscription in
     // StartWarmup. Created lazily on the first event, restarted on every later one; disposed in
     // the post-Run teardown so it can't fire against torn-down state.
@@ -194,6 +198,7 @@ public sealed class TrayApp : ITrayNotifier
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Capture", null, (_, _) => TriggerCapture());
+        BuildKeptCaptureItems(menu);
         menu.Items.Add("Settings...", null, (_, _) => OpenSettings());
         menu.Items.Add("About", null, (_, _) => ShowAbout());
         menu.Items.Add(new ToolStripSeparator());
@@ -226,7 +231,9 @@ public sealed class TrayApp : ITrayNotifier
             // the hotkey already do.
             _automationServer = new AutomationServer(
                 System.Windows.Threading.Dispatcher.CurrentDispatcher, TriggerCapture,
-                OpenSettingsForAutomation, CloseSettingsForAutomation);
+                OpenSettingsForAutomation, CloseSettingsForAutomation,
+                CopyKeptCapture, SaveKeptCapture,
+                ShowTrayMenuForAutomation, CloseTrayMenuForAutomation);
             _automationServer.Start();
         }
 
@@ -533,6 +540,36 @@ public sealed class TrayApp : ITrayNotifier
         return null;
     }
 
+    /// <summary>Automation-only entry point (App/AutomationServer.cs's `tray`/`menu` command):
+    /// drops the REAL tray context menu (the same ContextMenuStrip a right-click opens, kept-capture
+    /// items and all) at the tray corner, so a `screenshot` can photograph it without synthetic
+    /// mouse input. Same visual-QA purpose as <see cref="OpenSettingsForAutomation"/>. Nothing
+    /// dismisses it on its own here - there is no foreground window to lose focus to - so
+    /// <see cref="CloseTrayMenuForAutomation"/> is how it goes away.</summary>
+    internal string? ShowTrayMenuForAutomation()
+    {
+        if (_notifyIcon?.ContextMenuStrip is not { } menu)
+        {
+            return "tray \"menu\" requires a tray icon with a context menu";
+        }
+
+        var work = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1024, 768);
+        // From the tray corner, expanding up and to the left - where Windows itself puts it.
+        menu.Show(new Point(work.Right - 8, work.Bottom - 8), ToolStripDropDownDirection.AboveLeft);
+        return null;
+    }
+
+    /// <summary>Automation-only entry point (App/AutomationServer.cs's `tray`/`closemenu`).</summary>
+    internal string? CloseTrayMenuForAutomation()
+    {
+        if (_notifyIcon?.ContextMenuStrip is not { Visible: true } menu)
+        {
+            return "tray \"closemenu\" requires an open tray menu";
+        }
+        menu.Close();
+        return null;
+    }
+
     /// <summary>The one-time PrintScreen/Snipping-Tool consent flow (DESIGN.md §2), applicable only
     /// when the configured hotkey is bare PrintScreen (no modifiers). On Windows 11 an ABSENT
     /// <c>HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled</c> value means the Snipping
@@ -672,6 +709,133 @@ public sealed class TrayApp : ITrayNotifier
             "About RoeSnip",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
+    }
+
+    // ---------------- The kept capture (Copy again / Save last capture) ----------------
+
+    /// <summary>The two things that can still be done with the last still capture once the overlay
+    /// has closed. They live in the tray menu because the overlay cannot stay up to hold them - it
+    /// dims the whole desktop - and the resident is the only part of the app that outlives a
+    /// capture. Hidden outright while nothing is kept, rather than greyed out or clickable and
+    /// broken: same rule the recording chrome's own Copy again / Save follow.</summary>
+    private void BuildKeptCaptureItems(ContextMenuStrip menu)
+    {
+        _copyAgainItem = new ToolStripMenuItem("Copy again", null, (_, _) => CopyKeptCapture());
+        _saveLastItem = new ToolStripMenuItem("Save last capture", null, (_, _) => SaveKeptCapture(null));
+        menu.Items.Add(_copyAgainItem);
+        menu.Items.Add(_saveLastItem);
+        // Pull, not push: the kept capture changes in AppComposition.RunCaptureFlowAsync, which has
+        // no business knowing about menu items.
+        menu.Opening += (_, _) => RefreshKeptCaptureItems();
+        RefreshKeptCaptureItems();
+    }
+
+    /// <summary>Labels "Copy again" with what would actually come back (size and time), so the
+    /// offer is checkable before it is taken.</summary>
+    private void RefreshKeptCaptureItems()
+    {
+        var kept = RoeSnip.Core.Clipboard.LastCapture.Current;
+        if (_copyAgainItem is not null)
+        {
+            _copyAgainItem.Visible = kept is not null;
+            if (kept is not null)
+            {
+                _copyAgainItem.Text = $"Copy again ({kept.Describe()})";
+            }
+        }
+        if (_saveLastItem is not null)
+        {
+            _saveLastItem.Visible = kept is not null;
+        }
+    }
+
+    /// <summary>Puts the kept capture back on the clipboard, in both formats the original copy
+    /// used (PNG + CF_DIBV5), so the paste it was meant for still works after something else has
+    /// been copied in between. Returns null on success, else why not - the automation hook reports
+    /// the same string the balloon says.</summary>
+    internal string? CopyKeptCapture()
+    {
+        if (RoeSnip.Core.Clipboard.LastCapture.Current is not { } kept)
+        {
+            return "no capture is being kept (take one first)";
+        }
+
+        try
+        {
+            RoeSnip.Imaging.ClipboardService.CopyToClipboard(
+                new RoeSnip.Imaging.SdrImage(kept.Width, kept.Height, kept.Pixels));
+            FileLog.Write($"RoeSnip: the kept capture ({kept.Describe()}) was copied to the clipboard again");
+            ShowInfoBalloon($"Copied the last capture ({kept.Describe()}) to the clipboard.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: re-copying the kept capture failed: {ex}");
+            ShowError($"Could not copy the last capture: {ex.Message}");
+            return $"copying the kept capture failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>Writes the kept capture as a PNG. No file dialog: this is a recovery action taken
+    /// from a tray menu, not a "where should this go?" moment, so it lands in the configured save
+    /// directory under the same roesnip_yyyyMMdd_HHmmss.png name the overlay's own Save would have
+    /// offered (stamped with when the capture was TAKEN, not when it was rescued), and the saved
+    /// balloon hands the user the folder. Never overwrites an earlier save of the same capture -
+    /// see KeptCapture.SuggestSavePath. <paramref name="explicitPath"/> is the automation hook's
+    /// way of writing somewhere deterministic; it bypasses nothing else.</summary>
+    internal string? SaveKeptCapture(string? explicitPath)
+    {
+        if (RoeSnip.Core.Clipboard.LastCapture.Current is not { } kept)
+        {
+            return "no capture is being kept (take one first)";
+        }
+
+        try
+        {
+            string path;
+            if (explicitPath is not null)
+            {
+                path = explicitPath;
+                string? parent = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(parent))
+                {
+                    Directory.CreateDirectory(parent);
+                }
+            }
+            else
+            {
+                Directory.CreateDirectory(_settings.SaveDirectory);
+                path = kept.SuggestSavePath(_settings.SaveDirectory);
+            }
+
+            RoeSnip.Imaging.PngWriter.WriteFile(
+                path, new RoeSnip.Imaging.SdrImage(kept.Width, kept.Height, kept.Pixels));
+            FileLog.Write($"RoeSnip: the kept capture ({kept.Describe()}) was saved to {path}");
+            ShowSavedBalloon(path);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: saving the kept capture failed: {ex}");
+            ShowError($"Could not save the last capture: {ex.Message}");
+            return $"saving the kept capture failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>A plain informational balloon (no click action). Sets the icon explicitly because
+    /// <see cref="ShowError"/> leaves it on Error for whatever balloon comes next.</summary>
+    private void ShowInfoBalloon(string message)
+    {
+        if (_notifyIcon is null)
+        {
+            return;
+        }
+
+        DetachActiveBalloonHandler();
+        _notifyIcon.BalloonTipTitle = "RoeSnip";
+        _notifyIcon.BalloonTipText = message;
+        _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+        _notifyIcon.ShowBalloonTip(3000);
     }
 
     /// <inheritdoc/>

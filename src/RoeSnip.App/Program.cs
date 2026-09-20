@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Avalonia;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Clipboard;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Settings;
@@ -654,6 +655,16 @@ public static class AppComposition
                     }
                     return;
                 }
+
+                // The overlay is gone by now, and the rendered crop would go with it. The resident
+                // holds on to it instead: the clipboard is shared state, and anything that copied
+                // between this capture and the paste it was meant for used to leave the user with
+                // nothing but "take it again". The tray menu's Copy again / Save last capture act
+                // on exactly this image (RoeSnip.Core/Clipboard/LastCapture.cs). A recording
+                // returns above - a finished take has its own prompt for the same job.
+                LastCapture.Keep(
+                    result.RenderedImage.Width, result.RenderedImage.Height,
+                    result.RenderedImage.Pixels, DateTime.Now);
 
                 if (result.SpanningVirtualSelectionPx is { } spanningVirtualPx)
                 {

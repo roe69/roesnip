@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -15,6 +16,7 @@ using Avalonia.Threading;
 using Microsoft.Win32;
 using RoeSnip.App.Overlay;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Clipboard;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Imaging;
 using RoeSnip.Core.Settings;
@@ -57,6 +59,11 @@ public sealed class TrayApp : ITrayNotifier
     private CancellationTokenSource? _pipeListenerCts;
     private SettingsWindow? _openSettingsWindow;
     private AutomationServer? _automationServer;
+    // The kept-capture menu items and the menu they belong to, held so RefreshKeptCaptureItems can
+    // add, re-label and remove them as captures come and go.
+    private NativeMenu? _trayMenu;
+    private NativeMenuItem? _copyAgainItem;
+    private NativeMenuItem? _saveLastItem;
     private bool _exiting;
 #if WINDOWS
     // Kept in a field so ExitApplication can DETACH it (SystemEvents is process-global): a
@@ -204,7 +211,9 @@ public sealed class TrayApp : ITrayNotifier
             // the two settings-window hooks are all passed by reference (not re-implemented) so a
             // `trigger`/`settings` command runs the exact same path the tray icon/hotkey/
             // single-instance signal already do.
-            _automationServer = new AutomationServer(TriggerCapture, OpenSettingsForAutomation, CloseSettingsForAutomation);
+            _automationServer = new AutomationServer(
+                TriggerCapture, OpenSettingsForAutomation, CloseSettingsForAutomation,
+                CopyKeptCapture, SaveKeptCapture);
             _automationServer.Start();
         }
 
@@ -1659,6 +1668,149 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
+    // ---------------- The kept capture (Copy again / Save last capture) ----------------
+
+    /// <summary>The two things that can still be done with the last still capture once the overlay
+    /// has closed. They live in the tray menu because the overlay cannot stay up to hold them - it
+    /// dims the whole desktop - and the resident is the only part of the app that outlives a
+    /// capture. Ported from the WPF app's own tray menu, with two differences forced by this port:
+    /// a native menu has no "about to open" hook, so the items are pushed (LastCapture.Changed)
+    /// rather than refreshed lazily, and Copy again is only offered where a windowless copy can
+    /// actually work (ClipboardService.CanCopyImageWithoutWindow - not X11).</summary>
+    private void BuildKeptCaptureItems(NativeMenu menu)
+    {
+        _trayMenu = menu;
+
+        if (ClipboardService.CanCopyImageWithoutWindow)
+        {
+            _copyAgainItem = new NativeMenuItem("Copy again");
+            _copyAgainItem.Click += (_, _) => CopyKeptCapture();
+        }
+        _saveLastItem = new NativeMenuItem("Save last capture");
+        _saveLastItem.Click += (_, _) => SaveKeptCapture(null);
+
+        // Static event on a process-lifetime singleton: never unsubscribed, by design.
+        LastCapture.Changed += () => Dispatcher.UIThread.Post(RefreshKeptCaptureItems);
+        RefreshKeptCaptureItems();
+    }
+
+    /// <summary>Adds the items once there is something to act on and takes them away again when
+    /// there is not, rather than leaving two entries that cannot work. Labels Copy again with what
+    /// would actually come back (size and time), so the offer is checkable before it is taken.
+    /// They sit directly under "Capture", which is index 1 of a menu whose other entries never
+    /// move.</summary>
+    private void RefreshKeptCaptureItems()
+    {
+        if (_trayMenu is not { } menu || _saveLastItem is null)
+        {
+            return;
+        }
+
+        var kept = LastCapture.Current;
+        var items = new List<NativeMenuItem>();
+        if (_copyAgainItem is not null)
+        {
+            items.Add(_copyAgainItem);
+        }
+        items.Add(_saveLastItem);
+
+        if (kept is null)
+        {
+            foreach (var item in items)
+            {
+                menu.Items.Remove(item);
+            }
+            return;
+        }
+
+        if (_copyAgainItem is not null)
+        {
+            _copyAgainItem.Header = $"Copy again ({kept.Describe()})";
+        }
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (!menu.Items.Contains(items[i]))
+            {
+                menu.Items.Insert(1 + i, items[i]);
+            }
+        }
+    }
+
+    /// <summary>Puts the kept capture back on the clipboard, in every format the original copy
+    /// used, so the paste it was meant for still works after something else has been copied in
+    /// between. Returns null on success, else why not - the automation hook reports the same string
+    /// the toast says.</summary>
+    internal string? CopyKeptCapture()
+    {
+        if (LastCapture.Current is not { } kept)
+        {
+            return "no capture is being kept (take one first)";
+        }
+        if (!ClipboardService.CanCopyImageWithoutWindow)
+        {
+            return "this platform's clipboard needs a window to own the copy";
+        }
+
+        try
+        {
+            ClipboardService.CopyImageWithoutWindow(new SdrImage(kept.Width, kept.Height, kept.Pixels));
+            FileLog.Write($"RoeSnip: the kept capture ({kept.Describe()}) was copied to the clipboard again");
+            ShowToast($"Copied the last capture ({kept.Describe()}) to the clipboard.", isError: false, durationMs: 3000, onClick: null);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: re-copying the kept capture failed: {ex}");
+            ShowError($"Could not copy the last capture: {ex.Message}");
+            return $"copying the kept capture failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>Writes the kept capture as a PNG. No file picker: this is a recovery action taken
+    /// from a tray menu, not a "where should this go?" moment, so it lands in the configured save
+    /// directory under the same roesnip_yyyyMMdd_HHmmss.png name the overlay's own Save would have
+    /// offered (stamped with when the capture was TAKEN, not when it was rescued), and the saved
+    /// toast hands the user the folder. Never overwrites an earlier save of the same capture - see
+    /// KeptCapture.SuggestSavePath. <paramref name="explicitPath"/> is the automation hook's way of
+    /// writing somewhere deterministic; it bypasses nothing else.</summary>
+    internal string? SaveKeptCapture(string? explicitPath)
+    {
+        if (LastCapture.Current is not { } kept)
+        {
+            return "no capture is being kept (take one first)";
+        }
+
+        try
+        {
+            string path;
+            if (explicitPath is not null)
+            {
+                path = explicitPath;
+                string? parent = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(parent))
+                {
+                    Directory.CreateDirectory(parent);
+                }
+            }
+            else
+            {
+                Directory.CreateDirectory(_settings.SaveDirectory);
+                path = kept.SuggestSavePath(_settings.SaveDirectory);
+            }
+
+            PngWriter.WriteFile(path, new SdrImage(kept.Width, kept.Height, kept.Pixels));
+            FileLog.Write($"RoeSnip: the kept capture ({kept.Describe()}) was saved to {path}");
+            ShowSavedBalloon(path);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: saving the kept capture failed: {ex}");
+            ShowError($"Could not save the last capture: {ex.Message}");
+            return $"saving the kept capture failed: {ex.Message}";
+        }
+    }
+
     // ---------------- ITrayNotifier (toast windows — Avalonia TrayIcon has no balloons) ----------------
 
     /// <inheritdoc/>
@@ -1811,6 +1963,7 @@ public sealed class TrayApp : ITrayNotifier
             exitItem.Click += (_, _) => ExitApplication();
 
             menu.Items.Add(captureItem);
+            BuildKeptCaptureItems(menu);
             menu.Items.Add(settingsItem);
             menu.Items.Add(aboutItem);
 
