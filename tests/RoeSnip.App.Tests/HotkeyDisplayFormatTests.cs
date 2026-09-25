@@ -57,4 +57,14 @@ public class HotkeyDisplayFormatTests
     {
         Assert.Equal(expected, HotkeyDisplayFormat.DescribeHotkey(modifiers, virtualKey));
     }
+
+    [Theory]
+    [InlineData(HotkeyManager.ModControl, 0x55u, false, "Ctrl+U")]
+    [InlineData(HotkeyManager.ModControl, 0x55u, true, "Cmd+U")]
+    [InlineData(HotkeyManager.ModControl | HotkeyManager.ModShift, 0x43u, true, "Cmd+Shift+C")]
+    [InlineData(HotkeyManager.ModAlt, 0x43u, true, "Alt+C")]
+    public void DescribeShortcut_NamesControlCmdOnMacOnly(uint modifiers, uint virtualKey, bool macOS, string expected)
+    {
+        Assert.Equal(expected, HotkeyDisplayFormat.DescribeShortcut(modifiers, virtualKey, macOS));
+    }
 }

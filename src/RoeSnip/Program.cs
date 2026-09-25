@@ -85,6 +85,14 @@ public sealed record RoeSnipSettings
     public bool PrintScreenPromptAnswered { get; init; } = false; // one-time PrtScr/Snipping-Tool consent dialog already answered
     public bool ColorPickerEnabled { get; init; } = false;        // false => no click-to-pick, no ColorPickerWindow, no loupe colour codes
 
+    /// <summary>The overlay's Copy and Upload shortcuts, same MOD_*/virtual-key shape as the
+    /// capture hotkey above. See RoeSnip.Core.Settings.OverlayShortcuts for the defaults, the
+    /// matching rule and the fixed keys neither may take.</summary>
+    public uint CopyShortcutModifiers { get; init; } = RoeSnip.Core.Settings.OverlayShortcuts.DefaultCopyModifiers;
+    public uint CopyShortcutVirtualKey { get; init; } = RoeSnip.Core.Settings.OverlayShortcuts.DefaultCopyVirtualKey;
+    public uint UploadShortcutModifiers { get; init; } = RoeSnip.Core.Settings.OverlayShortcuts.DefaultUploadModifiers;
+    public uint UploadShortcutVirtualKey { get; init; } = RoeSnip.Core.Settings.OverlayShortcuts.DefaultUploadVirtualKey;
+
     // ---------- UX round 2 (additive; see DESIGN.md addendum / Overlay/ColorPickerWindow etc.) ----------
 
     /// <summary>Last 8 picked colors from the standalone ColorPickerWindow's eyedropper ("Pick"),

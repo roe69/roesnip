@@ -634,6 +634,7 @@ public partial class ToolbarControl : UserControl
 
     private readonly List<MenuItem> _shareProviderMenuItems = new();
     private bool _shareHasProviders;
+    private string _uploadShortcutText = "Ctrl+U";
     // Senior-review fix (LOW finding): SetShareProviders is re-run on every toolbar show (see
     // OverlayWindow.ShowToolbar's own doc comment - pooled-window reuse, not a settings refresh).
     // SetShareBusy(true) is now only a momentary double-click guard set right before the overlay's
@@ -675,9 +676,7 @@ public partial class ToolbarControl : UserControl
         }
 
         _shareHasProviders = providers.Count > 0;
-        ShareButton.ToolTip = _shareHasProviders
-            ? "Share: upload to your default provider"
-            : "Share: no provider configured yet - set one up in Settings";
+        ShareButton.ToolTip = ShareToolTip;
         if (_shareBusy)
         {
             return; // an upload is still running - SetShareBusy already disabled both buttons; leave that alone
@@ -697,9 +696,23 @@ public partial class ToolbarControl : UserControl
         _shareBusy = busy;
         ShareButton.IsEnabled = !busy && _shareHasProviders;
         ShareMenuButton.IsEnabled = !busy && _shareHasProviders;
-        ShareButton.ToolTip = busy
-            ? "Sharing..."
-            : (_shareHasProviders ? "Share: upload to your default provider" : "Share: no provider configured yet - set one up in Settings");
+        ShareButton.ToolTip = busy ? "Sharing..." : ShareToolTip;
+    }
+
+    private string ShareToolTip => _shareHasProviders
+        ? $"Share: upload to your default provider ({_uploadShortcutText})"
+        : "Share: no provider configured yet - set one up in Settings";
+
+    /// <summary>Names the user's Copy and Upload bindings in the two buttons' tooltips; the owning
+    /// window calls this on every show, since a pooled toolbar may predate a rebinding.</summary>
+    public void SetShortcutHints(string copy, string upload)
+    {
+        CopyButton.ToolTip = $"Copy ({copy})";
+        _uploadShortcutText = upload;
+        if (!_shareBusy)
+        {
+            ShareButton.ToolTip = ShareToolTip;
+        }
     }
 
     private void OnShareClick(object sender, RoutedEventArgs e) => ShareClicked?.Invoke();

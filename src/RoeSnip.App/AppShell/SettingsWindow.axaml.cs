@@ -47,9 +47,17 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     /// exactly as before. Mirrors the WPF app's own SettingsWindow._current.</summary>
     private RoeSnipSettings _current;
 
-    private bool _capturingHotkey;
+    /// <summary>Which key box the next keystroke goes to: the global capture hotkey, or one of the
+    /// overlay's two rebindable shortcuts. Mirrors the WPF app's own KeyCaptureTarget.</summary>
+    private enum KeyCaptureTarget { None, Hotkey, CopyShortcut, UploadShortcut }
+
+    private KeyCaptureTarget _capturing;
     private uint _pendingModifiers;
     private uint _pendingVirtualKey;
+    private uint _pendingCopyModifiers;
+    private uint _pendingCopyVirtualKey;
+    private uint _pendingUploadModifiers;
+    private uint _pendingUploadVirtualKey;
 
     // Item 15: the "Restart elevated now" flow needs to exit this WHOLE app (releasing the
     // single-instance lock) so the elevated task can take over — mirrors the WPF app's own
@@ -84,6 +92,10 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         _exitApplication = exitApplication;
         _pendingModifiers = settings.HotkeyModifiers;
         _pendingVirtualKey = settings.HotkeyVirtualKey;
+        _pendingCopyModifiers = settings.CopyShortcutModifiers;
+        _pendingCopyVirtualKey = settings.CopyShortcutVirtualKey;
+        _pendingUploadModifiers = settings.UploadShortcutModifiers;
+        _pendingUploadVirtualKey = settings.UploadShortcutVirtualKey;
 
         LoadFromSettings();
 
@@ -115,6 +127,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     private void LoadFromSettings()
     {
         HotkeyDisplay.Text = HotkeyDisplayFormat.DescribeHotkey(_pendingModifiers, _pendingVirtualKey);
+        RefreshShortcutDisplays();
         WaylandHotkeyCaption.IsVisible = _hotkeyUnavailableOnWayland;
         SaveDirectoryBox.Text = _original.SaveDirectory;
         AutoSaveHdrCheckBox.IsChecked = _original.AutoSaveHdrCopy;
@@ -577,7 +590,8 @@ public partial class SettingsWindow : Avalonia.Controls.Window
 
     private void ChangeHotkeyButton_Click(object? sender, RoutedEventArgs e)
     {
-        _capturingHotkey = true;
+        CancelShortcutCapture();
+        _capturing = KeyCaptureTarget.Hotkey;
 
         // Bug 2: suspend the global hotkey for the duration of capture so the OS/hook delivers
         // the keystroke to THIS window instead of acting on it as the still-armed hotkey - see
@@ -592,7 +606,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
-        if (!_capturingHotkey)
+        if (_capturing == KeyCaptureTarget.None)
         {
             base.OnKeyDown(e);
             return;
@@ -607,7 +621,14 @@ public partial class SettingsWindow : Avalonia.Controls.Window
             return; // still waiting for a non-modifier key
         }
 
-        CommitCapturedKey(key, e.KeyModifiers);
+        if (_capturing == KeyCaptureTarget.Hotkey)
+        {
+            CommitCapturedKey(key, e.KeyModifiers);
+        }
+        else
+        {
+            CommitCapturedShortcut(key, e.KeyModifiers);
+        }
     }
 
     /// <summary>Bug 2 (WPF SettingsWindow.xaml.cs:305-326): PrintScreen (VK_SNAPSHOT) is a
@@ -616,7 +637,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     /// other key is already handled on key-down and just passes through normally here.</summary>
     protected override void OnKeyUp(KeyEventArgs e)
     {
-        if (!_capturingHotkey || e.Key != Key.Snapshot)
+        if (_capturing != KeyCaptureTarget.Hotkey || e.Key != Key.Snapshot)
         {
             base.OnKeyUp(e);
             return;
@@ -643,13 +664,103 @@ public partial class SettingsWindow : Avalonia.Controls.Window
 
         _pendingModifiers = modifiers;
         _pendingVirtualKey = virtualKey.Value;
-        _capturingHotkey = false;
+        _capturing = KeyCaptureTarget.None;
         HotkeyDisplay.Text = HotkeyDisplayFormat.DescribeHotkey(_pendingModifiers, _pendingVirtualKey);
 
         // Bug 5: capture is over - resume the global hotkey (still the OLD/saved binding; the new
         // one only takes effect on Save) so it keeps firing while this window stays open deciding
         // whether to Save or Cancel the new binding.
         _resumeGlobalHotkey();
+    }
+
+    private void ChangeCopyShortcutButton_Click(object? sender, RoutedEventArgs e) =>
+        BeginShortcutCapture(KeyCaptureTarget.CopyShortcut);
+
+    private void ChangeUploadShortcutButton_Click(object? sender, RoutedEventArgs e) =>
+        BeginShortcutCapture(KeyCaptureTarget.UploadShortcut);
+
+    /// <summary>Unlike the hotkey, the global hotkey stays armed here: a shortcut only means
+    /// something inside the overlay, so nothing system-wide competes for the keystroke.</summary>
+    private void BeginShortcutCapture(KeyCaptureTarget target)
+    {
+        if (_capturing == KeyCaptureTarget.Hotkey)
+        {
+            return; // finish the hotkey first; its capture holds the global hotkey suspended
+        }
+        CancelShortcutCapture();
+        _capturing = target;
+        ShortcutDisplayFor(target).Text = "Press a key combination...";
+        Focus();
+    }
+
+    private void CancelShortcutCapture()
+    {
+        if (_capturing is KeyCaptureTarget.CopyShortcut or KeyCaptureTarget.UploadShortcut)
+        {
+            _capturing = KeyCaptureTarget.None;
+            RefreshShortcutDisplays();
+        }
+    }
+
+    /// <summary>Meta is stored as Control on macOS, where the overlay reads Cmd as Control; on
+    /// Windows/Linux it is the Win/Super key, which the rejection rule turns away.</summary>
+    private void CommitCapturedShortcut(Key key, KeyModifiers keyModifiers)
+    {
+        if (key == Key.Escape)
+        {
+            CancelShortcutCapture();
+            return;
+        }
+
+        if (MapKeyToVirtualKey(key) is not uint virtualKey)
+        {
+            ShortcutDisplayFor(_capturing).Text = "Unsupported key - press another combination...";
+            return;
+        }
+
+        uint modifiers = 0;
+        if (keyModifiers.HasFlag(KeyModifiers.Control)) modifiers |= OverlayShortcuts.ModControl;
+        if (keyModifiers.HasFlag(KeyModifiers.Alt)) modifiers |= OverlayShortcuts.ModAlt;
+        if (keyModifiers.HasFlag(KeyModifiers.Shift)) modifiers |= OverlayShortcuts.ModShift;
+        if (keyModifiers.HasFlag(KeyModifiers.Meta))
+        {
+            modifiers |= OperatingSystem.IsMacOS() ? OverlayShortcuts.ModControl : OverlayShortcuts.ModWin;
+        }
+
+        bool copy = _capturing == KeyCaptureTarget.CopyShortcut;
+        string? rejection = OverlayShortcuts.Rejection(
+            modifiers, virtualKey,
+            copy ? "Upload" : "Copy",
+            copy ? _pendingUploadModifiers : _pendingCopyModifiers,
+            copy ? _pendingUploadVirtualKey : _pendingCopyVirtualKey,
+            _pendingModifiers, _pendingVirtualKey);
+        if (rejection is not null)
+        {
+            ShortcutDisplayFor(_capturing).Text = $"{rejection} - press another combination...";
+            return;
+        }
+
+        if (copy)
+        {
+            _pendingCopyModifiers = modifiers;
+            _pendingCopyVirtualKey = virtualKey;
+        }
+        else
+        {
+            _pendingUploadModifiers = modifiers;
+            _pendingUploadVirtualKey = virtualKey;
+        }
+        _capturing = KeyCaptureTarget.None;
+        RefreshShortcutDisplays();
+    }
+
+    private TextBox ShortcutDisplayFor(KeyCaptureTarget target) =>
+        target == KeyCaptureTarget.CopyShortcut ? CopyShortcutDisplay : UploadShortcutDisplay;
+
+    private void RefreshShortcutDisplays()
+    {
+        CopyShortcutDisplay.Text = HotkeyDisplayFormat.DescribeShortcut(_pendingCopyModifiers, _pendingCopyVirtualKey);
+        UploadShortcutDisplay.Text = HotkeyDisplayFormat.DescribeShortcut(_pendingUploadModifiers, _pendingUploadVirtualKey);
     }
 
     /// <summary>Maps an Avalonia <see cref="Key"/> to the Windows virtual-key code the settings
@@ -731,6 +842,10 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         {
             HotkeyModifiers = _pendingModifiers,
             HotkeyVirtualKey = _pendingVirtualKey,
+            CopyShortcutModifiers = _pendingCopyModifiers,
+            CopyShortcutVirtualKey = _pendingCopyVirtualKey,
+            UploadShortcutModifiers = _pendingUploadModifiers,
+            UploadShortcutVirtualKey = _pendingUploadVirtualKey,
             SaveDirectory = SaveDirectoryBox.Text ?? _original.SaveDirectory,
             AutoSaveHdrCopy = AutoSaveHdrCheckBox.IsChecked == true,
             CopyOnSelect = CopyOnSelectCheckBox.IsChecked == true,

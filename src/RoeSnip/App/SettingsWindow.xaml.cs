@@ -49,9 +49,17 @@ public partial class SettingsWindow : Window
     private readonly Action _suspendGlobalHotkey;
     private readonly Action _resumeGlobalHotkey;
 
-    private bool _capturingHotkey;
+    /// <summary>Which key box the next keystroke goes to: the global capture hotkey, or one of the
+    /// overlay's two rebindable shortcuts.</summary>
+    private enum KeyCaptureTarget { None, Hotkey, CopyShortcut, UploadShortcut }
+
+    private KeyCaptureTarget _capturing;
     private uint _pendingModifiers;
     private uint _pendingVirtualKey;
+    private uint _pendingCopyModifiers;
+    private uint _pendingCopyVirtualKey;
+    private uint _pendingUploadModifiers;
+    private uint _pendingUploadVirtualKey;
 
     // Guards RunElevatedCheckBox.IsChecked assignments that must NOT re-enter
     // RunElevatedCheckBox_Checked/Unchecked (initial load, and reconciling the checkbox back to
@@ -81,6 +89,10 @@ public partial class SettingsWindow : Window
         _resumeGlobalHotkey = resumeGlobalHotkey;
         _pendingModifiers = settings.HotkeyModifiers;
         _pendingVirtualKey = settings.HotkeyVirtualKey;
+        _pendingCopyModifiers = settings.CopyShortcutModifiers;
+        _pendingCopyVirtualKey = settings.CopyShortcutVirtualKey;
+        _pendingUploadModifiers = settings.UploadShortcutModifiers;
+        _pendingUploadVirtualKey = settings.UploadShortcutVirtualKey;
 
         LoadFromSettings();
 
@@ -96,6 +108,7 @@ public partial class SettingsWindow : Window
     private void LoadFromSettings()
     {
         HotkeyDisplay.Text = DescribeHotkey(_pendingModifiers, _pendingVirtualKey);
+        RefreshShortcutDisplays();
         SaveDirectoryBox.Text = _original.SaveDirectory;
         AutoSaveHdrCheckBox.IsChecked = _original.AutoSaveHdrCopy;
         CopyOnSelectCheckBox.IsChecked = _original.CopyOnSelect;
@@ -345,7 +358,8 @@ public partial class SettingsWindow : Window
 
     private void ChangeHotkeyButton_Click(object sender, RoutedEventArgs e)
     {
-        _capturingHotkey = true;
+        CancelShortcutCapture();
+        _capturing = KeyCaptureTarget.Hotkey;
 
         // Bug 2: if the CURRENTLY registered hotkey (e.g. bare PrintScreen) stays registered
         // while capturing, RegisterHotKey has already claimed that keystroke system-wide and
@@ -363,7 +377,7 @@ public partial class SettingsWindow : Window
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
-        if (!_capturingHotkey)
+        if (_capturing == KeyCaptureTarget.None)
         {
             base.OnPreviewKeyDown(e);
             return;
@@ -378,7 +392,14 @@ public partial class SettingsWindow : Window
             return; // still waiting for a non-modifier key
         }
 
-        CommitCapturedKey(key);
+        if (_capturing == KeyCaptureTarget.Hotkey)
+        {
+            CommitCapturedKey(key);
+        }
+        else
+        {
+            CommitCapturedShortcut(key);
+        }
     }
 
     /// <summary>Bug 2: PrintScreen (VK_SNAPSHOT) is a long-standing Windows quirk - it generates
@@ -387,7 +408,7 @@ public partial class SettingsWindow : Window
     /// and just passes through normally here.</summary>
     protected override void OnPreviewKeyUp(KeyEventArgs e)
     {
-        if (!_capturingHotkey)
+        if (_capturing != KeyCaptureTarget.Hotkey)
         {
             base.OnPreviewKeyUp(e);
             return;
@@ -414,13 +435,94 @@ public partial class SettingsWindow : Window
 
         _pendingModifiers = modifiers;
         _pendingVirtualKey = (uint)KeyInterop.VirtualKeyFromKey(key);
-        _capturingHotkey = false;
+        _capturing = KeyCaptureTarget.None;
         HotkeyDisplay.Text = DescribeHotkey(_pendingModifiers, _pendingVirtualKey);
 
         // Bug 5: capture is over - resume the global hotkey (still the OLD/saved binding; the new
         // one only takes effect on Save) so PrintScreen keeps triggering snips while this window
         // stays open deciding whether to Save or Cancel the new binding.
         _resumeGlobalHotkey();
+    }
+
+    private void ChangeCopyShortcutButton_Click(object sender, RoutedEventArgs e) =>
+        BeginShortcutCapture(KeyCaptureTarget.CopyShortcut);
+
+    private void ChangeUploadShortcutButton_Click(object sender, RoutedEventArgs e) =>
+        BeginShortcutCapture(KeyCaptureTarget.UploadShortcut);
+
+    /// <summary>Unlike the hotkey, the global hotkey stays armed here: a shortcut only means
+    /// something inside the overlay, so nothing system-wide competes for the keystroke.</summary>
+    private void BeginShortcutCapture(KeyCaptureTarget target)
+    {
+        if (_capturing == KeyCaptureTarget.Hotkey)
+        {
+            return; // finish the hotkey first; its capture holds the global hotkey suspended
+        }
+        CancelShortcutCapture();
+        _capturing = target;
+        ShortcutDisplayFor(target).Text = "Press a key combination...";
+        Focus();
+        Keyboard.Focus(this);
+    }
+
+    private void CancelShortcutCapture()
+    {
+        if (_capturing is KeyCaptureTarget.CopyShortcut or KeyCaptureTarget.UploadShortcut)
+        {
+            _capturing = KeyCaptureTarget.None;
+            RefreshShortcutDisplays();
+        }
+    }
+
+    private void CommitCapturedShortcut(Key key)
+    {
+        if (key == Key.Escape)
+        {
+            CancelShortcutCapture();
+            return;
+        }
+
+        uint modifiers = 0;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) modifiers |= NativeMethods.MOD_CONTROL;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)) modifiers |= NativeMethods.MOD_ALT;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) modifiers |= NativeMethods.MOD_SHIFT;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Windows)) modifiers |= NativeMethods.MOD_WIN;
+        uint virtualKey = (uint)KeyInterop.VirtualKeyFromKey(key);
+
+        bool copy = _capturing == KeyCaptureTarget.CopyShortcut;
+        string? rejection = RoeSnip.Core.Settings.OverlayShortcuts.Rejection(
+            modifiers, virtualKey,
+            copy ? "Upload" : "Copy",
+            copy ? _pendingUploadModifiers : _pendingCopyModifiers,
+            copy ? _pendingUploadVirtualKey : _pendingCopyVirtualKey,
+            _pendingModifiers, _pendingVirtualKey);
+        if (rejection is not null)
+        {
+            ShortcutDisplayFor(_capturing).Text = $"{rejection} - press another combination...";
+            return;
+        }
+
+        if (copy)
+        {
+            _pendingCopyModifiers = modifiers;
+            _pendingCopyVirtualKey = virtualKey;
+        }
+        else
+        {
+            _pendingUploadModifiers = modifiers;
+            _pendingUploadVirtualKey = virtualKey;
+        }
+        _capturing = KeyCaptureTarget.None;
+        RefreshShortcutDisplays();
+    }
+
+    private System.Windows.Controls.TextBox ShortcutDisplayFor(KeyCaptureTarget target) =>
+        target == KeyCaptureTarget.CopyShortcut ? CopyShortcutDisplay : UploadShortcutDisplay;
+
+    private void RefreshShortcutDisplays()
+    {
+        CopyShortcutDisplay.Text = DescribeHotkey(_pendingCopyModifiers, _pendingCopyVirtualKey);
+        UploadShortcutDisplay.Text = DescribeHotkey(_pendingUploadModifiers, _pendingUploadVirtualKey);
     }
 
     private void RunElevatedCheckBox_Checked(object sender, RoutedEventArgs e) => ToggleElevatedStartup(enable: true);
@@ -657,6 +759,10 @@ public partial class SettingsWindow : Window
         {
             HotkeyModifiers = _pendingModifiers,
             HotkeyVirtualKey = _pendingVirtualKey,
+            CopyShortcutModifiers = _pendingCopyModifiers,
+            CopyShortcutVirtualKey = _pendingCopyVirtualKey,
+            UploadShortcutModifiers = _pendingUploadModifiers,
+            UploadShortcutVirtualKey = _pendingUploadVirtualKey,
             SaveDirectory = SaveDirectoryBox.Text,
             AutoSaveHdrCopy = AutoSaveHdrCheckBox.IsChecked == true,
             CopyOnSelect = CopyOnSelectCheckBox.IsChecked == true,
@@ -769,7 +875,7 @@ public partial class SettingsWindow : Window
         return true;
     }
 
-    private static string DescribeHotkey(uint modifiers, uint virtualKey)
+    internal static string DescribeHotkey(uint modifiers, uint virtualKey)
     {
         var parts = new List<string>();
         if ((modifiers & NativeMethods.MOD_CONTROL) != 0) parts.Add("Ctrl");

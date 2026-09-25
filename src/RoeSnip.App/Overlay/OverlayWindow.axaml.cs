@@ -1333,9 +1333,9 @@ public partial class OverlayWindow : Window
             _onCommand(OverlayCommand.ConfirmPlain);
             e.Handled = true;
         }
-        else if (ctrl && e.Key == Key.C)
+        else if (ShortcutCommandFor(e.Key, e.KeyModifiers) is { } shortcut)
         {
-            _onCommand(OverlayCommand.Copy);
+            _onCommand(shortcut);
             e.Handled = true;
         }
         else if (ctrl && e.Key == Key.S)
@@ -1360,6 +1360,34 @@ public partial class OverlayWindow : Window
             _annotations.Redo();
             e.Handled = true;
         }
+    }
+
+    /// <summary>The rebindable Copy/Upload shortcut this key press is, if any (see
+    /// <see cref="OverlayShortcuts"/>). Checked ahead of the fixed Ctrl shortcuts; the settings
+    /// window never lets either binding land on one of those. Cmd reads as Control on macOS, the
+    /// same rule as the fixed shortcuts above, so a stored Ctrl+C answers to Cmd+C there.</summary>
+    private OverlayCommand? ShortcutCommandFor(Key key, KeyModifiers modifiers)
+    {
+        if (AppShell.SettingsWindow.MapKeyToVirtualKey(key) is not uint vk)
+        {
+            return null;
+        }
+
+        uint mods = 0;
+        if ((modifiers & KeyModifiers.Alt) != 0) mods |= OverlayShortcuts.ModAlt;
+        if ((modifiers & KeyModifiers.Control) != 0) mods |= OverlayShortcuts.ModControl;
+        if ((modifiers & KeyModifiers.Shift) != 0) mods |= OverlayShortcuts.ModShift;
+        if ((modifiers & KeyModifiers.Meta) != 0) mods |= OperatingSystem.IsMacOS() ? OverlayShortcuts.ModControl : OverlayShortcuts.ModWin;
+
+        if (OverlayShortcuts.Matches(_liveSettings.CopyShortcutModifiers, _liveSettings.CopyShortcutVirtualKey, mods, vk))
+        {
+            return OverlayCommand.Copy;
+        }
+        if (OverlayShortcuts.Matches(_liveSettings.UploadShortcutModifiers, _liveSettings.UploadShortcutVirtualKey, mods, vk))
+        {
+            return OverlayCommand.Share;
+        }
+        return null;
     }
 
     // ---------- Selection / toolbar / dim mask ----------
@@ -1696,6 +1724,9 @@ public partial class OverlayWindow : Window
         // configs are offered — a built-in the user has never filled in a credential for is seeded
         // disabled (ShareProviderCatalog.DefaultConfigFor) and must not appear as a clickable-but-
         // broken picker entry. Mirrors the WPF app's own ShowToolbar wiring.
+        _toolbar.SetShortcutHints(
+            AppShell.HotkeyDisplayFormat.DescribeShortcut(_liveSettings.CopyShortcutModifiers, _liveSettings.CopyShortcutVirtualKey),
+            AppShell.HotkeyDisplayFormat.DescribeShortcut(_liveSettings.UploadShortcutModifiers, _liveSettings.UploadShortcutVirtualKey));
         _toolbar.SetShareProviders(
             RoeSnip.Core.Sharing.ShareManager.EffectiveConfigs(_liveSettings.ShareProviders)
                 .Where(c => c.Enabled)

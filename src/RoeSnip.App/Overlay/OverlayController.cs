@@ -1081,11 +1081,10 @@ public static class OverlayController
                 toolbarWindow!.LiveSettings.ShareProviders, toolbarWindow!.LiveSettings.DefaultShareProviderId);
             if (config is null)
             {
-                // ShareButton is only ever enabled once ToolbarControl.SetShareProviders was given at
-                // least one enabled provider (see that method's own doc comment), so this should be
-                // unreachable in practice — kept as a defensive, honestly-surfaced failure rather than
-                // a silent no-op in case settings changed out from under an already-open overlay.
-                _notifier?.ShowError("Share failed: no share provider is configured.");
+                // The Share button stays disabled without a provider, but the Upload shortcut is
+                // live in every session, so this is where pressing it with nothing set up lands.
+                // The overlay stays open: the selection is still there to copy or save instead.
+                _notifier?.ShowError("Upload failed: no share provider is configured. Add one under Settings, Sharing.");
                 return;
             }
 

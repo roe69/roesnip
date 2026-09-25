@@ -19,6 +19,14 @@ public sealed record RoeSnipSettings
     public bool WaylandHotkeyNoticeShown { get; init; } = false; // Wayland-only meaning; harmless elsewhere
     public bool ColorPickerEnabled { get; init; } = false;        // false => no click-to-pick, no ColorPickerWindow, no loupe colour codes
 
+    /// <summary>The overlay's Copy and Upload shortcuts, same MOD_*/virtual-key shape as the
+    /// capture hotkey above. See <see cref="OverlayShortcuts"/> for the defaults, the matching rule
+    /// and the fixed keys neither may take.</summary>
+    public uint CopyShortcutModifiers { get; init; } = OverlayShortcuts.DefaultCopyModifiers;
+    public uint CopyShortcutVirtualKey { get; init; } = OverlayShortcuts.DefaultCopyVirtualKey;
+    public uint UploadShortcutModifiers { get; init; } = OverlayShortcuts.DefaultUploadModifiers;
+    public uint UploadShortcutVirtualKey { get; init; } = OverlayShortcuts.DefaultUploadVirtualKey;
+
     /// <summary>Last 8 picked colors from the standalone eyedropper ("Pick"), newest first, stored
     /// as "#RRGGBB". Deduplicated (a re-pick of an existing entry moves it to the front rather than
     /// adding a second copy) by whichever bounded-list helper WP-B's overlay port lands.</summary>

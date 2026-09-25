@@ -55,6 +55,7 @@ public partial class ToolbarControl : UserControl
     private readonly Button _saveHdrButton;
     private readonly Button _recordButton;
     private readonly Button _shareButton;
+    private readonly Button _copyButton;
     private readonly Button _shareMenuButton;
     private readonly Button _undoButton;
     private readonly Button _redoButton;
@@ -123,6 +124,7 @@ public partial class ToolbarControl : UserControl
     private readonly MenuFlyout _shareProviderMenuFlyout = new();
     private readonly List<MenuItem> _shareProviderMenuItems = new();
     private bool _shareHasProviders;
+    private string _uploadShortcutText = "Ctrl+U";
 
     // d8fa815 gotcha #2: SetShareProviders is re-run on every toolbar show (pooled-window reuse —
     // see OverlayWindow.ShowToolbar's own doc comment). SetShareBusy(true) is now only a momentary
@@ -173,6 +175,7 @@ public partial class ToolbarControl : UserControl
         _saveHdrButton = Find<Button>("SaveHdrButton");
         _recordButton = Find<Button>("RecordButton");
         _shareButton = Find<Button>("ShareButton");
+        _copyButton = Find<Button>("CopyButton");
         _shareMenuButton = Find<Button>("ShareMenuButton");
         _undoButton = Find<Button>("UndoButton");
         _redoButton = Find<Button>("RedoButton");
@@ -200,7 +203,7 @@ public partial class ToolbarControl : UserControl
 
         _undoButton.Click += (_, _) => UndoClicked?.Invoke();
         _redoButton.Click += (_, _) => RedoClicked?.Invoke();
-        Find<Button>("CopyButton").Click += (_, _) => CopyClicked?.Invoke();
+        _copyButton.Click += (_, _) => CopyClicked?.Invoke();
         Find<Button>("SaveButton").Click += (_, _) => SaveClicked?.Invoke();
         _saveHdrButton.Click += (_, _) => SaveHdrClicked?.Invoke();
         _recordButton.Click += OnRecordClick;
@@ -285,9 +288,7 @@ public partial class ToolbarControl : UserControl
         }
 
         _shareHasProviders = providers.Count > 0;
-        ToolTip.SetTip(_shareButton, _shareHasProviders
-            ? "Share: upload to your default provider"
-            : "Share: no provider configured yet — set one up in Settings");
+        ToolTip.SetTip(_shareButton, ShareToolTip);
         if (_shareBusy)
         {
             return; // an upload is still running — SetShareBusy already disabled both buttons; leave that alone
@@ -306,9 +307,24 @@ public partial class ToolbarControl : UserControl
         _shareBusy = busy;
         _shareButton.IsEnabled = !busy && _shareHasProviders;
         _shareMenuButton.IsEnabled = !busy && _shareHasProviders;
-        ToolTip.SetTip(_shareButton, busy
-            ? "Sharing..."
-            : (_shareHasProviders ? "Share: upload to your default provider" : "Share: no provider configured yet — set one up in Settings"));
+        ToolTip.SetTip(_shareButton, busy ? "Sharing..." : ShareToolTip);
+    }
+
+    private string ShareToolTip => _shareHasProviders
+        ? $"Share: upload to your default provider ({_uploadShortcutText})"
+        : "Share: no provider configured yet - set one up in Settings";
+
+    /// <summary>Names the user's Copy and Upload bindings in the two buttons' tooltips; the owning
+    /// window calls this on every show, since a pooled toolbar may predate a rebinding. Mirrors the
+    /// WPF control's own SetShortcutHints.</summary>
+    public void SetShortcutHints(string copy, string upload)
+    {
+        ToolTip.SetTip(_copyButton, $"Copy ({copy})");
+        _uploadShortcutText = upload;
+        if (!_shareBusy)
+        {
+            ToolTip.SetTip(_shareButton, ShareToolTip);
+        }
     }
 
     private void OnRecordClick(object? sender, RoutedEventArgs e) => _recordMenuFlyout.ShowAt(_recordButton);

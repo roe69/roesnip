@@ -87,6 +87,39 @@
                     </StackPanel>
                 </Border>
 
+                <!-- Snip shortcuts: the overlay's rebindable pair (RoeSnip.Core.Settings.OverlayShortcuts) -->
+                <TextBlock Text="Snip shortcuts" Style="{StaticResource SectionHeaderStyle}"/>
+                <Border Style="{StaticResource SectionCardStyle}" Margin="0,0,0,14">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="64"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="8"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Copy" VerticalAlignment="Center"
+                                   Foreground="{StaticResource RlTextPrimaryBrush}"/>
+                        <TextBox x:Name="CopyShortcutDisplay" Grid.Row="0" Grid.Column="1" IsReadOnly="True"
+                                 Style="{StaticResource ReadOnlyHotkeyBoxStyle}" Margin="0,0,8,0"/>
+                        <Button x:Name="ChangeCopyShortcutButton" Grid.Row="0" Grid.Column="2" Content="Change..."
+                                Click="ChangeCopyShortcutButton_Click"/>
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Upload" VerticalAlignment="Center"
+                                   Foreground="{StaticResource RlTextPrimaryBrush}"/>
+                        <TextBox x:Name="UploadShortcutDisplay" Grid.Row="2" Grid.Column="1" IsReadOnly="True"
+                                 Style="{StaticResource ReadOnlyHotkeyBoxStyle}" Margin="0,0,8,0"/>
+                        <Button x:Name="ChangeUploadShortcutButton" Grid.Row="2" Grid.Column="2" Content="Change..."
+                                Click="ChangeUploadShortcutButton_Click"/>
+                        <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0"
+                                   Text="Upload sends the snip to your default share provider. Esc cancels a change."
+                                   FontSize="11" TextWrapping="Wrap" Foreground="{StaticResource RlTextMutedBrush}"/>
+                    </Grid>
+                </Border>
+
                 <!-- Startup -->
                 <TextBlock Text="Startup" Style="{StaticResource SectionHeaderStyle}"/>
                 <Border Style="{StaticResource SectionCardStyle}" Margin="0,0,0,14">

@@ -71,6 +71,26 @@
           </StackPanel>
         </Border>
 
+        <!-- Snip shortcuts: the overlay's rebindable pair (RoeSnip.Core.Settings.OverlayShortcuts) -->
+        <TextBlock Text="Snip shortcuts" Classes="section-header"/>
+        <Border Classes="card" Margin="0,0,0,14">
+          <Grid ColumnDefinitions="64,*,Auto" RowDefinitions="Auto,8,Auto,Auto">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Copy" VerticalAlignment="Center"
+                       Foreground="{StaticResource RlTextPrimaryBrush}"/>
+            <TextBox x:Name="CopyShortcutDisplay" Grid.Row="0" Grid.Column="1" IsReadOnly="True" Margin="0,0,8,0"/>
+            <Button x:Name="ChangeCopyShortcutButton" Grid.Row="0" Grid.Column="2" Content="Change..."
+                    Click="ChangeCopyShortcutButton_Click"/>
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Upload" VerticalAlignment="Center"
+                       Foreground="{StaticResource RlTextPrimaryBrush}"/>
+            <TextBox x:Name="UploadShortcutDisplay" Grid.Row="2" Grid.Column="1" IsReadOnly="True" Margin="0,0,8,0"/>
+            <Button x:Name="ChangeUploadShortcutButton" Grid.Row="2" Grid.Column="2" Content="Change..."
+                    Click="ChangeUploadShortcutButton_Click"/>
+            <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,6,0,0"
+                       Text="Upload sends the snip to your default share provider. Esc cancels a change."
+                       FontSize="11" TextWrapping="Wrap" Foreground="{StaticResource RlTextMutedBrush}"/>
+          </Grid>
+        </Border>
+
         <!-- Startup -->
         <TextBlock Text="Startup" Classes="section-header"/>
         <Border Classes="card" Margin="0,0,0,14">

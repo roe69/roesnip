@@ -31,6 +31,18 @@ public static class HotkeyDisplayFormat
         return string.Join("+", parts);
     }
 
+    /// <summary>An overlay Copy/Upload binding (RoeSnip.Core.Settings.OverlayShortcuts). Same text
+    /// as <see cref="DescribeHotkey"/>, except macOS names the stored Control flag "Cmd": the overlay
+    /// reads Cmd as Control there, and Cmd is the key a Mac user reaches for.</summary>
+    public static string DescribeShortcut(uint modifiers, uint virtualKey) =>
+        DescribeShortcut(modifiers, virtualKey, OperatingSystem.IsMacOS());
+
+    public static string DescribeShortcut(uint modifiers, uint virtualKey, bool macOS)
+    {
+        string text = DescribeHotkey(modifiers, virtualKey);
+        return macOS && (modifiers & HotkeyManager.ModControl) != 0 ? "Cmd" + text["Ctrl".Length..] : text;
+    }
+
     public static string DescribeVirtualKey(uint virtualKey)
     {
         if (HotkeyManager.VirtualKeyToKeyCode(virtualKey) is KeyCode code)

@@ -1636,6 +1636,23 @@ because a correct implementation needs live hardware this repo cannot exercise.
   and without a kept capture (`tray menu` + `screenshot includeExcluded:true`); the port's native
   menu cannot be photographed that way, so its two items are compile-verified and exercised through
   their own methods, not seen on screen. Nothing here is run on Linux/macOS.
+- Rebindable Copy and Upload shortcuts in the overlay (2026-09, new
+  RoeSnip.Core/Settings/OverlayShortcuts.cs, both apps' settings records, SettingsWindow,
+  OverlayWindow and ToolbarControl, the WPF SessionKeyboardHook). Copy was hardwired to Ctrl+C and
+  Upload (the toolbar's Share button, an upload to the default provider) had no key at all. Both
+  now live in settings.json in the capture hotkey's MOD_*/virtual-key shape
+  (CopyShortcut*/UploadShortcut*, defaults Ctrl+C and Ctrl+U) and are set from a new "Snip
+  shortcuts" card in Settings. Matching is exact on modifiers and runs ahead of the fixed Ctrl
+  keys, so the settings window rejects any binding that would shadow one of those (Esc, Enter,
+  Delete/Backspace, arrows, Ctrl+S/Z/Y/A, Ctrl+Shift+Z), the other shortcut, the capture hotkey,
+  or a Win-key combination. Upload with no provider configured shows the error balloon and leaves
+  the overlay open; the button stays disabled in that state, but a key cannot be. Toolbar tooltips
+  name the live bindings. The WPF low-level session hook now reads Shift/Alt/Win as well as Ctrl so
+  a rebound combination is claimed without focus (a side effect: Ctrl+Shift+Z through the hook is
+  now Redo, as it always was through the focused path). Avalonia divergence: on macOS a stored
+  Control binding answers to Cmd (as the fixed shortcuts already do) and is shown as "Cmd+...".
+  The recording review's Ctrl+C hook is unchanged: it passes through to the focused app rather than
+  owning the key, so it stays on the platform copy chord.
 - Flash phase goes CLICK-THROUGH so hovered content survives the capture (2026-08, both apps'
   Overlay/FlashDimmer.cs + OverlayController.cs, new Overlay/FlashMouseSwallowHook.cs in each).
   Removing the flash's SetForegroundWindow claim (same pass) only fixed the ACTIVATION half of the

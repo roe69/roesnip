@@ -21,6 +21,7 @@ namespace RoeSnip.Overlay;
 // are in scope alongside System.Windows/System.Windows.Media/.Input/.Controls — alias the
 // colliding names to WPF's. (Declared after the namespace line — see AnnotationLayer.cs for why:
 // RoeSnip.Color, a sibling WP-A namespace, would otherwise shadow an outer-scope alias for "Color".)
+using OverlayShortcuts = RoeSnip.Core.Settings.OverlayShortcuts;
 using Point = System.Windows.Point;
 using Color = System.Windows.Media.Color;
 using TextBox = System.Windows.Controls.TextBox;
@@ -1432,7 +1433,9 @@ public partial class OverlayWindow : Window
             // its Esc/Enter semantics.
             return;
         }
-        if (ProcessKeyCommand(e.Key, Keyboard.Modifiers))
+        // Alt combinations arrive as Key.System; the low-level hook path already sees the real key.
+        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (ProcessKeyCommand(key, Keyboard.Modifiers))
         {
             e.Handled = true;
         }
@@ -1496,9 +1499,9 @@ public partial class OverlayWindow : Window
             _onCommand(OverlayCommand.ConfirmPlain);
             return true;
         }
-        if (ctrl && key == Key.C)
+        if (ShortcutCommandFor(key, modifiers) is { } shortcut)
         {
-            _onCommand(OverlayCommand.Copy);
+            _onCommand(shortcut);
             return true;
         }
         if (ctrl && key == Key.S)
@@ -1558,6 +1561,32 @@ public partial class OverlayWindow : Window
 
         return false;
     }
+
+    /// <summary>The rebindable Copy/Upload shortcut this key press is, if any (see
+    /// RoeSnip.Core.Settings.OverlayShortcuts). Checked ahead of the fixed Ctrl shortcuts; the
+    /// settings window never lets either binding land on one of those.</summary>
+    private OverlayCommand? ShortcutCommandFor(Key key, ModifierKeys modifiers)
+    {
+        uint vk = (uint)KeyInterop.VirtualKeyFromKey(key);
+        uint mods = 0;
+        if ((modifiers & ModifierKeys.Alt) != 0) mods |= OverlayShortcuts.ModAlt;
+        if ((modifiers & ModifierKeys.Control) != 0) mods |= OverlayShortcuts.ModControl;
+        if ((modifiers & ModifierKeys.Shift) != 0) mods |= OverlayShortcuts.ModShift;
+        if ((modifiers & ModifierKeys.Windows) != 0) mods |= OverlayShortcuts.ModWin;
+
+        if (OverlayShortcuts.Matches(_liveSettings.CopyShortcutModifiers, _liveSettings.CopyShortcutVirtualKey, mods, vk))
+        {
+            return OverlayCommand.Copy;
+        }
+        if (OverlayShortcuts.Matches(_liveSettings.UploadShortcutModifiers, _liveSettings.UploadShortcutVirtualKey, mods, vk))
+        {
+            return OverlayCommand.Share;
+        }
+        return null;
+    }
+
+    /// <summary>Whether SessionKeyboardHook should claim this key as a session key.</summary>
+    internal bool IsOverlayShortcut(Key key, ModifierKeys modifiers) => ShortcutCommandFor(key, modifiers) is not null;
 
     // ---------- Selection / toolbar / dim mask ----------
 
@@ -1905,6 +1934,9 @@ public partial class OverlayWindow : Window
         // user has never filled in a credential for is seeded disabled
         // (ShareProviderCatalog.DefaultConfigFor) and must not appear as a clickable-but-broken
         // picker entry.
+        _toolbar.SetShortcutHints(
+            SettingsWindow.DescribeHotkey(_liveSettings.CopyShortcutModifiers, _liveSettings.CopyShortcutVirtualKey),
+            SettingsWindow.DescribeHotkey(_liveSettings.UploadShortcutModifiers, _liveSettings.UploadShortcutVirtualKey));
         _toolbar.SetShareProviders(
             RoeSnip.Core.Sharing.ShareManager.EffectiveConfigs(_liveSettings.ShareProviders)
                 .Where(c => c.Enabled)

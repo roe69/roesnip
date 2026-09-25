@@ -64,8 +64,12 @@ clipboard after something else has taken it, and **Save last capture** writes it
 the save directory. Both appear only while a capture is being held - it lives in
 memory, one at a time, until the next capture replaces it or RoeSnip exits.
 
+In the overlay, Ctrl+C copies the snip and Ctrl+U uploads it to your default
+share provider. Both keys can be changed under Settings, Snip shortcuts.
+
 Settings live at `%APPDATA%\RoeSnip\settings.json` (hotkey, save directory,
-auto-HDR-copy, tone-map overrides, run-at-startup, copy-on-select). A missing
+auto-HDR-copy, tone-map overrides, run-at-startup, copy-on-select, snip
+shortcuts). A missing
 or corrupt file falls back to defaults in memory without being overwritten,
 so it can always be inspected or repaired by hand.
 

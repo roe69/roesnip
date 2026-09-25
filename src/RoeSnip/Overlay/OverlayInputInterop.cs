@@ -72,6 +72,8 @@ internal static class OverlayInputInterop
     internal const int VK_SHIFT = 0x10;
     internal const int VK_CAPITAL = 0x14;
     internal const int VK_MENU = 0x12;
+    internal const int VK_LWIN = 0x5B;
+    internal const int VK_RWIN = 0x5C;
 
     // ---------- SendInput (ForegroundActivator's tier-3 Alt-tap "unlock", item 3a) ----------
 
@@ -142,8 +144,9 @@ internal static class OverlayInputInterop
 /// A WH_KEYBOARD_LL hook intercepts these keys at the OS level regardless of which window has
 /// focus, so the overlay's session keys work with zero dependence on foreground/focus. It only
 /// intercepts (and swallows, so the keystroke doesn't leak through to the background app) the keys
-/// the overlay cares about (Esc/Enter/Ctrl+C/Ctrl+S/Ctrl+Z, plus Delete/Back whenever a placed
-/// annotation is selected — Feature B); everything else passes through untouched via CallNextHookEx.
+/// the overlay cares about (Esc/Enter/Ctrl+S/Ctrl+Z and the rebindable Copy/Upload shortcuts, plus
+/// Delete/Back whenever a placed annotation is selected - Feature B); everything else passes through
+/// untouched via CallNextHookEx.
 ///
 /// EXCEPTION (per spec): while a text annotation edit is active AND the overlay window genuinely
 /// holds OS foreground/focus (via ForegroundActivator's activation ladder), only Esc is intercepted
@@ -193,7 +196,7 @@ internal sealed class SessionKeyboardHook : IDisposable
                 int error = Marshal.GetLastWin32Error();
                 FileLog.Write(
                     $"RoeSnip: failed to install the session keyboard hook (error 0x{error:X}); " +
-                    "Esc/Enter/Ctrl+C/Ctrl+S/Ctrl+Z will only work while the overlay actually has focus.");
+                    "Esc/Enter/Copy/Upload/Ctrl+S/Ctrl+Z will only work while the overlay actually has focus.");
             }
         }
         catch (Exception ex)
@@ -270,8 +273,14 @@ internal sealed class SessionKeyboardHook : IDisposable
                 // other non-session keystroke a background tray process shouldn't be eating.
                 bool deleteRequested = (key == Key.Delete || key == Key.Back)
                     && activeWindow?.HasSelectedAnnotation == true;
+                var modifiers = ctrl ? ModifierKeys.Control : ModifierKeys.None;
+                if ((OverlayInputInterop.GetKeyState(OverlayInputInterop.VK_SHIFT) & 0x8000) != 0) modifiers |= ModifierKeys.Shift;
+                if ((OverlayInputInterop.GetKeyState(OverlayInputInterop.VK_MENU) & 0x8000) != 0) modifiers |= ModifierKeys.Alt;
+                if ((OverlayInputInterop.GetKeyState(OverlayInputInterop.VK_LWIN) & 0x8000) != 0
+                    || (OverlayInputInterop.GetKeyState(OverlayInputInterop.VK_RWIN) & 0x8000) != 0) modifiers |= ModifierKeys.Windows;
                 bool isSessionKey = key == Key.Escape || key == Key.Enter || deleteRequested
-                    || (ctrl && (key == Key.C || key == Key.S || key == Key.Z));
+                    || (ctrl && (key == Key.S || key == Key.Z))
+                    || activeWindow?.IsOverlayShortcut(key, modifiers) == true;
 
                 // While typing (and the window does hold real focus, per the branch above), only Esc
                 // is ours to steal — everything else must reach the real focused TextBox through the
@@ -280,7 +289,6 @@ internal sealed class SessionKeyboardHook : IDisposable
                 {
                     if (activeWindow is not null)
                     {
-                        var modifiers = ctrl ? ModifierKeys.Control : ModifierKeys.None;
                         // Marshal to the UI thread's dispatcher queue rather than calling straight
                         // through: we're on the hook's call stack here (synchronous, system-wide),
                         // and ProcessKeyCommand can close windows (Cancel) — doing that reentrantly
