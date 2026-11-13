@@ -7,6 +7,7 @@ using Avalonia.Threading;
 using RoeSnip.App.AppShell;
 using RoeSnip.App.Overlay;
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Clipboard;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Recording;
 using RoeSnip.Core.Recording.Gif;
@@ -72,6 +73,9 @@ public sealed class RecordingOrchestrator
     // Reentrancy guard for the finished-take prompt's own Save: the picker is awaited, so a second
     // click (or automation call) would otherwise open a second one over the first.
     private bool _resavingFinishedTake;
+    // The latest shared take's upload and the prompt generation it belongs to (Retry upload).
+    private RoeSnip.App.Sharing.ShareFlowPresenter.ShareUpload? _takeUpload;
+    private int _takeUploadGeneration;
 
     private RecordingOrchestrator(RecordingSession session, RoeSnipSettings settings, ITrayNotifier? notifier)
     {
@@ -104,6 +108,8 @@ public sealed class RecordingOrchestrator
         _chrome.DoneRequested += () => _session.FinishAfterTake();
         _chrome.CopyAgainRequested += () => CopyFinishedTakeAgain();
         _chrome.SaveAgainRequested += () => SaveFinishedTakeCopy();
+        _chrome.RetryUploadRequested += () => RetryTakeUpload();
+        _chrome.ShowInFolderRequested += () => ShowFinishedTakeInFolder();
         _chrome.CancelRequested += () => _session.CancelAndDiscard();
         _chrome.MicToggled += on => _session.SetAudioToggle(on, null);
         _chrome.SystemAudioToggled += on => _session.SetAudioToggle(null, on);
@@ -285,12 +291,17 @@ public sealed class RecordingOrchestrator
     {
         try
         {
-            await ClipboardService.CopyFileAsync(_chrome, path);
-            FileLog.Write($"RoeSnip: recording re-copied to the clipboard from {path}");
+            // A failed upload's take is still the upload's source, deleted when a Retry succeeds:
+            // the clipboard gets its own staged copy so the paste outlives that.
+            bool uploadFailed = _session.UploadFailed;
+            string clipPath = uploadFailed ? ClipboardStaging.StageCopy(path, DateTime.Now) : path;
+            await ClipboardService.CopyFileAsync(_chrome, clipPath);
+            FileLog.Write($"RoeSnip: recording re-copied to the clipboard from {clipPath}");
             // Re-word the prompt: a button that deliberately does not dismiss it has no other way
             // to report back.
             _chrome.ShowDonePrompt(
-                $"Copied {Path.GetFileName(path)} to the clipboard. Record another from this area?");
+                $"Copied {Path.GetFileName(clipPath)} to the clipboard. Record another from this area?",
+                takeAvailable: _session.FinishedTakePath is not null, uploadFailed: _session.UploadFailed);
         }
         catch (Exception ex)
         {
@@ -332,7 +343,8 @@ public sealed class RecordingOrchestrator
 
             File.Copy(path, target, overwrite: true);
             _notifier?.ShowSavedBalloon(target);
-            _chrome.ShowDonePrompt($"Saved {Path.GetFileName(target)}. Record another from this area?");
+            _chrome.ShowDonePrompt($"Saved {Path.GetFileName(target)}. Record another from this area?",
+                takeAvailable: _session.FinishedTakePath is not null, uploadFailed: _session.UploadFailed);
         }
         catch (Exception ex)
         {
@@ -399,35 +411,65 @@ public sealed class RecordingOrchestrator
             return; // reentrant call, or the encoder failed to stop (already messaged by the session itself)
         }
 
-        Stream stream;
-        try
-        {
-            stream = new FileStream(
-                handoff.TempPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16, useAsync: true);
-        }
-        catch (Exception ex)
-        {
-            // Could not even open the finalized file for reading - report the same way an upload
-            // failure would, naming the (still-present) path so the user can go rescue it by hand.
-            _notifier?.ShowError($"Recording share failed: {ex.Message} The recording was kept at: {handoff.TempPath}");
-            return;
-        }
-
-        var request = new ShareUploadRequest(stream, handoff.FileName, handoff.ContentType);
-        RoeSnip.App.Sharing.ShareFlowPresenter.StartUpload(
+        int generation = _session.TakeChoiceGeneration;
+        string tempPath = handoff.TempPath;
+        _takeUpload = RoeSnip.App.Sharing.ShareFlowPresenter.StartUpload(
             config,
-            request,
+            // Opened per attempt, so a Retry re-reads the kept file. An open failure is reported as
+            // an upload failure, which keeps the take.
+            () => new FileStream(tempPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16, useAsync: true),
+            handoff.FileName,
+            handoff.ContentType,
             handoff.Monitor,
-            keptFilePathOnFailure: handoff.TempPath,
+            keptFilePathOnFailure: tempPath,
             onSuccess: () =>
             {
                 // The DATA-LOSS RULE's enforcement point: delete ONLY here, on a genuine upload
                 // success - never in the presenter's own generic plumbing.
-                try { if (File.Exists(handoff.TempPath)) File.Delete(handoff.TempPath); }
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); }
                 catch (Exception ex) { FileLog.Write($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
+                if (_session.TryClearUploadState(generation))
+                {
+                    _chrome.ShowDonePrompt("Shared. The link is on the clipboard. Record another from this area?", takeAvailable: false);
+                }
             },
-            onFailure: null,
+            onFailure: message =>
+            {
+                // Kept on disk: turn the prompt into the upload-failed form if it is still this take's.
+                if (_session.TryMarkUploadFailed(generation, tempPath))
+                {
+                    _chrome.ShowDonePrompt($"Upload failed: {message} The take is kept.", takeAvailable: true, uploadFailed: true);
+                }
+            },
             notifier: _notifier);
+        _takeUploadGeneration = generation;
+    }
+
+    /// <summary>"Retry upload" on the upload-failed prompt: the same upload again, from the kept file.</summary>
+    private void RetryTakeUpload()
+    {
+        if (!_session.UploadFailed || _resavingFinishedTake || _takeUpload is not { } upload)
+        {
+            return;
+        }
+        if (_session.FinishedTakePath is { } path && !File.Exists(path))
+        {
+            _notifier?.ShowError($"The recording is no longer at {path}.");
+            return;
+        }
+        if (_session.TryClearUploadState(_takeUploadGeneration))
+        {
+            _chrome.ShowDonePrompt("Uploading this take again. Record another from this area?", takeAvailable: false);
+            upload.Retry();
+        }
+    }
+
+    private void ShowFinishedTakeInFolder()
+    {
+        if (_session.AwaitingAnotherTakeChoice && _session.FinishedTakePath is { } path)
+        {
+            FileReveal.Show(path);
+        }
     }
 
     /// <summary>The single fresh-disk-state provider lookup shared by <see cref="RequestShare"/> and
@@ -617,6 +659,11 @@ public sealed class RecordingOrchestrator
                 if (s.FinishedTakePath is null) return "cannot save again: this take has no file left to save";
                 if (active._resavingFinishedTake) return "cannot save again: a save is already in progress";
                 active._chrome.InvokeSaveAgain();
+                return null;
+            case "retryupload":
+                if (!s.AwaitingAnotherTakeChoice || !s.UploadFailed) return "cannot retry upload: no failed upload is waiting on a choice";
+                if (active._resavingFinishedTake) return "cannot retry upload: a save is already in progress";
+                active._chrome.InvokeRetryUpload();
                 return null;
             case "another":
                 if (!s.AwaitingAnotherTakeChoice) return "cannot record another: no finished take is waiting on a choice";

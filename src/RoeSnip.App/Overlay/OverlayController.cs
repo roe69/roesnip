@@ -1204,9 +1204,10 @@ public static class OverlayController
         {
             toolbarWindow.SetShareBusy(true);
             string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}.png";
-            var request = new RoeSnip.Core.Sharing.ShareUploadRequest(
-                new System.IO.MemoryStream(pngBytes, writable: false), fileName, "image/png");
-            RoeSnip.App.Sharing.ShareFlowPresenter.StartUpload(config, request, toolbarWindow.Monitor, keptFilePathOnFailure: null, onSuccess: null, onFailure: null);
+            // The bytes stay referenced by the upload, so the toast's Retry re-sends them after a failure.
+            RoeSnip.App.Sharing.ShareFlowPresenter.StartUpload(
+                config, () => new System.IO.MemoryStream(pngBytes, writable: false), fileName, "image/png",
+                toolbarWindow.Monitor, keptFilePathOnFailure: null, onSuccess: null, onFailure: null);
         }
 
         /// <summary>O8 audit fix: OnCommand's callers (key handlers, toolbar button clicks) cannot

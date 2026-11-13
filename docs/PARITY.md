@@ -1653,6 +1653,21 @@ because a correct implementation needs live hardware this repo cannot exercise.
   Control binding answers to Cmd (as the fixed shortcuts already do) and is shown as "Cmd+...".
   The recording review's Ctrl+C hook is unchanged: it passes through to the focused app rather than
   owning the key, so it stays on the platform copy chord.
+- A failed upload keeps the take reachable (2026-11, both apps' Sharing/ShareFlowPresenter.cs +
+  ShareResultWindow, Recording/RecordingChrome.cs, the WPF RecordingController.cs and the port's
+  RecordingOrchestrator.cs + RecordingSession, both AutomationServer.cs; shared Core
+  ClipboardStaging.StageCopy + Sharing/FileReveal.cs). When a shared take's upload fails or is
+  cancelled while its prompt is up, the prompt shows the error with Retry upload, Copy, Save as...
+  and Show in folder; the temp take is deleted only on upload success, and Done / Record another
+  from there keep it and raise a tray error naming its path. Copy there stages a COPY so a later
+  successful retry cannot break the paste. The toast's failure state gains Retry (and Show in folder
+  for a recording); a still share retries from the PNG bytes. StartUpload now takes an
+  openContent factory (one stream per attempt) and returns a ShareUpload handle. Automation action
+  `retryupload` in both apps. Port difference: the session tracks which prompt an upload belongs to
+  with TakeChoiceGeneration (the orchestrator owns the upload), where WPF compares the handle.
+  Large RoeShare uploads (over 32 MB, chunked) and the upload logging are Core-only, shared by both.
+  Not run in either app yet; the port is unit-tested (RecordingSession upload state), not run on
+  Linux/macOS.
 - Flash phase goes CLICK-THROUGH so hovered content survives the capture (2026-08, both apps'
   Overlay/FlashDimmer.cs + OverlayController.cs, new Overlay/FlashMouseSwallowHook.cs in each).
   Removing the flash's SetForegroundWindow claim (same pass) only fixed the ACTIVATION half of the

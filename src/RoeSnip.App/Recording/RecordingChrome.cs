@@ -107,7 +107,9 @@ public sealed class RecordingChrome : Window
     private readonly Button _doneNoButton;
     private readonly Button _doneCopyAgainButton;
     private readonly Button _doneSaveButton;
-    private readonly StackPanel _doneReuseRow;
+    private readonly Button _doneRetryUploadButton;
+    private readonly Button _doneShowFolderButton;
+    private readonly WrapPanel _doneReuseRow;
     private bool _showingDonePrompt;
 
     public event Action? StartRequested;
@@ -133,6 +135,10 @@ public sealed class RecordingChrome : Window
     /// the user picks. Same chrome-only-raises-it division of labour as <see cref="SaveRequested"/>;
     /// the take's path lives in RecordingSession, the picker in RecordingOrchestrator.</summary>
     public event Action? SaveAgainRequested;
+    /// <summary>"Retry upload" on the prompt after a take's upload failed.</summary>
+    public event Action? RetryUploadRequested;
+    /// <summary>"Show in folder" on the prompt after a take's upload failed.</summary>
+    public event Action? ShowInFolderRequested;
     public event Action? CancelRequested;
     public event Action<bool>? MicToggled;
     public event Action<bool>? SystemAudioToggled;
@@ -402,9 +408,22 @@ public sealed class RecordingChrome : Window
         _doneSaveButton = BuildButton("Save", isDanger: false);
         ToolTip.SetTip(_doneSaveButton, "Save this take to a file");
         _doneSaveButton.Click += (_, _) => SaveAgainRequested?.Invoke();
-        _doneReuseRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+        // Upload-failed only: the take is still on disk, so offer another try and its folder.
+        _doneRetryUploadButton = BuildButton("Retry upload", isDanger: false);
+        ToolTip.SetTip(_doneRetryUploadButton, "Upload this take again");
+        _doneRetryUploadButton.Click += (_, _) => RetryUploadRequested?.Invoke();
+        _doneShowFolderButton = BuildButton("Show in folder", isDanger: false);
+        ToolTip.SetTip(_doneShowFolderButton, "Open the folder this take is kept in");
+        _doneShowFolderButton.Click += (_, _) => ShowInFolderRequested?.Invoke();
+        _doneReuseRow = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0), MaxWidth = 260 };
+        _doneReuseRow.Children.Add(_doneRetryUploadButton);
         _doneReuseRow.Children.Add(_doneCopyAgainButton);
         _doneReuseRow.Children.Add(_doneSaveButton);
+        _doneReuseRow.Children.Add(_doneShowFolderButton);
+        foreach (Control child in _doneReuseRow.Children)
+        {
+            child.Margin = new Thickness(4, 0, 0, 4); // rows wrap: keep a gap between them
+        }
 
         _donePanel = new StackPanel { Margin = new Thickness(12, 8, 12, 8), IsVisible = false };
         _donePanel.Children.Add(_doneText);
@@ -758,10 +777,16 @@ public sealed class RecordingChrome : Window
 
     /// <summary>Shown after a take has been finished (saved, or copied to the clipboard) instead of
     /// silently re-arming for another one: the session stays put until the user picks. The message
-    /// names what just happened so "Record another" is an informed choice.</summary>
-    public void ShowDonePrompt(string message, bool takeAvailable = true)
+    /// names what just happened so "Record another" is an informed choice. <paramref name="uploadFailed"/>
+    /// (the take's upload failed and it is still on disk) adds Retry upload and Show in folder, and
+    /// labels the other two Copy / Save as... since nothing has been copied or saved yet.</summary>
+    public void ShowDonePrompt(string message, bool takeAvailable = true, bool uploadFailed = false)
     {
         _doneReuseRow.IsVisible = takeAvailable;
+        _doneRetryUploadButton.IsVisible = uploadFailed;
+        _doneShowFolderButton.IsVisible = uploadFailed;
+        _doneCopyAgainButton.Content = uploadFailed ? "Copy" : "Copy again";
+        _doneSaveButton.Content = uploadFailed ? "Save as..." : "Save";
         _doneText.Text = message;
         _showingDonePrompt = true;
         _showingRestartConfirm = false;
@@ -911,6 +936,7 @@ public sealed class RecordingChrome : Window
     }
     public void InvokeCopyAgain() => CopyAgainRequested?.Invoke();
     public void InvokeSaveAgain() => SaveAgainRequested?.Invoke();
+    public void InvokeRetryUpload() => RetryUploadRequested?.Invoke();
     public void InvokeDone()
     {
         HideDonePrompt();

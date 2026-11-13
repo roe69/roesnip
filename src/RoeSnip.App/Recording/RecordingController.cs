@@ -607,7 +607,9 @@ public sealed class RecordingSession
     private void RearmForAnotherTake()
     {
         _tempPath = null;
+        NoteKeptFailedUpload();
         AwaitingAnotherTakeChoice = false;
+        TakeChoiceGeneration++;
         FinishedTakePath = null;
         SetPhase(Phase.Setup);
     }
@@ -633,7 +635,55 @@ public sealed class RecordingSession
         _tempPath = null;
         FinishedTakePath = finishedTakePath;
         AwaitingAnotherTakeChoice = true;
+        TakeChoiceGeneration++;
         TakeFinished?.Invoke(message);
+    }
+
+    /// <summary>Bumped each time a take parks on the prompt, so a late upload result can tell
+    /// whether the prompt on screen is still for its take.</summary>
+    public int TakeChoiceGeneration { get; private set; }
+
+    /// <summary>True while the prompt shows a failed upload; <see cref="FinishedTakePath"/> is then
+    /// the kept temp take.</summary>
+    public bool UploadFailed { get; private set; }
+
+    /// <summary>The take's upload failed: if the prompt is still up for that take, keep the temp
+    /// file reachable from it. Returns whether the prompt should show the upload-failed form.</summary>
+    public bool TryMarkUploadFailed(int generation, string tempPath)
+    {
+        if (_ended != 0 || !AwaitingAnotherTakeChoice || generation != TakeChoiceGeneration)
+        {
+            return false;
+        }
+        UploadFailed = true;
+        FinishedTakePath = tempPath;
+        return true;
+    }
+
+    /// <summary>An upload (first try or retry) for the prompt's take succeeded or is starting again:
+    /// the temp take is about to be, or has been, deleted. Returns whether the prompt is still for
+    /// that take.</summary>
+    public bool TryClearUploadState(int generation)
+    {
+        if (_ended != 0 || !AwaitingAnotherTakeChoice || generation != TakeChoiceGeneration)
+        {
+            return false;
+        }
+        UploadFailed = false;
+        FinishedTakePath = null;
+        return true;
+    }
+
+    /// <summary>Leaving the prompt (Done, Record another) with a failed upload: the take stays in
+    /// the temp folder, so say where instead of letting it vanish from view.</summary>
+    private void NoteKeptFailedUpload()
+    {
+        if (UploadFailed && FinishedTakePath is { } path && File.Exists(path))
+        {
+            FileLog.Write($"RoeSnip: leaving the prompt with a failed upload; the take is kept at {path}");
+            _notifier?.ShowError($"The recording was not uploaded. It is kept at {path}");
+        }
+        UploadFailed = false;
     }
 
     /// <summary>"Record another" on the finished-take prompt.</summary>
@@ -644,10 +694,11 @@ public sealed class RecordingSession
     }
 
     /// <summary>"Done" on the finished-take prompt - the take is already saved/copied/uploaded, so
-    /// there is nothing left to discard.</summary>
+    /// there is nothing left to discard (a failed upload's take is kept, see NoteKeptFailedUpload).</summary>
     public void FinishAfterTake()
     {
         if (!AwaitingAnotherTakeChoice) return;
+        NoteKeptFailedUpload();
         AwaitingAnotherTakeChoice = false;
         FinishedTakePath = null;
         TeardownSession(finalPath: null, encoderAbandoned: false);
@@ -807,6 +858,7 @@ public sealed class RecordingSession
             return;
         }
         FileLog.Write($"RoeSnip: recording session ending (saved={finalPath is not null})");
+        NoteKeptFailedUpload();
         AwaitingAnotherTakeChoice = false;
         FinishedTakePath = null;
 

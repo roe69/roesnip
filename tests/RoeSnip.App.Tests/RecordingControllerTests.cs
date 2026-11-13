@@ -216,6 +216,56 @@ public class RecordingSessionSetupPhaseTests
         Assert.Null(session.FinishedTakePath);
     }
 
+    /// <summary>A failed upload for the take on the prompt makes the kept temp take reachable from
+    /// it, and Done afterwards ends the session WITHOUT deleting that file (DATA-LOSS RULE).</summary>
+    [Fact]
+    public void UploadFailed_OnTheCurrentPrompt_KeepsTheTakeThroughDone()
+    {
+        string kept = Path.Combine(Path.GetTempPath(), $"roesnip_rec_test_{Guid.NewGuid():N}.mp4");
+        File.WriteAllBytes(kept, new byte[] { 1, 2, 3 });
+        try
+        {
+            var session = NewSetupSession();
+            session.CompleteClipboardHandoff(Path.Combine(Path.GetTempPath(), "roesnip_staged_take.gif"));
+            int generation = session.TakeChoiceGeneration;
+
+            Assert.True(session.TryMarkUploadFailed(generation, kept));
+            Assert.True(session.UploadFailed);
+            Assert.Equal(kept, session.FinishedTakePath);
+
+            session.FinishAfterTake();
+
+            Assert.False(session.UploadFailed);
+            Assert.True(File.Exists(kept));
+        }
+        finally
+        {
+            File.Delete(kept);
+        }
+    }
+
+    /// <summary>A late result for an earlier take never takes over a prompt that has moved on.</summary>
+    [Fact]
+    public void UploadResult_ForAnEarlierTake_IsIgnored()
+    {
+        var session = NewSetupSession();
+        try
+        {
+            session.CompleteClipboardHandoff(Path.Combine(Path.GetTempPath(), "roesnip_staged_take.gif"));
+            int generation = session.TakeChoiceGeneration;
+            session.RecordAnotherTake();
+            session.CompleteClipboardHandoff(Path.Combine(Path.GetTempPath(), "roesnip_staged_take2.gif"));
+
+            Assert.False(session.TryMarkUploadFailed(generation, "x.mp4"));
+            Assert.False(session.TryClearUploadState(generation));
+            Assert.False(session.UploadFailed);
+        }
+        finally
+        {
+            session.CancelAndDiscard();
+        }
+    }
+
     [Fact]
     public void StartNew_WhileAlreadyActive_Throws()
     {

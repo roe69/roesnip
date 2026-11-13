@@ -193,6 +193,7 @@ public class AutomationProtocolTests
     [InlineData("done")]
     [InlineData("copyagain")]
     [InlineData("saveagain")]
+    [InlineData("retryupload")]
     public void ValidateArgs_Chrome_AcceptsKnownActions(string action)
     {
         var request = AutomationProtocol.TryParseRequest($"{{\"cmd\":\"chrome\",\"action\":\"{action}\"}}", out _)!;
