@@ -6,6 +6,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Core.Sharing;
 
@@ -64,6 +65,25 @@ public sealed class ProviderSpecShareProvider : IShareProvider
             {
                 values[field.Key] = field.DefaultValue;
             }
+        }
+
+        if (_spec.ChunkedProtocol == ChunkedUploadProtocol.RoeShareResumable
+            && _spec.ChunkedAboveBytes is { } chunkedAbove
+            && request.Content.CanSeek
+            && request.Content.Length > chunkedAbove)
+        {
+            string baseUrl = values.TryGetValue("BaseUrl", out string? b) ? b : "";
+            if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out Uri? baseUri)
+                || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps))
+            {
+                return new ShareUploadResult(false, null,
+                    $"{DisplayName} is not configured correctly: the server URL is not a valid http(s) URL.");
+            }
+            values.TryGetValue("ApiKey", out string? apiKey);
+            values.TryGetValue("ExpiresIn", out string? expiresIn);
+            return await new RoeShareChunkedUploader(_client, DisplayName)
+                .UploadAsync(baseUrl, apiKey ?? "", expiresIn, request, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         string expandedEndpoint = TemplateExpander.Expand(_spec.Endpoint, values);
@@ -126,10 +146,12 @@ public sealed class ProviderSpecShareProvider : IShareProvider
             // the caller cancelled - ShareManager's own OCE rethrow would then propagate it further,
             // defeating the "never let an unexpected exception escape as an unobserved-task-exception
             // crash for a fire-and-forget UI caller" guarantee that facade documents.
+            FileLog.Write($"RoeSnip: share upload to {DisplayName} timed out: {ex}");
             return new ShareUploadResult(false, null, $"{DisplayName}: upload timed out: {ex.Message}");
         }
         catch (Exception ex)
         {
+            FileLog.Write($"RoeSnip: share upload request to {DisplayName} failed: {ex}");
             return new ShareUploadResult(false, null, $"{DisplayName}: upload request failed: {ex.Message}");
         }
 
@@ -223,7 +245,7 @@ public sealed class ProviderSpecShareProvider : IShareProvider
     // response from ever landing fully in memory in the first place.
     private const int MaxResponseBytes = 1024 * 1024; // 1 MB
 
-    private static async Task<string> ReadResponseBodyAsync(HttpContent content, CancellationToken cancellationToken)
+    internal static async Task<string> ReadResponseBodyAsync(HttpContent content, CancellationToken cancellationToken)
     {
         await using Stream stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var buffer = new MemoryStream();

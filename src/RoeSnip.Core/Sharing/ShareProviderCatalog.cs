@@ -35,10 +35,9 @@ public static class ShareProviderCatalog
     /// <c>201 { id, url, fileId, name, size, editToken, expiresAt }</c> - "url" is the ready-to-share
     /// link (config.baseUrl + '/' + id), "editToken" is the owner-management secret (CONTRACT.md's D1
     /// addition; absent on an older server, which is fine - see ResponseEditTokenJsonPath's own doc
-    /// comment). Bounded by the server's own max request body size; CONTRACT.md says larger files need
-    /// the resumable /api/v1/shares + PATCH-chunks flow instead, which this one-shot spec deliberately
-    /// does not attempt to model (a multi-request resumable protocol does not fit the flat "one POST,
-    /// one response" ProviderSpec shape - a real future limitation, not an oversight).</summary>
+    /// comment). The one-shot is bounded by the server's max request body (64 MiB), so files above
+    /// ChunkedAboveBytes go through the resumable /api/v1/shares + PATCH-chunks flow instead
+    /// (RoeShareChunkedUploader), which yields the same direct-media link shape.</summary>
     public static readonly ProviderSpec RoeShare = new()
     {
         Id = "roeshare",
@@ -52,6 +51,9 @@ public static class ShareProviderCatalog
             ["X-Filename"] = "{Filename}",
         },
         MaxUploadBytes = null, // server-configured (config.maxFileSize) - not knowable statically
+        ChunkedProtocol = ChunkedUploadProtocol.RoeShareResumable,
+        // Half the server's 64 MiB one-shot body cap: anything bigger goes chunked.
+        ChunkedAboveBytes = 32L * 1024 * 1024,
         ResponseMode = ResponseUrlMode.JsonPath,
         ResponseJsonPath = "url",
         // Owner-management secret RoeShare's own upload endpoint returns alongside "url" (see
@@ -85,8 +87,7 @@ public static class ShareProviderCatalog
         IsBuiltIn = true,
         Verified = true,
         Notes = "Your own RoeShare server. Create an API key from RoeShare's admin panel " +
-                "(Admin > API keys). One-shot upload only - very large files may exceed the " +
-                "server's request size limit; use RoeShare's web upload page for those.",
+                "(Admin > API keys). Files over 32 MB upload in resumable chunks.",
     };
 
     /// <summary>Imgur's anonymous upload - api.imgur.com/3/image, multipart field "image",

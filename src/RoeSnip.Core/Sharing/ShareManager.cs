@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Core.Sharing;
 
@@ -86,6 +87,7 @@ public static class ShareManager
         ProviderSpec? spec = ShareProviderCatalog.ResolveSpec(config);
         if (spec is null)
         {
+            FileLog.Write($"RoeSnip: share upload not started: no spec for provider '{config.DisplayName}'");
             return new ShareUploadResult(false, null,
                 $"'{config.DisplayName}' is not configured (unknown or missing provider spec).");
         }
@@ -94,18 +96,26 @@ public static class ShareManager
         {
             double limitMb = maxBytes / 1024.0 / 1024.0;
             double actualMb = content.Length / 1024.0 / 1024.0;
+            FileLog.Write($"RoeSnip: share upload not started: {fileName} is {content.Length} bytes, {spec.Name} allows {maxBytes}");
             return new ShareUploadResult(false, null,
                 $"{spec.Name} allows at most {limitMb:0.#} MB; this file is {actualMb:0.#} MB.");
         }
 
         var provider = new ProviderSpecShareProvider(spec, config, client ?? SharedClient.Value);
+        FileLog.Write($"RoeSnip: share upload starting: {provider.DisplayName}, {fileName}, {contentType}, {content.Length} bytes");
         try
         {
-            return await provider.UploadAsync(new ShareUploadRequest(content, fileName, contentType), cancellationToken)
+            ShareUploadResult result = await provider
+                .UploadAsync(new ShareUploadRequest(content, fileName, contentType), cancellationToken)
                 .ConfigureAwait(false);
+            FileLog.Write(result.Success
+                ? $"RoeSnip: share upload succeeded: {result.Url}"
+                : $"RoeSnip: share upload failed (HTTP {result.HttpStatusCode?.ToString() ?? "none"}): {result.ErrorMessage}");
+            return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            FileLog.Write($"RoeSnip: share upload cancelled: {fileName}");
             throw;
         }
         catch (Exception ex)
@@ -116,6 +126,7 @@ public static class ShareManager
             // shape it doesn't handle yet, or - before the `when` clause above existed - a timeout
             // misread as the caller's own cancellation) become an unobserved-task-exception crash for
             // a fire-and-forget UI caller.
+            FileLog.Write($"RoeSnip: share upload threw: {ex}");
             return new ShareUploadResult(false, null, $"Upload failed: {ex.Message}");
         }
     }

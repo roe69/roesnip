@@ -14,6 +14,17 @@ public enum ShareUploadKind
     RawBody,
 }
 
+/// <summary>A multi-request upload protocol a spec can switch to for large files. None for every
+/// custom spec; see <see cref="ProviderSpec.ChunkedAboveBytes"/>.</summary>
+public enum ChunkedUploadProtocol
+{
+    None,
+
+    /// <summary>RoeShare's resumable flow: POST /api/v1/shares, POST /api/shares/:id/files, PATCH
+    /// chunks with ?offset=, POST .../finalize (roeshare CONTRACT.md). See RoeShareChunkedUploader.</summary>
+    RoeShareResumable,
+}
+
 /// <summary>How the uploaded file's public URL is pulled out of a successful response body.</summary>
 public enum ResponseUrlMode
 {
@@ -109,6 +120,13 @@ public sealed record ProviderSpec
     /// RoeShare's own <c>maxFileSize</c> lives in ITS <c>/api/config</c>, not something this static
     /// spec can know) - in that case the provider's own error response is what surfaces the limit.</summary>
     public long? MaxUploadBytes { get; init; }
+
+    /// <summary>Multi-request protocol used instead of the one-shot request for a file larger than
+    /// <see cref="ChunkedAboveBytes"/>. None (the default) means always one-shot.</summary>
+    public ChunkedUploadProtocol ChunkedProtocol { get; init; } = ChunkedUploadProtocol.None;
+
+    /// <summary>Size above which <see cref="ChunkedProtocol"/> is used. Null = never.</summary>
+    public long? ChunkedAboveBytes { get; init; }
 
     public ResponseUrlMode ResponseMode { get; init; } = ResponseUrlMode.JsonPath;
 
