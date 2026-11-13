@@ -27,6 +27,8 @@ public partial class ShareResultWindow : Window
 {
     private readonly RoeSnip.Capture.MonitorInfo _monitor;
     private Action? _onCancelRequested;
+    private Action? _onRetryRequested;
+    private string? _keptFilePath;
     private string? _cleanUrl;
     private string? _openUrl;
     private bool _resolved; // true once Success/Failure has been shown - Cancel/Esc no longer cancels
@@ -58,6 +60,12 @@ public partial class ShareResultWindow : Window
     /// without this window needing to know anything about the upload's actual outcome.</summary>
     public void ShowUploading(Action onCancelRequested)
     {
+        // Also the Retry path: the toast may be coming back from its Failure state.
+        _resolved = false;
+        _onRetryRequested = null;
+        _keptFilePath = null;
+        RetryButton.Visibility = Visibility.Collapsed;
+        ShowFolderButton.Visibility = Visibility.Collapsed;
         _onCancelRequested = onCancelRequested;
         StatusText.Text = "Uploading...";
         StatusText.Foreground = (System.Windows.Media.Brush)Resources["MutedBrush"] ?? System.Windows.Media.Brushes.Gray;
@@ -106,10 +114,15 @@ public partial class ShareResultWindow : Window
     /// until the user dismisses it (no auto-dismiss timer) so a data-loss-relevant message never
     /// disappears unread. <paramref name="keptFilePath"/> non-null only for a recording share whose
     /// temp file was kept (the DATA-LOSS RULE: deleted only on upload success, enforced by the
-    /// caller's onSuccess callback, never here).</summary>
-    public void ShowFailure(string message, string? keptFilePath)
+    /// caller's onSuccess callback, never here). <paramref name="onRetry"/> non-null shows Retry;
+    /// a kept file also gets Show in folder.</summary>
+    public void ShowFailure(string message, string? keptFilePath, Action? onRetry = null)
     {
         _resolved = true;
+        _onRetryRequested = onRetry;
+        _keptFilePath = keptFilePath;
+        RetryButton.Visibility = onRetry is not null ? Visibility.Visible : Visibility.Collapsed;
+        ShowFolderButton.Visibility = keptFilePath is not null ? Visibility.Visible : Visibility.Collapsed;
 
         StatusText.Text = message;
         StatusText.Foreground = (System.Windows.Media.Brush)Resources["ErrorBrush"];
@@ -139,6 +152,21 @@ public partial class ShareResultWindow : Window
         CancelButton.IsEnabled = false;
         StatusText.Text = "Cancelling...";
         _onCancelRequested?.Invoke();
+    }
+
+    private void RetryButton_Click(object sender, RoutedEventArgs e)
+    {
+        Action? retry = _onRetryRequested;
+        _onRetryRequested = null; // one click, one attempt
+        retry?.Invoke();
+    }
+
+    private void ShowFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_keptFilePath is { } path)
+        {
+            RoeSnip.Core.Sharing.FileReveal.Show(path);
+        }
     }
 
     private void OpenButton_Click(object sender, RoutedEventArgs e)

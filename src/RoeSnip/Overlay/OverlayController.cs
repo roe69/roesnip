@@ -1558,9 +1558,10 @@ public static class OverlayController
         {
             toolbarWindow.SetShareBusy(true);
             string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}.png";
-            var request = new RoeSnip.Core.Sharing.ShareUploadRequest(
-                new System.IO.MemoryStream(pngBytes, writable: false), fileName, "image/png");
-            RoeSnip.Sharing.ShareFlowPresenter.StartUpload(config, request, toolbarWindow.Monitor, keptFilePathOnFailure: null, onSuccess: null, onFailure: null);
+            // The bytes stay referenced by the upload, so the toast's Retry re-sends them after a failure.
+            RoeSnip.Sharing.ShareFlowPresenter.StartUpload(
+                config, () => new System.IO.MemoryStream(pngBytes, writable: false), fileName, "image/png",
+                toolbarWindow.Monitor, keptFilePathOnFailure: null, onSuccess: null, onFailure: null);
         }
 
         /// <summary>Esc's two-stage behavior, decided here because only the session can see every

@@ -31,6 +31,19 @@ public static class ClipboardStaging
         return staged;
     }
 
+    /// <summary>Like <see cref="Stage"/> but copies, leaving <paramref name="sourcePath"/> in place -
+    /// for a take whose upload failed, which a later Retry still reads and deletes on success.</summary>
+    public static string StageCopy(string sourcePath, DateTime timestampLocal)
+    {
+        string dir = DirectoryPath;
+        Directory.CreateDirectory(dir);
+        Prune(dir);
+
+        string staged = Path.Combine(dir, $"roesnip_{timestampLocal:yyyyMMdd_HHmmss}{Path.GetExtension(sourcePath)}");
+        File.Copy(sourcePath, staged, overwrite: true);
+        return staged;
+    }
+
     private static void Prune(string dir)
     {
         try

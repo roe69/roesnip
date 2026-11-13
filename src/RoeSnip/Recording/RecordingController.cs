@@ -280,6 +280,10 @@ internal sealed class RecordingSession
     // clipboard staging copy. Null means there is nothing left to re-copy or save (a shared take,
     // whose only copy the upload deletes on success), which hides the prompt's Copy again/Save.
     private string? _finishedTakePath;
+    // The shared take's upload while the prompt is up: retried from the prompt after a failure.
+    private RoeSnip.Sharing.ShareFlowPresenter.ShareUpload? _takeUpload;
+    // True while the prompt shows a failed upload; _finishedTakePath is then the kept temp take.
+    private bool _uploadFailed;
 
     public RecordingSession(
         MonitorInfo monitor, RectPhysical selectionPx, RecordingFormat format,
@@ -391,6 +395,8 @@ internal sealed class RecordingSession
             _chrome.DoneRequested += () => TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: false);
             _chrome.CopyAgainRequested += CopyFinishedTakeAgain;
             _chrome.SaveAgainRequested += SaveFinishedTakeCopy;
+            _chrome.RetryUploadRequested += RetryTakeUpload;
+            _chrome.ShowInFolderRequested += ShowFinishedTakeInFolder;
             _chrome.CancelRequested += CancelAndDiscard;
             _chrome.MicToggled += v => SetAudioToggle(mic: v, systemAudio: null);
             _chrome.SystemAudioToggled += v => SetAudioToggle(mic: null, systemAudio: v);
@@ -1494,6 +1500,7 @@ internal sealed class RecordingSession
         _gifTempPath = null;
 
         DisposeReviewCopyHook();
+        NoteKeptFailedUpload();
         _awaitingAnotherTakeChoice = false;
         _finishedTakePath = null;
         _phase = Phase.Setup;
@@ -1629,11 +1636,14 @@ internal sealed class RecordingSession
 
         try
         {
-            ClipboardService.CopyFileToClipboard(path);
-            FileLog.Write($"RoeSnip: recording re-copied to the clipboard from {path}");
+            // A failed upload's take is still the upload's source, deleted when a Retry succeeds:
+            // the clipboard gets its own staged copy so the paste outlives that.
+            string clipPath = _uploadFailed ? ClipboardStaging.StageCopy(path, DateTime.Now) : path;
+            ClipboardService.CopyFileToClipboard(clipPath);
+            FileLog.Write($"RoeSnip: recording re-copied to the clipboard from {clipPath}");
             _chrome!.ShowDonePrompt(
-                $"Copied {Path.GetFileName(path)} to the clipboard. Record another from this area?",
-                takeAvailable: true);
+                $"Copied {Path.GetFileName(clipPath)} to the clipboard. Record another from this area?",
+                takeAvailable: true, uploadFailed: _uploadFailed);
         }
         catch (Exception ex)
         {
@@ -1673,7 +1683,8 @@ internal sealed class RecordingSession
             File.Copy(path, target, overwrite: true);
             _notifier?.ShowSavedBalloon(target);
             _chrome!.ShowDonePrompt(
-                $"Saved {Path.GetFileName(target)}. Record another from this area?", takeAvailable: true);
+                $"Saved {Path.GetFileName(target)}. Record another from this area?", takeAvailable: true,
+                uploadFailed: _uploadFailed);
         }
         catch (Exception ex)
         {
@@ -1698,6 +1709,7 @@ internal sealed class RecordingSession
         _gifTempPath = null;
 
         DisposeReviewCopyHook();
+        NoteKeptFailedUpload();
         _awaitingAnotherTakeChoice = false;
         _finishedTakePath = null;
         _phase = Phase.Setup;
@@ -1864,24 +1876,14 @@ internal sealed class RecordingSession
         // (the upload itself continues in the background either way).
         AwaitAnotherTakeChoice("Uploading this take. Record another from this area?", finishedTakePath: null);
 
-        Stream stream;
-        try
-        {
-            stream = new FileStream(
-                tempPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16, useAsync: true);
-        }
-        catch (Exception ex)
-        {
-            // Could not even open the finalized file for reading — report the same way an upload
-            // failure would, naming the (still-present) path so the user can go rescue it by hand.
-            _notifier?.ShowError($"Recording share failed: {ex.Message} The recording was kept at: {tempPath}");
-            return;
-        }
-
-        var request = new RoeSnip.Core.Sharing.ShareUploadRequest(stream, fileName, contentType);
-        RoeSnip.Sharing.ShareFlowPresenter.StartUpload(
+        RoeSnip.Sharing.ShareFlowPresenter.ShareUpload? upload = null;
+        upload = RoeSnip.Sharing.ShareFlowPresenter.StartUpload(
             config,
-            request,
+            // Opened per attempt, so a Retry re-reads the kept file. An open failure is reported as
+            // an upload failure, which keeps the take.
+            () => new FileStream(tempPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1 << 16, useAsync: true),
+            fileName,
+            contentType,
             monitor,
             keptFilePathOnFailure: tempPath,
             onSuccess: () =>
@@ -1891,9 +1893,76 @@ internal sealed class RecordingSession
                 // comment ("FAILURE = DATA LOSS").
                 try { if (File.Exists(tempPath)) File.Delete(tempPath); }
                 catch (Exception ex) { FileLog.Write($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
+                OnTakeUploadSucceeded(upload);
             },
-            onFailure: null,
+            onFailure: message => OnTakeUploadFailed(upload, tempPath, message),
             notifier: _notifier);
+        _takeUpload = upload;
+    }
+
+    /// <summary>The take's upload failed (or was cancelled). The file was kept; if this session's
+    /// prompt is still up for that take, turn it into the upload-failed prompt (Retry upload, Copy,
+    /// Save as..., Show in folder) instead of leaving only Record another / Done.</summary>
+    private void OnTakeUploadFailed(RoeSnip.Sharing.ShareFlowPresenter.ShareUpload? upload, string tempPath, string message)
+    {
+        if (_ended != 0 || !_awaitingAnotherTakeChoice || upload is null || !ReferenceEquals(upload, _takeUpload))
+        {
+            return; // the session moved on; the toast still names the kept path and offers Retry
+        }
+        _uploadFailed = true;
+        _finishedTakePath = tempPath;
+        _chrome!.ShowDonePrompt($"Upload failed: {message} The take is kept.", takeAvailable: true, uploadFailed: true);
+    }
+
+    private void OnTakeUploadSucceeded(RoeSnip.Sharing.ShareFlowPresenter.ShareUpload? upload)
+    {
+        if (_ended != 0 || !_awaitingAnotherTakeChoice || upload is null || !ReferenceEquals(upload, _takeUpload))
+        {
+            return;
+        }
+        _uploadFailed = false;
+        _finishedTakePath = null; // deleted by the success callback
+        _takeUpload = null;
+        _chrome!.ShowDonePrompt("Shared. The link is on the clipboard. Record another from this area?", takeAvailable: false);
+    }
+
+    /// <summary>"Retry upload" on the upload-failed prompt: the same upload again, from the kept file.</summary>
+    private void RetryTakeUpload()
+    {
+        if (!_awaitingAnotherTakeChoice || !_uploadFailed || _saving || _takeUpload is not { } upload)
+        {
+            return;
+        }
+        if (_finishedTakePath is { } path && !File.Exists(path))
+        {
+            _notifier?.ShowError($"The recording is no longer at {path}.");
+            return;
+        }
+        _uploadFailed = false;
+        _finishedTakePath = null; // hidden while uploading, same as the first attempt
+        _chrome!.ShowDonePrompt("Uploading this take again. Record another from this area?", takeAvailable: false);
+        upload.Retry();
+    }
+
+    private void ShowFinishedTakeInFolder()
+    {
+        if (_awaitingAnotherTakeChoice && _finishedTakePath is { } path)
+        {
+            RoeSnip.Core.Sharing.FileReveal.Show(path);
+        }
+    }
+
+    /// <summary>Leaving the prompt (Done, Record another) with a failed upload: the take stays in
+    /// the temp folder, so say where instead of letting it vanish from view.</summary>
+    private void NoteKeptFailedUpload()
+    {
+        if (_uploadFailed && _finishedTakePath is { } path && File.Exists(path))
+        {
+            FileLog.Write($"RoeSnip: leaving the prompt with a failed upload; the take is kept at {path}");
+            _notifier?.ShowError($"The recording was not uploaded. It is kept at {path}");
+        }
+        _uploadFailed = false;
+        _takeUpload = null;
     }
 
     /// <summary>The single terminal path every end-of-recording route funnels through (Save,
@@ -1907,6 +1976,7 @@ internal sealed class RecordingSession
         FileLog.Write($"RoeSnip: recording session ending (saved={finalPath is not null})");
 
         DisposeReviewCopyHook(); // a system-wide keyboard hook must never outlive its session
+        NoteKeptFailedUpload();
         _awaitingAnotherTakeChoice = false;
         _finishedTakePath = null;
 
@@ -2737,6 +2807,11 @@ internal sealed class RecordingSession
                 if (_finishedTakePath is null) return "cannot save again: this take has no file left to save";
                 if (_saving) return "cannot save again: a save is already in progress";
                 _chrome!.InvokeSaveAgain();
+                return null;
+            case "retryupload":
+                if (!_awaitingAnotherTakeChoice || !_uploadFailed) return "cannot retry upload: no failed upload is waiting on a choice";
+                if (_saving) return "cannot retry upload: a save is already in progress";
+                _chrome!.InvokeRetryUpload();
                 return null;
             case "another":
                 if (!_awaitingAnotherTakeChoice) return "cannot record another: no finished take is waiting on a choice";

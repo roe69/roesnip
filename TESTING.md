@@ -357,7 +357,7 @@ the current phase if not in `setup`.
 #### `chrome`
 
 `{"cmd":"chrome","action":"start"}` — one of `start`/`stop`/`save`/`copy`/`share`/`cancel`/`pause`/
-`resume`/`another`/`done`/`copyagain`/`saveagain`.
+`resume`/`another`/`done`/`copyagain`/`saveagain`/`retryupload`.
 
 Raises the same button `Click` event a real mouse click on that chrome button would — `start`/
 `stop` share one button exactly like the real UI (`start` valid only in `setup`, `stop` only in
@@ -389,6 +389,16 @@ into that directory, which is how to drive it without UIA against a native file 
 dismisses the prompt; both re-word it to name what they just did. Both error unless a finished take
 is waiting on a choice AND it still has a file to act on (a SHARED take does not - the upload's
 success callback deletes the only copy).
+
+When a shared take's upload fails (or is cancelled) while its prompt is still up, the prompt turns
+into the upload-failed form: the error, then Retry upload, Copy, Save as... and Show in folder. The
+temp take is kept until an upload succeeds; Done or Record another from there leave it in place and
+raise a tray error naming its path. `retryupload` presses Retry upload and errors unless that form
+is showing. Copy there stages a COPY in the clipboard directory, so a later successful retry
+(which deletes the temp take) cannot break the paste. The toast offers the same Retry, plus Show in
+folder for a recording; a toolbar still share retries from the PNG bytes it still holds. To force a
+failure, point the RoeShare provider at an unreachable server URL. Every attempt, retry and failure
+is in `roesnip.log` ("share upload ..." lines).
 
 `share` (Sharing/* subsystem, added alongside the toolbar's own Share wiring) requires `reviewing`
 and errors if a save or share is already in progress. It hard-stops the still-alive pipeline (same
