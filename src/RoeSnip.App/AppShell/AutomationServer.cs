@@ -48,7 +48,7 @@ public static class AutomationProtocol
     public static readonly IReadOnlyList<string> KnownCommands = new[]
     {
         "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot",
-        "confirm", "settings", "lastcapture", "tray",
+        "confirm", "settings", "lastcapture", "tray", "zoom",
     };
 
     /// <summary>Parses one line of the wire protocol: must be a JSON object with a non-empty string
@@ -133,6 +133,17 @@ public static class AutomationProtocol
                 return TryGetString(request, "tier", out string? tier) && tier is "max" or "quality" or "balanced" or "compact" or "minimal"
                     ? null
                     : "preset requires \"tier\": one of max|quality|balanced|compact|minimal";
+
+            // Loupe zoom (sample radius), the same value the mouse wheel changes; `state` reports
+            // loupeRadius and pointerScale so the pointer-speed tie can be checked without a mouse.
+            case "zoom":
+                if (!TryGetNumber(request, "radius", out double rawRadius) || rawRadius != Math.Floor(rawRadius))
+                {
+                    return "zoom requires a whole-number \"radius\"";
+                }
+                return rawRadius < Magnifier.MinSampleRadius || rawRadius > Magnifier.MaxSampleRadius
+                    ? $"zoom \"radius\" must be {Magnifier.MinSampleRadius}-{Magnifier.MaxSampleRadius}"
+                    : null;
 
             case "fps":
                 // Ported verbatim from the WPF app even though recording isn't live here yet: kept
@@ -274,7 +285,9 @@ public static class AutomationProtocol
         string? EstimateText,
         int? Fps,
         FpsRangeDto? FpsRange,
-        IReadOnlyList<MonitorDto> Monitors);
+        IReadOnlyList<MonitorDto> Monitors,
+        int? LoupeRadius = null,
+        double? PointerScale = null);
 
     /// <summary>Pure DTO-to-JSON step of the `state` response (and the trailing snapshot every
     /// other command's response ends with) — no live app state read here, just serialization, so
@@ -292,6 +305,8 @@ public static class AutomationProtocol
             ["preset"] = state.Preset,
             ["estimateText"] = state.EstimateText,
             ["fps"] = state.Fps,
+            ["loupeRadius"] = state.LoupeRadius,
+            ["pointerScale"] = state.PointerScale is { } scale ? Math.Round(scale, 4) : null,
         };
 
         obj["fpsRange"] = state.FpsRange is { } fr
@@ -482,6 +497,7 @@ internal sealed class AutomationServer
                 "confirm" => HandleConfirm(request),
                 "settings" => HandleSettings(request),
                 "lastcapture" => HandleLastCapture(request),
+                "zoom" => HandleZoom(request),
                 "tray" => AutomationProtocol.BuildError(
                     "tray: this port's tray menu is a native menu the OS owns, so it cannot be opened programmatically"),
                 _ => AutomationProtocol.BuildError($"unknown command \"{cmd}\""), // unreachable, ValidateArgs already rejected it
@@ -551,6 +567,18 @@ internal sealed class AutomationServer
             return AutomationProtocol.BuildError(error);
         }
         return AutomationProtocol.SerializeState(PollUntil(s => s.Mode == "setup"));
+    }
+
+    private string HandleZoom(JsonObject request)
+    {
+        int radius = AutomationProtocol.GetInt(request, "radius");
+
+        string? error = InvokeOnUi<string?>(() => OverlayController.IsSessionActive
+            ? OverlayController.SetZoomForAutomation(radius)
+            : "zoom requires an active overlay session");
+        return error is not null
+            ? AutomationProtocol.BuildError(error)
+            : AutomationProtocol.SerializeState(InvokeOnUi(GetStateSnapshot));
     }
 
     private string HandlePreset(JsonObject request)
@@ -727,10 +755,12 @@ internal sealed class AutomationServer
         if (OverlayController.IsSessionActive)
         {
             var sel = OverlayController.GetSelectionForAutomation();
+            var loupe = OverlayController.GetLoupeForAutomation();
             return new AutomationProtocol.StateSnapshot(
                 "overlay",
                 sel is { } s ? new AutomationProtocol.SelectionDto(s.Left, s.Top, s.Width, s.Height) : null,
-                null, null, null, null, null, monitors);
+                null, null, null, null, null, monitors,
+                loupe?.Radius, loupe?.Scale);
         }
 
         return new AutomationProtocol.StateSnapshot("idle", null, null, null, null, null, null, monitors);

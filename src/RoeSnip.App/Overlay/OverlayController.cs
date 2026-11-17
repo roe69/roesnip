@@ -57,6 +57,16 @@ public static class OverlayController
 
     internal static RectPhysical? GetSelectionForAutomation() => s_activeSession?.GetSelectionForAutomation();
 
+    /// <summary>Loupe radius and the pointer speed factor the hook uses right now, for `state`.</summary>
+    internal static (int Radius, double Scale)? GetLoupeForAutomation() => s_activeSession?.GetLoupeForAutomation();
+
+    /// <summary>`zoom` automation command: same path as the mouse wheel (OverlayWindow.ApplyLoupeRadius).</summary>
+    internal static string? SetZoomForAutomation(int radius)
+    {
+        var session = s_activeSession;
+        return session is null ? "no active overlay session" : session.SetZoomForAutomation(radius);
+    }
+
     /// <summary>Reads s_activeSession into a local once and branches on IT rather than
     /// "s_activeSession?.Method(...) ?? "no active overlay session"" — a null-coalescing collapse
     /// here can't tell "no session" apart from "the session's own call legitimately returned null
@@ -508,10 +518,53 @@ public static class OverlayController
                     frame, preview, settings, OnActivatedByMouse, OnSelectionStarted,
                     OnSpanningCandidate, FinalizeNewSelectionDrag, OnCommand, ShareToSpecificProvider,
                     OverlayController.OnColorPicked, pickOnlyMode);
+                window.LoupeRadiusChanged += r => SyncLoupeRadius(window, r);
                 _windows.Add(window);
                 monitorBoundsForVdb.Add(frame.Monitor.BoundsPx);
             }
             _virtualDesktopBounds = SpanningSelectionMath.ComputeVirtualDesktopBounds(monitorBoundsForVdb);
+        }
+
+        private IDisposable? _pointerHook;
+
+        /// <summary>Pointer speed factor right now (hook callback: UI thread, no allocation). A window
+        /// owning a NewSelection drag wins (the drag may be crossing onto another monitor); otherwise
+        /// the window the cursor last entered.</summary>
+        private double CurrentPointerScale()
+        {
+            foreach (var window in _windows)
+            {
+                if (window.IsNewSelectionDrag)
+                {
+                    return window.PointerScale;
+                }
+            }
+            return _activeWindow?.PointerScale ?? 1.0;
+        }
+
+        /// <summary>One loupe zoom per session: mirror a window's change onto the others.</summary>
+        private void SyncLoupeRadius(OverlayWindow source, int radius)
+        {
+            foreach (var window in _windows)
+            {
+                if (!ReferenceEquals(window, source))
+                {
+                    window.SetLoupeRadiusSilently(radius);
+                }
+            }
+        }
+
+        internal (int Radius, double Scale)? GetLoupeForAutomation() =>
+            _activeWindow is { } w ? (w.LoupeRadius, CurrentPointerScale()) : null;
+
+        internal string? SetZoomForAutomation(int radius)
+        {
+            if (_activeWindow is not { } w)
+            {
+                return "no overlay window to zoom";
+            }
+            w.ApplyLoupeRadius(radius);
+            return null;
         }
 
         public Task<OverlayResult?> RunAsync()
@@ -568,6 +621,10 @@ public static class OverlayController
                 }
                 return Task.FromResult<OverlayResult?>(null);
             }
+
+            // Slows the pointer while the loupe is zoomed in (Windows only; null elsewhere). Removed
+            // in Finish(), which every exit path below reaches.
+            _pointerHook = PointerSensitivityRegistry.Current?.Install(CurrentPointerScale);
 
             // If showing (or activating) one of these windows throws partway through, every window
             // already shown must be force-closed rather than left stranded, topmost, on screen with
@@ -1555,6 +1612,10 @@ public static class OverlayController
                 return;
             }
             _finished = true;
+
+            try { _pointerHook?.Dispose(); }
+            catch (Exception ex) { FileLog.Write($"RoeSnip: pointer-scale hook removal failed: {ex.Message}"); }
+            _pointerHook = null;
 
             foreach (var window in _windows)
             {

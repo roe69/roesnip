@@ -56,10 +56,9 @@ public partial class OverlayWindow : Window
     private readonly CapturedFrame _frame;
     private readonly SdrImage _preview;
 
-    // Not readonly (unlike _frame/_preview above): the magnifier wheel-zoom handler below persists
-    // a dialed MagnifierSampleRadius back into this live copy (same "_liveSettings with { ... };
-    // TrySaveLiveSettings()" pattern as the frozen WPF app's OverlayWindow), so later sessions in
-    // this same tray-app process pick up the new default without a restart.
+    // Not readonly (unlike _frame/_preview above): in-overlay edits (palette, text style) are
+    // written back into this live copy and saved (TrySaveLiveSettings), so later sessions in this
+    // tray-app process pick them up without a restart.
     private RoeSnipSettings _liveSettings;
     private readonly Action<OverlayWindow> _onActivatedByMouse;
     private readonly Action<OverlayWindow> _onSelectionStarted;
@@ -250,6 +249,45 @@ public partial class OverlayWindow : Window
     /// write is in flight. Checked at the top of every tunnel-routed input handler below.</summary>
     internal bool SessionInputSuspended { get; set; }
 
+    /// <summary>True while this window owns a NewSelection drag (the loupe is up during it).</summary>
+    internal bool IsNewSelectionDrag => _dragMode == DragMode.NewSelection;
+
+    internal int LoupeRadius => _magnifier.SampleRadius;
+
+    /// <summary>Raised when the loupe zoom changes; the session mirrors it onto the other monitors'
+    /// windows so the zoom (and the pointer speed tied to it) is one value per session.</summary>
+    internal event Action<int>? LoupeRadiusChanged;
+
+    /// <summary>The WPF app's IsMagnifierActive rule, used ONLY to gate pointer scaling here (this
+    /// port's loupe itself has no visibility gate yet - see docs/PARITY.md): pointer speed follows the
+    /// zoom while placing a selection or a blur region, and is normal while moving/resizing/drawing.</summary>
+    private bool IsPointerScalingActive => _pickOnlyMode
+        || (_selectionPx is null && _dragMode == DragMode.None)
+        || _dragMode == DragMode.NewSelection
+        || (_currentTool == AnnotationTool.Pixelate && _dragMode == DragMode.None);
+
+    /// <summary>Pointer speed multiplier for the platform hook: 1.0 unless the loupe is in use. UI
+    /// thread only (called from the hook callback).</summary>
+    internal double PointerScale => !SessionInputSuspended && IsPointerScalingActive
+        ? PointerScaling.FactorForRadius(_magnifier.SampleRadius, Magnifier.MaxSampleRadius)
+        : 1.0;
+
+    /// <summary>The one place the loupe zoom changes: the wheel and the automation `zoom` command
+    /// both land here. Per session, never persisted.</summary>
+    internal void ApplyLoupeRadius(int radius)
+    {
+        int clamped = Math.Clamp(radius, Magnifier.MinSampleRadius, Magnifier.MaxSampleRadius);
+        if (clamped == _magnifier.SampleRadius)
+        {
+            return;
+        }
+        _magnifier.SampleRadius = clamped;
+        LoupeRadiusChanged?.Invoke(clamped);
+    }
+
+    /// <summary>Mirror of another window's zoom (no event, so the session does not echo).</summary>
+    internal void SetLoupeRadiusSilently(int radius) => _magnifier.SampleRadius = radius;
+
     /// <summary>True while this window has anything worth cancelling short of closing the whole
     /// overlay — used by OverlayController's two-stage Esc (stage: clear snip, stay open).</summary>
     internal bool HasSnipInProgress =>
@@ -322,7 +360,7 @@ public partial class OverlayWindow : Window
         _previewBitmap = preview.ToAvaloniaBitmap();
         _previewImage.Source = _previewBitmap;
         _annotations.PreviewSource = preview; // Pixelate tool mosaics these pixels (raw SdrImage, not the Avalonia bitmap)
-        _magnifier.SampleRadius = settings.MagnifierSampleRadius;
+        _magnifier.SampleRadius = Magnifier.MaxSampleRadius; // every session opens at max zoom out
         _magnifier.Formats = settings; // item 22: ordered ColorFormats-driven loupe value lines
 
         // O4 audit fix: free the preview bitmap on every path this window stops being used —
@@ -1157,14 +1195,7 @@ public partial class OverlayWindow : Window
         {
             // A SELECTED blur is handled by the selected-shape branch above (still resizes its
             // block); this only runs when nothing is selected.
-            int newRadius = Math.Clamp(
-                _magnifier.SampleRadius - notches, Magnifier.MinSampleRadius, Magnifier.MaxSampleRadius);
-            if (newRadius != _magnifier.SampleRadius)
-            {
-                _magnifier.SampleRadius = newRadius;
-                _liveSettings = _liveSettings with { MagnifierSampleRadius = newRadius };
-                TrySaveLiveSettings();
-            }
+            ApplyLoupeRadius(_magnifier.SampleRadius - notches);
             e.Handled = true;
             return;
         }

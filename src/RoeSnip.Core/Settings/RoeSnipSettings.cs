@@ -54,13 +54,6 @@ public sealed record RoeSnipSettings
     /// list once the user first edits it (same contract as <see cref="PaletteColors"/>).</summary>
     public List<Color.ColorFormatEntry> ColorFormats { get; init; } = new();
 
-    /// <summary>Magnifier loupe zoom: how many source pixels the FIXED-size loupe shows — a
-    /// (2r+1)x(2r+1) block around the cursor, so a SMALLER radius means fewer, bigger pixels (more
-    /// zoomed in) inside the same widget footprint. Adjusted live by scrolling the wheel while the
-    /// loupe is up, persisted immediately so the last-used zoom is every later session's default.
-    /// Clamped on use to the magnifier's own Min/MaxSampleRadius once that lands in Core/overlay.</summary>
-    public int MagnifierSampleRadius { get; init; } = 5;
-
     /// <summary>Last-used text-annotation style (toolbar's text-style group), applied to new text
     /// annotations and carried across overlay sessions.</summary>
     public string TextFontFamily { get; init; } = "Segoe UI";

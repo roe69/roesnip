@@ -1830,3 +1830,16 @@ because a correct implementation needs live hardware this repo cannot exercise.
   Core helpers, so screen and export match. WPF: tests/RoeSnip.Tests/AnnotationRenderTests.cs;
   Avalonia has no headless render harness (no Avalonia.Headless), so only the shared Core math is
   unit-tested (AnnotationGeometryTests).
+- [x] 26-loupe-pointer-speed: every overlay session opens with the loupe at max zoom out (radius 15)
+  and the last-used zoom is no longer persisted (`MagnifierSampleRadius` removed from both apps'
+  settings; an old settings.json key is ignored). While the loupe is in use (pick mode, no selection
+  yet, a NewSelection drag, blur placement) the pointer is slowed to `(2r+1)/31`, floored at 0.1
+  (`RoeSnip.Core.Overlay.PointerScaling`, unit-tested in PointerScalingTests). Windows: a
+  session-scoped WH_MOUSE_LL hook (WPF `Overlay/PointerScaleHook.cs`; Avalonia
+  `RoeSnip.Platform.Windows/PointerSensitivityBackend.cs` behind Core `IPointerSensitivityBackend`)
+  scales non-injected moves with a sub-pixel remainder, SetCursorPos to the result (clamped to the
+  virtual screen) and swallows the original. Linux/macOS: no backend registered, pointer unscaled
+  (macOS could use CGWarpMouseCursorPosition later). Avalonia gates the scaling with WPF's
+  `IsMagnifierActive` rule although its loupe itself is still always visible (see 24). Automation:
+  `state` reports `loupeRadius` + `pointerScale`, new `zoom {radius}` command shares the wheel's
+  `ApplyLoupeRadius` path in both apps.

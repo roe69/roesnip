@@ -130,7 +130,6 @@ public class SettingsTests : IDisposable
                 new() { Name = "HEX", Format = "%Rex%Grx%Blx", Enabled = true, IsCustom = false, InLoupe = true },
                 new() { Name = "Mine", Format = "%Re/%Gr/%Bl", Enabled = false, IsCustom = true, InLoupe = false },
             },
-            MagnifierSampleRadius = 9,
             TextFontFamily = "Consolas",
             TextFontSize = 32.0,
             TextBold = true,
@@ -255,7 +254,6 @@ public class SettingsTests : IDisposable
         Assert.True(loaded.ColorFormatShowNits);
         Assert.False(loaded.ColorFormatShowHsv);
         Assert.False(loaded.ColorFormatShowCmyk);
-        Assert.Equal(5, loaded.MagnifierSampleRadius);
         Assert.Equal("Segoe UI", loaded.TextFontFamily);
         Assert.Equal(20.0, loaded.TextFontSize);
         Assert.False(loaded.TextBold);
@@ -289,7 +287,6 @@ public class SettingsTests : IDisposable
         Assert.Empty(loaded.RecentPickedColors);
         Assert.True(loaded.ColorFormatShowHex);
         Assert.False(loaded.ColorFormatShowHsv);
-        Assert.Equal(5, loaded.MagnifierSampleRadius);
         Assert.Equal("Segoe UI", loaded.TextFontFamily);
         Assert.Equal(20.0, loaded.TextFontSize);
         Assert.Empty(loaded.CustomColors);
