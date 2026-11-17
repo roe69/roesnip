@@ -897,7 +897,7 @@ public sealed class RecordingSession
         // GIF only: two persistent exactly-canvas-sized tone-map targets so the recording-cadence
         // path never allocates a fresh (LOH-sized) output array per frame (LOH-avoidance buffer
         // reuse - item 20's own required item, via SdrImage.FromCapturedFrame's reuseOutput param).
-        byte[]? gifTonemapA = null, gifTonemapB = null;
+        byte[]? gifTonemapA = null, gifTonemapB = null, mp4Tonemap = null;
         bool gifUseA = true;
         // GIF downscaled render (Compact/Minimal tiers): a THIRD persistent exactly-scaled-canvas
         // buffer, allocated once on first use.
@@ -942,7 +942,11 @@ public sealed class RecordingSession
 
                         if (_format == RecordingFormat.Mp4)
                         {
-                            var sdr = RoeSnip.Core.Imaging.SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts);
+                            // Reused target: the encoder copies the pixels synchronously, so no
+                            // per-frame LOH array and no per-frame tonemap log line.
+                            int mp4Len = frame.Width * 4 * frame.Height;
+                            if (mp4Tonemap is null || mp4Tonemap.Length != mp4Len) mp4Tonemap = new byte[mp4Len];
+                            var sdr = RoeSnip.Core.Imaging.SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts, mp4Tonemap);
                             long timestamp100ns = (long)((effectiveTicks - epochTicks.Value) / freq * 10_000_000.0);
                             _encoder!.WriteFrame(sdr, timestamp100ns);
                         }

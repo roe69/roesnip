@@ -239,4 +239,29 @@ public class ToneMapperEquivalenceTests
         Assert.Same(reused, viaReuse.Pixels);
         Assert.Equal(fresh.Pixels, viaReuse.Pixels);
     }
+
+    [Fact]
+    public void ReusedOutput_WritesNoTimingLine_StillCaptureDoes()
+    {
+        // Recording frames (reuseOutput) must not log per frame; one-shot captures keep the line the
+        // capture-to-overlay breakdown reads.
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "RoeSnipTonemapLog_" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            RoeSnip.Core.Diagnostics.FileLog.Initialize(dir);
+            var frame = MakeFrame(16, 4, MakeMonitor(240.0, 1000.0), (_, _, _) => Bits(0.5f));
+
+            ToneMapper.MapToSdr(frame, new ToneMapOptions(), new byte[16 * 4 * 4]);
+            string logPath = System.IO.Path.Combine(dir, "roesnip.log");
+            Assert.False(System.IO.File.Exists(logPath) && System.IO.File.ReadAllText(logPath).Contains("tonemap"));
+
+            ToneMapper.MapToSdr(frame, new ToneMapOptions());
+            Assert.Contains("tonemap 16x4", System.IO.File.ReadAllText(logPath));
+        }
+        finally
+        {
+            RoeSnip.Core.Diagnostics.FileLog.ResetForTests();
+            try { System.IO.Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
 }
