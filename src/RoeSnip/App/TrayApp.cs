@@ -359,6 +359,7 @@ public sealed class TrayApp : ITrayNotifier
             Microsoft.Win32.SystemEvents.PowerModeChanged -= _powerModeChangedHandler;
         }
         RoeSnip.Interop.SuspendResumeNotifications.Unregister();
+        RoeSnip.Interop.DisplayStateNotifications.Unregister();
         _displayChangeDebounce?.Dispose();
         _uiThreadMarshal.Dispose();
 
@@ -1294,6 +1295,7 @@ public sealed class TrayApp : ITrayNotifier
         // below had never run once. The callback-based power registration hears every wake; the
         // SystemEvents subscription above stays as a belt, deduped inside OnSystemResumed.
         RoeSnip.Interop.SuspendResumeNotifications.Register(OnSystemResumed);
+        RoeSnip.Interop.DisplayStateNotifications.Register(OnConsoleDisplayState);
 
         // Cold-start CaptureGate race fix (r5-latency, S5): flag the gate as "warmup pending" BEFORE
         // the warmup thread even starts, so a trigger that fires in the brief window between
@@ -1563,19 +1565,76 @@ public sealed class TrayApp : ITrayNotifier
         });
     }
 
+    private long _lastDisplayOnTick;
+
+    /// <summary>Console display state (0 off, 1 on, 2 dimmed). The first WGC capture after the
+    /// monitors were off for a while costs 470-680 ms on all monitors at once (30 snips in the
+    /// 2026-11 logs; the power plan turns the displays off after 15 min), so when they come back on
+    /// one throwaway capture per WGC monitor runs now, while the user is still reaching for the
+    /// hotkey. Takes the capture gate like startup warmup does (a hotkey in the window waits, it
+    /// would have paid the same cost itself) and skips if a session is already live.</summary>
+    private void OnConsoleDisplayState(int state)
+    {
+        FileLog.Write($"RoeSnip: console display {(state == 0 ? "off" : state == 1 ? "on" : "dimmed")}.");
+        if (state != 1)
+        {
+            return;
+        }
+        long now = Environment.TickCount64;
+        long last = System.Threading.Interlocked.Exchange(ref _lastDisplayOnTick, now);
+        if (last != 0 && now - last < 5_000)
+        {
+            return;
+        }
+        _ = Task.Run(() =>
+        {
+            var monitors = Volatile.Read(ref s_cachedMonitors);
+            if (monitors is null || monitors.Count == 0 || !RoeSnip.CaptureGate.TryEnter())
+            {
+                return;
+            }
+            RoeSnip.CaptureGate.HeldByWarmup = true;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                Parallel.ForEach(monitors, monitor =>
+                {
+                    if (RoeSnip.Capture.CaptureCache.Default.IsDesktopDuplicationBroken(monitor.DeviceName))
+                    {
+                        try
+                        {
+                            RoeSnip.Capture.WgcCapturer.Prewarm(monitor, throwawayFrame: true);
+                        }
+                        catch (Exception ex)
+                        {
+                            FileLog.Write($"RoeSnip: display-on re-warm failed for {monitor.DeviceName} (non-fatal): {ex.Message}");
+                        }
+                    }
+                });
+                FileLog.Write($"RoeSnip: display-on capture re-warm done in {watch.ElapsedMilliseconds} ms.");
+            }
+            finally
+            {
+                RoeSnip.CaptureGate.HeldByWarmup = false;
+                RoeSnip.CaptureGate.Exit();
+            }
+        });
+    }
+
     /// <summary>Re-provisions WgcCapturer's cached per-monitor item/device for every monitor, in
     /// parallel (the slots are per-monitor gated, so this mirrors CaptureService's own per-monitor
     /// parallelism). Parallel matters here: post-wake the Windows capture broker can be sick in a
     /// way that makes item creation block on COM server activation for up to its full 120 s
     /// timeout (observed live 2026-07-22: CO_E_SERVER_EXEC_FAILURE surfacing exactly 120 s after
     /// the call) — sequential prewarm would serialize that worst case per monitor.</summary>
-    private static void ReprovisionWgcSlots(System.Collections.Generic.IReadOnlyList<RoeSnip.Capture.MonitorInfo> monitors)
+    private static void ReprovisionWgcSlots(
+        System.Collections.Generic.IReadOnlyList<RoeSnip.Capture.MonitorInfo> monitors, bool force = false)
     {
         Parallel.ForEach(monitors, monitor =>
         {
             try
             {
-                RoeSnip.Capture.WgcCapturer.Prewarm(monitor, throwawayFrame: false);
+                RoeSnip.Capture.WgcCapturer.Prewarm(monitor, throwawayFrame: false, forceReprovision: force);
             }
             catch (Exception ex)
             {
@@ -1608,7 +1667,9 @@ public sealed class TrayApp : ITrayNotifier
                 Volatile.Write(ref s_cachedMonitors, monitors);
                 if (reprovisionWgc)
                 {
-                    ReprovisionWgcSlots(monitors);
+                    // Forced: a re-attached display can keep its handle and size while the cached
+                    // item still belongs to the detached one (2026-11-16 02:14 "disposed object").
+                    ReprovisionWgcSlots(monitors, force: true);
                 }
                 if (prewarmFlash && monitors.Count > 0)
                 {
