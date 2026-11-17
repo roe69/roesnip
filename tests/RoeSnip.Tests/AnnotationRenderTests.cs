@@ -9,6 +9,8 @@ using Xunit;
 
 namespace RoeSnip.Tests;
 
+using Color = System.Windows.Media.Color;
+
 /// <summary>Renders committed annotations through AnnotationLayer.RenderForExport (the export path;
 /// on screen draws through the same Draw). Set ROESNIP_RENDER_DIR to also write PNGs to look at.</summary>
 public class AnnotationRenderTests

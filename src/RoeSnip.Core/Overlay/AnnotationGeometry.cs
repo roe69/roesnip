@@ -48,7 +48,7 @@ public static class AnnotationGeometry
         double nx = -uy, ny = ux;
         double w = Math.Max(1.0, width);
 
-        double headLen = Math.Max(11.0, w * 4.0);
+        double headLen = Math.Max(16.0, w * 4.0 + 6.0);
         double headHalf = Math.Max(headLen * 0.45, w * 1.25);
         if (headLen > len * 0.5)
         {
