@@ -24,6 +24,7 @@ using Size = System.Windows.Size;
 // FlowDirection property, which shadows the enum type name "FlowDirection" inside any method of a
 // class deriving from it (AnnotationLayer here). Alias to a distinct name to avoid CS0176.
 using FlowDir = System.Windows.FlowDirection;
+using Geo = global::RoeSnip.Core.Overlay.AnnotationGeometry;
 
 /// <summary>Annotation tool kinds. Text is implemented but is the lowest-priority / most cuttable
 /// tool per PLAN.md §3.2 — the other five (Rectangle/Ellipse/Arrow/Line/Freehand) must work
@@ -950,7 +951,15 @@ public sealed class AnnotationLayer : FrameworkElement
             case AnnotationTool.Rectangle:
                 if (shape.PointsPx.Count >= 2)
                 {
-                    dc.DrawRectangle(null, pen, new Rect(P(0), P(1)));
+                    // Sharp mitred corners on whole device pixels (snip tools draw crisp boxes).
+                    var rectPen = new Pen(new SolidColorBrush(shape.StrokeColor), pen.Thickness)
+                    {
+                        LineJoin = PenLineJoin.Miter,
+                    };
+                    double w = pen.Thickness;
+                    var rp0 = new Point(Geo.PixelAlign(P(0).X, w), Geo.PixelAlign(P(0).Y, w));
+                    var rp1 = new Point(Geo.PixelAlign(P(1).X, w), Geo.PixelAlign(P(1).Y, w));
+                    dc.DrawRectangle(null, rectPen, new Rect(rp0, rp1));
                 }
                 break;
 
@@ -967,14 +976,25 @@ public sealed class AnnotationLayer : FrameworkElement
             case AnnotationTool.Line:
                 if (shape.PointsPx.Count >= 2)
                 {
-                    dc.DrawLine(pen, P(0), P(1));
+                    var l0 = P(0);
+                    var l1 = P(1);
+                    // Axis-aligned lines snap the cross-axis coordinate so they stay crisp.
+                    if (Math.Abs(l0.Y - l1.Y) < 0.5)
+                    {
+                        l0.Y = l1.Y = Geo.PixelAlign((l0.Y + l1.Y) / 2, pen.Thickness);
+                    }
+                    else if (Math.Abs(l0.X - l1.X) < 0.5)
+                    {
+                        l0.X = l1.X = Geo.PixelAlign((l0.X + l1.X) / 2, pen.Thickness);
+                    }
+                    dc.DrawLine(pen, l0, l1);
                 }
                 break;
 
             case AnnotationTool.Arrow:
                 if (shape.PointsPx.Count >= 2)
                 {
-                    DrawArrow(dc, pen, shape.StrokeColor, P(0), P(1));
+                    DrawArrow(dc, pen.Thickness, shape.StrokeColor, P(0), P(1));
                 }
                 break;
 
@@ -1000,12 +1020,23 @@ public sealed class AnnotationLayer : FrameworkElement
                     using (var ctx = geometry.Open())
                     {
                         ctx.BeginFigure(shape.PointsPx[0] + translate, false, false);
-                        var rest = new List<Point>(shape.PointsPx.Count - 1);
-                        for (int i = 1; i < shape.PointsPx.Count; i++)
+                        var pts = new List<(double X, double Y)>(shape.PointsPx.Count);
+                        foreach (var sp in shape.PointsPx)
                         {
-                            rest.Add(shape.PointsPx[i] + translate);
+                            var q = sp + translate;
+                            pts.Add((q.X, q.Y));
                         }
-                        ctx.PolyLineTo(rest, true, true);
+                        foreach (var seg in Geo.SmoothPath(pts))
+                        {
+                            if (seg.Quad)
+                            {
+                                ctx.QuadraticBezierTo(new Point(seg.Cx, seg.Cy), new Point(seg.Ex, seg.Ey), true, true);
+                            }
+                            else
+                            {
+                                ctx.LineTo(new Point(seg.Ex, seg.Ey), true, true);
+                            }
+                        }
                     }
                     dc.DrawGeometry(null, pen, geometry);
                 }
@@ -1083,37 +1114,25 @@ public sealed class AnnotationLayer : FrameworkElement
         dc.DrawDrawing(group);
     }
 
-    private static void DrawArrow(DrawingContext dc, Pen pen, Color color, Point from, Point to)
+    /// <summary>One filled outline (sharp head, tapered tail) from the shared AnnotationGeometry;
+    /// the tip is exactly <paramref name="to"/>. No stroke, so nothing pokes past the tip.</summary>
+    private static void DrawArrow(DrawingContext dc, double width, Color color, Point from, Point to)
     {
-        dc.DrawLine(pen, from, to);
-
-        var direction = to - from;
-        if (direction.LengthSquared < 1e-6)
+        var pts = Geo.ArrowOutline(from.X, from.Y, to.X, to.Y, width);
+        if (pts.Length < 6)
         {
             return;
         }
-        direction.Normalize();
-
-        double headLength = Math.Max(10.0, pen.Thickness * 4.0);
-        double headAngle = Math.PI / 7.0; // ~25.7 degrees
-
-        Vector Rotate(Vector v, double radians)
+        var geometry = new StreamGeometry();
+        using (var ctx = geometry.Open())
         {
-            double cos = Math.Cos(radians), sin = Math.Sin(radians);
-            return new Vector(v.X * cos - v.Y * sin, v.X * sin + v.Y * cos);
+            ctx.BeginFigure(new Point(pts[0], pts[1]), true, true);
+            for (int i = 2; i < pts.Length; i += 2)
+            {
+                ctx.LineTo(new Point(pts[i], pts[i + 1]), true, false);
+            }
         }
-
-        var back = -direction * headLength;
-        var left = to + Rotate(back, headAngle);
-        var right = to + Rotate(back, -headAngle);
-
-        var headGeometry = new StreamGeometry();
-        using (var ctx = headGeometry.Open())
-        {
-            ctx.BeginFigure(to, true, true);
-            ctx.LineTo(left, true, true);
-            ctx.LineTo(right, true, true);
-        }
-        dc.DrawGeometry(new SolidColorBrush(color), null, headGeometry);
+        geometry.Freeze();
+        dc.DrawGeometry(new SolidColorBrush(color), null, geometry);
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace RoeSnip.Core.Overlay;
 
@@ -28,6 +29,87 @@ public static class AnnotationGeometry
         double cx = ax + abx * u, cy = ay + aby * u;
         double ddx = px - cx, ddy = py - cy;
         return Math.Sqrt(ddx * ddx + ddy * ddy);
+    }
+
+    /// <summary>Closed outline of an arrow as x,y pairs: a sharp swept-back head whose tip is exactly
+    /// (tx,ty), a shaft that ends inside the head (never past the tip) and a slightly tapered tail.
+    /// Fill it with no stroke. Empty for a degenerate (sub-pixel) arrow. The head scales with the
+    /// stroke width, has a minimum so thin arrows keep a visible head, and is capped at half the
+    /// arrow's length so a short arrow stays an arrow.</summary>
+    public static double[] ArrowOutline(double fx, double fy, double tx, double ty, double width)
+    {
+        double dx = tx - fx, dy = ty - fy;
+        double len = Math.Sqrt(dx * dx + dy * dy);
+        if (len < 1.0)
+        {
+            return Array.Empty<double>();
+        }
+        double ux = dx / len, uy = dy / len;
+        double nx = -uy, ny = ux;
+        double w = Math.Max(1.0, width);
+
+        double headLen = Math.Max(11.0, w * 4.0);
+        double headHalf = Math.Max(headLen * 0.45, w * 1.25);
+        if (headLen > len * 0.5)
+        {
+            double k = len * 0.5 / headLen;
+            headLen *= k;
+            headHalf *= k;
+        }
+        headHalf = Math.Max(headHalf, w * 0.5 + 0.75);
+
+        double shaftHalf = w * 0.5;
+        double tailHalf = Math.Max(0.5, shaftHalf * 0.65);
+        double notchBack = headLen * 0.72;
+
+        double bx = tx - ux * headLen, by = ty - uy * headLen;     // barb baseline centre
+        double mx = tx - ux * notchBack, my = ty - uy * notchBack; // shaft/head join
+
+        return new[]
+        {
+            fx + nx * tailHalf, fy + ny * tailHalf,
+            mx + nx * shaftHalf, my + ny * shaftHalf,
+            bx + nx * headHalf, by + ny * headHalf,
+            tx, ty,
+            bx - nx * headHalf, by - ny * headHalf,
+            mx - nx * shaftHalf, my - ny * shaftHalf,
+            fx - nx * tailHalf, fy - ny * tailHalf,
+        };
+    }
+
+    /// <summary>Snaps a stroke centre coordinate so an axis-aligned stroke of this width covers whole
+    /// device pixels: odd widths sit on a pixel centre (n + 0.5), even widths on a pixel edge.</summary>
+    public static double PixelAlign(double v, double width)
+    {
+        long w = (long)Math.Round(Math.Max(1.0, width));
+        return (w & 1) == 1 ? Math.Floor(v) + 0.5 : Math.Round(v);
+    }
+
+    /// <summary>Freehand path: a line to the first midpoint, quadratic curves (control = each interior
+    /// point, end = the midpoint to the next) and a final line to the last point. Rounds the corners
+    /// of sparse, fast mouse samples; passes through the first and last points. Needs 2+ points.</summary>
+    public static (bool Quad, double Cx, double Cy, double Ex, double Ey)[] SmoothPath(
+        IReadOnlyList<(double X, double Y)> pts)
+    {
+        int n = pts.Count;
+        if (n < 2)
+        {
+            return Array.Empty<(bool, double, double, double, double)>();
+        }
+        if (n == 2)
+        {
+            return new[] { (false, 0.0, 0.0, pts[1].X, pts[1].Y) };
+        }
+        var res = new List<(bool, double, double, double, double)>(n + 1)
+        {
+            (false, 0.0, 0.0, (pts[0].X + pts[1].X) / 2, (pts[0].Y + pts[1].Y) / 2),
+        };
+        for (int i = 1; i < n - 1; i++)
+        {
+            res.Add((true, pts[i].X, pts[i].Y, (pts[i].X + pts[i + 1].X) / 2, (pts[i].Y + pts[i + 1].Y) / 2));
+        }
+        res.Add((false, 0.0, 0.0, pts[n - 1].X, pts[n - 1].Y));
+        return res.ToArray();
     }
 
     /// <summary>WCAG relative luminance (sRGB) — a standard, cheap "how light does this read"
