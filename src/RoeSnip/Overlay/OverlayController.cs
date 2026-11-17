@@ -379,6 +379,16 @@ public static class OverlayController
     /// session is active).</summary>
     internal static RectPhysical? GetSelectionForAutomation() => s_activeSession?.GetSelectionForAutomation();
 
+    /// <summary>Loupe radius and the pointer speed factor the hook uses right now, for `state`.</summary>
+    internal static (int Radius, double Scale)? GetLoupeForAutomation() => s_activeSession?.GetLoupeForAutomation();
+
+    /// <summary>`zoom` automation command: same path as the mouse wheel (OverlayWindow.ApplyLoupeRadius).</summary>
+    internal static string? SetZoomForAutomation(int radius)
+    {
+        var session = s_activeSession;
+        return session is null ? "no active overlay session" : session.SetZoomForAutomation(radius);
+    }
+
     /// <summary>Sets the selection on whichever monitor's window contains
     /// <paramref name="virtualDesktopPx"/>'s top-left corner, through the exact SetSelection path
     /// Ctrl+A (select-all) uses, so the dim mask and toolbar placement update exactly as a
@@ -658,6 +668,51 @@ public static class OverlayController
             // including an exception constructing or showing any window — funnels through Finish(),
             // which disposes this hook unconditionally.
             _keyboardHook = new SessionKeyboardHook(() => _activeWindow);
+
+            // Slows the pointer while the loupe is zoomed in; removed in Finish() with the keyboard hook.
+            _pointerHook = new PointerScaleHook(CurrentPointerScale);
+        }
+
+        private readonly PointerScaleHook _pointerHook;
+
+        /// <summary>Pointer speed factor right now (hook callback: UI thread, no allocation). A window
+        /// owning a NewSelection drag wins (the drag may be crossing onto another monitor); otherwise
+        /// the window the cursor last entered.</summary>
+        private double CurrentPointerScale()
+        {
+            foreach (var window in _windows)
+            {
+                if (window.IsNewSelectionDrag)
+                {
+                    return window.PointerScale;
+                }
+            }
+            return _activeWindow?.PointerScale ?? 1.0;
+        }
+
+        /// <summary>One loupe zoom per session: mirror a window's change onto the others.</summary>
+        private void SyncLoupeRadius(OverlayWindow source, int radius)
+        {
+            foreach (var window in _windows)
+            {
+                if (!ReferenceEquals(window, source))
+                {
+                    window.SetLoupeRadiusSilently(radius);
+                }
+            }
+        }
+
+        internal (int Radius, double Scale)? GetLoupeForAutomation() =>
+            _activeWindow is { } w ? (w.LoupeRadius, CurrentPointerScale()) : null;
+
+        internal string? SetZoomForAutomation(int radius)
+        {
+            if (_activeWindow is not { } w)
+            {
+                return "no overlay window to zoom";
+            }
+            w.ApplyLoupeRadius(radius);
+            return null;
         }
 
         public Task<OverlayResult?> RunAsync()
@@ -724,6 +779,7 @@ public static class OverlayController
                         // any such exception still reaches Finish() -> CloseOverlay() on this window
                         // like every other exit path.
                         window.Closed += (_, _) => Finish(null);
+                        window.LoupeRadiusChanged += r => SyncLoupeRadius(window, r);
                         _windows.Add(window);
                         window.Initialize(
                             frame, preview, _settings, OnActivatedByMouse, OnSelectionStarted,
@@ -740,6 +796,7 @@ public static class OverlayController
                             OnSpanningCandidate, FinalizeNewSelectionDrag, OnCommand,
                             _onColorPicked, ShareToSpecificProvider, _pickOnlyMode);
                         window.Closed += (_, _) => Finish(null);
+                        window.LoupeRadiusChanged += r => SyncLoupeRadius(window, r);
                         window.ContentRendered += (_, _) => OnOverlayContentRendered(window);
                         // NOTE (anti-flicker): the overlay window is OPAQUE (Background is the frozen
                         // preview, PreviewImage on top, DimPath dim on top of that) — so once it paints
@@ -1798,6 +1855,7 @@ public static class OverlayController
             }
             finally
             {
+                _pointerHook.Dispose();
                 _keyboardHook.Dispose();
                 if (ReferenceEquals(s_activeSession, this))
                 {

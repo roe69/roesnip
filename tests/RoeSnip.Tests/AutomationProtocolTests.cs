@@ -464,6 +464,53 @@ public class AutomationProtocolTests
         Assert.Contains("a.png", json);
     }
 
+    // ---------- zoom / loupe state ----------
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(8)]
+    [InlineData(15)]
+    public void ValidateArgs_Zoom_AcceptsRadiusInTheLoupeRange(int radius)
+    {
+        var request = AutomationProtocol.TryParseRequest($"{{\"cmd\":\"zoom\",\"radius\":{radius}}}", out _)!;
+        Assert.Null(AutomationProtocol.ValidateArgs("zoom", request));
+    }
+
+    [Theory]
+    [InlineData("{\"cmd\":\"zoom\",\"radius\":0}")]
+    [InlineData("{\"cmd\":\"zoom\",\"radius\":16}")]
+    [InlineData("{\"cmd\":\"zoom\",\"radius\":2.5}")]
+    [InlineData("{\"cmd\":\"zoom\"}")]
+    [InlineData("{\"cmd\":\"zoom\",\"radius\":\"max\"}")]
+    public void ValidateArgs_Zoom_RejectsBadRadius(string json)
+    {
+        var request = AutomationProtocol.TryParseRequest(json, out _)!;
+        Assert.NotNull(AutomationProtocol.ValidateArgs("zoom", request));
+    }
+
+    [Fact]
+    public void SerializeState_ReportsLoupeRadiusAndPointerScale()
+    {
+        var state = new AutomationProtocol.StateSnapshot(
+            "overlay", null, null, null, null, null, null,
+            new List<AutomationProtocol.MonitorDto>(), 5, 0.3548387);
+        string json = AutomationProtocol.SerializeState(state);
+
+        Assert.Contains("\"loupeRadius\":5", json);
+        Assert.Contains("\"pointerScale\":0.3548", json);
+    }
+
+    [Fact]
+    public void SerializeState_NoOverlay_HasNullLoupeFields()
+    {
+        var state = new AutomationProtocol.StateSnapshot(
+            "idle", null, null, null, null, null, null, new List<AutomationProtocol.MonitorDto>());
+        string json = AutomationProtocol.SerializeState(state);
+
+        Assert.Contains("\"loupeRadius\":null", json);
+        Assert.Contains("\"pointerScale\":null", json);
+    }
+
     // ---------- KnownCommands ----------
 
     [Fact]
@@ -477,12 +524,12 @@ public class AutomationProtocolTests
         // can drive a `screenshot` of it for visual QA without synthetic input.
         // "lastcapture" and "tray" came with the kept still capture: the resident holds the
         // last capture so it can be re-copied or saved from the tray menu, and "tray" drops
-        // that menu for a `screenshot` to photograph.
+        // that menu for a `screenshot` to photograph. "zoom" sets the loupe zoom like the wheel.
         Assert.Equal(
             new[]
             {
                 "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot",
-                "confirm", "settings", "lastcapture", "tray",
+                "confirm", "settings", "lastcapture", "tray", "zoom",
             },
             AutomationProtocol.KnownCommands);
     }

@@ -311,6 +311,37 @@ public partial class OverlayWindow : Window
         // can be placed to the pixel.
         || (_currentTool == AnnotationTool.Pixelate && _dragMode == DragMode.None);
 
+    /// <summary>True while this window owns a NewSelection drag (the loupe is up during it).</summary>
+    internal bool IsNewSelectionDrag => _dragMode == DragMode.NewSelection;
+
+    internal int LoupeRadius => MagnifierControl.SampleRadius;
+
+    /// <summary>Raised when the loupe zoom changes; the session mirrors it onto the other monitors'
+    /// windows so the zoom (and the pointer speed tied to it) is one value per session.</summary>
+    internal event Action<int>? LoupeRadiusChanged;
+
+    /// <summary>Pointer speed multiplier for PointerScaleHook: 1.0 unless the loupe is up.
+    /// UI thread only (reads plain fields; called from the hook callback).</summary>
+    internal double PointerScale => _initialized && IsMagnifierActive
+        ? RoeSnip.Core.Overlay.PointerScaling.FactorForRadius(MagnifierControl.SampleRadius, Magnifier.MaxSampleRadius)
+        : 1.0;
+
+    /// <summary>The one place the loupe zoom changes: the wheel and the automation `zoom` command
+    /// both land here.</summary>
+    internal void ApplyLoupeRadius(int radius)
+    {
+        int clamped = Math.Clamp(radius, Magnifier.MinSampleRadius, Magnifier.MaxSampleRadius);
+        if (clamped == MagnifierControl.SampleRadius)
+        {
+            return;
+        }
+        MagnifierControl.SampleRadius = clamped;
+        LoupeRadiusChanged?.Invoke(clamped);
+    }
+
+    /// <summary>Mirror of another window's zoom (no event, so the session does not echo).</summary>
+    internal void SetLoupeRadiusSilently(int radius) => MagnifierControl.SampleRadius = radius;
+
     internal OverlayWindow(
         CapturedFrame frame,
         SdrImage preview,
@@ -404,9 +435,8 @@ public partial class OverlayWindow : Window
         _textBold = settings.TextBold;
         _textItalic = settings.TextItalic;
 
-        // Last-used loupe zoom (wheel while the magnifier is up — see OnPreviewMouseWheel); the
-        // property setter clamps, so a hand-edited settings.json value can't break the render.
-        MagnifierControl.SampleRadius = settings.MagnifierSampleRadius;
+        // Every session opens at max zoom out (the wheel zooms in; pointer speed follows the zoom).
+        MagnifierControl.SampleRadius = Magnifier.MaxSampleRadius;
         // The loupe's value lines follow the same ColorFormatShow* toggles as the picker window.
         MagnifierControl.Formats = settings;
     }
@@ -2474,20 +2504,13 @@ public partial class OverlayWindow : Window
 
         if (_currentTool == AnnotationTool.Pixelate)
         {
-            // Blur tool wheel = zoom the placement loupe (level persists via MagnifierSampleRadius),
+            // Blur tool wheel = zoom the placement loupe (per session, never persisted),
             // NOT the mosaic block size, so no "Npx" size indicator shows. Block size is set from the
             // toolbar size box. A SELECTED blur is handled by the selected-shape branch above (still
             // resizes its block), so this only runs when nothing is selected.
             if (IsMagnifierActive)
             {
-                int newRadius = Math.Clamp(
-                    MagnifierControl.SampleRadius - notches, Magnifier.MinSampleRadius, Magnifier.MaxSampleRadius);
-                if (newRadius != MagnifierControl.SampleRadius)
-                {
-                    MagnifierControl.SampleRadius = newRadius;
-                    _liveSettings = _liveSettings with { MagnifierSampleRadius = newRadius };
-                    TrySaveLiveSettings();
-                }
+                ApplyLoupeRadius(MagnifierControl.SampleRadius - notches);
             }
             e.Handled = true;
             return;
@@ -2496,19 +2519,11 @@ public partial class OverlayWindow : Window
         if (_currentTool == AnnotationTool.None)
         {
             // Select tool, nothing selected: if the magnifier loupe is up (dimmed screen, no
-            // selection/drag), the wheel zooms it — up = smaller sampled area = more zoom. The
-            // dialed level persists immediately (same pattern as palette edits) so it is the
-            // default for every later session.
+            // selection/drag), the wheel zooms it (up = smaller sampled area = more zoom). Every
+            // session opens at max zoom out (nothing persists).
             if (IsMagnifierActive)
             {
-                int newRadius = Math.Clamp(
-                    MagnifierControl.SampleRadius - notches, Magnifier.MinSampleRadius, Magnifier.MaxSampleRadius);
-                if (newRadius != MagnifierControl.SampleRadius)
-                {
-                    MagnifierControl.SampleRadius = newRadius;
-                    _liveSettings = _liveSettings with { MagnifierSampleRadius = newRadius };
-                    TrySaveLiveSettings();
-                }
+                ApplyLoupeRadius(MagnifierControl.SampleRadius - notches);
                 e.Handled = true;
             }
             return; // otherwise: nothing selected (a selected shape was already handled+returned above)

@@ -268,6 +268,18 @@ GIF, `{"min":5,"max":60}` for MP4 — quality/fps expansion workstream: fps is a
 now, not four fixed chips, so `fpsRange` replaces the old `allowedFps` array) — the exact range the
 `fps` command below will accept right now.
 
+While an overlay session is up, `state` also reports `loupeRadius` (the magnifier's sample radius,
+1-15; every session opens at 15 = max zoom out) and `pointerScale` (the pointer-speed multiplier the
+mouse hook applies right now: `(2r+1)/31` floored at 0.1, and `1.0` whenever the loupe is not up,
+e.g. once a selection exists). Both are `null` outside an overlay session.
+
+#### `zoom`
+
+`{"cmd":"zoom","radius":3}` (whole number 1-15) sets the loupe zoom through the same code path the
+mouse wheel uses (`OverlayWindow.ApplyLoupeRadius`), so `state` then shows the matching
+`loupeRadius`/`pointerScale`. Errors outside an overlay session. The zoom is per session; nothing
+persists.
+
 #### `trigger`
 
 Opens the capture overlay — the same action as `--signal-capture` / the hotkey / the tray icon's

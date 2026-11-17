@@ -40,13 +40,13 @@ public sealed class Magnifier : FrameworkElement
     public const int MinSampleRadius = 1;
     public const int MaxSampleRadius = 15;
 
-    private int _sampleRadius = 5;
+    private int _sampleRadius = MaxSampleRadius;
 
     /// <summary>How many source pixels the loupe shows: a (2r+1)x(2r+1) block around the cursor,
     /// rendered inside the FIXED-size loupe (the widget never changes size — the per-pixel swatch
     /// size scales instead, so a smaller radius means fewer, bigger pixels: zoomed in).
-    /// Wheel-adjustable per session (OverlayWindow's wheel handler), seeded from
-    /// RoeSnipSettings.MagnifierSampleRadius.</summary>
+    /// Wheel-adjustable per session (OverlayWindow's wheel handler); every session opens at
+    /// <see cref="MaxSampleRadius"/> (widest, normal pointer speed).</summary>
     public int SampleRadius
     {
         get => _sampleRadius;
