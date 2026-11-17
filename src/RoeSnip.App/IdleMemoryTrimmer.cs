@@ -101,6 +101,22 @@ internal static class IdleMemoryTrimmer
         thread.Start();
     }
 
+    /// <summary>Process-level counters appended to the trim line so the log shows what grows
+    /// between snips (native private bytes, threads, handles) - the managed heap does not.</summary>
+    private static string ProcessStats()
+    {
+        try
+        {
+            using var p = System.Diagnostics.Process.GetCurrentProcess();
+            return $" private={p.PrivateMemorySize64 / (1024 * 1024)} MB ws={p.WorkingSet64 / (1024 * 1024)} MB " +
+                   $"threads={p.Threads.Count} handles={p.HandleCount}";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
     private static void TrimBody()
     {
         bool flagReleasedByWatchdog = false;
@@ -136,7 +152,7 @@ internal static class IdleMemoryTrimmer
             TrimPlatformCaptureCache();
             FileLog.Write(
                 $"RoeSnip: idle memory trim {watch.ElapsedMilliseconds} ms " +
-                $"(managed heap now {GC.GetTotalMemory(false) / (1024 * 1024)} MB)");
+                $"(managed heap now {GC.GetTotalMemory(false) / (1024 * 1024)} MB){ProcessStats()}");
         }
         catch (Exception ex)
         {

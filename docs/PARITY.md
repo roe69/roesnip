@@ -1494,6 +1494,22 @@ because a correct implementation needs live hardware this repo cannot exercise.
       slots so it is safe on every display change). This app still has no display-change
       subscription, so its OnSystemResumed runs a single SECOND re-provision pass ~15 s
       after resume instead — the accepted substitute until a display-change hook exists.
+- Response-time pass from the owner's 10-day log (2026-11-18), WPF then ported per concern:
+  (1) MP4 recording tonemaps into a reused buffer (the GIF path already did): it was a
+      per-frame log line (24k of 27k log lines) and a per-frame LOH array. Both apps.
+  (2) Cold first capture after the monitors were off (WGC session 470-680 ms on all monitors
+      at once; slow share rises with idle time, the power plan blanks displays at 15 min):
+      GUID_CONSOLE_DISPLAY_STATE callback (DisplayStateNotifications; WPF Interop, App
+      Platform.Windows) re-primes WGC with one throwaway capture per WGC monitor when the
+      display turns on, under the capture gate. The WGC log line now splits
+      create/start/frame/read (the App app had no WGC line; it has one now). Cause is inferred
+      from the power-plan timeout, not yet confirmed by the new split.
+  (3) WPF only: the debounced DisplaySettingsChanged refresh re-provisions WGC slots with
+      forceReprovision (a re-attached display kept its handle and size, so IsReusable kept a
+      stale item: "Cannot access a disposed object" on the next capture). The App app has no
+      DisplaySettingsChanged subscription (see above), so nothing to port.
+  (4) Idle-trim log line gained private/ws/threads/handles in both apps, to show what grows
+      per snip (managed heap stays 5-49 MB; the resident growth is native).
 - Core's FallbackCaptureBackend has stale-memo self-healing the WPF CaptureService lacks;
   the port is ahead of WPF there. No action, do not "fix" the divergence backwards.
 - The two apps keep deliberately distinct identities everywhere: settings dir
