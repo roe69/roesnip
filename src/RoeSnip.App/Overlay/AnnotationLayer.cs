@@ -930,7 +930,16 @@ public sealed class AnnotationLayer : Control
             case AnnotationTool.Rectangle:
                 if (shape.PointsPx.Count >= 2)
                 {
-                    dc.DrawRectangle(null, pen, new Rect(P(0), P(1)));
+                    // Sharp mitred corners on whole device pixels (snip tools draw crisp boxes).
+                    var rectPen = new Pen(
+                        new SolidColorBrush(shape.StrokeColor),
+                        pen.Thickness,
+                        lineCap: PenLineCap.Flat,
+                        lineJoin: PenLineJoin.Miter);
+                    double w = pen.Thickness;
+                    var rp0 = new Point(AnnotationGeometry.PixelAlign(P(0).X, w), AnnotationGeometry.PixelAlign(P(0).Y, w));
+                    var rp1 = new Point(AnnotationGeometry.PixelAlign(P(1).X, w), AnnotationGeometry.PixelAlign(P(1).Y, w));
+                    dc.DrawRectangle(null, rectPen, new Rect(rp0, rp1));
                 }
                 break;
 
@@ -947,14 +956,29 @@ public sealed class AnnotationLayer : Control
             case AnnotationTool.Line:
                 if (shape.PointsPx.Count >= 2)
                 {
-                    dc.DrawLine(pen, P(0), P(1));
+                    var l0 = P(0);
+                    var l1 = P(1);
+                    // Axis-aligned lines snap the cross-axis coordinate so they stay crisp.
+                    if (Math.Abs(l0.Y - l1.Y) < 0.5)
+                    {
+                        double ay = AnnotationGeometry.PixelAlign((l0.Y + l1.Y) / 2, pen.Thickness);
+                        l0 = new Point(l0.X, ay);
+                        l1 = new Point(l1.X, ay);
+                    }
+                    else if (Math.Abs(l0.X - l1.X) < 0.5)
+                    {
+                        double ax = AnnotationGeometry.PixelAlign((l0.X + l1.X) / 2, pen.Thickness);
+                        l0 = new Point(ax, l0.Y);
+                        l1 = new Point(ax, l1.Y);
+                    }
+                    dc.DrawLine(pen, l0, l1);
                 }
                 break;
 
             case AnnotationTool.Arrow:
                 if (shape.PointsPx.Count >= 2)
                 {
-                    DrawArrow(dc, pen, shape.StrokeColor, P(0), P(1));
+                    DrawArrow(dc, pen.Thickness, shape.StrokeColor, P(0), P(1));
                 }
                 break;
 
@@ -980,9 +1004,22 @@ public sealed class AnnotationLayer : Control
                     using (var ctx = geometry.Open())
                     {
                         ctx.BeginFigure(P(0), false);
-                        for (int i = 1; i < shape.PointsPx.Count; i++)
+                        var pts = new List<(double X, double Y)>(shape.PointsPx.Count);
+                        for (int i = 0; i < shape.PointsPx.Count; i++)
                         {
-                            ctx.LineTo(P(i));
+                            var q = P(i);
+                            pts.Add((q.X, q.Y));
+                        }
+                        foreach (var seg in AnnotationGeometry.SmoothPath(pts))
+                        {
+                            if (seg.Quad)
+                            {
+                                ctx.QuadraticBezierTo(new Point(seg.Cx, seg.Cy), new Point(seg.Ex, seg.Ey));
+                            }
+                            else
+                            {
+                                ctx.LineTo(new Point(seg.Ex, seg.Ey));
+                            }
                         }
                         ctx.EndFigure(false);
                     }
@@ -1043,43 +1080,26 @@ public sealed class AnnotationLayer : Control
         }
     }
 
-    private static void DrawArrow(DrawingContext dc, Pen pen, Color color, Point from, Point to)
+    /// <summary>One filled outline (sharp head, tapered tail) from the shared AnnotationGeometry;
+    /// the tip is exactly <paramref name="to"/>. No stroke, so nothing pokes past the tip.</summary>
+    private static void DrawArrow(DrawingContext dc, double width, Color color, Point from, Point to)
     {
-        dc.DrawLine(pen, from, to);
-
-        double dx = to.X - from.X, dy = to.Y - from.Y;
-        double lengthSquared = dx * dx + dy * dy;
-        if (lengthSquared < 1e-6)
+        var pts = AnnotationGeometry.ArrowOutline(from.X, from.Y, to.X, to.Y, width);
+        if (pts.Length < 6)
         {
             return;
         }
-        double length = Math.Sqrt(lengthSquared);
-        double dirX = dx / length, dirY = dy / length;
-
-        double headLength = Math.Max(10.0, pen.Thickness * 4.0);
-        double headAngle = Math.PI / 7.0; // ~25.7 degrees
-
-        (double X, double Y) Rotate(double vx, double vy, double radians)
+        var geometry = new StreamGeometry();
+        using (var ctx = geometry.Open())
         {
-            double cos = Math.Cos(radians), sin = Math.Sin(radians);
-            return (vx * cos - vy * sin, vx * sin + vy * cos);
-        }
-
-        double backX = -dirX * headLength, backY = -dirY * headLength;
-        var (lx, ly) = Rotate(backX, backY, headAngle);
-        var (rx, ry) = Rotate(backX, backY, -headAngle);
-        var left = new Point(to.X + lx, to.Y + ly);
-        var right = new Point(to.X + rx, to.Y + ry);
-
-        var headGeometry = new StreamGeometry();
-        using (var ctx = headGeometry.Open())
-        {
-            ctx.BeginFigure(to, true);
-            ctx.LineTo(left);
-            ctx.LineTo(right);
+            ctx.BeginFigure(new Point(pts[0], pts[1]), true);
+            for (int i = 2; i < pts.Length; i += 2)
+            {
+                ctx.LineTo(new Point(pts[i], pts[i + 1]));
+            }
             ctx.EndFigure(true);
         }
-        dc.DrawGeometry(new SolidColorBrush(color), null, headGeometry);
+        dc.DrawGeometry(new SolidColorBrush(color), null, geometry);
     }
 }
 

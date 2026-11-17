@@ -1822,3 +1822,11 @@ because a correct implementation needs live hardware this repo cannot exercise.
   gap noted while touching this code, not introduced or fixed by this pass:** Avalonia's magnifier
   still has no visibility gate at all (it stays up through Resize/Move/annotation drags, unlike
   WPF's `IsMagnifierActive`-gated hide) — tracked as a separate future parity item.
+- [x] 25-annotation-crispness: Arrow is one filled outline (sharp swept-back head, tapered tail, tip
+  exactly at the end point, head capped at half the length) from `RoeSnip.Core.Overlay.
+  AnnotationGeometry.ArrowOutline`; Rectangle uses mitred corners; Rectangle edges and axis-aligned
+  Lines snap to whole pixels (`PixelAlign`: odd widths on pixel centres); Freehand/Highlight go
+  through `SmoothPath` (quadratic midpoint smoothing). Both apps' `AnnotationLayer.Draw` use the same
+  Core helpers, so screen and export match. WPF: tests/RoeSnip.Tests/AnnotationRenderTests.cs;
+  Avalonia has no headless render harness (no Avalonia.Headless), so only the shared Core math is
+  unit-tested (AnnotationGeometryTests).
