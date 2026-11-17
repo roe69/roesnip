@@ -594,6 +594,7 @@ public sealed class TrayApp : ITrayNotifier
             SystemEvents.PowerModeChanged -= _powerModeChangedHandler;
         }
         RoeSnip.Platform.Windows.SuspendResumeNotifications.Unregister();
+        RoeSnip.Platform.Windows.DisplayStateNotifications.Unregister();
 #endif
         if (_trayIcon is not null)
         {
@@ -673,6 +674,7 @@ public sealed class TrayApp : ITrayNotifier
         // callback-based power registration hears every wake; the SystemEvents subscription above
         // stays as a belt, deduped inside OnSystemResumed. Ported from the WPF app.
         RoeSnip.Platform.Windows.SuspendResumeNotifications.Register(OnSystemResumed);
+        RoeSnip.Platform.Windows.DisplayStateNotifications.Register(OnConsoleDisplayState);
 #endif
 
         var thread = new Thread(RunWarmup)
@@ -743,6 +745,63 @@ public sealed class TrayApp : ITrayNotifier
             catch (Exception ex)
             {
                 FileLog.Write($"RoeSnip: post-resume second re-warm pass failed (non-fatal): {ex.Message}");
+            }
+        });
+    }
+
+    private long _lastDisplayOnTick;
+
+    /// <summary>Console display state (0 off, 1 on, 2 dimmed). The first WGC capture after the
+    /// monitors were off for a while costs 470-680 ms on all monitors at once (WPF daily-driver
+    /// logs, 2026-11; the power plan turns the displays off after 15 min), so when they come back
+    /// on one throwaway capture per WGC monitor runs now, while the user is still reaching for the
+    /// hotkey. Takes the capture gate like startup warmup does (a hotkey in the window waits, it
+    /// would have paid the same cost itself) and skips if a session is already live. Ported from
+    /// the WPF app.</summary>
+    private void OnConsoleDisplayState(int state)
+    {
+        FileLog.Write($"RoeSnip: console display {(state == 0 ? "off" : state == 1 ? "on" : "dimmed")}.");
+        if (state != 1)
+        {
+            return;
+        }
+        long now = Environment.TickCount64;
+        long last = Interlocked.Exchange(ref _lastDisplayOnTick, now);
+        if (last != 0 && now - last < 5_000)
+        {
+            return;
+        }
+        _ = Task.Run(() =>
+        {
+            var monitors = Volatile.Read(ref s_cachedMonitors);
+            if (monitors is null || monitors.Count == 0 || !CaptureGate.TryEnter())
+            {
+                return;
+            }
+            CaptureGate.HeldByWarmup = true;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                Parallel.ForEach(monitors, monitor =>
+                {
+                    if (RoeSnip.Core.Capture.CaptureCache.Default.IsDesktopDuplicationBroken(monitor.DeviceName))
+                    {
+                        try
+                        {
+                            RoeSnip.Platform.Windows.WgcCapturer.Prewarm(monitor, throwawayFrame: true);
+                        }
+                        catch (Exception ex)
+                        {
+                            FileLog.Write($"RoeSnip: display-on re-warm failed for {monitor.DeviceName} (non-fatal): {ex.Message}");
+                        }
+                    }
+                });
+                FileLog.Write($"RoeSnip: display-on capture re-warm done in {watch.ElapsedMilliseconds} ms.");
+            }
+            finally
+            {
+                CaptureGate.HeldByWarmup = false;
+                CaptureGate.Exit();
             }
         });
     }

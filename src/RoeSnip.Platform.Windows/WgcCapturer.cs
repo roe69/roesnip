@@ -162,7 +162,15 @@ public sealed class WgcCapturer : IScreenCapturer
 
                 try
                 {
-                    return CaptureCore(monitor, resources);
+                    var sessionWatch = System.Diagnostics.Stopwatch.StartNew();
+                    var timings = new CaptureTimings();
+                    var frame = CaptureCore(monitor, resources, timings);
+                    // The split (pool+session create / StartCapture / first-frame wait / readback)
+                    // pins which stage a slow cold capture spends its time in.
+                    FileLog.Write(
+                        $"RoeSnip: WGC capture {monitor.DeviceName} session={sessionWatch.ElapsedMilliseconds}ms " +
+                        $"(create={timings.CreateMs} start={timings.StartMs} frame={timings.FrameWaitMs} read={timings.ReadMs})");
+                    return frame;
                 }
                 catch (Exception ex)
                 {
@@ -491,10 +499,17 @@ public sealed class WgcCapturer : IScreenCapturer
     /// 2x5s = ~10s frozen on the hotkey path.</summary>
     private const int FrameWaitMs = 1200;
 
-    private static CapturedFrame CaptureCore(MonitorInfo monitor, MonitorResources resources)
+    /// <summary>Per-stage milliseconds of one CaptureCore call, for the WGC log line.</summary>
+    private sealed class CaptureTimings
+    {
+        public long CreateMs, StartMs, FrameWaitMs, ReadMs;
+    }
+
+    private static CapturedFrame CaptureCore(MonitorInfo monitor, MonitorResources resources, CaptureTimings? timings = null)
     {
         Direct3D11CaptureFramePool? framePool = null;
         GraphicsCaptureSession? session = null;
+        var stage = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             // WGC doesn't expose a "delivered format" the way Desktop Duplication does — request
@@ -538,8 +553,12 @@ public sealed class WgcCapturer : IScreenCapturer
             framePool.FrameArrived += OnFrameArrived;
             try
             {
+                if (timings is not null) { timings.CreateMs = stage.ElapsedMilliseconds; stage.Restart(); }
                 session.StartCapture();
-                if (!frameReady.Wait(FrameWaitMs))
+                if (timings is not null) { timings.StartMs = stage.ElapsedMilliseconds; stage.Restart(); }
+                bool arrived = frameReady.Wait(FrameWaitMs);
+                if (timings is not null) { timings.FrameWaitMs = stage.ElapsedMilliseconds; stage.Restart(); }
+                if (!arrived)
                 {
                     throw new CaptureException($"WGC frame wait timed out for monitor {monitor.DeviceName}.");
                 }
@@ -592,6 +611,7 @@ public sealed class WgcCapturer : IScreenCapturer
                     resources.D3dDevice.ImmediateContext.Unmap(staging, 0);
                 }
 
+                if (timings is not null) { timings.ReadMs = stage.ElapsedMilliseconds; }
                 FrameFormat format = srcDesc.Format == Format.R16G16B16A16_Float
                     ? FrameFormat.Fp16ScRgb
                     : FrameFormat.Bgra8Srgb;
