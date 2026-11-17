@@ -44,8 +44,9 @@ public sealed class PointerDeltaScaler
     {
         double x = dx * factor + _remainderX;
         double y = dy * factor + _remainderY;
-        scaledX = (int)x;
-        scaledY = (int)y;
+        // Nudge away from zero so repeated fractions (10 x 0.1 = 0.99999...) still reach a whole pixel.
+        scaledX = (int)(x + Math.CopySign(1e-9, x));
+        scaledY = (int)(y + Math.CopySign(1e-9, y));
         _remainderX = x - scaledX;
         _remainderY = y - scaledY;
     }
