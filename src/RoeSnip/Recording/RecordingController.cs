@@ -2135,7 +2135,7 @@ internal sealed class RecordingSession
         // (see that method's doc comment) — so there is no aliasing hazard for this rotation to
         // protect against in the first place. The alternation below is kept anyway as cheap,
         // harmless housekeeping, not because it's required for correctness.
-        byte[]? gifTonemapA = null, gifTonemapB = null;
+        byte[]? gifTonemapA = null, gifTonemapB = null, mp4Tonemap = null;
         bool gifUseA = true;
         // GIF downscaled render (Compact/Minimal tiers, _gifRenderScale < 1.0 — see
         // GifEncoderOptions.RenderScale's own doc comment): a THIRD persistent exactly-scaled-canvas
@@ -2221,7 +2221,11 @@ internal sealed class RecordingSession
 
                         if (_format == RecordingFormat.Mp4)
                         {
-                            var sdr = SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts);
+                            // Reused target: the encoder copies the pixels synchronously, so no
+                            // per-frame LOH array and no per-frame tonemap log line.
+                            int mp4Len = frame.Width * 4 * frame.Height;
+                            if (mp4Tonemap is null || mp4Tonemap.Length != mp4Len) mp4Tonemap = new byte[mp4Len];
+                            var sdr = SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts, mp4Tonemap);
                             long timestamp100ns = (long)((effectiveTicks - epochTicks.Value) / freq * 10_000_000.0);
                             _mp4Encoder!.WriteFrame(sdr, timestamp100ns);
 
