@@ -88,11 +88,21 @@ RoeSnip.exe --capture [--monitor N] [--out shot.png] [--jxr]
 
 ## Linux
 
-The cross-platform build (`src/RoeSnip.App`) publishes a self-contained
-`linux-x64` binary or AppImage. Run it with no arguments to start the tray
-app, or `./RoeSnip capture` / `./RoeSnip settings` to trigger the capture
-flow or open the settings window (starting a resident instance on first run,
-signaling the existing one afterward).
+The cross-platform build (`src/RoeSnip.App`) ships per release as
+`RoeSnip-linux-x64.AppImage` / `RoeSnip-linux-arm64.AppImage`, plus a
+`RoeSnip-linux-<arch>.tar.gz` of the publish folder for distros without FUSE.
+Run it with no arguments to start the tray app, or `./RoeSnip capture` /
+`./RoeSnip settings` to trigger the capture flow or open the settings window
+(starting a resident instance on first run, signaling the existing one
+afterward).
+
+Install: run the AppImage and pick **Install RoeSnip** in the tray menu. It
+moves itself to `~/.local/share/RoeSnip/RoeSnip.AppImage` (respects
+`XDG_DATA_HOME`), adds an application menu entry
+(`~/.local/share/applications/net.roelite.roesnip.desktop`, with a Capture
+action) and starts at login (`~/.config/autostart/net.roelite.roesnip.desktop`,
+toggle in Settings). The installed AppImage updates itself from GitHub
+Releases. The tar.gz build only shows a notice when a new version is out.
 
 **Wayland hotkey.** The hotkey hook (SharpHook/libuiohook) is X11-only, so on
 Wayland RoeSnip never starts it. Instead it binds the configured hotkey as
@@ -112,6 +122,17 @@ notice; bind a desktop shortcut to the `RoeSnip capture` CLI verb by hand:
 
 X11 sessions are unaffected: the hook starts normally there and the
 PrintScreen hotkey works as on Windows.
+
+## macOS
+
+Releases ship `RoeSnip-osx-arm64.dmg` (Apple silicon) and
+`RoeSnip-osx-x64.dmg` (Intel). The app is only ad-hoc signed: right-click >
+Open the first time. Pick **Install RoeSnip** in the tray menu to copy it to
+`~/Applications/RoeSnip.app` and start it at login
+(`~/Library/LaunchAgents/net.roelite.roesnip.plist`, toggle in Settings). The
+installed copy updates itself from GitHub Releases. The ad-hoc signature
+changes with every build, so macOS may ask for Screen Recording permission
+again after an update.
 
 ## Docs
 

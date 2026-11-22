@@ -17,8 +17,7 @@ namespace RoeSnip.App.AppShell;
 /// Self-updates swap the exe at the same path, so a once-created shortcut stays valid across
 /// updates; <see cref="EnsureFor"/> is also called at startup (not just from Install) so installs
 /// that predate this feature gain the shortcut on their first launch after updating. Windows-only:
-/// Linux/macOS have no Install() at all (parity item 13's accepted limitation), so there is nothing
-/// to make findable there. Same convenience-never-load-bearing contract as the rest of the
+/// the Linux menu entry is LinuxDesktopIntegration; macOS finds ~/Applications by itself. Same convenience-never-load-bearing contract as the rest of the
 /// install/update machinery: never throws, reviewed by eye rather than unit-tested (real COM +
 /// real filesystem).</summary>
 [SupportedOSPlatform("windows")]
