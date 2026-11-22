@@ -83,6 +83,12 @@ public static class UpdateHealthMarker
         /// <summary>The version a prior auto-restore rolled back away from, if any; null means
         /// nothing is quarantined. See the class doc comment's point 3.</summary>
         public string? QuarantinedVersion { get; init; }
+
+        /// <summary>The version the last swap by this app put at the install target (update or
+        /// Install); kept after the health milestone, cleared by a rollback. Linux reads it to tell
+        /// whether another updater already installed a release (an AppImage has no readable
+        /// version). Older builds drop it on their next write: absent means unknown.</summary>
+        public string? InstalledVersion { get; init; }
     }
 
     private static string FilePath(string directory) => Path.Combine(directory, FileName);
@@ -145,7 +151,15 @@ public static class UpdateHealthMarker
     public static void RecordPendingUpdate(string directory, string targetVersion)
     {
         State state = Load(directory);
-        Save(directory, state with { PendingVersion = targetVersion, AttemptCount = 0 });
+        Save(directory, state with { PendingVersion = targetVersion, AttemptCount = 0, InstalledVersion = targetVersion });
+    }
+
+    /// <summary>Records <paramref name="version"/> as what the install target now holds, without
+    /// a pending verify (Install copies the running, already proven build).</summary>
+    public static void RecordInstalledVersion(string directory, string version)
+    {
+        State state = Load(directory);
+        Save(directory, state with { InstalledVersion = version });
     }
 
     /// <summary>Called once, as early as possible in a normal startup (before the tray icon, hotkey,
@@ -203,7 +217,7 @@ public static class UpdateHealthMarker
     public static void Quarantine(string directory, string version)
     {
         State state = Load(directory);
-        Save(directory, state with { QuarantinedVersion = version, PendingVersion = null, AttemptCount = 0 });
+        Save(directory, state with { QuarantinedVersion = version, PendingVersion = null, AttemptCount = 0, InstalledVersion = null });
     }
 
     /// <summary>True when <paramref name="candidateVersion"/> - a release CheckForUpdateAsync is

@@ -21,33 +21,55 @@ public sealed class UpdateLock : IDisposable
     public static string PathFor(string installTargetPath) =>
         installTargetPath.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar) + ".update.lock";
 
-    /// <summary>Takes the lock without waiting; null when another holder has it (or the folder
-    /// cannot be written). Never throws on I/O.</summary>
+    /// <summary>Takes the lock without waiting; null only when another holder has it. Any other
+    /// I/O failure (unwritable folder, full disk) is rethrown with its own message, so it never
+    /// reads as "another process is updating".</summary>
     public static UpdateLock? TryAcquire(string lockPath)
     {
+        string? dir = System.IO.Path.GetDirectoryName(lockPath);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+
         try
         {
-            string? dir = System.IO.Path.GetDirectoryName(lockPath);
-            if (!string.IsNullOrEmpty(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-
             var stream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.None);
             return new UpdateLock(stream, lockPath);
         }
-        catch (IOException)
-        {
-            return null;
-        }
-        catch (UnauthorizedAccessException)
+        catch (IOException ex) when (IsHeldElsewhere(ex, OperatingSystem.IsWindows(), OperatingSystem.IsMacOS()))
         {
             return null;
         }
     }
 
+    private const int WindowsSharingViolation = unchecked((int)0x80070020);
+    private const int WindowsLockViolation = unchecked((int)0x80070021);
+    private const int LinuxEagain = 11;
+    private const int MacEagain = 35;
+
+    /// <summary>True when <paramref name="ex"/> from the FileShare.None open means another handle
+    /// holds the lock: a Windows sharing / lock violation, or on Unix the EWOULDBLOCK (= EAGAIN) of
+    /// the non-blocking flock, which .NET 8 throws as a plain IOException whose HResult is the raw
+    /// errno (11 on Linux, checked on .NET 8.0.428; 35 on macOS).</summary>
+    public static bool IsHeldElsewhere(Exception ex, bool isWindows, bool isMacOS)
+    {
+        if (ex.GetType() != typeof(IOException))
+        {
+            return false; // FileNotFound, DirectoryNotFound, PathTooLong, ... are real failures
+        }
+
+        if (isWindows)
+        {
+            return ex.HResult == WindowsSharingViolation || ex.HResult == WindowsLockViolation;
+        }
+
+        return ex.HResult == (isMacOS ? MacEagain : LinuxEagain);
+    }
+
     /// <summary>Polls <see cref="TryAcquire"/> until <paramref name="timeout"/>. Contended is true
-    /// when the first try failed, i.e. another updater held the install meanwhile.</summary>
+    /// when the first try failed, i.e. another updater held the install meanwhile. Throws what
+    /// TryAcquire throws.</summary>
     public static async Task<(UpdateLock? Lock, bool Contended)> AcquireAsync(
         string lockPath, TimeSpan timeout, TimeSpan pollInterval, CancellationToken cancellationToken = default)
     {

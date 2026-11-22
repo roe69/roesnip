@@ -1193,13 +1193,23 @@ public sealed class TrayApp : ITrayNotifier
     /// Only for copies that self-update (Windows, a Linux AppImage, a macOS .app bundle). Returns 0
     /// on "updated"/"already current"/"not applicable here", 1 if the check/download/swap errored,
     /// another updater still held the install after <see cref="SelfUpdateLockWait"/>, or the whole
-    /// run passed <see cref="SelfUpdateDeadline"/>; one stdout line says which. Never throws.</summary>
+    /// run passed <see cref="SelfUpdateDeadline"/> before its swap started (a started swap is always
+    /// waited out); one stdout line says which. Never throws.</summary>
     private static int RunSelfUpdateNow()
     {
-        Task<int> work = Task.Run(RunSelfUpdateNowCore);
+        var swapGate = new SwapGate();
+        Task<int> work = Task.Run(() => RunSelfUpdateNowCore(swapGate));
         if (work.Wait(SelfUpdateDeadline))
         {
             return work.Result;
+        }
+
+        // The deadline only abandons a run that has not touched the install yet; once the swap
+        // started (two moves on Windows) exiting could leave no exe at the target, so wait it out.
+        if (!swapGate.TryAbandon())
+        {
+            FileLog.Write("RoeSnip: --self-update-now: deadline passed mid-swap; waiting for the swap to finish.");
+            return work.GetAwaiter().GetResult();
         }
 
         SelfUpdateReport($"update failed: no result within {SelfUpdateDeadline.TotalMinutes:0} minutes.");
@@ -1217,7 +1227,7 @@ public sealed class TrayApp : ITrayNotifier
         FileLog.Write($"RoeSnip: --self-update-now: {text}");
     }
 
-    private static int RunSelfUpdateNowCore()
+    private static int RunSelfUpdateNowCore(SwapGate swapGate)
     {
         if (!UpdateManager.SelfUpdateSupported)
         {
@@ -1253,7 +1263,7 @@ public sealed class TrayApp : ITrayNotifier
             UpdateManager.UpdateInfo update = result.Update;
             FileLog.Write($"RoeSnip: --self-update-now: updating {UpdateManager.CurrentVersionText} -> {update.Version}...");
             UpdateManager.ApplyOutcome outcome = UpdateManager
-                .ApplyUpdateAsync(update, beforeLaunch: null, lockWait: SelfUpdateLockWait)
+                .ApplyUpdateAsync(update, beforeLaunch: null, lockWait: SelfUpdateLockWait, swapGate: swapGate)
                 .GetAwaiter().GetResult();
             switch (outcome)
             {

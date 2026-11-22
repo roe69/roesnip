@@ -247,4 +247,21 @@ public sealed class UpdateHealthMarkerTests : IDisposable
         Assert.False(UpdateHealthMarker.IsQuarantined(_tempDir, new Version(1, 9, 1)));
         Assert.Null(UpdateHealthMarker.Load(_tempDir).QuarantinedVersion);
     }
+
+    [Fact]
+    public void InstalledVersion_SetBySwap_KeptPastHealthMilestone_ClearedByRollback()
+    {
+        UpdateHealthMarker.RecordInstalledVersion(_tempDir, "1.8.0");
+        Assert.Equal("1.8.0", UpdateHealthMarker.Load(_tempDir).InstalledVersion);
+        Assert.Null(UpdateHealthMarker.Load(_tempDir).PendingVersion);
+
+        UpdateHealthMarker.RecordPendingUpdate(_tempDir, "1.9.0");
+        Assert.Equal("1.9.0", UpdateHealthMarker.Load(_tempDir).InstalledVersion);
+
+        Assert.True(UpdateHealthMarker.ClearPending(_tempDir, "1.9.0"));
+        Assert.Equal("1.9.0", UpdateHealthMarker.Load(_tempDir).InstalledVersion);
+
+        UpdateHealthMarker.Quarantine(_tempDir, "1.9.0");
+        Assert.Null(UpdateHealthMarker.Load(_tempDir).InstalledVersion);
+    }
 }

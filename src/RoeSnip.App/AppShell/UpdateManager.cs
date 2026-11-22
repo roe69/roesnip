@@ -412,15 +412,53 @@ public static class UpdateManager
     // ---------------- cleanup ----------------
 
     /// <summary>Startup cleanup of swap leftovers: ".old" (unless a pending-verify marker still
-    /// needs it as the rollback target) and any abandoned staging download. Never throws.</summary>
-    public static void CleanupStaleUpdateFiles()
-    {
-        if (StaleExeIsSafeToDelete())
+    /// needs it as the rollback target) and any abandoned staging download, holding the update
+    /// lock (skipped while another updater runs). Never throws.</summary>
+    public static void CleanupStaleUpdateFiles() =>
+        WithUpdateLock(InstallTargetPath, "stale update file cleanup", () =>
         {
-            TryDelete(StaleExePath);
+            if (StaleExeIsSafeToDelete())
+            {
+                TryDelete(StaleExePath);
+            }
+
+            DeleteStaleDownloads();
+        });
+
+    /// <summary>Runs <paramref name="action"/> holding <paramref name="target"/>'s update lock.
+    /// Skips, with a log line, when another updater holds it or the lock cannot be taken, and when
+    /// the target's folder does not exist (nothing to clean, and no folder is created). An updater
+    /// can hold the lock for over an hour (the macOS idle gate waits out a long recording with
+    /// its bundle staged), so age alone never makes its staging safe to delete.</summary>
+    private static void WithUpdateLock(string target, string what, Action action)
+    {
+        string? dir = Path.GetDirectoryName(target);
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+        {
+            return;
         }
 
-        CleanupDownloadLeftover();
+        UpdateLock? held;
+        try
+        {
+            held = UpdateLock.TryAcquire(UpdateLock.PathFor(target));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            FileLog.Write($"RoeSnip: {what} skipped - could not take the update lock: {ex.Message}");
+            return;
+        }
+
+        if (held is null)
+        {
+            FileLog.Write($"RoeSnip: {what} skipped - {BusyMessage}.");
+            return;
+        }
+
+        using (held)
+        {
+            action();
+        }
     }
 
     /// <summary>Bounded-retry ".old" delete (the replaced process may still hold it). Call off the
@@ -441,8 +479,11 @@ public static class UpdateManager
     /// <summary>Deletes only abandoned download/staging leftovers (".new", ".new-*" older than
     /// <see cref="UpdateStaging.StaleAge"/>, so another process's in-flight download survives),
     /// never ".old" or ".restore" (after an interrupted rollback it can hold the only good build;
-    /// startup repair moves it back).</summary>
-    public static void CleanupDownloadLeftover()
+    /// startup repair moves it back). Holds the update lock; skipped while another updater runs.</summary>
+    public static void CleanupDownloadLeftover() =>
+        WithUpdateLock(InstallTargetPath, "stale download cleanup", DeleteStaleDownloads);
+
+    private static void DeleteStaleDownloads()
     {
         try
         {
@@ -510,7 +551,9 @@ public static class UpdateManager
 
     /// <summary>Linux / macOS: puts a unit back when a crash mid-swap left its path empty (the
     /// bundle swap is two renames). macOS also checks both standard bundle paths, since a .dmg run
-    /// targets ~/Applications while the broken install may be the /Applications one. Never throws.</summary>
+    /// targets ~/Applications while the broken install may be the /Applications one. Each target is
+    /// repaired only while holding its update lock: a live swap looks just like a crashed one.
+    /// Never throws.</summary>
     private static void RepairInterruptedSwaps()
     {
         if (OperatingSystem.IsWindows())
@@ -527,17 +570,25 @@ public static class UpdateManager
 
         foreach (string target in new System.Collections.Generic.HashSet<string>(targets, StringComparer.Ordinal))
         {
-            try
+            if (!InstallSwap.Exists(target + ".old") && !InstallSwap.Exists(target + ".restore"))
             {
-                if (InstallSwap.RepairInterruptedSwap(target, target + ".old", target + ".restore"))
+                continue; // nothing to repair; skip the lock (and its file) entirely
+            }
+
+            WithUpdateLock(target, $"interrupted-swap repair at '{target}'", () =>
+            {
+                try
                 {
-                    FileLog.Write($"RoeSnip: repaired an interrupted update or rollback at '{target}'.");
+                    if (InstallSwap.RepairInterruptedSwap(target, target + ".old", target + ".restore"))
+                    {
+                        FileLog.Write($"RoeSnip: repaired an interrupted update or rollback at '{target}'.");
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                FileLog.Write($"RoeSnip: could not repair an interrupted update at '{target}' (non-fatal): {ex.Message}");
-            }
+                catch (Exception ex)
+                {
+                    FileLog.Write($"RoeSnip: could not repair an interrupted update at '{target}' (non-fatal): {ex.Message}");
+                }
+            });
         }
     }
 
@@ -575,13 +626,24 @@ public static class UpdateManager
     private static bool TryRestorePreviousBuild(int attemptCount)
     {
         string badVersion = CurrentVersionText;
-        using UpdateLock? updateLock = UpdateLock.TryAcquire(UpdateLockPath);
+        UpdateLock? updateLock;
+        try
+        {
+            updateLock = UpdateLock.TryAcquire(UpdateLockPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            FileLog.Write($"RoeSnip: rollback of {badVersion} skipped - could not take the update lock: {ex.Message}");
+            return false;
+        }
+
         if (updateLock is null)
         {
             FileLog.Write($"RoeSnip: rollback of {badVersion} skipped - {BusyMessage}.");
             return false;
         }
 
+        using UpdateLock heldLock = updateLock;
         try
         {
             FileLog.Write(
@@ -773,6 +835,7 @@ public static class UpdateManager
 
             // Works even while an installed instance runs: it keeps its renamed file/bundle.
             InstallSwap.SwapIn(stagingPath, InstallTargetPath, StaleExePath);
+            UpdateHealthMarker.RecordInstalledVersion(HealthMarkerDirectory, CurrentVersionText);
             if (OperatingSystem.IsMacOS())
             {
                 TryDelete(MacStagingDir);
@@ -900,10 +963,14 @@ public static class UpdateManager
     /// old process must not keep running against a swapped bundle). Serialized on
     /// <see cref="ApplyUpdateLock"/> in-process and on the per-install <see cref="UpdateLock"/>
     /// across processes: when another process holds it, waits up to <paramref name="lockWait"/>
-    /// (zero = skip at once, <see cref="ApplyOutcome.Busy"/>); once it frees, an install that
-    /// already matches the release is <see cref="ApplyOutcome.AppliedByOtherProcess"/>. Rethrows on
-    /// failure; the installed copy is never left without a runnable unit.</summary>
-    public static async Task<ApplyOutcome> ApplyUpdateAsync(UpdateInfo info, Func<Task>? beforeLaunch = null, TimeSpan lockWait = default)
+    /// (zero = skip at once, <see cref="ApplyOutcome.Busy"/>). With the lock held, an install that
+    /// already is the release is <see cref="ApplyOutcome.AppliedByOtherProcess"/> (re-applying it
+    /// would move the just-launched build into ".old" and delete the real previous one).
+    /// <paramref name="swapGate"/>, when given, is claimed right before the first swap step; an
+    /// abandoned gate makes it throw before anything on disk changes. Rethrows on failure; the
+    /// installed copy is never left without a runnable unit.</summary>
+    public static async Task<ApplyOutcome> ApplyUpdateAsync(
+        UpdateInfo info, Func<Task>? beforeLaunch = null, TimeSpan lockWait = default, SwapGate? swapGate = null)
     {
         await ApplyUpdateLock.WaitAsync().ConfigureAwait(false);
         try
@@ -924,13 +991,16 @@ public static class UpdateManager
 
             using (updateLock)
             {
-                if (contended && await InstalledMatchesAsync(info).ConfigureAwait(false))
+                // Always, not only when contended: the other updater may have finished before
+                // this one first tried the lock.
+                if (await InstalledMatchesAsync(info).ConfigureAwait(false))
                 {
-                    FileLog.Write($"RoeSnip: another RoeSnip process already installed {info.Version}.");
+                    FileLog.Write(
+                        $"RoeSnip: the installed copy already is {info.Version} (installed by another RoeSnip process{(contended ? " while this one waited" : "")}); skipping.");
                     return ApplyOutcome.AppliedByOtherProcess;
                 }
 
-                await ApplyUpdateLockedAsync(info, beforeLaunch).ConfigureAwait(false);
+                await ApplyUpdateLockedAsync(info, beforeLaunch, swapGate).ConfigureAwait(false);
                 return ApplyOutcome.Applied;
             }
         }
@@ -952,21 +1022,47 @@ public static class UpdateManager
         Busy,
     }
 
-    /// <summary>True when the installed unit's SHA-256 equals the release asset's (Windows: the
-    /// plain exe's when the download is the .gz). macOS bundles have no single-file digest: false,
-    /// so the caller applies the update itself.</summary>
+    /// <summary>True when the installed unit already is <paramref name="info"/>'s release.
+    /// macOS: CFBundleShortVersionString of the installed bundle's Info.plist. Windows: the
+    /// installed exe's file version, else its SHA-256 against the asset's (the plain exe's for a
+    /// .gz). Linux: the AppImage's SHA-256 when the release has a digest, else the version the
+    /// health marker recorded at the last swap plus a size check. False when unsure.</summary>
     private static async Task<bool> InstalledMatchesAsync(UpdateInfo info)
     {
-        if (OperatingSystem.IsMacOS())
-        {
-            return false;
-        }
-
-        string? digest = info.IsGzip ? info.PlainDigest : info.Digest;
         try
         {
-            return File.Exists(InstalledExePath) &&
-                   await AssetDigest.VerifyAsync(InstalledExePath, digest).ConfigureAwait(false) == true;
+            if (OperatingSystem.IsMacOS())
+            {
+                string plist = Path.Combine(InstallTargetPath, "Contents", "Info.plist");
+                return File.Exists(plist) &&
+                       InstalledVersion.Matches(InstalledVersion.FromMacInfoPlist(await File.ReadAllTextAsync(plist).ConfigureAwait(false)), info.Version);
+            }
+
+            if (!File.Exists(InstalledExePath))
+            {
+                return false;
+            }
+
+            if (OperatingSystem.IsWindows())
+            {
+                FileVersionInfo file = FileVersionInfo.GetVersionInfo(InstalledExePath);
+                if (InstalledVersion.Matches(new Version(file.FileMajorPart, file.FileMinorPart, file.FileBuildPart), info.Version))
+                {
+                    return true;
+                }
+            }
+
+            string? digest = info.IsGzip ? info.PlainDigest : info.Digest;
+            bool? digestMatches = await AssetDigest.VerifyAsync(InstalledExePath, digest).ConfigureAwait(false);
+            if (digestMatches is not null || !OperatingSystem.IsLinux())
+            {
+                return digestMatches == true;
+            }
+
+            UpdateHealthMarker.State marker = UpdateHealthMarker.Load(HealthMarkerDirectory);
+            string version = FormatVersionText(info.Version);
+            return (marker.InstalledVersion == version || marker.PendingVersion == version) &&
+                   (info.Size is not long size || new FileInfo(InstalledExePath).Length == size);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -974,19 +1070,19 @@ public static class UpdateManager
         }
     }
 
-    private static async Task ApplyUpdateLockedAsync(UpdateInfo info, Func<Task>? beforeLaunch)
+    private static async Task ApplyUpdateLockedAsync(UpdateInfo info, Func<Task>? beforeLaunch, SwapGate? swapGate)
     {
         if (OperatingSystem.IsWindows())
         {
-            await ApplyUpdateWindowsAsync(info, beforeLaunch).ConfigureAwait(false);
+            await ApplyUpdateWindowsAsync(info, beforeLaunch, swapGate).ConfigureAwait(false);
         }
         else if (OperatingSystem.IsLinux())
         {
-            await ApplyUpdateLinuxAsync(info, beforeLaunch).ConfigureAwait(false);
+            await ApplyUpdateLinuxAsync(info, beforeLaunch, swapGate).ConfigureAwait(false);
         }
         else if (OperatingSystem.IsMacOS())
         {
-            await ApplyUpdateMacAsync(info, beforeLaunch).ConfigureAwait(false);
+            await ApplyUpdateMacAsync(info, beforeLaunch, swapGate).ConfigureAwait(false);
         }
         else
         {
@@ -1046,7 +1142,17 @@ public static class UpdateManager
         }
     }
 
-    private static async Task ApplyUpdateWindowsAsync(UpdateInfo info, Func<Task>? beforeLaunch)
+    /// <summary>Claims <paramref name="gate"/> right before the first swap step; throws when the run
+    /// was abandoned, so nothing on disk changes after the caller gave up.</summary>
+    private static void BeginSwap(SwapGate? gate, Version version)
+    {
+        if (gate is not null && !gate.TryBeginSwap())
+        {
+            throw new OperationCanceledException($"Update to {version} was abandoned before the swap started.");
+        }
+    }
+
+    private static async Task ApplyUpdateWindowsAsync(UpdateInfo info, Func<Task>? beforeLaunch, SwapGate? swapGate)
     {
         string downloadPath = DownloadingExePath; // the decompressed exe the swap uses
         string fetchPath = info.IsGzip ? GzDownloadingExePath : downloadPath;
@@ -1091,6 +1197,8 @@ public static class UpdateManager
                     FileLog.Write($"RoeSnip: decompressed update to {info.Version} has no verifiable plain-asset digest - skipping the post-decompression hash check.");
                 }
             }
+
+            BeginSwap(swapGate, info.Version);
 
             // Retried: a prior .old can still be locked by a process that is only now exiting.
             TryDeleteWithRetry(StaleExePath);
@@ -1165,7 +1273,7 @@ public static class UpdateManager
         }
     }
 
-    private static async Task ApplyUpdateLinuxAsync(UpdateInfo info, Func<Task>? beforeLaunch)
+    private static async Task ApplyUpdateLinuxAsync(UpdateInfo info, Func<Task>? beforeLaunch, SwapGate? swapGate)
     {
         string stagedPath = DownloadingExePath; // RoeSnip.AppImage.new, next to the target
         try
@@ -1176,6 +1284,7 @@ public static class UpdateManager
             await DownloadAndVerifyAsync(info, stagedPath).ConfigureAwait(false);
             MakeExecutable(stagedPath);
 
+            BeginSwap(swapGate, info.Version);
             // The running AppImage keeps its mounted inode after the rename to ".old".
             InstallSwap.SwapIn(stagedPath, InstallTargetPath, StaleExePath);
 
@@ -1195,7 +1304,7 @@ public static class UpdateManager
         }
     }
 
-    private static async Task ApplyUpdateMacAsync(UpdateInfo info, Func<Task>? beforeLaunch)
+    private static async Task ApplyUpdateMacAsync(UpdateInfo info, Func<Task>? beforeLaunch, SwapGate? swapGate)
     {
         string tarPath = GzDownloadingExePath;
         string stagedBundle = DownloadingExePath; // ~/Applications/.RoeSnip-update/RoeSnip.app
@@ -1221,6 +1330,7 @@ public static class UpdateManager
                 await beforeLaunch().ConfigureAwait(false);
             }
 
+            BeginSwap(swapGate, info.Version);
             InstallSwap.SwapIn(stagedBundle, InstallTargetPath, StaleExePath);
             TryDelete(MacStagingDir);
             StripQuarantine(InstallTargetPath);

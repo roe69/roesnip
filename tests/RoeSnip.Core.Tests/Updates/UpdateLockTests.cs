@@ -24,6 +24,8 @@ public sealed class UpdateLockTests : IDisposable
         Assert.Equal(target + ".update.lock", UpdateLock.PathFor(target + Path.DirectorySeparatorChar));
     }
 
+    // Same process on purpose: Windows sharing modes and the Unix flock behind FileShare.None both
+    // conflict per open handle, not per process (checked on Linux .NET 8: IOException HResult 11).
     [Fact]
     public void SecondAcquire_FailsWhileHeld_AndSucceedsAfterRelease()
     {
@@ -36,6 +38,46 @@ public sealed class UpdateLockTests : IDisposable
         using UpdateLock? again = UpdateLock.TryAcquire(LockPath);
         Assert.NotNull(again);
         Assert.True(File.Exists(LockPath));
+    }
+
+    [Fact]
+    public void HeldLock_ThrowsTheContentionErrorThisOsReportsAsBusy()
+    {
+        using UpdateLock? first = UpdateLock.TryAcquire(LockPath);
+        Assert.NotNull(first);
+
+        IOException ex = Assert.ThrowsAny<IOException>(() =>
+            new FileStream(LockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.None).Dispose());
+        Assert.True(UpdateLock.IsHeldElsewhere(ex, OperatingSystem.IsWindows(), OperatingSystem.IsMacOS()),
+            $"{ex.GetType().Name} HResult {ex.HResult}: {ex.Message}");
+    }
+
+    [Fact]
+    public void UnusableFolder_Throws_NotBusy()
+    {
+        Directory.CreateDirectory(_dir);
+        string notADir = Path.Combine(_dir, "file");
+        File.WriteAllText(notADir, "x");
+
+        Assert.ThrowsAny<IOException>(() => UpdateLock.TryAcquire(Path.Combine(notADir, "RoeSnip.exe.update.lock")));
+    }
+
+    [Theory]
+    [InlineData(unchecked((int)0x80070020), true, false, true)]  // ERROR_SHARING_VIOLATION
+    [InlineData(unchecked((int)0x80070021), true, false, true)]  // ERROR_LOCK_VIOLATION
+    [InlineData(unchecked((int)0x80070070), true, false, false)] // ERROR_DISK_FULL
+    [InlineData(11, false, false, true)]                          // Linux EAGAIN
+    [InlineData(28, false, false, false)]                         // Linux ENOSPC
+    [InlineData(35, false, true, true)]                           // macOS EAGAIN
+    [InlineData(11, false, true, false)]                          // macOS EDEADLK
+    public void IsHeldElsewhere_OnlyForContention(int hresult, bool windows, bool mac, bool expected) =>
+        Assert.Equal(expected, UpdateLock.IsHeldElsewhere(new IOException("x", hresult), windows, mac));
+
+    [Fact]
+    public void IsHeldElsewhere_NeverForOtherExceptionTypes()
+    {
+        Assert.False(UpdateLock.IsHeldElsewhere(new DirectoryNotFoundException("x") { HResult = 11 }, false, false));
+        Assert.False(UpdateLock.IsHeldElsewhere(new UnauthorizedAccessException("x"), false, false));
     }
 
     [Fact]
