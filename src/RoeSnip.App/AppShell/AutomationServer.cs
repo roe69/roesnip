@@ -48,7 +48,7 @@ public static class AutomationProtocol
     public static readonly IReadOnlyList<string> KnownCommands = new[]
     {
         "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot",
-        "confirm", "settings", "lastcapture", "tray", "zoom",
+        "confirm", "settings", "lastcapture", "tray", "zoom", "toast",
     };
 
     /// <summary>Parses one line of the wire protocol: must be a JSON object with a non-empty string
@@ -225,6 +225,13 @@ public static class AutomationProtocol
             // byte for byte (see this class's own doc comment), but it has no live handler here and
             // never will - this port's tray menu is a NATIVE menu the OS owns, which cannot be
             // dropped programmatically the way a WinForms ContextMenuStrip can.
+            // Shows a plain info toast through TrayApp.ShowToast, so placement can be checked with
+            // a `screenshot` and the "toast placed at" log line.
+            case "toast":
+                return TryGetString(request, "text", out string? toastText) && !string.IsNullOrWhiteSpace(toastText)
+                    ? null
+                    : "toast requires a non-empty \"text\"";
+
             case "tray":
                 return TryGetString(request, "action", out string? trayAction) && trayAction is "menu" or "closemenu"
                     ? null
@@ -512,6 +519,7 @@ internal sealed class AutomationServer
                 "settings" => HandleSettings(request),
                 "lastcapture" => HandleLastCapture(request),
                 "zoom" => HandleZoom(request),
+                "toast" => HandleToast(request),
                 "tray" => AutomationProtocol.BuildError(
                     "tray: this port's tray menu is a native menu the OS owns, so it cannot be opened programmatically"),
                 _ => AutomationProtocol.BuildError($"unknown command \"{cmd}\""), // unreachable, ValidateArgs already rejected it
@@ -692,6 +700,17 @@ internal sealed class AutomationServer
     /// rather than constructing a second window, so a `screenshot` command right after `settings
     /// open` captures the SAME window a real tray click would show. Independent of overlay/
     /// recording `mode` - the trailing state snapshot below reflects whatever `mode` already was.</summary>
+    /// <summary>Set by TrayApp when the pipe starts: shows an info toast with the given text.</summary>
+    internal static Action<string>? ShowToastHook;
+
+    private string HandleToast(JsonObject request)
+    {
+        string text = (string)request["text"]!;
+        if (ShowToastHook is not { } show) return AutomationProtocol.BuildError("toast: no toast host in this build");
+        InvokeOnUi<object?>(() => { show(text); return null; });
+        return AutomationProtocol.SerializeState(InvokeOnUi(GetStateSnapshot));
+    }
+
     private string HandleSettings(JsonObject request)
     {
         string action = (string)request["action"]!;

@@ -216,6 +216,7 @@ public sealed class TrayApp : ITrayNotifier
             _automationServer = new AutomationServer(
                 TriggerCapture, OpenSettingsForAutomation, CloseSettingsForAutomation,
                 CopyKeptCapture, SaveKeptCapture);
+            AutomationServer.ShowToastHook = text => ShowToast(text, isError: false, durationMs: 6000, onClick: null);
             _automationServer.Start();
         }
 
