@@ -469,6 +469,13 @@ public partial class OverlayWindow : Window
         Position = new PixelPoint(bounds.Left, bounds.Top);
         Width = bounds.Width / scale;
         Height = bounds.Height / scale;
+        if (OperatingSystem.IsLinux())
+        {
+            // GNOME/KDE keep a plain borderless topmost window out of the panel/dock struts, which
+            // shifts the frozen image down by the top bar's height; fullscreen on the monitor the
+            // window was positioned on covers the whole output.
+            WindowState = WindowState.FullScreen;
+        }
 
         PropagateDeviceScale();
         UpdateDimGeometry();
