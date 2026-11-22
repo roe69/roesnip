@@ -6,11 +6,11 @@ using Tmds.DBus;
 namespace RoeSnip.Platform.Linux;
 
 /// <summary>A kept-open org.freedesktop.portal.ScreenCast session (MONITOR sources, multiple,
-/// persist_mode=2) with one GStreamer pipeline per shared monitor. Process-wide per purpose:
-/// <see cref="Snapshot"/> (cursor hidden, every stream started at open, kept for the process life)
-/// and <see cref="Recording"/> (cursor embedded, streams started on demand, closed after a take).
-/// The restore token is saved per purpose so the share dialog appears once; a restore that still
-/// shows a dialog means the token was rejected (GNOME then saves a new one).
+/// persist_mode=2) with one GStreamer pipeline per shared monitor. One per process:
+/// <see cref="Snapshot"/> (cursor hidden, every stream started at open, kept for the process life),
+/// used by captures and recordings alike so the share dialog appears once ever (owner rule: a
+/// second session with its own token meant a second dialog). Its restore token is saved; a restore
+/// that still shows a dialog means the token was rejected (GNOME then saves a new one).
 ///
 /// Opening runs on a background task. Callers wait for it with a bound. The Screenshot portal is
 /// used only when the desktop cannot screencast at all (<see cref="State"/> Unsupported) and never
@@ -18,7 +18,6 @@ namespace RoeSnip.Platform.Linux;
 internal sealed class ScreenCastSession
 {
     public static readonly ScreenCastSession Snapshot = new("snapshot", ScreenCastPortal.CursorHidden, startAllStreams: true, needsPermission: true);
-    public static readonly ScreenCastSession Recording = new("recording", ScreenCastPortal.CursorEmbedded, startAllStreams: false, needsPermission: false);
 
     /// <summary>Why the snapshot session does not open: no saved token and the user has not pressed
     /// asked (a capture or Settings' "Allow instant capture"); the dialog never opens on its own.</summary>
@@ -56,6 +55,7 @@ internal sealed class ScreenCastSession
         _cursorMode = cursorMode;
         _startAllStreams = startAllStreams;
         _tokens = ScreenCastTokenStore.ForPurpose(purpose);
+        ScreenCastTokenStore.ForPurpose("recording").Save(null); // unused token file; deleting it never prompts
     }
 
     public static bool IsWaylandSession =>
@@ -230,7 +230,7 @@ internal sealed class ScreenCastSession
         }
     }
 
-    /// <summary>Closes the session (recording purpose after a take). The token stays saved.</summary>
+    /// <summary>Closes the session. The token stays saved.</summary>
     public void Close()
     {
         lock (_gate)

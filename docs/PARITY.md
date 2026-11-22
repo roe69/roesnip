@@ -1086,9 +1086,19 @@ existing WPF test suite is the proof.
       SpanningCanvasCompositor was NOT ported - recording itself is single-monitor-only in this port
       per item 20's own scope note (spanning recording is a separate, not-yet-landed track for BOTH
       apps' history), so there is nothing for a spanning selection to composite; Record on a spanning
-      selection surfaces an honest error instead of silently recording one monitor. (2) No native
-      save-file dialog - Save without an explicit path only succeeds via ROESNIP_RECORD_AUTOSAVE
-      (unchanged from item 20's own documented gap; a real Avalonia save dialog is future work). (3)
+      selection surfaces an honest error instead of silently recording one monitor. (2) Save dialog: DONE
+      (2026-11-23). Reviewing Save, PrtScr-in-Reviewing and the prompt's Save / Save as... open
+      Avalonia's StorageProvider save picker on the chrome window (Win32 dialog, xdg FileChooser
+      portal on Linux, NSSavePanel on macOS) with WPF PickSavePath's values: Settings' save folder,
+      roesnip_yyyyMMdd_HHmmss.mp4|.gif, one "MP4 video (*.mp4)" / "GIF image (*.gif)" type, the
+      extension added when typed without one (Recording/RecordingSaveNames.cs);
+      ROESNIP_RECORD_AUTOSAVE still skips it. Save moves the temp take, Save again copies it, as in
+      WPF. Deliberate deviations: the dialog opens BEFORE the hard stop, so Cancel leaves the take in
+      Reviewing, still Resumable (WPF discards the take on Cancel); a failed move keeps the temp take
+      and parks on the prompt with it; the chrome drops Topmost for the dialog instead of hiding.
+      Automation `chrome save|saveagain` honour an optional "path" (no dialog). Unit tests:
+      RecordingSaveNamesTests and the chrome-path ValidateArgs cases; the dialog itself is not
+      live-verified on any OS yet. (3)
       RegionOutline is Windows-only (see above).
       LIVE-VERIFIED on Windows (this machine, standalone `--automation` instance with
       ROESNIP_RECORD_AUTOSAVE set to a scratch dir, started and killed by this item's own session,
@@ -1928,9 +1938,9 @@ because a correct implementation needs live hardware this repo cannot exercise.
   passes a test encode in the order nvh264enc, vah264enc, vaapih264enc, x264enc, openh264enc ->
   h264parse -> mp4mux; AAC via fdkaacenc/avenc_aac/voaacenc/faac, else Opus), audio through
   pulsesrc (mic = default source, system = `@DEFAULT_MONITOR@`, audiomixer when both;
-  `GstAudioCaptureDevice.cs`), Wayland region frames cropped from a cursor-embedded recording
-  screencast (`screencast-recording.token`, closed at hard stop; falls back to the cursorless
-  snapshot session). RecordingCapabilities reports MP4/mic/loopback on Linux only when the
+  `GstAudioCaptureDevice.cs`), Wayland region frames cropped from the already-allowed snapshot
+  screencast (one share dialog ever; it hides the cursor, so Wayland recordings have none).
+  RecordingCapabilities reports MP4/mic/loopback on Linux only when the
   GStreamer elements exist. X11 recording uses the polled X11 source with the same encoder.
 - [ ] 29-macos-serve-recording (code landed, not yet built or run on a Mac): `scksnap serve`
   (`helpers/scksnap/Sources/Serve.swift`, length-prefixed protocol on stdin/stdout, mirrored by

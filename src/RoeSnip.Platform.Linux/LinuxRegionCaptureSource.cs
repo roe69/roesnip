@@ -8,9 +8,10 @@ namespace RoeSnip.Platform.Linux;
 
 /// <summary>Wayland recording source: crops frames straight out of a screencast stream on the
 /// <see cref="RecordingSchedule"/> cadence, emitting only when the stream delivered a new frame
-/// (same as WGC, which only fires on change). Uses the cursor-embedded
-/// <see cref="ScreenCastSession.Recording"/> session (closed again at Stop) and falls back to the
-/// cursorless snapshot session when that one cannot open.</summary>
+/// (same as WGC, which only fires on change). Uses the already-allowed
+/// <see cref="ScreenCastSession.Snapshot"/> session, so a recording never opens a second share
+/// dialog; that session hides the cursor, so recordings have none (cursor_mode METADATA would need
+/// a native PipeWire consumer: pipewiresrc does not pass the cursor meta on).</summary>
 public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
 {
     private static readonly TimeSpan OpenWait = TimeSpan.FromSeconds(10);
@@ -59,27 +60,26 @@ public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
     private string? TryAttach()
     {
         var monitors = X11Capturer.EnumerateMonitorsViaRandR();
-        string? lastWhy = null;
-        foreach (var session in new[] { ScreenCastSession.Recording, ScreenCastSession.Snapshot })
+        var live = ScreenCastSession.Snapshot.Acquire(OpenWait, out string reason);
+        if (live is null) return reason;
+        var geometry = live.StreamFor(_monitor, monitors);
+        if (geometry is null) return $"no stream for monitor {_monitor.DeviceName}";
+        var stream = live.GetStream(geometry.Value.NodeId);
+        if (stream is null || !stream.WaitForFirstSample(TimeSpan.FromSeconds(2)))
         {
-            var live = session.Acquire(OpenWait, out string reason);
-            if (live is null) { lastWhy = reason; continue; }
-            var geometry = live.StreamFor(_monitor, monitors);
-            if (geometry is null) { lastWhy = $"no stream for monitor {_monitor.DeviceName}"; continue; }
-            var stream = live.GetStream(geometry.Value.NodeId);
-            if (stream is null || !stream.WaitForFirstSample(TimeSpan.FromSeconds(2)))
-            {
-                lastWhy = $"stream node {geometry.Value.NodeId} delivered no frame";
-                continue;
-            }
-            _stream = stream;
-            FileLog.Write($"RoeSnip: recording from the {(ReferenceEquals(session, ScreenCastSession.Recording) ? "recording (cursor)" : "snapshot (no cursor)")} " +
-                $"screencast, node {geometry.Value.NodeId}, region {_width}x{_height} on {_monitor.DeviceName}");
-            return null;
+            return $"stream node {geometry.Value.NodeId} delivered no frame";
         }
-        ScreenCastSession.Recording.Close();
-        return lastWhy ?? "no screencast session";
+        _stream = stream;
+        if (Interlocked.Exchange(ref s_noCursorLogged, 1) == 0)
+        {
+            FileLog.Write("RoeSnip: recording without cursor: the shared screen hides it");
+        }
+        FileLog.Write($"RoeSnip: recording from the snapshot screencast, node {geometry.Value.NodeId}, " +
+            $"region {_width}x{_height} on {_monitor.DeviceName}");
+        return null;
     }
+
+    private static int s_noCursorLogged;
 
     private static long Pack(int left, int top) => ((long)left << 32) | (uint)top;
 
@@ -154,9 +154,6 @@ public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
         if (Interlocked.Exchange(ref _stopped, 1) != 0) return;
         _pump?.Join(TimeSpan.FromSeconds(2));
         _queue.Writer.TryComplete();
-        // Also when this take fell back to the snapshot session: a late answer to the share
-        // dialog may have opened the recording session after all.
-        ScreenCastSession.Recording.Close();
     }
 
     public void Dispose() => Stop();
