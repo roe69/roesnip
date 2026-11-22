@@ -112,7 +112,7 @@ internal static class ToastAnchor
 #if LINUX_BACKEND
             else if (OperatingSystem.IsLinux())
             {
-                bool wayland = RoeSnip.Platform.Linux.ScreenCastSession.IsWaylandSession;
+                bool wayland = string.Equals(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland", StringComparison.OrdinalIgnoreCase);
                 if (wayland && _lastPointer is { } seen)
                 {
                     source = "last-known";
