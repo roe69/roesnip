@@ -17,6 +17,11 @@ public sealed record RoeSnipSettings
     public bool CopyOnSelect { get; init; } = false;
     public bool PrintScreenPromptAnswered { get; init; } = false; // Windows-only meaning; harmless elsewhere
     public bool WaylandHotkeyNoticeShown { get; init; } = false; // Wayland-only meaning; harmless elsewhere
+
+    /// <summary>GNOME only: org.gnome.shell.keybindings keys RoeSnip cleared so the capture hotkey
+    /// reaches it, mapped to their original gsettings value text (e.g. "['Print']"). Written back
+    /// when the hotkey moves off that key.</summary>
+    public Dictionary<string, string> GnomeShellKeybindingBackup { get; init; } = new();
     public bool ColorPickerEnabled { get; init; } = false;        // false => no click-to-pick, no ColorPickerWindow, no loupe colour codes
 
     /// <summary>The overlay's Copy and Upload shortcuts, same MOD_*/virtual-key shape as the

@@ -1391,7 +1391,13 @@ because a correct implementation needs live hardware this repo cannot exercise.
   a hotkey change); without the portal, GNOME gets a gsettings custom keybinding `roesnip`
   running `<exe> capture` when no other custom entry uses the key. The desktop owns the final
   trigger (it may show a consent dialog or reassign the key). The one-time toast and Settings
-  caption remain for desktops where neither works. Not yet verified on a live Wayland session.
+  caption remain for desktops where neither works. GNOME 50 live: CreateSession works, but a
+  BindShortcuts for bare Print never answered because gnome-shell's show-screenshot-ui holds it;
+  AppShell/GnomePrintScreenTakeover.cs is the analogue of the Windows Snipping Tool consent
+  (asked once via PrintScreenPromptAnswered, Yes clears only the conflicting
+  org.gnome.shell.keybindings accelerator with a backup in GnomeShellKeybindingBackup, No
+  switches to Ctrl+PrintScreen), and a key GNOME still holds is never sent to the portal. A bind
+  with no answer in 30 s falls back to the GNOME custom keybinding.
 - Instant-dim window parking on Wayland: clients cannot position windows, so the parked
   flash/overlay pool cannot exist there; Linux gets the warmup slice (item 17) only, and
   full-pool tuning needs a live Linux machine (tracked in PLAN-XPLAT.md section 7).

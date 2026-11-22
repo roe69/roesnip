@@ -69,7 +69,7 @@ public sealed class LinuxGlobalShortcuts : IDisposable
     private static readonly ObjectPath PortalPath = new("/org/freedesktop/portal/desktop");
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan SessionTimeout = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan BindTimeout = TimeSpan.FromMinutes(2); // a consent dialog may be up
+    private static readonly TimeSpan BindTimeout = TimeSpan.FromSeconds(30); // a consent dialog may be up
 
     private readonly Action _onActivated;
     private readonly object _gate = new();
@@ -158,12 +158,63 @@ public sealed class LinuxGlobalShortcuts : IDisposable
                     return;
                 }
 
+                // gnome-shell keeps its own grab, so a portal bind for that key never answers.
+                if (GnomeShellHolder(modifiers, virtualKey) is string held)
+                {
+                    FileLog.Write(
+                        $"RoeSnip: GNOME still binds {trigger} to {held}; not asking the portal for it " +
+                        "(allow the PrintScreen takeover or pick another hotkey).");
+                    _requestedTrigger = null;
+                    _bindChain = _bindChain.ContinueWith(_ => CloseSessionAsync(), TaskScheduler.Default).Unwrap();
+                    SetActive(false);
+                    return;
+                }
+
                 _requestedTrigger = trigger;
-                _bindChain = _bindChain.ContinueWith(_ => BindPortalAsync(trigger), TaskScheduler.Default).Unwrap();
+                _bindChain = _bindChain
+                    .ContinueWith(_ => BindPortalAsync(trigger, modifiers, virtualKey), TaskScheduler.Default).Unwrap();
             }
         }
         else if (Kind is Mechanism.GnomeKeybinding or Mechanism.UserShortcut)
         {
+            ApplyGnomeKeybinding(modifiers, virtualKey);
+        }
+    }
+
+    /// <summary>The org.gnome.shell.keybindings key(s) holding this hotkey, or null.</summary>
+    private static string? GnomeShellHolder(uint modifiers, uint virtualKey)
+    {
+        if (!IsGnome())
+        {
+            return null;
+        }
+
+        var held = new GnomePrintScreenTakeover().Detect(modifiers, virtualKey);
+        return held.Count == 0 ? null : string.Join(", ", held.Keys);
+    }
+
+    /// <summary>The portal never answered: drop its session (so a late bind cannot double-fire)
+    /// and use the GNOME custom keybinding route instead.</summary>
+    private async Task FallBackToGnomeAsync(uint modifiers, uint virtualKey, string why)
+    {
+        await CloseSessionAsync().ConfigureAwait(false);
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!IsGnome())
+        {
+            FileLog.Write($"RoeSnip: {why}; no fallback outside GNOME.");
+            SetActive(false);
+            return;
+        }
+
+        FileLog.Write($"RoeSnip: {why}; falling back to a GNOME custom keybinding.");
+        lock (_gate)
+        {
+            Kind = Mechanism.GnomeKeybinding;
+            _requestedTrigger = null;
             ApplyGnomeKeybinding(modifiers, virtualKey);
         }
     }
@@ -218,7 +269,7 @@ public sealed class LinuxGlobalShortcuts : IDisposable
         _onActivated();
     }
 
-    private async Task BindPortalAsync(string trigger)
+    private async Task BindPortalAsync(string trigger, uint modifiers, uint virtualKey)
     {
         var connection = _connection;
         var portal = _portal;
@@ -271,6 +322,10 @@ public sealed class LinuxGlobalShortcuts : IDisposable
                 $"RoeSnip: GlobalShortcuts bound 'capture' (preferred {trigger}, desktop shows '{description ?? "(none)"}').");
             SetActive(true);
         }
+        catch (TimeoutException ex)
+        {
+            await FallBackToGnomeAsync(modifiers, virtualKey, ex.Message).ConfigureAwait(false);
+        }
         catch (Exception ex)
         {
             FileLog.Write($"RoeSnip: GlobalShortcuts bind failed: {ex.GetBaseException().Message}");
@@ -280,7 +335,7 @@ public sealed class LinuxGlobalShortcuts : IDisposable
 
     /// <summary>Calls a portal method that answers through a Request object's Response signal:
     /// subscribes to the token-predicted path first so the signal cannot be missed. Returns the
-    /// results, or null after logging a refusal or timeout.</summary>
+    /// results, null after logging a refusal, or throws TimeoutException on no answer.</summary>
     private async Task<IDictionary<string, object>?> RequestAsync(
         Connection connection, Func<string, Task<ObjectPath>> call, TimeSpan timeout)
     {
@@ -307,8 +362,7 @@ public sealed class LinuxGlobalShortcuts : IDisposable
 
             if (await Task.WhenAny(response.Task, Task.Delay(timeout)).ConfigureAwait(false) != response.Task)
             {
-                FileLog.Write($"RoeSnip: GlobalShortcuts request got no answer within {timeout.TotalSeconds:F0}s.");
-                return null;
+                throw new TimeoutException($"GlobalShortcuts request got no answer within {timeout.TotalSeconds:F0}s");
             }
 
             var (code, results) = await response.Task.ConfigureAwait(false);
@@ -385,6 +439,14 @@ public sealed class LinuxGlobalShortcuts : IDisposable
 
     private void ApplyGnomeKeybinding(uint modifiers, uint virtualKey)
     {
+        lock (_gate) // also reached from the portal fallback on a pool thread
+        {
+            ApplyGnomeKeybindingCore(modifiers, virtualKey);
+        }
+    }
+
+    private void ApplyGnomeKeybindingCore(uint modifiers, uint virtualKey)
+    {
         string? accel = LinuxShortcutFormat.ToGtkAccelerator(modifiers, virtualKey);
         if (accel is null)
         {
@@ -396,6 +458,14 @@ public sealed class LinuxGlobalShortcuts : IDisposable
         if (_active && accel == _gnomeAccel)
         {
             return; // Register runs on every Settings close; skip the gsettings round trips
+        }
+
+        if (GnomeShellHolder(modifiers, virtualKey) is string held)
+        {
+            FileLog.Write($"RoeSnip: GNOME still binds {accel} to {held}; not adding the RoeSnip keybinding.");
+            _gnomeAccel = null;
+            SetActive(false);
+            return;
         }
 
         string? appImage = Environment.GetEnvironmentVariable("APPIMAGE");
@@ -463,55 +533,9 @@ public sealed class LinuxGlobalShortcuts : IDisposable
     private static string? FirstString(string? gvariant) =>
         LinuxShortcutFormat.ParseStringArray(gvariant).FirstOrDefault();
 
-    private static bool IsGnome() =>
-        (Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP") ?? "")
-            .Split(':').Any(d => string.Equals(d, "GNOME", StringComparison.OrdinalIgnoreCase));
+    private static bool IsGnome() => GnomePrintScreenTakeover.IsGnomeSession();
 
-    /// <summary>Runs gsettings; stdout (trimmed) on exit 0, else null.</summary>
-    private static string? Gsettings(params string[] args)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo("gsettings")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (string arg in args)
-            {
-                psi.ArgumentList.Add(arg);
-            }
-
-            using var process = Process.Start(psi);
-            if (process is null)
-            {
-                return null;
-            }
-
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(3000))
-            {
-                try { process.Kill(); } catch { /* already gone */ }
-                return null;
-            }
-
-            if (process.ExitCode != 0)
-            {
-                FileLog.Write($"RoeSnip: gsettings {args[0]} {args[1]} failed: {stderr.Result.Trim()}");
-                return null;
-            }
-
-            return stdout.Result.Trim();
-        }
-        catch (Exception ex)
-        {
-            FileLog.Write($"RoeSnip: gsettings unavailable: {ex.Message}");
-            return null;
-        }
-    }
+    private static string? Gsettings(params string[] args) => GnomePrintScreenTakeover.RunGsettings(args);
 
     private void SetActive(bool active)
     {

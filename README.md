@@ -112,7 +112,11 @@ Hyprland); the desktop may ask once to allow it and has the final say on the
 key. Changing the hotkey in Settings re-binds it. Without that portal, on
 GNOME RoeSnip adds a custom keybinding `roesnip` that runs
 `<RoeSnip or $APPIMAGE> capture`, unless another custom shortcut already uses
-that key. Elsewhere, or when the desktop refuses, RoeSnip shows a one-time
+that key. gnome-shell grabs Print, Shift+Print and Alt+Print for its own
+screenshot tool, so with a PrintScreen hotkey RoeSnip asks once whether to
+clear GNOME's binding for that key (restored when the hotkey moves off it);
+"No" switches RoeSnip to Ctrl+PrintScreen. A key GNOME still holds is never
+sent to the portal. Elsewhere, or when the desktop refuses, RoeSnip shows a one-time
 notice; bind a desktop shortcut to the `RoeSnip capture` CLI verb by hand:
 
 - **GNOME:** Settings - Keyboard - View and Customize Shortcuts - Custom
