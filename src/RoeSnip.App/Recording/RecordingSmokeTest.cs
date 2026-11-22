@@ -32,7 +32,7 @@ internal static class RecordingSmokeTest
 
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ROESNIP_RECORD_AUTOSAVE")))
         {
-            FileLog.Write("RoeSnip: --record-smoketest requires ROESNIP_RECORD_AUTOSAVE to be set (this port has no save-file dialog yet).");
+            FileLog.Write("RoeSnip: --record-smoketest requires ROESNIP_RECORD_AUTOSAVE to be set (it saves without the save dialog).");
             return 1;
         }
 

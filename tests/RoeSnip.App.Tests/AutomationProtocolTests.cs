@@ -207,6 +207,25 @@ public class AutomationProtocolTests
         Assert.NotNull(AutomationProtocol.ValidateArgs("chrome", request));
     }
 
+    [Theory]
+    [InlineData("save")]
+    [InlineData("saveagain")]
+    public void ValidateArgs_Chrome_SaveAcceptsAnExplicitPath(string action)
+    {
+        var request = AutomationProtocol.TryParseRequest($"{{\"cmd\":\"chrome\",\"action\":\"{action}\",\"path\":\"/tmp/take.mp4\"}}", out _)!;
+        Assert.Null(AutomationProtocol.ValidateArgs("chrome", request));
+    }
+
+    [Theory]
+    [InlineData("{\"cmd\":\"chrome\",\"action\":\"save\",\"path\":\"\"}")]
+    [InlineData("{\"cmd\":\"chrome\",\"action\":\"save\",\"path\":5}")]
+    [InlineData("{\"cmd\":\"chrome\",\"action\":\"start\",\"path\":\"/tmp/take.mp4\"}")]
+    public void ValidateArgs_Chrome_RejectsABadOrMisplacedPath(string json)
+    {
+        var request = AutomationProtocol.TryParseRequest(json, out _)!;
+        Assert.NotNull(AutomationProtocol.ValidateArgs("chrome", request));
+    }
+
     [Fact]
     public void ValidateArgs_Screenshot_RequiresNonEmptyPath()
     {

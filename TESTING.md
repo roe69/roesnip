@@ -805,10 +805,13 @@ Live, same wire shape as the WPF app's own protocol section above (`mode` become
 - **`preset`** / **`fps`** — Setup-only, same tier/range validation as the WPF wire contract.
 - **`chrome`** — `{"cmd":"chrome","action":"start"}` (also `stop`/`pause`/`resume`/`save`/`share`/
   `cancel`). Drives the exact same button handler a real chrome click would; an action invalid for
-  the current phase errors instead of silently no-opping. `save` with no explicit path (this port
-  has no save-file dialog) only succeeds when `ROESNIP_RECORD_AUTOSAVE` is set on the resident's own
-  environment — otherwise the take stays in `reviewing` and the failure is logged to stderr, never
-  silently swallowed. `share` with no configured provider is a fail-closed no-op (the take stays
+  the current phase errors instead of silently no-opping. `save` and `saveagain` take an optional
+  `"path"` (`{"cmd":"chrome","action":"save","path":"/tmp/take.mp4"}`): the take is written there
+  with no dialog, and a failed write comes back `ok:false` (the take is kept). Without `path` they
+  click the real button, which opens the save dialog (Avalonia StorageProvider: Win32 dialog, xdg
+  FileChooser portal, NSSavePanel) unless `ROESNIP_RECORD_AUTOSAVE` is set on the resident. Cancel
+  in the dialog leaves the take in `reviewing` (log: `recording save dialog cancelled; the take
+  stays in review`); `save` while the dialog is open errors. `share` with no configured provider is a fail-closed no-op (the take stays
   exactly as it was, still soft-stopped, still Resumable) — see RecordingOrchestrator.RequestShare's
   own doc comment for the full contract (ported verbatim from the WPF reference's 422e87a fix).
 - **`select`** while a recording is active moves/resizes the (Windows-only) RegionOutline instead of

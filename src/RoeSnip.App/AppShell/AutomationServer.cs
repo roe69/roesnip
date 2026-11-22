@@ -165,11 +165,25 @@ public static class AutomationProtocol
                 return null;
 
             case "chrome":
-                return TryGetString(request, "action", out string? action)
-                       && action is "start" or "stop" or "save" or "share" or "copy" or "cancel"
-                           or "pause" or "resume" or "another" or "done" or "copyagain" or "saveagain" or "retryupload"
-                    ? null
-                    : "chrome requires \"action\": one of start|stop|save|share|copy|cancel|pause|resume|another|done|copyagain|saveagain|retryupload";
+                if (!(TryGetString(request, "action", out string? action)
+                      && action is "start" or "stop" or "save" or "share" or "copy" or "cancel"
+                          or "pause" or "resume" or "another" or "done" or "copyagain" or "saveagain" or "retryupload"))
+                {
+                    return "chrome requires \"action\": one of start|stop|save|share|copy|cancel|pause|resume|another|done|copyagain|saveagain|retryupload";
+                }
+                // Optional "path" on save/saveagain writes there without the save dialog.
+                if (request["path"] is not null)
+                {
+                    if (action is not ("save" or "saveagain"))
+                    {
+                        return "chrome \"path\" is only valid with \"save\" or \"saveagain\"";
+                    }
+                    if (!TryGetString(request, "path", out string? chromePath) || string.IsNullOrWhiteSpace(chromePath))
+                    {
+                        return "chrome \"path\" must be a non-empty string";
+                    }
+                }
+                return null;
 
             case "screenshot":
                 if (!TryGetString(request, "path", out string? path) || string.IsNullOrWhiteSpace(path))
@@ -608,9 +622,10 @@ internal sealed class AutomationServer
     private string HandleChrome(JsonObject request)
     {
         string action = (string)request["action"]!;
+        string? path = request["path"] is JsonValue pv && pv.TryGetValue(out string? p) ? p : null;
 
         string? error = InvokeOnUi<string?>(() => RecordingOrchestrator.IsActive
-            ? RecordingOrchestrator.InvokeChromeAction(action)
+            ? RecordingOrchestrator.InvokeChromeAction(action, path)
             : $"chrome \"{action}\" requires an active recording session");
         return error is not null
             ? AutomationProtocol.BuildError(error)

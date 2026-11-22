@@ -73,6 +73,8 @@ public sealed class RecordingOrchestrator
     // Reentrancy guard for the finished-take prompt's own Save: the picker is awaited, so a second
     // click (or automation call) would otherwise open a second one over the first.
     private bool _resavingFinishedTake;
+    // Same guard for the Reviewing-state Save's picker (a PrtScr press while it is open lands in Save).
+    private bool _pickingSavePath;
     // The latest shared take's upload and the prompt generation it belongs to (Retry upload).
     private RoeSnip.App.Sharing.ShareFlowPresenter.ShareUpload? _takeUpload;
     private int _takeUploadGeneration;
@@ -198,18 +200,49 @@ public sealed class RecordingOrchestrator
         IdleMemoryTrimmer.Schedule();
     }
 
-    /// <summary>Chrome's Save button (item 21e - no native save-file dialog yet, same documented gap
-    /// RecordingSession.Save's own doc comment already carries; ROESNIP_RECORD_AUTOSAVE is the only
-    /// way this port can save outside automation's explicit-path route).</summary>
+    /// <summary>Reviewing-state Save (chrome button, PrtScr): the save dialog picks the path
+    /// (automation's explicit path calls RecordingSession.Save directly). The take stays soft-stopped
+    /// while the dialog is open, so Cancel leaves it in review, still Resumable - never discarded.</summary>
     private void Save()
     {
-        string? path = _session.Save();
-        if (path is null && !_session.IsReviewing)
+        if (!_session.IsReviewing || _pickingSavePath)
         {
-            // Save() already reported (balloon) and tore the session down itself on a real failure;
-            // a null result while still Reviewing means "no path available" (ROESNIP_RECORD_AUTOSAVE
-            // unset, no automation path) - RecordingSession.SaveOutput already logs that to stderr.
+            return;
         }
+        _pickingSavePath = true;
+        _ = SaveWithPickerAsync();
+    }
+
+    private async Task SaveWithPickerAsync()
+    {
+        string? target;
+        try
+        {
+            target = await PickSavePathAsync();
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: the recording save dialog failed: {ex}");
+            _notifier?.ShowError($"Could not open the save dialog: {ex.Message} The take is still in review.");
+            return;
+        }
+        finally
+        {
+            _pickingSavePath = false;
+        }
+
+        if (target is null)
+        {
+            FileLog.Write("RoeSnip: recording save dialog cancelled; the take stays in review");
+            return;
+        }
+        if (!_session.IsReviewing)
+        {
+            // Resumed, shared, copied or cancelled while the dialog was open: that action won.
+            FileLog.Write("RoeSnip: recording left review while the save dialog was open; not saved");
+            return;
+        }
+        _session.Save(target);
     }
 
     /// <summary>Reviewing-state Share (item 21e). The provider is resolved FIRST from a FRESH
@@ -314,7 +347,7 @@ public sealed class RecordingOrchestrator
     /// Copy again hands to the clipboard (and, after a plain Save, is already the user's own file),
     /// so moving it would break the other button and could strand a clipboard entry pointing at
     /// nothing. A cancelled picker leaves the prompt exactly as it was.</summary>
-    private void SaveFinishedTakeCopy()
+    private void SaveFinishedTakeCopy(string? explicitPath = null)
     {
         if (!_session.AwaitingAnotherTakeChoice || _resavingFinishedTake
             || _session.FinishedTakePath is not { } path)
@@ -328,20 +361,28 @@ public sealed class RecordingOrchestrator
         }
 
         _resavingFinishedTake = true;
-        _ = SaveFinishedTakeCopyAsync(path);
+        _ = SaveFinishedTakeCopyAsync(path, explicitPath);
     }
 
-    private async Task SaveFinishedTakeCopyAsync(string path)
+    private async Task SaveFinishedTakeCopyAsync(string path, string? explicitPath)
     {
         try
         {
-            string? target = await PickSavePathAsync(Path.GetExtension(path));
+            string? target = explicitPath ?? await PickSavePathAsync();
             if (target is null)
             {
+                FileLog.Write("RoeSnip: recording save dialog cancelled; the finished take is untouched");
                 return; // cancelled - the take is untouched and the prompt is still up
             }
 
-            File.Copy(path, target, overwrite: true);
+            target = Path.GetFullPath(target);
+            var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            if (!string.Equals(target, Path.GetFullPath(path), cmp)) // Copy onto itself throws
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(path, target, overwrite: true);
+            }
+            FileLog.Write($"RoeSnip: finished recording saved again to {target}");
             _notifier?.ShowSavedBalloon(target);
             _chrome.ShowDonePrompt($"Saved {Path.GetFileName(target)}. Record another from this area?",
                 takeAvailable: _session.FinishedTakePath is not null, uploadFailed: _session.UploadFailed);
@@ -357,14 +398,20 @@ public sealed class RecordingOrchestrator
         }
     }
 
-    /// <summary>Avalonia's own save picker, built the same way OverlayController.TryPickSavePathAsync
-    /// builds the screenshot one (same suggested directory, same overwrite prompt). Note this does
-    /// NOT close item 21e: RecordingSession.SaveOutput still has no dialog, so the Reviewing-state
-    /// Save button stays ROESNIP_RECORD_AUTOSAVE-only. The prompt's Save can have one because it
-    /// only copies an already-finished file instead of finalizing a live take.</summary>
-    private async Task<string?> PickSavePathAsync(string extension)
+    /// <summary>The save dialog for both the Reviewing Save and the prompt's Save (WPF PickSavePath):
+    /// StorageProvider of the chrome window (Win32 dialog, the xdg FileChooser portal on Linux,
+    /// NSSavePanel on macOS), starting in Settings' save folder, roesnip_yyyyMMdd_HHmmss named for
+    /// this session's format, one .mp4 or .gif type. ROESNIP_RECORD_AUTOSAVE skips the dialog.
+    /// Returns null on Cancel.</summary>
+    private async Task<string?> PickSavePathAsync()
     {
-        string ext = extension.TrimStart('.');
+        var format = _session.Format;
+        if (RecordingSaveNames.AutosavePath(format, DateTime.Now) is { } autosave)
+        {
+            return autosave;
+        }
+
+        string ext = RecordingSaveNames.Extension(format).TrimStart('.');
         var settings = SettingsStore.Load();
         try
         {
@@ -385,15 +432,43 @@ public sealed class RecordingOrchestrator
             // A missing/inaccessible start folder just means the picker opens at its default.
         }
 
-        var file = await _chrome.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        // The chrome is topmost and would sit over the dialog (WPF hides it for the same reason); it
+        // stays shown so it remains a valid dialog parent.
+        bool wasTopmost = _chrome.Topmost;
+        _chrome.Topmost = false;
+        IStorageFile? file;
+        try
         {
-            SuggestedStartLocation = startLocation,
-            SuggestedFileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}",
-            DefaultExtension = ext,
-            ShowOverwritePrompt = true,
-        });
+            file = await _chrome.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Save recording",
+                SuggestedStartLocation = startLocation,
+                SuggestedFileName = RecordingSaveNames.SuggestedFileName(format, DateTime.Now),
+                DefaultExtension = ext,
+                FileTypeChoices = new[] { RecordingSaveNames.FileType(format) },
+                ShowOverwritePrompt = true,
+            });
+        }
+        finally
+        {
+            _chrome.Topmost = wasTopmost;
+        }
 
-        return file?.TryGetLocalPath();
+        if (file is null)
+        {
+            return null;
+        }
+        string? local = file.TryGetLocalPath();
+        Uri chosen = file.Path;
+        file.Dispose();
+        if (local is null)
+        {
+            // Not a plain file path (a portal/document URI): treat as not chosen, the take is kept.
+            FileLog.Write($"RoeSnip: the save dialog returned a location with no local path ({chosen}); not saved");
+            _notifier?.ShowError("Recording not saved: pick a folder on this computer.");
+            return null;
+        }
+        return RecordingSaveNames.EnsureExtension(local, format);
     }
 
     private void RequestShare()
@@ -611,7 +686,7 @@ public sealed class RecordingOrchestrator
     /// <summary>AutomationServer's `chrome`/`escape` commands - drives the same handler a real chrome
     /// button click would, after rejecting an action that button isn't valid for right now as an
     /// explicit error instead of the silent no-op a disabled button would give.</summary>
-    public static string? InvokeChromeAction(string action)
+    public static string? InvokeChromeAction(string action, string? path = null)
     {
         var active = s_active;
         if (active is null)
@@ -639,8 +714,15 @@ public sealed class RecordingOrchestrator
                 return null;
             case "save":
                 if (!s.IsReviewing) return "cannot save while recording is not Reviewing";
-                active._chrome.InvokeSave();
-                return null;
+                if (active._pickingSavePath) return "cannot save: the save dialog is already open";
+                if (path is null)
+                {
+                    active._chrome.InvokeSave(); // the real button: opens the save dialog
+                    return null;
+                }
+                // An explicit path writes there without a dialog; a failed move is reported here
+                // (the take is kept and parks on the prompt).
+                return active._session.Save(path) is null ? $"saving to \"{path}\" failed; see the log" : null;
             case "share":
                 if (!s.IsReviewing) return "cannot share while recording is not Reviewing";
                 active._chrome.InvokeShare();
@@ -658,7 +740,14 @@ public sealed class RecordingOrchestrator
                 if (!s.AwaitingAnotherTakeChoice) return "cannot save again: no finished take is waiting on a choice";
                 if (s.FinishedTakePath is null) return "cannot save again: this take has no file left to save";
                 if (active._resavingFinishedTake) return "cannot save again: a save is already in progress";
-                active._chrome.InvokeSaveAgain();
+                if (path is null)
+                {
+                    active._chrome.InvokeSaveAgain();
+                }
+                else
+                {
+                    active.SaveFinishedTakeCopy(path); // no dialog; the copy runs on this UI turn
+                }
                 return null;
             case "retryupload":
                 if (!s.AwaitingAnotherTakeChoice || !s.UploadFailed) return "cannot retry upload: no failed upload is waiting on a choice";

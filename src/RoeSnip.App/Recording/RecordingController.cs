@@ -78,9 +78,9 @@ public sealed record RecordingShareHandoff(string TempPath, RecordingFormat Form
 ///               (GIF everywhere, MP4 where RoeSnip.Core.Recording.RecordingCapabilitiesRegistry
 ///               reports support) are live, drained by a dedicated encoder thread. StopCaptureToReview
 ///               or Restart end this phase.
-///   Reviewing - the take is fully encoded to its temp file. Save() finalizes it (File.Move, honoring
-///               the ROESNIP_RECORD_AUTOSAVE test hook - item 21 wires a real save-file dialog for the
-///               non-autosave path); CancelAndDiscard() discards it and closes the whole session.
+///   Reviewing - the take is fully encoded to its temp file. Save(path) finalizes it (File.Move to the
+///               path RecordingOrchestrator's save dialog picked, automation's explicit path, or the
+///               ROESNIP_RECORD_AUTOSAVE test hook); CancelAndDiscard() discards it and closes the whole session.
 /// No chrome/outline UI exists in this item - <see cref="RecordingController.StartNew"/> plus this
 /// class's own public methods ARE the "temporary internal start/stop hook for testing" item 20's
 /// brief calls for; item 21 wires real UI buttons onto these same methods with no shape change.</summary>
@@ -513,21 +513,23 @@ public sealed class RecordingSession
         SetPhase(Phase.Reviewing);
     }
 
-    /// <summary>Chrome's Save button (or the smoke-test hook) - only valid once a take has actually
-    /// been stopped into review. Hard-stops the still-alive pipeline, finalizes/moves the temp file
-    /// to a real path, then - on a successful save - returns to Setup with the same region so
-    /// another take can be recorded immediately (<paramref name="rearmAfterSave"/> = true, the
-    /// default); every other outcome tears the session down. <paramref name="explicitTargetPath"/>
-    /// lets a caller with a real save-file dialog (item 21) supply the chosen path directly; with it
-    /// null, this falls back to the ROESNIP_RECORD_AUTOSAVE test hook (see
-    /// <see cref="SaveOutput"/>'s own doc comment) - this port has no native save dialog of its own
-    /// yet, so a caller with neither returns null (a documented "not saved" result, not an
-    /// exception).</summary>
+    /// <summary>Chrome's Save (after RecordingOrchestrator's save dialog), automation's explicit
+    /// path, or the smoke test's ROESNIP_RECORD_AUTOSAVE. Only valid in Reviewing. With no path at
+    /// all this returns null BEFORE the hard stop, so the take stays soft-stopped and Resumable.
+    /// Otherwise hard-stops, moves the temp take to the target and parks on the "Record another?"
+    /// prompt. A failed move keeps the temp take (never deleted here) and parks on the prompt with
+    /// it, so Save / Show in folder can still reach it.</summary>
     public string? Save(string? explicitTargetPath = null, bool rearmAfterSave = true)
     {
         if (_phase != Phase.Reviewing || _saving)
         {
             return null; // same reentrancy reasoning as the WPF app's own SaveAndFinish guard
+        }
+        string? target = explicitTargetPath ?? RecordingSaveNames.AutosavePath(_format, DateTime.Now);
+        if (target is null)
+        {
+            FileLog.Write("RoeSnip: recording save requested with no path and no ROESNIP_RECORD_AUTOSAVE set; the take stays in review.");
+            return null;
         }
         _saving = true;
 
@@ -540,65 +542,32 @@ public sealed class RecordingSession
             return null;
         }
 
-        string? finalPath = null;
+        string tempPath = _tempPath!;
+        string finalPath;
         try
         {
-            finalPath = SaveOutput(explicitTargetPath);
+            finalPath = Path.GetFullPath(target);
+            Directory.CreateDirectory(Path.GetDirectoryName(finalPath)!);
+            File.Move(tempPath, finalPath, overwrite: true);
         }
         catch (Exception ex)
         {
-            _notifier?.ShowError($"Failed to save recording: {ex.Message}");
-            finalPath = null;
-        }
-        finally
-        {
-            if (finalPath is null)
-            {
-                CleanupTempFile();
-            }
             _saving = false;
+            FileLog.Write($"RoeSnip: saving the recording to {target} failed, the take is kept at {tempPath}: {ex}");
+            _notifier?.ShowError($"Failed to save recording: {ex.Message} It is kept at {tempPath}");
+            AwaitAnotherTakeChoice($"Save failed: {ex.Message} The take is kept.", File.Exists(tempPath) ? tempPath : null);
+            return null;
         }
+        _saving = false;
+        FileLog.Write($"RoeSnip: recording saved to {finalPath}");
 
-        if (finalPath is not null && rearmAfterSave)
+        if (rearmAfterSave)
         {
             _notifier?.ShowSavedBalloon(finalPath);
             AwaitAnotherTakeChoice($"Saved {Path.GetFileName(finalPath)}. Record another from this area?", finalPath);
             return finalPath;
         }
-
         TeardownSession(finalPath, encoderAbandoned: false);
-        return finalPath;
-    }
-
-    /// <summary>Test hook: when <paramref name="explicitTargetPath"/> is null and
-    /// ROESNIP_RECORD_AUTOSAVE is set, saves straight there instead of needing a native save dialog -
-    /// this is how the automated smoke/verify harness (and item 21's own automation commands) drive
-    /// Record without UIA against a native Win32 file-picker. Returns null when neither an explicit
-    /// path nor the env var is available - this port has no save-file dialog of its own (item 21).</summary>
-    private string? SaveOutput(string? explicitTargetPath)
-    {
-        string finalPath;
-        if (explicitTargetPath is not null)
-        {
-            finalPath = explicitTargetPath;
-            Directory.CreateDirectory(Path.GetDirectoryName(finalPath) is { Length: > 0 } dir ? dir : ".");
-        }
-        else
-        {
-            string ext = _format == RecordingFormat.Mp4 ? ".mp4" : ".gif";
-            string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}{ext}";
-            string? autosaveDir = Environment.GetEnvironmentVariable("ROESNIP_RECORD_AUTOSAVE");
-            if (string.IsNullOrEmpty(autosaveDir))
-            {
-                FileLog.Write(
-                    "RoeSnip: recording save requested with no explicit path and no ROESNIP_RECORD_AUTOSAVE set - this port has no save-file dialog yet (item 21).");
-                return null;
-            }
-            Directory.CreateDirectory(autosaveDir);
-            finalPath = Path.Combine(autosaveDir, fileName);
-        }
-
-        File.Move(_tempPath!, finalPath, overwrite: true);
         return finalPath;
     }
 
