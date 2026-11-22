@@ -10,8 +10,9 @@ namespace RoeSnip.Platform.Linux;
 /// <see cref="RecordingSchedule"/> cadence, emitting only when the stream delivered a new frame
 /// (same as WGC, which only fires on change). Uses the already-allowed
 /// <see cref="ScreenCastSession.Snapshot"/> session, so a recording never opens a second share
-/// dialog; that session hides the cursor, so recordings have none (cursor_mode METADATA would need
-/// a native PipeWire consumer: pipewiresrc does not pass the cursor meta on).</summary>
+/// dialog. Its pixels have no cursor, so the sprite from the session's cursor metadata
+/// (<see cref="PipeWireCursorReader"/>) is drawn into each frame; a cursor-only move emits a frame
+/// too. Without cursor metadata recordings have no cursor.</summary>
 public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
 {
     private static readonly TimeSpan OpenWait = TimeSpan.FromSeconds(10);
@@ -70,16 +71,16 @@ public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
             return $"stream node {geometry.Value.NodeId} delivered no frame";
         }
         _stream = stream;
-        if (Interlocked.Exchange(ref s_noCursorLogged, 1) == 0)
-        {
-            FileLog.Write("RoeSnip: recording without cursor: the shared screen hides it");
-        }
+        _live = live;
+        _nodeId = geometry.Value.NodeId;
         FileLog.Write($"RoeSnip: recording from the snapshot screencast, node {geometry.Value.NodeId}, " +
-            $"region {_width}x{_height} on {_monitor.DeviceName}");
+            $"region {_width}x{_height} on {_monitor.DeviceName}, " +
+            (live.Cursor is not null ? "cursor from screencast metadata" : "without cursor (no screencast cursor metadata)"));
         return null;
     }
 
-    private static int s_noCursorLogged;
+    private ScreenCastSession.Live? _live;
+    private uint _nodeId;
 
     private static long Pack(int left, int top) => ((long)left << 32) | (uint)top;
 
@@ -104,6 +105,7 @@ public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
         int pollMs = Math.Clamp(250 / Math.Max(1, _targetFps), 2, 50);
         long lastSequence = -1;
         long lastPacked = long.MinValue;
+        PipeWireCursorReader.State? lastCursor = null;
         try
         {
             while (Volatile.Read(ref _stopped) == 0)
@@ -113,7 +115,8 @@ public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
                     throw new InvalidOperationException("screencast stream stopped: " + stream.DeadReason);
                 }
                 long packed = Volatile.Read(ref _originPacked);
-                if (Paused || (stream.Sequence == lastSequence && packed == lastPacked))
+                var cursor = _live?.Cursor?.Get(_nodeId);
+                if (Paused || (stream.Sequence == lastSequence && packed == lastPacked && ReferenceEquals(cursor, lastCursor)))
                 {
                     Thread.Sleep(pollMs);
                     continue;
@@ -135,6 +138,12 @@ public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
                 }
                 lastSequence = sequence;
                 lastPacked = packed;
+                lastCursor = cursor;
+                if (cursor is { Valid: true, Sprite: { } sprite })
+                {
+                    var (mx, my) = ScreenCastCursor.ToMonitorPx(cursor, _monitor);
+                    CursorCompositor.Draw(pixels, _width, _height, sprite, mx - left, my - top);
+                }
                 var frame = new CapturedFrame(FrameFormat.Bgra8Srgb, _width, _height, _width * 4, pixels,
                     _monitor, sdrWhiteInBufferUnits: 1.0);
                 if (!_queue.Writer.TryWrite(new RegionCaptureFrame(frame, now)))

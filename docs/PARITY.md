@@ -1939,7 +1939,8 @@ because a correct implementation needs live hardware this repo cannot exercise.
   h264parse -> mp4mux; AAC via fdkaacenc/avenc_aac/voaacenc/faac, else Opus), audio through
   pulsesrc (mic = default source, system = `@DEFAULT_MONITOR@`, audiomixer when both;
   `GstAudioCaptureDevice.cs`), Wayland region frames cropped from the already-allowed snapshot
-  screencast (one share dialog ever; it hides the cursor, so Wayland recordings have none).
+  screencast (one share dialog ever; its pixels have no cursor, so the cursor is drawn in from its
+  cursor metadata, see 31).
   RecordingCapabilities reports MP4/mic/loopback on Linux only when the
   GStreamer elements exist. X11 recording uses the polled X11 source with the same encoder.
 - [ ] 29-macos-serve-recording (code landed, not yet built or run on a Mac): `scksnap serve`
@@ -1967,3 +1968,14 @@ because a correct implementation needs live hardware this repo cannot exercise.
   position an overlay saw, then XQueryPointer through XWayland, then bottom-centre of a monitor).
   On Linux the position is re-applied once 150 ms after opening if the window manager moved it.
   Log: `toast placed at X,Y (cursor|cursor via XWayland|last-known|monitor fallback)`.
+- [ ] 31-wayland-cursor-metadata (code landed, live check outstanding): the snapshot screencast
+  asks for cursor_mode METADATA (4) when the portal offers it, else HIDDEN; pixels stay
+  cursorless. pipewiresrc only turns the cursor meta into a position-only ROI meta and drops
+  mutter's cursor-only buffers, so `Platform.Linux/PipeWireCursorReader.cs` links a second
+  libpipewire-0.3 input to each node on a dup of the same portal fd (no second share dialog),
+  requests SPA_META_Cursor and requeues every buffer at once (`Core/Capture/SpaPod.cs`,
+  `SpaCursorMeta.cs`, ScreenCastCursorMetaTests). `ScreenCastCursor` maps it to desktop px.
+  Wayland recordings draw the sprite into each region frame (`Core/Recording/CursorCompositor.cs`),
+  and a cursor-only move emits a frame, matching Windows recordings. Log:
+  `screencast cursor metadata: on (...)|unavailable (<why>)` 3 s after the session opens; the
+  recording line ends `cursor from screencast metadata` or `without cursor (...)`.

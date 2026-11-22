@@ -45,6 +45,7 @@ internal static class ScreenCastPortal
     public const uint SourceMonitor = 1;
     public const uint CursorHidden = 1;
     public const uint CursorEmbedded = 2;
+    public const uint CursorMetadata = 4;
     public const uint PersistUntilRevoked = 2;
 
     /// <summary>Subscribes to the predicted request path first (no signal race), issues the call,

@@ -7,7 +7,8 @@ namespace RoeSnip.Platform.Linux;
 
 /// <summary>A kept-open org.freedesktop.portal.ScreenCast session (MONITOR sources, multiple,
 /// persist_mode=2) with one GStreamer pipeline per shared monitor. One per process:
-/// <see cref="Snapshot"/> (cursor hidden, every stream started at open, kept for the process life),
+/// <see cref="Snapshot"/> (cursor not in the pixels: cursor_mode METADATA when offered, read by
+/// <see cref="PipeWireCursorReader"/>, else HIDDEN; every stream started at open, kept for the process life),
 /// used by captures and recordings alike so the share dialog appears once ever (owner rule: a
 /// second session with its own token meant a second dialog). Its restore token is saved; a restore
 /// that still shows a dialog means the token was rejected (GNOME then saves a new one).
@@ -17,7 +18,9 @@ namespace RoeSnip.Platform.Linux;
 /// on GNOME (shutter sound and flash), see <see cref="LinuxCapturePolicy"/>.</summary>
 internal sealed class ScreenCastSession
 {
-    public static readonly ScreenCastSession Snapshot = new("snapshot", ScreenCastPortal.CursorHidden, startAllStreams: true, needsPermission: true);
+    public static readonly ScreenCastSession Snapshot = new("snapshot", ScreenCastPortal.CursorMetadata, startAllStreams: true, needsPermission: true);
+
+    private static readonly TimeSpan CursorMetaCheckAfter = TimeSpan.FromSeconds(3);
 
     /// <summary>Why the snapshot session does not open: no saved token and the user has not pressed
     /// asked (a capture or Settings' "Allow instant capture"); the dialog never opens on its own.</summary>
@@ -68,6 +71,12 @@ internal sealed class ScreenCastSession
     public bool IsLive
     {
         get { lock (_gate) { return _live is { IsDead: false }; } }
+    }
+
+    /// <summary>The live session, or null; never starts an open.</summary>
+    public Live? CurrentLive
+    {
+        get { lock (_gate) { return _live is { IsDead: false } live ? live : null; } }
     }
 
     /// <summary>The snapshot screencast state for <see cref="LinuxCapturePolicy"/>; X11 is Unsupported.</summary>
@@ -445,6 +454,14 @@ internal sealed class ScreenCastSession
             {
                 FileLog.Write("RoeSnip: screencast open - GNOME shows its screen-sharing indicator in the top bar while it stays open");
             }
+            if (cursorMode == ScreenCastPortal.CursorMetadata)
+            {
+                StartCursorMetadata(live, rawFd, geometries);
+            }
+            else
+            {
+                FileLog.Write($"RoeSnip: screencast cursor metadata: unavailable (portal cursor modes {cursorModes}, no METADATA)");
+            }
             return live;
         }
         catch
@@ -465,6 +482,42 @@ internal sealed class ScreenCastSession
             }
             throw;
         }
+    }
+
+    /// <summary>Starts the cursor reader and, after <see cref="CursorMetaCheckAfter"/>, logs whether
+    /// the nodes carry cursor metadata (a reader that saw none is dropped).</summary>
+    private static void StartCursorMetadata(Live live, int rawFd, IReadOnlyList<ScreenCastStreamGeometry> geometries)
+    {
+        PipeWireCursorReader? reader;
+        string why;
+        try
+        {
+            reader = PipeWireCursorReader.TryStart(rawFd, geometries.Select(g => g.NodeId), out why);
+        }
+        catch (Exception ex)
+        {
+            reader = null;
+            why = $"{ex.GetType().Name}: {ex.Message}";
+        }
+        if (reader is null)
+        {
+            FileLog.Write($"RoeSnip: screencast cursor metadata: unavailable ({why})");
+            return;
+        }
+        live.Cursor = reader;
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(CursorMetaCheckAfter).ConfigureAwait(false);
+            if (live.IsDead || !ReferenceEquals(live.Cursor, reader)) return;
+            if (reader.AnyMetaSeen)
+            {
+                FileLog.Write($"RoeSnip: screencast cursor metadata: on ({reader.StatesText})");
+                return;
+            }
+            FileLog.Write($"RoeSnip: screencast cursor metadata: unavailable (no cursor meta within {CursorMetaCheckAfter.TotalSeconds:F0} s: {reader.StatesText})");
+            live.Cursor = null;
+            reader.Dispose();
+        });
     }
 
     public static string MonitorsSignature(IReadOnlyList<MonitorInfo> monitors)
@@ -489,6 +542,9 @@ internal sealed class ScreenCastSession
         public bool RestoredFromToken { get; }
         public string TopologySignature { get; }
         public IDisposable? ClosedWatch { get; set; }
+
+        /// <summary>Cursor metadata of the nodes; null when the session has none.</summary>
+        public volatile PipeWireCursorReader? Cursor;
         public bool IsDead => _deadReason is not null;
         public event Action<Live, string>? Died;
 
@@ -573,6 +629,9 @@ internal sealed class ScreenCastSession
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            var cursor = Cursor;
+            Cursor = null;
+            try { cursor?.Dispose(); } catch { }
             lock (_gate)
             {
                 foreach (var s in _streams.Values) s.Dispose();
