@@ -31,8 +31,11 @@ internal sealed unsafe class ScreenCastStream : IDisposable
     public ScreenCastStream(int pipeWireFd, ScreenCastStreamGeometry geometry)
     {
         Geometry = geometry;
+        // always-copy: the kept latest sample must not pin one of mutter's shared PipeWire buffers.
+        // Without it the producer runs out of free buffers, every new frame is dropped (pw-top ERR
+        // in the 100k's) and snapshots show the screen as it was minutes ago.
         string description =
-            $"pipewiresrc fd={pipeWireFd} path={geometry.NodeId} ! videoconvert ! " +
+            $"pipewiresrc fd={pipeWireFd} path={geometry.NodeId} always-copy=true ! videoconvert ! " +
             "video/x-raw,format=BGRx ! appsink name=sink max-buffers=1 drop=true sync=false";
         _pipeline = Gst.ParseLaunch(description);
         _sink = Gst.gst_bin_get_by_name(_pipeline, "sink");
