@@ -14,14 +14,29 @@ namespace RoeSnip.App.AppShell;
 /// <summary>Places toast windows next to the mouse cursor (Core ToastPlacement), in Avalonia's
 /// physical-pixel Position space. Cursor source per OS: Windows GetCursorPos, macOS
 /// NSEvent.mouseLocation, X11 XQueryPointer. Wayland gives clients no global pointer, so it uses
-/// the last pointer position a RoeSnip window saw, then XQueryPointer through XWayland (where the
-/// pointer last was over an X window), then the bottom-centre of a monitor.</summary>
+/// a pointer position a RoeSnip window saw in the last 2 s, then a PointerProbe, then XQueryPointer
+/// through XWayland (stale while the pointer is over a native Wayland window), then the older
+/// last-seen position, then the bottom-centre of a monitor.</summary>
 internal static class ToastAnchor
 {
+    private static readonly TimeSpan FreshFor = TimeSpan.FromSeconds(2);
+
     private static PixelPoint? _lastPointer;
+    private static long _lastPointerAt;
+    private static bool _lastPointerFromProbe;
 
     /// <summary>Records a screen-space (physical px) pointer position a RoeSnip window saw.</summary>
-    public static void NotePointer(PixelPoint screenPx) => _lastPointer = screenPx;
+    public static void NotePointer(PixelPoint screenPx) => Remember(screenPx, false);
+
+    private static void Remember(PixelPoint screenPx, bool fromProbe)
+    {
+        _lastPointer = screenPx;
+        _lastPointerAt = System.Diagnostics.Stopwatch.GetTimestamp();
+        _lastPointerFromProbe = fromProbe;
+    }
+
+    private static bool LastPointerFresh =>
+        _lastPointer is not null && System.Diagnostics.Stopwatch.GetElapsedTime(_lastPointerAt) <= FreshFor;
 
     /// <summary>Sets <paramref name="window"/>.Position (before Show) for a toast of the given DIP
     /// size and logs the source used. <paramref name="fallbackMonitor"/> is the monitor to use when
@@ -113,10 +128,17 @@ internal static class ToastAnchor
             else if (OperatingSystem.IsLinux())
             {
                 bool wayland = string.Equals(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland", StringComparison.OrdinalIgnoreCase);
-                if (wayland && _lastPointer is { } seen)
+                if (wayland && LastPointerFresh && _lastPointer is { } seen)
                 {
-                    source = "last-known";
+                    // Also reuses a probe result, so a toast and the share window probe once.
+                    source = _lastPointerFromProbe ? "cursor (probe)" : "last-known";
                     return seen;
+                }
+                if (wayland && PointerProbe.Run(screens) is { } probed)
+                {
+                    Remember(probed, true);
+                    source = "cursor (probe)";
+                    return probed;
                 }
                 if (RoeSnip.Platform.Linux.X11Capturer.TryQueryPointer(out int x, out int y))
                 {
