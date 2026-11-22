@@ -52,6 +52,57 @@ public partial class ShareResultWindow : Window
         _autoDismissTimer.Tick += (_, _) => { _autoDismissTimer.Stop(); Close(); };
 
         PositionNextToCursor();
+
+        _followTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _followTimer.Tick += (_, _) => FollowPointer();
+        _followTimer.Start();
+    }
+
+    private readonly DispatcherTimer _followTimer;
+    private ToastFollower? _follower;
+    private RoeSnip.Core.Capture.RectPhysical _placed;
+    private int _followMoves;
+
+    /// <summary>Keeps the window next to a moving pointer (Core ToastFollower: only when the pointer
+    /// moved, frozen once the pointer heads into the window so it stays clickable).</summary>
+    private void FollowPointer()
+    {
+        if (_follower is null || _follower.Frozen || !IsVisible)
+        {
+            return;
+        }
+        try
+        {
+            if (!Overlay.FlashDimmer.TryGetCursorPos(out int cx, out int cy))
+            {
+                return;
+            }
+            IntPtr hMonitor = NativeMethods.MonitorFromPoint(new NativeMethods.POINT { X = cx, Y = cy }, NativeMethods.MONITOR_DEFAULTTONEAREST);
+            var monitorInfo = new NativeMethods.MONITORINFOEX { cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFOEX>() };
+            if (!NativeMethods.GetMonitorInfo(hMonitor, ref monitorInfo))
+            {
+                return;
+            }
+            uint dpiX = 96;
+            try { NativeMethods.GetDpiForMonitor(hMonitor, NativeMethods.MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out dpiX, out _); }
+            catch { dpiX = 96; }
+            double scale = dpiX / 96.0;
+            int w = (int)Math.Round(Width * scale), h = (int)Math.Round(Height * scale);
+            var wa = monitorInfo.rcWork;
+            var workArea = new RoeSnip.Core.Capture.RectPhysical(wa.Left, wa.Top, wa.Right, wa.Bottom);
+            if (_follower.Step(cx, cy, _placed, workArea, w, h, scale) is { } next)
+            {
+                IntPtr hwnd = new WindowInteropHelper(this).Handle;
+                NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_TOPMOST, next.X, next.Y, w, h, NativeMethods.SWP_NOACTIVATE);
+                _placed = RoeSnip.Core.Capture.RectPhysical.FromSize(next.X, next.Y, w, h);
+                _followMoves++;
+            }
+        }
+        catch (Exception ex)
+        {
+            _followTimer.Stop();
+            FileLog.Write($"RoeSnip: toast follow stopped ({ex.Message})");
+        }
     }
 
     /// <summary>Uploading state: indeterminate progress + a Cancel button. <paramref name="onCancelRequested"/>
@@ -226,7 +277,11 @@ public partial class ShareResultWindow : Window
         }
     }
 
-    private void Window_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e) => _autoDismissTimer.Stop();
+    private void Window_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        _autoDismissTimer.Stop();
+        _follower?.Freeze();
+    }
 
     private void Window_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
     {
@@ -245,6 +300,11 @@ public partial class ShareResultWindow : Window
     {
         IsClosed = true;
         _autoDismissTimer.Stop();
+        _followTimer.Stop();
+        if (_followMoves > 0)
+        {
+            FileLog.Write($"RoeSnip: toast followed the pointer ({_followMoves} moves, {(_follower?.Frozen == true ? "frozen when approached" : "never approached")}, cursor)");
+        }
         _onCancelRequested?.Invoke();
     }
 
@@ -306,6 +366,8 @@ public partial class ShareResultWindow : Window
                     (int)Math.Round(ToastPlacement.EdgeMarginDip * scale));
 
             NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_TOPMOST, x, y, physicalWidth, physicalHeight, NativeMethods.SWP_NOACTIVATE);
+            _placed = RoeSnip.Core.Capture.RectPhysical.FromSize(x, y, physicalWidth, physicalHeight);
+            _follower = new ToastFollower(haveCursor ? (cx, cy) : null, _placed);
             FileLog.Write($"RoeSnip: toast placed at {x},{y} ({(haveCursor ? "cursor" : "monitor fallback")})");
         }
         catch (Exception ex)
