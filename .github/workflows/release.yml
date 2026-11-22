@@ -1,13 +1,18 @@
 name: release
 
-# ONE action: bump -> build (win-x64 / linux-x64 / osx-arm64) -> publish a single GitHub Release.
-# Modelled on installer-src's build-all.yml shape (a preflight/version job -> parallel per-platform
-# builds -> one all-or-nothing publish job), collapsed into a single workflow so cutting a release is
-# a single dispatch. TWO in-app self-updaters poll GET /repos/roe69/roesnip/releases/latest and each
-# downloads its OWN exact asset name - the WPF app's App/UpdateManager.cs downloads "RoeSnip.exe",
-# the Avalonia port's AppShell/UpdateManager.cs downloads "RoeSnipApp-win-x64.exe". Both asset names
-# are load-bearing and must never change or collide (a name collision would let one app's updater
-# silently download and swap in the OTHER product's binary).
+# ONE action: bump -> build (win-x64 + win-arm64 / linux-x64 + linux-arm64 / osx-arm64 + osx-x64)
+# -> publish a single GitHub Release. Modelled on installer-src's build-all.yml shape (a
+# preflight/version job -> parallel per-platform builds -> one all-or-nothing publish job), collapsed
+# into a single workflow so cutting a release is a single dispatch. TWO in-app self-updaters poll
+# GET /repos/roe69/roesnip/releases/latest and each downloads its OWN exact asset name - the WPF
+# app's App/UpdateManager.cs downloads "RoeSnip.exe"; the Avalonia port's AppShell/UpdateManager.cs
+# downloads, per OS and process arch (RoeSnip.Core/Updates/UpdateAssetNames.cs):
+#   Windows  RoeSnipApp-win-<x64|arm64>.exe (+ .gz)
+#   Linux    RoeSnip-linux-<x64|arm64>.AppImage      (only when running from an AppImage)
+#   macOS    RoeSnip-osx-<arm64|x64>.app.tar.gz      (tar of RoeSnip.app, keeps exec bits + xattrs)
+# Every asset name is load-bearing and must never change or collide (a name collision would let one
+# app's updater silently download and swap in the OTHER product's binary). The .dmg and
+# RoeSnip-linux-<arch>.tar.gz (publish folder, for distros without FUSE) are for manual installs.
 #
 # Each Windows exe also ships a gzip -9 "<name>.exe.gz" sibling (hardening item 9: ~61% smaller,
 # measured on the real binaries) as an ADDITIONAL asset - both UpdateManagers prefer it and fall
@@ -210,10 +215,36 @@ jobs:
           path: src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnipApp-win-x64.exe.gz
           if-no-files-found: error
 
+      # RoeSnip.App for Windows on ARM: cross-published on the x64 runner (pure managed + system
+      # D3D/MF DLLs; SharpHook/SkiaSharp/HarfBuzz ship win-arm64 natives). Same single-file shape.
+      - name: Publish RoeSnip.App (win-arm64)
+        run: dotnet publish src/RoeSnip.App/RoeSnip.App.csproj -c Release -f net8.0-windows10.0.22621.0 -r win-arm64 -p:PublishProfile=win-arm64 -p:Version=${{ needs.prep.outputs.version }}
+
+      - name: Rename and compress RoeSnip.App win-arm64 asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-arm64/publish
+          mv "$OUT/RoeSnip.exe" "$OUT/RoeSnipApp-win-arm64.exe"
+          gzip -9 -k -f "$OUT/RoeSnipApp-win-arm64.exe"
+
+      - name: Upload RoeSnip.App win-arm64 assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-app-arm64
+          path: |
+            src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-arm64/publish/RoeSnipApp-win-arm64.exe
+            src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-arm64/publish/RoeSnipApp-win-arm64.exe.gz
+          if-no-files-found: error
+
   # ---------------------------------------------------------------------------
-  # 2b. Cross-platform (RoeSnip.App, net8.0): one matrix leg per shippable arch.
-  #     Adding a future arch is ONE uncommented row - the steps branch on
-  #     runner.os. .AppImage on Linux, unsigned .dmg on macOS.
+  # 2b. Cross-platform (RoeSnip.App, net8.0): one matrix leg per shippable arch;
+  #     the steps branch on runner.os. Linux: .AppImage (self-updates) + .tar.gz of
+  #     the publish folder. macOS: unsigned .dmg + RoeSnip-osx-<arch>.app.tar.gz
+  #     (the self-update asset). osx-x64 is cross-published on the arm64 runner
+  #     (dotnet publish -r osx-x64 + swiftc -target x86_64) so it never depends on an
+  #     Intel macOS runner image. linux-arm64 builds natively on ubuntu-24.04-arm.
+  #     .rpm / .deb packages are deliberately not built.
   # ---------------------------------------------------------------------------
   build-xplat:
     name: Build ${{ matrix.rid }}
@@ -225,18 +256,16 @@ jobs:
         include:
           - rid: linux-x64
             runner: ubuntu-latest
-            asset: RoeSnip-linux-x64.AppImage
+            appimage_arch: x86_64
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+            appimage_arch: aarch64
           - rid: osx-arm64
             runner: macos-15
-            asset: RoeSnip-osx-arm64.dmg
-          # --- Future archs: uncomment one row to ship it (steps already branch on runner.os) ---
-          # - rid: osx-x64
-          #   runner: macos-13          # GitHub's Intel macOS runner
-          #   asset: RoeSnip-osx-x64.dmg
-          # - rid: linux-arm64
-          #   runner: ubuntu-24.04-arm
-          #   asset: RoeSnip-linux-arm64.AppImage
-          # --- .rpm / .deb Linux packages are deliberately future - NOT built now. ---
+            swift_target: arm64-apple-macos13.0
+          - rid: osx-x64
+            runner: macos-15
+            swift_target: x86_64-apple-macos13.0
     steps:
       - name: Check out (bumped commit)
         uses: actions/checkout@v4
@@ -262,22 +291,26 @@ jobs:
       - name: Publish RoeSnip.App (${{ matrix.rid }})
         run: dotnet publish src/RoeSnip.App -c Release -f net8.0 -r ${{ matrix.rid }} --self-contained -p:EnableWindowsTargeting=true -p:PublishReadyToRun=false -p:EnableCompressionInSingleFile=false -p:SatelliteResourceLanguages=en -p:Version=${{ needs.prep.outputs.version }}
 
-      # ---- Linux: AppImage via the official static appimagetool -------------------------------
-      - name: Package .AppImage
+
+      # ---- Linux: AppImage via the official static appimagetool, plus a tar.gz --------------
+      # appimagetool must match the runner arch (aarch64 on ubuntu-24.04-arm); it embeds the
+      # runtime for ARCH. roesnip.png sits at the AppDir root: the app copies it from $APPDIR into
+      # the user's icon theme on install (AppShell/LinuxDesktopIntegration.cs).
+      - name: Package .AppImage and .tar.gz
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          # ImageMagick is not preinstalled on ubuntu-24.04 (ubuntu-latest) - install it for the
-          # .ico -> .png icon conversion.
+          # ImageMagick is not preinstalled on ubuntu-24.04 - install it for the .ico -> .png icon.
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends imagemagick
+          VERSION="${{ needs.prep.outputs.version }}"
           PUBLISH="src/RoeSnip.App/bin/Release/net8.0/${{ matrix.rid }}/publish"
           APPDIR="$PWD/AppDir"
           rm -rf "$APPDIR"; mkdir -p "$APPDIR/usr/bin"
           cp -a "$PUBLISH/." "$APPDIR/usr/bin/"
           chmod +x "$APPDIR/usr/bin/RoeSnip"
           convert "src/RoeSnip/Assets/roesnip.ico[0]" -resize 256x256 "$APPDIR/roesnip.png"
-          cat > "$APPDIR/RoeSnip.desktop" <<'EOF'
+          cat > "$APPDIR/net.roelite.roesnip.desktop" <<EOF
           [Desktop Entry]
           Type=Application
           Name=RoeSnip
@@ -285,6 +318,7 @@ jobs:
           Icon=roesnip
           Categories=Graphics;Utility;
           Terminal=false
+          X-AppImage-Version=${VERSION}
           EOF
           cat > "$APPDIR/AppRun" <<'EOF'
           #!/bin/sh
@@ -292,24 +326,30 @@ jobs:
           exec "$HERE/usr/bin/RoeSnip" "$@"
           EOF
           chmod +x "$APPDIR/AppRun"
-          # Static appimagetool; --appimage-extract-and-run avoids needing FUSE on the runner.
-          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          # --appimage-extract-and-run avoids needing FUSE on the runner.
+          curl -fsSL "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.appimage_arch }}.AppImage" -o appimagetool
           chmod +x appimagetool
           mkdir -p dist
-          ARCH=x86_64 ./appimagetool --appimage-extract-and-run "$APPDIR" "dist/${{ matrix.asset }}"
+          ARCH=${{ matrix.appimage_arch }} VERSION="$VERSION" ./appimagetool --appimage-extract-and-run "$APPDIR" "dist/RoeSnip-${{ matrix.rid }}.AppImage"
+          # Publish folder as a tarball for distros without FUSE (passive update notice only).
+          rm -rf tarroot; mkdir -p tarroot/RoeSnip
+          cp -a "$PUBLISH/." tarroot/RoeSnip/
+          cp "$APPDIR/roesnip.png" tarroot/RoeSnip/roesnip.png
+          tar -C tarroot -czf "dist/RoeSnip-${{ matrix.rid }}.tar.gz" RoeSnip
 
       # ---- macOS: build the capture helper, wrap in a .app, produce an UNSIGNED .dmg ----------
       # No Developer ID / notarization secrets exist, so the .app is only ad-hoc signed and the .dmg
-      # is unsigned - Gatekeeper will warn; testers right-click > Open once. Real signing is future.
+      # is unsigned - Gatekeeper will warn; testers right-click > Open once. The ad-hoc signature
+      # changes every build, so macOS may ask for Screen Recording permission again after an update.
       - name: Build scksnap capture helper
         if: runner.os == 'macOS'
         working-directory: helpers/scksnap
         run: |
           set -euo pipefail
-          swiftc -parse-as-library -O -target arm64-apple-macos13.0 -o scksnap Sources/Scksnap.swift
+          swiftc -parse-as-library -O -target ${{ matrix.swift_target }} -o scksnap Sources/Scksnap.swift
           codesign --force --sign - --identifier net.roelite.roesnip.scksnap scksnap
 
-      - name: Package unsigned .dmg
+      - name: Package unsigned .dmg and .app.tar.gz
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
@@ -342,18 +382,23 @@ jobs:
           </plist>
           EOF
           sed -i '' "s#__VERSION__#${{ needs.prep.outputs.version }}#g" "$APP/Contents/Info.plist"
+          grep -q "<string>${{ needs.prep.outputs.version }}</string>" "$APP/Contents/Info.plist"
           # Ad-hoc sign (no secrets); unsigned/un-notarized on purpose.
           codesign --force --deep --sign - "$APP" || true
           mkdir -p dmgroot dist
           cp -R "$APP" dmgroot/
           ln -s /Applications dmgroot/Applications
-          hdiutil create -volname "RoeSnip" -srcfolder dmgroot -ov -format UDZO "dist/${{ matrix.asset }}"
+          hdiutil create -volname "RoeSnip" -srcfolder dmgroot -ov -format UDZO "dist/RoeSnip-${{ matrix.rid }}.dmg"
+          # Self-update asset: bsdtar keeps exec bits and the xattrs codesign stores on non-Mach-O
+          # files; the app extracts it with /usr/bin/tar next to ~/Applications/RoeSnip.app.
+          tar -czf "dist/RoeSnip-${{ matrix.rid }}.app.tar.gz" "$APP"
+          tar -tzf "dist/RoeSnip-${{ matrix.rid }}.app.tar.gz" | grep -qx "RoeSnip.app/Contents/MacOS/RoeSnip"
 
-      - name: Upload ${{ matrix.rid }} artifact
+      - name: Upload ${{ matrix.rid }} artifacts
         uses: actions/upload-artifact@v4
         with:
           name: xplat-${{ matrix.rid }}
-          path: dist/${{ matrix.asset }}
+          path: dist/*
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
