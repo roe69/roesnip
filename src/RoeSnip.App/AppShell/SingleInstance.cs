@@ -6,6 +6,7 @@ using System.IO.Pipes;
 using System.Threading;
 using System.Threading.Tasks;
 using RoeSnip.Core.Diagnostics;
+using RoeSnip.Core.Updates;
 
 namespace RoeSnip.App.AppShell;
 
@@ -26,8 +27,8 @@ public enum InstanceSignal : byte
 /// <summary>Single-instance enforcement: named mutex + named pipe, ported from the WPF app's
 /// TrayApp (SignalExistingInstance/ListenForSignalAsync, PLAN.md §3.3) per PLAN-XPLAT.md §3.2.
 /// .NET named pipes are Unix domain sockets on macOS/Linux and named Mutex works cross-platform
-/// (PLAN-XPLAT.md §5), so this code is OS-conditional only in the mutex name (the Windows
-/// "Global\" Terminal-Services prefix is meaningless elsewhere).
+/// (PLAN-XPLAT.md section 5), so this code is OS-conditional only in the names (off Windows they carry
+/// the user name and the mutex is Global\, see PipeName).
 ///
 /// DELIBERATE deviation from §3.2's literal names: the plan reuses the frozen WPF app's exact
 /// mutex/pipe names ("RoeSnip-SingleInstance"/"RoeSnip-SingleInstance-Capture"), but both apps run
@@ -37,15 +38,85 @@ public enum InstanceSignal : byte
 /// flagged in the WP-X2 report for the integrator.</summary>
 public sealed class SingleInstance : IDisposable
 {
-    private const string PipeName = "RoeSnip.App-SingleInstance";
+    // Off Windows a plain .NET mutex name is scoped to the Unix session (getsid), and a LaunchAgent,
+    // `open -n`, GNOME autostart and a GNOME menu launch each land in a different one: Global\ plus
+    // the user name makes it one lock per user. The pipe is a socket in the per-user TMPDIR (macOS)
+    // or the shared /tmp (Linux), reachable from every session; the user name keeps users apart.
+    private const string WindowsName = "RoeSnip.App-SingleInstance";
+
+    // Builds before the per-user names: session-scoped mutex, this socket name.
+    private const string LegacyUnixPipeName = "RoeSnip.App-SingleInstance";
+
+    private static readonly string PipeName = OperatingSystem.IsWindows()
+        ? WindowsName
+        : WindowsName + "-" + SafeUserName();
 
     private static string MutexName => OperatingSystem.IsWindows()
-        ? @"Global\RoeSnip.App-SingleInstance"
-        : "RoeSnip.App-SingleInstance";
+        ? @"Global\" + WindowsName
+        : @"Global\" + PipeName;
+
+    // getpwuid(geteuid()) name; anything but [A-Za-z0-9._-] dropped so it stays a valid file name.
+    private static string SafeUserName()
+    {
+        string name;
+        try { name = Environment.UserName; }
+        catch { name = string.Empty; }
+
+        var safe = new System.Text.StringBuilder(name.Length);
+        foreach (char c in name)
+        {
+            if (c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '.' or '_' or '-')
+            {
+                safe.Append(c);
+            }
+        }
+        return safe.Length > 0 ? safe.ToString() : "user";
+    }
 
     private readonly Mutex _mutex;
 
     private SingleInstance(Mutex mutex) => _mutex = mutex;
+
+    private static SingleInstance Acquired(Mutex mutex)
+    {
+        RetireLegacyResident();
+        return new SingleInstance(mutex);
+    }
+
+    /// <summary>Off Windows: a resident from a build that still used the session-scoped lock holds
+    /// none of ours (the update that started this process is one), so ask it to exit over its old
+    /// socket. Only tried when that socket file exists, so a normal start pays nothing.</summary>
+    private static void RetireLegacyResident()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // .NET's Unix pipe socket path: <temp>/CoreFxPipe_<name>.
+        string socket = Path.Combine(Path.GetTempPath(), "CoreFxPipe_" + LegacyUnixPipeName);
+        try
+        {
+            if (!File.Exists(socket))
+            {
+                return;
+            }
+
+            using var client = new NamedPipeClientStream(".", LegacyUnixPipeName, PipeDirection.Out);
+            client.Connect(500);
+            client.WriteByte((byte)InstanceSignal.Exit);
+            client.Flush();
+            FileLog.Write("RoeSnip: asked a resident from an older build to exit");
+        }
+        catch (Exception ex)
+        {
+            // A stale socket (connect spins until the timeout on it): remove it so the next start
+            // skips the probe.
+            FileLog.Write($"RoeSnip: no older-build resident answered ({ex.Message}), removing its socket");
+            try { File.Delete(socket); }
+            catch (Exception deleteEx) when (deleteEx is IOException or UnauthorizedAccessException) { }
+        }
+    }
 
     /// <summary>Returns the held single-instance lock, or null if another instance already holds
     /// it (in which case the caller should signal that instance instead).</summary>
@@ -58,7 +129,9 @@ public sealed class SingleInstance : IDisposable
             return null;
         }
 
-        return new SingleInstance(mutex);
+        // Makes a verb run (`capture`) that missed the resident and became one visible in the log.
+        FileLog.Write($"RoeSnip: no resident found (lock {MutexName} free), becoming the resident");
+        return Acquired(mutex);
     }
 
     /// <summary>Replace-on-run takeover (item 13a, WPF TrayApp.cs:75-92 semantics): another
@@ -76,19 +149,19 @@ public sealed class SingleInstance : IDisposable
         if (createdNew)
         {
             // Race: the other instance exited between the caller's failed TryAcquire and this call.
-            return new SingleInstance(mutex);
+            return Acquired(mutex);
         }
 
         SignalExistingInstance(InstanceSignal.Exit);
         if (TryAcquireMutex(mutex, signalWaitTimeout))
         {
-            return new SingleInstance(mutex);
+            return Acquired(mutex);
         }
 
         KillOtherInstances();
         if (TryAcquireMutex(mutex, killWaitTimeout))
         {
-            return new SingleInstance(mutex);
+            return Acquired(mutex);
         }
 
         mutex.Dispose();
@@ -136,7 +209,7 @@ public sealed class SingleInstance : IDisposable
 
                 // Linux AppImage: compare the APPIMAGE file, not the per-run /tmp/.mount_* exe.
                 string? path = UpdateManager.ProcessIdentityPath(p, TryGetMainModulePath(p));
-                if (path is null || !ownPaths.Contains(path))
+                if (path is null || !ownPaths.Contains(Comparable(path)))
                 {
                     continue; // not one of THIS app's own exe paths — e.g. the WPF resident.
                 }
@@ -173,12 +246,17 @@ public sealed class SingleInstance : IDisposable
         {
             return;
         }
-        try { paths.Add(Path.GetFullPath(path)); }
+        try { paths.Add(Comparable(path)); }
         catch (Exception ex) when (ex is IOException or ArgumentException or NotSupportedException)
         {
             // Unparseable path — ignore rather than throw out of a best-effort discrimination check.
         }
     }
+
+    // Off Windows symlinks resolved: $APPIMAGE in another process's environ is always the real
+    // path, while our install paths come from $HOME / $XDG_DATA_HOME as written.
+    private static string Comparable(string path) =>
+        OperatingSystem.IsWindows() ? Path.GetFullPath(path) : RealPath.ResolveOrFull(path);
 
     private static string? TryGetMainModulePath(Process p)
     {

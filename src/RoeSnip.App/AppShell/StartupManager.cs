@@ -93,6 +93,25 @@ public static class StartupManager
         File.WriteAllText(entryPath, content);
     }
 
+    /// <summary>macOS: an existing LaunchAgent is rewritten to start <paramref name="launchPath"/>
+    /// when it names another bundle (the user moved to a /Applications copy, or back). Never
+    /// creates one: start-at-login stays the user's choice.</summary>
+    public static void RepointMacLaunchAgent(string launchPath)
+    {
+        string path = MacLaunchAgentPath;
+        if (!OperatingSystem.IsMacOS() || !File.Exists(path))
+        {
+            return;
+        }
+
+        string wanted = DesktopIntegrationFiles.MacLaunchAgent(launchPath);
+        if (File.ReadAllText(path) != wanted)
+        {
+            File.WriteAllText(path, wanted);
+            FileLog.Write($"RoeSnip: start-at-login now runs {launchPath}");
+        }
+    }
+
     public static bool IsRunAtStartupEnabled()
     {
         if (OperatingSystem.IsWindows())

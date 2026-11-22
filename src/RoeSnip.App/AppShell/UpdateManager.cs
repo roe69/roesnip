@@ -24,8 +24,9 @@ namespace RoeSnip.App.AppShell;
 /// - Linux: $XDG_DATA_HOME/RoeSnip/RoeSnip.AppImage from "RoeSnip-linux-&lt;arch&gt;.AppImage", only
 ///   when this process runs from an AppImage ($APPIMAGE). A tar.gz / dev folder run gets the
 ///   passive "new version" notice instead.
-/// - macOS: ~/Applications/RoeSnip.app from "RoeSnip-osx-&lt;arch&gt;.app.tar.gz", only when this
-///   process runs from a .app bundle.
+/// - macOS: the running .app bundle when it is in /Applications or ~/Applications and the user
+///   can write that folder, else ~/Applications/RoeSnip.app (Install copies a .dmg / Downloads run
+///   there), from "RoeSnip-osx-&lt;arch&gt;.app.tar.gz", only when this process runs from a bundle.
 ///
 /// Identity is DISTINCT from the WPF app (both can be installed side by side): own install dir,
 /// Run value "RoeSnip.App", and never the WPF asset "RoeSnip.exe" (UpdateAssetNames).
@@ -67,17 +68,23 @@ public static class UpdateManager
 
     private static string? Env(string name) => Environment.GetEnvironmentVariable(name);
 
+    // macOS: the bundle this process runs from when it is a user-writable /Applications or
+    // ~/Applications copy, else ~/Applications/RoeSnip.app. Initialised before InstallDir.
+    private static readonly string MacInstallBundle = OperatingSystem.IsMacOS()
+        ? UpdateInstallLayout.MacInstallTarget(UpdateInstallLayout.BundleOf(Environment.ProcessPath), Home, IsWritableDirectory)
+        : string.Empty;
+
     /// <summary>Directory holding the install unit: %LOCALAPPDATA%\RoeSnip.App,
-    /// ~/.local/share/RoeSnip, or ~/Applications.</summary>
+    /// ~/.local/share/RoeSnip, or the folder of the macOS bundle (/Applications or ~/Applications).</summary>
     public static string InstallDir { get; } =
-        OperatingSystem.IsMacOS() ? Path.Combine(Home, "Applications")
+        OperatingSystem.IsMacOS() ? Path.GetDirectoryName(MacInstallBundle)!
         : OperatingSystem.IsLinux() ? UpdateInstallLayout.LinuxInstallDir(Env, Home)
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RoeSnip.App");
 
     /// <summary>The unit an update swaps: the exe (Windows), the AppImage (Linux) or the .app bundle
     /// directory (macOS).</summary>
     public static string InstallTargetPath { get; } =
-        OperatingSystem.IsMacOS() ? UpdateInstallLayout.MacBundlePath(Home)
+        OperatingSystem.IsMacOS() ? MacInstallBundle
         : OperatingSystem.IsLinux() ? UpdateInstallLayout.LinuxAppImagePath(Env, Home)
         : Path.Combine(InstallDir, "RoeSnip.exe");
 
@@ -175,6 +182,12 @@ public static class UpdateManager
 
             try
             {
+                if (!OperatingSystem.IsWindows())
+                {
+                    // $APPIMAGE and macOS process paths are symlink-resolved; the target may not be.
+                    return RealPath.SameFile(current, InstallTargetPath, PathComparison);
+                }
+
                 return string.Equals(
                     Path.GetFullPath(current).TrimEnd(Path.DirectorySeparatorChar),
                     Path.GetFullPath(InstallTargetPath).TrimEnd(Path.DirectorySeparatorChar),
@@ -440,9 +453,19 @@ public static class UpdateManager
     /// ".old" once the threshold of launches that never reached the health milestone is hit.</summary>
     public static HealthCheckAction CheckUpdateHealthAtStartup()
     {
+        RepairInterruptedSwaps();
         if (!IsInstalled)
         {
             return HealthCheckAction.ProceedImmediateCleanup;
+        }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            try { StartupManager.RepointMacLaunchAgent(InstalledLaunchPath); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                FileLog.Write($"RoeSnip: could not repoint the LaunchAgent (non-fatal): {ex.Message}");
+            }
         }
 
         UpdateHealthMarker.State state = UpdateHealthMarker.RecordLaunchAttempt(HealthMarkerDirectory, CurrentVersionText);
@@ -459,6 +482,57 @@ public static class UpdateManager
         }
 
         return HealthCheckAction.ProceedDeferredCleanup;
+    }
+
+    /// <summary>Linux / macOS: puts a unit back when a crash mid-swap left its path empty (the
+    /// bundle swap is two renames). macOS also checks both standard bundle paths, since a .dmg run
+    /// targets ~/Applications while the broken install may be the /Applications one. Never throws.</summary>
+    private static void RepairInterruptedSwaps()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // RestoreStagingPath is the .new download there, never a rollback unit.
+        }
+
+        var targets = new System.Collections.Generic.List<string> { InstallTargetPath };
+        if (OperatingSystem.IsMacOS())
+        {
+            targets.Add(UpdateInstallLayout.MacSystemBundlePath);
+            targets.Add(UpdateInstallLayout.MacBundlePath(Home));
+        }
+
+        foreach (string target in new System.Collections.Generic.HashSet<string>(targets, StringComparer.Ordinal))
+        {
+            try
+            {
+                if (InstallSwap.RepairInterruptedSwap(target, target + ".old", target + ".restore"))
+                {
+                    FileLog.Write($"RoeSnip: '{target}' was missing after an interrupted update - restored it.");
+                }
+            }
+            catch (Exception ex)
+            {
+                FileLog.Write($"RoeSnip: could not repair an interrupted update at '{target}' (non-fatal): {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>True when this user can create (and so rename) entries in <paramref name="dir"/>:
+    /// probes with a hidden file, since /Applications is writable only for admin users.</summary>
+    private static bool IsWritableDirectory(string dir)
+    {
+        string probe = Path.Combine(dir, $".roesnip-write-probe-{Environment.ProcessId}");
+        try
+        {
+            using (new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose))
+            {
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Health milestone (tray up + ~15 s): clears this version's pending marker, then

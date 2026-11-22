@@ -77,6 +77,32 @@ public static class UpdateInstallLayout
     /// <summary>~/Applications/RoeSnip.app</summary>
     public static string MacBundlePath(string home) => Path.Combine(home, "Applications", MacBundleName);
 
+    /// <summary>/Applications/RoeSnip.app (where the .dmg's Applications link puts it).</summary>
+    public static string MacSystemBundlePath => Path.Combine("/Applications", MacBundleName);
+
+    /// <summary>The bundle macOS self-updates and starts at login: <paramref name="runningBundle"/>
+    /// when it sits directly in /Applications or ~/Applications and
+    /// <paramref name="isWritableDir"/> says the user can rename entries in that folder, else
+    /// ~/Applications/RoeSnip.app (what Install copies a .dmg / Downloads run to).</summary>
+    public static string MacInstallTarget(string? runningBundle, string home, Func<string, bool> isWritableDir)
+    {
+        if (!string.IsNullOrEmpty(runningBundle))
+        {
+            string bundle = RealPath.ResolveOrFull(runningBundle).TrimEnd(Path.DirectorySeparatorChar);
+            string? parent = Path.GetDirectoryName(bundle);
+            if (parent is not null &&
+                // APFS is case-insensitive by default.
+                (RealPath.SameFile(parent, "/Applications", StringComparison.OrdinalIgnoreCase) ||
+                 RealPath.SameFile(parent, Path.Combine(home, "Applications"), StringComparison.OrdinalIgnoreCase)) &&
+                isWritableDir(parent))
+            {
+                return bundle;
+            }
+        }
+
+        return MacBundlePath(home);
+    }
+
     /// <summary>The bundle's executable: &lt;bundle&gt;/Contents/MacOS/RoeSnip.</summary>
     public static string MacBundleExecutable(string bundlePath) =>
         Path.Combine(bundlePath, "Contents", "MacOS", MacExecutableName);
@@ -116,6 +142,6 @@ public static class UpdateInstallLayout
         string name = Path.GetFileName(sourcePath);
         return name.StartsWith("RoeSnip", StringComparison.OrdinalIgnoreCase) &&
                name.EndsWith(".AppImage", StringComparison.OrdinalIgnoreCase) &&
-               !string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(installedPath), StringComparison.Ordinal);
+               !RealPath.SameFile(sourcePath, installedPath, StringComparison.Ordinal);
     }
 }

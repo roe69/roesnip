@@ -286,6 +286,126 @@ public sealed class CrossPlatformInstallTests : IDisposable
         Assert.Equal("bad", ReadBundle(target + ".old"));
     }
 
+    [Fact]
+    public void SwapIn_File_OffWindows_ReplacesTargetInPlace()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // Windows keeps the two-rename swap (a running exe cannot be renamed over).
+        }
+
+        string target = Path.Combine(_tempDir, "RoeSnip.AppImage");
+        File.WriteAllText(target, "v1");
+        File.WriteAllText(target + ".new", "v2");
+        // A reader holding the old file keeps its content: the rename replaces the directory entry.
+        using FileStream held = File.OpenRead(target);
+
+        InstallSwap.SwapIn(target + ".new", target, target + ".old");
+
+        Assert.Equal("v2", File.ReadAllText(target));
+        Assert.Equal("v1", File.ReadAllText(target + ".old"));
+        Assert.Equal("v1", new StreamReader(held).ReadToEnd());
+    }
+
+    [Fact]
+    public void RepairInterruptedSwap_RestoresOld_WhenTargetMissing()
+    {
+        string target = Path.Combine(_tempDir, "RoeSnip.app");
+        WriteBundle(target + ".old", "v1");
+
+        Assert.True(InstallSwap.RepairInterruptedSwap(target, target + ".old", target + ".restore"));
+        Assert.Equal("v1", ReadBundle(target));
+        Assert.False(Directory.Exists(target + ".old"));
+    }
+
+    [Fact]
+    public void RepairInterruptedSwap_PrefersRestoreStaging()
+    {
+        // Crash inside RestorePrevious after target -> old: staging holds the good unit.
+        string target = Path.Combine(_tempDir, "RoeSnip.app");
+        WriteBundle(target + ".old", "bad");
+        WriteBundle(target + ".restore", "good");
+
+        Assert.True(InstallSwap.RepairInterruptedSwap(target, target + ".old", target + ".restore"));
+        Assert.Equal("good", ReadBundle(target));
+    }
+
+    [Fact]
+    public void RepairInterruptedSwap_NoOpWhenTargetPresentOrNothingToRestore()
+    {
+        string target = Path.Combine(_tempDir, "RoeSnip.app");
+        Assert.False(InstallSwap.RepairInterruptedSwap(target, target + ".old", target + ".restore"));
+
+        WriteBundle(target, "v2");
+        WriteBundle(target + ".old", "v1");
+        Assert.False(InstallSwap.RepairInterruptedSwap(target, target + ".old", target + ".restore"));
+        Assert.Equal("v2", ReadBundle(target));
+    }
+
+    // ---------- asset names vs the real release.yml ----------
+
+    [Fact]
+    public void AssetNames_AreAllProducedByReleaseWorkflow()
+    {
+        // Comment lines dropped: a name only mentioned in the header comment is not produced.
+        string yml = string.Join('\n', Array.FindAll(
+            File.ReadAllLines(FindReleaseWorkflow()), line => !line.TrimStart().StartsWith('#')));
+
+        var rids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (System.Text.RegularExpressions.Match m in
+                 System.Text.RegularExpressions.Regex.Matches(yml, @"^\s*-\s*rid:\s*(\S+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline))
+        {
+            rids.Add(m.Groups[1].Value);
+        }
+        Assert.NotEmpty(rids);
+
+        // Every RoeSnip(App)-<rid><ext> token, literal or templated on the matrix rid.
+        var produced = new HashSet<string>(StringComparer.Ordinal);
+        foreach (System.Text.RegularExpressions.Match m in
+                 System.Text.RegularExpressions.Regex.Matches(yml, @"(RoeSnip(?:App)?-)(\$\{\{ matrix\.rid \}\}|[a-z]+-[a-z0-9]+)((?:\.[A-Za-z]+)+)"))
+        {
+            string prefix = m.Groups[1].Value, ext = m.Groups[3].Value;
+            if (m.Groups[2].Value.StartsWith("$", StringComparison.Ordinal))
+            {
+                foreach (string rid in rids)
+                {
+                    produced.Add(prefix + rid + ext);
+                }
+            }
+            else
+            {
+                produced.Add(prefix + m.Groups[2].Value + ext);
+            }
+        }
+
+        foreach (UpdatePlatform platform in Enum.GetValues<UpdatePlatform>())
+        {
+            foreach (Architecture arch in new[] { Architecture.X64, Architecture.Arm64 })
+            {
+                UpdateAssetSelection s = UpdateAssetNames.For(platform, arch)!;
+                Assert.Contains(s.Primary, produced);
+                if (s.Gz is not null)
+                {
+                    Assert.Contains(s.Gz, produced);
+                }
+            }
+        }
+    }
+
+    // Walks up from the test output dir to the repo root holding .github/workflows/release.yml.
+    private static string FindReleaseWorkflow()
+    {
+        for (DirectoryInfo? dir = new(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            string candidate = Path.Combine(dir.FullName, ".github", "workflows", "release.yml");
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+        throw new FileNotFoundException("release.yml not found above " + AppContext.BaseDirectory);
+    }
+
     private static void WriteBundle(string bundle, string version)
     {
         string macOs = Path.Combine(bundle, "Contents", "MacOS");
