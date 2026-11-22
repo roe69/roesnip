@@ -1370,9 +1370,13 @@ existing WPF test suite is the proof.
         applications/net.roelite.roesnip.desktop (named after the portal app id; a "Capture"
         action runs `capture`), copies $APPDIR/roesnip.png to icons/hicolor/256x256/apps, and
         $XDG_CONFIG_HOME/autostart/net.roelite.roesnip.desktop; the Downloads AppImage is deleted
-        on the installed copy's next start. Update: download to RoeSnip.AppImage.new, size +
-        SHA-256 check, chmod 755, rename target -> .old and .new -> target, idle gate, pending
-        marker, exec the AppImage.
+        on the installed copy's next start. Update: under the per-install lock
+        RoeSnip.AppImage.update.lock (every OS: one updater at a time, a second one skips or,
+        for --self-update-now, waits up to 5 min), download to RoeSnip.AppImage.new-<pid>, size +
+        SHA-256 check, chmod 755, rename target -> .old and .new-<pid> -> target, idle gate,
+        pending marker, exec the AppImage with every inherited fd close-on-exec (the AppImage
+        FUSE keepalive fd otherwise keeps the old mount daemon alive). Startup cleanup deletes
+        .new / .new-* only when older than 1 h.
       - macOS, only from a .app bundle: Install copies the bundle with /usr/bin/ditto to
         ~/Applications/RoeSnip.app (the source bundle is left alone) and writes
         ~/Library/LaunchAgents/net.roelite.roesnip.plist (RunAtLoad, ProgramArguments = the

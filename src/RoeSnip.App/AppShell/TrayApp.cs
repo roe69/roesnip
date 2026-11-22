@@ -109,8 +109,12 @@ public sealed class TrayApp : ITrayNotifier
             // One-shot "force update now": check GitHub and, if there is a newer release, download
             // + swap it and let the new build take over via replace-on-run, then exit — no tray
             // icon, no single-instance mutex (so it never fights the running instance the new
-            // build replaces). See RunSelfUpdateNow.
-            return RunSelfUpdateNow();
+            // build replaces). See RunSelfUpdateNow. Environment.Exit so no stray foreground
+            // thread can keep this one-shot alive.
+            int code = RunSelfUpdateNow();
+            Console.Out.Flush();
+            Environment.Exit(code);
+            return code;
         }
 
         return RunResident(InstanceSignal.None);
@@ -1187,9 +1191,33 @@ public sealed class TrayApp : ITrayNotifier
     /// icon and no single-instance mutex are ever created here — this process's only job is to
     /// perform the swap and exit, leaving the freshly-launched new build as the running instance.
     /// Only for copies that self-update (Windows, a Linux AppImage, a macOS .app bundle). Returns 0
-    /// on "updated"/"already current"/"not applicable here", 1 only if the check/download/swap
-    /// itself errored; never throws.</summary>
+    /// on "updated"/"already current"/"not applicable here", 1 if the check/download/swap errored,
+    /// another updater still held the install after <see cref="SelfUpdateLockWait"/>, or the whole
+    /// run passed <see cref="SelfUpdateDeadline"/>; one stdout line says which. Never throws.</summary>
     private static int RunSelfUpdateNow()
+    {
+        Task<int> work = Task.Run(RunSelfUpdateNowCore);
+        if (work.Wait(SelfUpdateDeadline))
+        {
+            return work.Result;
+        }
+
+        SelfUpdateReport($"update failed: no result within {SelfUpdateDeadline.TotalMinutes:0} minutes.");
+        return 1;
+    }
+
+    // Download (15 min) + waiting out another updater (5 min) + the release check, with headroom.
+    private static readonly TimeSpan SelfUpdateDeadline = TimeSpan.FromMinutes(25);
+
+    private static readonly TimeSpan SelfUpdateLockWait = TimeSpan.FromMinutes(5);
+
+    private static void SelfUpdateReport(string text)
+    {
+        Console.Out.WriteLine($"RoeSnip: {text}");
+        FileLog.Write($"RoeSnip: --self-update-now: {text}");
+    }
+
+    private static int RunSelfUpdateNowCore()
     {
         if (!UpdateManager.SelfUpdateSupported)
         {
@@ -1214,23 +1242,36 @@ public sealed class TrayApp : ITrayNotifier
             {
                 if (result.Failed)
                 {
-                    Console.Out.WriteLine($"RoeSnip: update check failed: {result.FailureDetail}");
+                    SelfUpdateReport($"update check failed: {result.FailureDetail}");
                     return 1;
                 }
 
-                Console.Out.WriteLine($"RoeSnip: already up to date (current {UpdateManager.CurrentVersion}).");
+                SelfUpdateReport($"already up to date (current {UpdateManager.CurrentVersionText}).");
                 return 0;
             }
 
             UpdateManager.UpdateInfo update = result.Update;
-            Console.Out.WriteLine($"RoeSnip: updating {UpdateManager.CurrentVersion} -> {update.Version}...");
-            UpdateManager.ApplyUpdateAsync(update).GetAwaiter().GetResult();
-            Console.Out.WriteLine($"RoeSnip: updated to {update.Version}; new build launched.");
-            return 0;
+            FileLog.Write($"RoeSnip: --self-update-now: updating {UpdateManager.CurrentVersionText} -> {update.Version}...");
+            UpdateManager.ApplyOutcome outcome = UpdateManager
+                .ApplyUpdateAsync(update, beforeLaunch: null, lockWait: SelfUpdateLockWait)
+                .GetAwaiter().GetResult();
+            switch (outcome)
+            {
+                case UpdateManager.ApplyOutcome.Applied:
+                    SelfUpdateReport($"updated to {update.Version}; new build launched.");
+                    return 0;
+                case UpdateManager.ApplyOutcome.AppliedByOtherProcess:
+                    SelfUpdateReport($"updated to {update.Version} by another RoeSnip process.");
+                    return 0;
+                default:
+                    SelfUpdateReport(
+                        $"update failed: another RoeSnip process was still updating after {SelfUpdateLockWait.TotalMinutes:0} minutes.");
+                    return 1;
+            }
         }
         catch (Exception ex)
         {
-            FileLog.Write($"RoeSnip: self-update failed: {ex.Message}");
+            SelfUpdateReport($"update failed: {ex.Message}");
             return 1;
         }
     }
@@ -1306,8 +1347,13 @@ public sealed class TrayApp : ITrayNotifier
         FileLog.Write($"RoeSnip: auto-updating {UpdateManager.CurrentVersion} -> {update.Version}...");
         try
         {
-            await UpdateManager.ApplyUpdateAsync(update, WaitForIdleAsync).ConfigureAwait(false);
-            UpdateManager.RecordLastCheckOutcome(update.Version.ToString(), $"Applied {update.Version}");
+            UpdateManager.ApplyOutcome outcome =
+                await UpdateManager.ApplyUpdateAsync(update, WaitForIdleAsync).ConfigureAwait(false);
+            if (outcome == UpdateManager.ApplyOutcome.Applied)
+            {
+                UpdateManager.RecordLastCheckOutcome(update.Version.ToString(), $"Applied {update.Version}");
+            }
+            // Busy: the other updater launches the new build, which replaces this process.
         }
         catch (Exception ex)
         {
@@ -1424,7 +1470,14 @@ public sealed class TrayApp : ITrayNotifier
     {
         try
         {
-            await UpdateManager.ApplyUpdateAsync(info).ConfigureAwait(false);
+            UpdateManager.ApplyOutcome outcome = await UpdateManager.ApplyUpdateAsync(info).ConfigureAwait(false);
+            if (outcome == UpdateManager.ApplyOutcome.Busy)
+            {
+                Dispatcher.UIThread.Post(() => ShowToast(
+                    "Another RoeSnip is already installing this update.", isError: false, durationMs: 6000, onClick: null));
+                return;
+            }
+
             UpdateManager.RecordLastCheckOutcome(info.Version.ToString(), $"Applied {info.Version}");
         }
         catch (Exception ex)

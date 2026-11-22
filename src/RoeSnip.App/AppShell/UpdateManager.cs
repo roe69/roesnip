@@ -116,20 +116,37 @@ public static class UpdateManager
 
     private static string StaleExePath => InstallTargetPath + ".old";
 
-    // The staged unit swapped in: Windows RoeSnip.exe.new, Linux RoeSnip.AppImage.new, macOS the
-    // extracted bundle inside MacStagingDir (same volume as the target, so the swap is a rename).
-    private static string DownloadingExePath =>
-        OperatingSystem.IsMacOS() ? Path.Combine(MacStagingDir, UpdateInstallLayout.MacBundleName)
+    // Shared stem of every staging name; each process stages under stem + "-<pid>" (UpdateStaging)
+    // so two updaters never write or swap the same file.
+    private static string StagingStem =>
+        OperatingSystem.IsMacOS() ? Path.Combine(InstallDir, ".RoeSnip-update")
         : OperatingSystem.IsLinux() ? InstallTargetPath + ".new"
         : Path.Combine(InstallDir, "RoeSnip.exe.new");
+
+    private static string ProcessStagingPath => UpdateStaging.ForProcess(StagingStem, Environment.ProcessId);
+
+    // The staged unit swapped in: Windows RoeSnip.exe.new-<pid>, Linux RoeSnip.AppImage.new-<pid>,
+    // macOS the extracted bundle inside MacStagingDir (same volume as the target, so the swap is a
+    // rename).
+    private static string DownloadingExePath =>
+        OperatingSystem.IsMacOS() ? Path.Combine(MacStagingDir, UpdateInstallLayout.MacBundleName)
+        : ProcessStagingPath;
 
     // The raw download when it is not the staged unit itself: the Windows .gz transit asset, or the
     // macOS .app.tar.gz.
     private static string GzDownloadingExePath =>
-        OperatingSystem.IsMacOS() ? Path.Combine(InstallDir, ".RoeSnip-update.app.tar.gz")
+        OperatingSystem.IsMacOS() ? ProcessStagingPath + ".app.tar.gz"
         : DownloadingExePath + ".gz";
 
-    private static string MacStagingDir => Path.Combine(InstallDir, ".RoeSnip-update");
+    private static string MacStagingDir => ProcessStagingPath;
+
+    /// <summary>Held around every download + swap (update, install, rollback), across processes.</summary>
+    private static string UpdateLockPath => UpdateLock.PathFor(InstallTargetPath);
+
+    private const string BusyMessage = "update already in progress by another RoeSnip process; skipping";
+
+    // Bounds the whole download (HttpClient.Timeout stops at the headers with ResponseHeadersRead).
+    private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(15);
 
     // Free slot for the crash-loop restore's three-way rename (a sibling, so it stays a rename).
     private static string RestoreStagingPath =>
@@ -421,15 +438,22 @@ public static class UpdateManager
     private static bool StaleExeIsSafeToDelete() =>
         UpdateHealthMarker.Load(HealthMarkerDirectory).PendingVersion is null;
 
-    /// <summary>Deletes only abandoned download/staging leftovers, never ".old" or ".restore" (after
-    /// an interrupted rollback it can hold the only good build; startup repair moves it back).</summary>
+    /// <summary>Deletes only abandoned download/staging leftovers (".new", ".new-*" older than
+    /// <see cref="UpdateStaging.StaleAge"/>, so another process's in-flight download survives),
+    /// never ".old" or ".restore" (after an interrupted rollback it can hold the only good build;
+    /// startup repair moves it back).</summary>
     public static void CleanupDownloadLeftover()
     {
-        TryDelete(DownloadingExePath);
-        TryDelete(GzDownloadingExePath);
-        if (OperatingSystem.IsMacOS())
+        try
         {
-            TryDelete(MacStagingDir);
+            foreach (string stale in UpdateStaging.FindStale(InstallDir, StagingStem, DateTime.UtcNow, UpdateStaging.StaleAge, PathComparison))
+            {
+                TryDelete(stale);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            FileLog.Write($"RoeSnip: could not list stale update downloads (non-fatal): {ex.Message}");
         }
     }
 
@@ -551,6 +575,13 @@ public static class UpdateManager
     private static bool TryRestorePreviousBuild(int attemptCount)
     {
         string badVersion = CurrentVersionText;
+        using UpdateLock? updateLock = UpdateLock.TryAcquire(UpdateLockPath);
+        if (updateLock is null)
+        {
+            FileLog.Write($"RoeSnip: rollback of {badVersion} skipped - {BusyMessage}.");
+            return false;
+        }
+
         try
         {
             FileLog.Write(
@@ -630,6 +661,9 @@ public static class UpdateManager
         }
         else if (OperatingSystem.IsLinux())
         {
+            // Else the child inherits this AppImage's FUSE keepalive fd and keeps its mount daemon
+            // running (see InheritedDescriptors).
+            InheritedDescriptors.MarkCloseOnExec();
             using Process? _ = Process.Start(new ProcessStartInfo(InstallTargetPath) { UseShellExecute = false });
         }
         else
@@ -713,6 +747,12 @@ public static class UpdateManager
             if (IsInstalled)
             {
                 return;
+            }
+
+            using UpdateLock? updateLock = UpdateLock.TryAcquire(UpdateLockPath);
+            if (updateLock is null)
+            {
+                throw new IOException("Another RoeSnip process is updating the installed copy; try again in a minute.");
             }
 
             // Stage next to the target, then rename into place, so the target is never observable
@@ -858,9 +898,12 @@ public static class UpdateManager
     /// is the idle gate: awaited right before the launch on Windows/Linux, and before the bundle
     /// swap on macOS (a folder-published app lazily loads assemblies from its bundle path, so the
     /// old process must not keep running against a swapped bundle). Serialized on
-    /// <see cref="ApplyUpdateLock"/>. Rethrows on failure; the installed copy is never left without
-    /// a runnable unit.</summary>
-    public static async Task ApplyUpdateAsync(UpdateInfo info, Func<Task>? beforeLaunch = null)
+    /// <see cref="ApplyUpdateLock"/> in-process and on the per-install <see cref="UpdateLock"/>
+    /// across processes: when another process holds it, waits up to <paramref name="lockWait"/>
+    /// (zero = skip at once, <see cref="ApplyOutcome.Busy"/>); once it frees, an install that
+    /// already matches the release is <see cref="ApplyOutcome.AppliedByOtherProcess"/>. Rethrows on
+    /// failure; the installed copy is never left without a runnable unit.</summary>
+    public static async Task<ApplyOutcome> ApplyUpdateAsync(UpdateInfo info, Func<Task>? beforeLaunch = null, TimeSpan lockWait = default)
     {
         await ApplyUpdateLock.WaitAsync().ConfigureAwait(false);
         try
@@ -870,21 +913,25 @@ public static class UpdateManager
                 throw new InvalidOperationException($"No downloadable asset for {info.Version} on this platform.");
             }
 
-            if (OperatingSystem.IsWindows())
+            (UpdateLock? updateLock, bool contended) = await UpdateLock
+                .AcquireAsync(UpdateLockPath, lockWait, TimeSpan.FromSeconds(1))
+                .ConfigureAwait(false);
+            if (updateLock is null)
             {
-                await ApplyUpdateWindowsAsync(info, beforeLaunch).ConfigureAwait(false);
+                FileLog.Write($"RoeSnip: {BusyMessage} ({info.Version}).");
+                return ApplyOutcome.Busy;
             }
-            else if (OperatingSystem.IsLinux())
+
+            using (updateLock)
             {
-                await ApplyUpdateLinuxAsync(info, beforeLaunch).ConfigureAwait(false);
-            }
-            else if (OperatingSystem.IsMacOS())
-            {
-                await ApplyUpdateMacAsync(info, beforeLaunch).ConfigureAwait(false);
-            }
-            else
-            {
-                throw new PlatformNotSupportedException("Self-update is not available on this OS.");
+                if (contended && await InstalledMatchesAsync(info).ConfigureAwait(false))
+                {
+                    FileLog.Write($"RoeSnip: another RoeSnip process already installed {info.Version}.");
+                    return ApplyOutcome.AppliedByOtherProcess;
+                }
+
+                await ApplyUpdateLockedAsync(info, beforeLaunch).ConfigureAwait(false);
+                return ApplyOutcome.Applied;
             }
         }
         finally
@@ -893,19 +940,81 @@ public static class UpdateManager
         }
     }
 
+    public enum ApplyOutcome
+    {
+        /// <summary>This process swapped the release in and launched it.</summary>
+        Applied,
+
+        /// <summary>Another process held the update lock and the install now matches the release.</summary>
+        AppliedByOtherProcess,
+
+        /// <summary>Another process still held the update lock after the wait; nothing was done.</summary>
+        Busy,
+    }
+
+    /// <summary>True when the installed unit's SHA-256 equals the release asset's (Windows: the
+    /// plain exe's when the download is the .gz). macOS bundles have no single-file digest: false,
+    /// so the caller applies the update itself.</summary>
+    private static async Task<bool> InstalledMatchesAsync(UpdateInfo info)
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            return false;
+        }
+
+        string? digest = info.IsGzip ? info.PlainDigest : info.Digest;
+        try
+        {
+            return File.Exists(InstalledExePath) &&
+                   await AssetDigest.VerifyAsync(InstalledExePath, digest).ConfigureAwait(false) == true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static async Task ApplyUpdateLockedAsync(UpdateInfo info, Func<Task>? beforeLaunch)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            await ApplyUpdateWindowsAsync(info, beforeLaunch).ConfigureAwait(false);
+        }
+        else if (OperatingSystem.IsLinux())
+        {
+            await ApplyUpdateLinuxAsync(info, beforeLaunch).ConfigureAwait(false);
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            await ApplyUpdateMacAsync(info, beforeLaunch).ConfigureAwait(false);
+        }
+        else
+        {
+            throw new PlatformNotSupportedException("Self-update is not available on this OS.");
+        }
+    }
+
     /// <summary>Downloads <see cref="UpdateInfo.DownloadUrl"/> to <paramref name="fetchPath"/> and
     /// checks size and digest. Deletes the file and throws on any mismatch.</summary>
     private static async Task DownloadAndVerifyAsync(UpdateInfo info, string fetchPath)
     {
+        using (var timeout = new CancellationTokenSource(DownloadTimeout))
         using (HttpResponseMessage response = await HttpClient
-                   .GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead)
+                   .GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
                    .ConfigureAwait(false))
         {
             response.EnsureSuccessStatusCode();
-            await using Stream source = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            await using Stream source = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
             await using (FileStream destination = File.Create(fetchPath))
             {
-                await source.CopyToAsync(destination).ConfigureAwait(false);
+                try
+                {
+                    await source.CopyToAsync(destination, timeout.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+                {
+                    throw new IOException($"Download of {info.Version} did not finish within {DownloadTimeout.TotalMinutes:0} minutes.");
+                }
             }
         }
 
