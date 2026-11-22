@@ -54,6 +54,134 @@ public static class DesktopIntegrationFiles
         return sb.ToString();
     }
 
+    /// <summary>The app id the portals know RoeSnip by; the menu entry's file name without ".desktop".</summary>
+    public const string LinuxAppId = "net.roelite.roesnip";
+
+    /// <summary>True when the entry's main or action Exec line launches exactly <paramref name="path"/>.</summary>
+    public static bool EntryLaunches(string entry, string path)
+    {
+        string exec = "Exec=" + QuoteExecArg(path);
+        foreach (string raw in entry.Split('\n'))
+        {
+            string line = raw.TrimEnd('\r');
+            if (line == exec || line.StartsWith(exec + " ", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>What the portal-registration menu entry should launch, or null to leave the file as
+    /// it is. An entry for the installed AppImage is never replaced; with an install on disk the
+    /// entry points at it; otherwise at <paramref name="launcher"/> ($APPIMAGE, else the process
+    /// path), rewritten when that path changes.</summary>
+    public static string? RegistrationEntryExec(string? existingEntry, string installedAppImage, bool installExists, string? launcher)
+    {
+        if (existingEntry is not null && EntryLaunches(existingEntry, installedAppImage))
+        {
+            return null;
+        }
+        if (installExists)
+        {
+            return installedAppImage;
+        }
+        if (string.IsNullOrEmpty(launcher))
+        {
+            return null;
+        }
+        return existingEntry is not null && EntryLaunches(existingEntry, launcher) ? null : launcher;
+    }
+
+    /// <summary>The systemd unit (last path segment ending in .scope or .service) of the unified
+    /// "0::" line of /proc/self/cgroup, else of the first line that has one; null if none.</summary>
+    public static string? SystemdUnitOf(string procSelfCgroup)
+    {
+        string? fallback = null;
+        foreach (string raw in procSelfCgroup.Split('\n'))
+        {
+            string line = raw.Trim();
+            int colon = line.IndexOf(':');
+            int second = colon < 0 ? -1 : line.IndexOf(':', colon + 1);
+            if (second < 0)
+            {
+                continue;
+            }
+
+            string unit = UnitOfPath(line[(second + 1)..]) ?? "";
+            if (unit.Length == 0)
+            {
+                continue;
+            }
+            if (line.StartsWith("0::", StringComparison.Ordinal))
+            {
+                return unit;
+            }
+            fallback ??= unit;
+        }
+        return fallback;
+    }
+
+    private static string? UnitOfPath(string path)
+    {
+        string[] parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        for (int i = parts.Length - 1; i >= 0; i--)
+        {
+            if (parts[i].EndsWith(".scope", StringComparison.Ordinal) || parts[i].EndsWith(".service", StringComparison.Ordinal))
+            {
+                return parts[i];
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The app id in an XDG app unit name, as xdg-desktop-portal reads it for host apps:
+    /// app[-launcher]-ID-RANDOM.scope or app[-launcher]-ID[@RANDOM].service, "\x2d" unescaped.
+    /// Null for anything else (session-2.scope, a plain service).</summary>
+    public static string? AppIdOfUnit(string? unit)
+    {
+        if (string.IsNullOrEmpty(unit) || !unit.StartsWith("app-", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        string body;
+        if (unit.EndsWith(".scope", StringComparison.Ordinal))
+        {
+            body = unit[4..^".scope".Length];
+            int dash = body.LastIndexOf('-');
+            if (dash <= 0)
+            {
+                return null;
+            }
+            body = body[..dash];
+        }
+        else if (unit.EndsWith(".service", StringComparison.Ordinal))
+        {
+            body = unit[4..^".service".Length];
+            int at = body.IndexOf('@');
+            if (at >= 0)
+            {
+                body = body[..at];
+            }
+        }
+        else
+        {
+            return null;
+        }
+
+        int launcherDash = body.LastIndexOf('-');
+        if (launcherDash >= 0)
+        {
+            body = body[(launcherDash + 1)..];
+        }
+        body = body.Replace("\\x2d", "-");
+        return body.Length == 0 ? null : body;
+    }
+
+    /// <summary>The transient scope RoeSnip moves itself into when the portal cannot be told its app id.</summary>
+    public static string OwnScopeName(int pid) => $"app-{LinuxAppId}-{pid}.scope";
+
     /// <summary>~/.config/autostart/net.roelite.roesnip.desktop: starts the tray resident at login.</summary>
     public static string LinuxAutostartEntry(string launchPath)
     {

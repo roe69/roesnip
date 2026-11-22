@@ -243,19 +243,19 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
                 "no D-Bus session bus (DBUS_SESSION_BUS_ADDRESS unset) — xdg-desktop-portal is unavailable.");
         }
 
-        using var connection = new Connection(address);
-        ConnectionInfo connectionInfo;
+        PortalConnection shared;
         try
         {
-            connectionInfo = await connection.ConnectAsync().ConfigureAwait(false);
+            shared = await PortalConnection.GetAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             throw new CaptureException($"could not connect to the D-Bus session bus: {ex.Message}", ex);
         }
+        var connection = shared.Connection;
 
         string token = "roesnip_" + Guid.NewGuid().ToString("N");
-        string senderPart = connectionInfo.LocalName.TrimStart(':').Replace('.', '_');
+        string senderPart = shared.SenderPart;
         var expectedRequestPath = new ObjectPath(
             $"/org/freedesktop/portal/desktop/request/{senderPart}/{token}");
 

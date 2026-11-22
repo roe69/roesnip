@@ -332,13 +332,22 @@ internal sealed class ScreenCastSession
             throw new ScreenCastUnsupportedException("no D-Bus session bus");
         }
 
-        var connection = new Connection(address);
-        CloseSafeHandle? fd = null;
-        Live? live = null;
+        PortalConnection shared;
         try
         {
-            var info = await connection.ConnectAsync().ConfigureAwait(false);
-            string sender = info.LocalName.TrimStart(':').Replace('.', '_');
+            shared = await PortalConnection.GetAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            throw new ScreenCastUnsupportedException("could not connect to the D-Bus session bus: " + ex.Message);
+        }
+        var connection = shared.Connection;
+        string sender = shared.SenderPart;
+        CloseSafeHandle? fd = null;
+        Live? live = null;
+        ObjectPath? openedSession = null;
+        try
+        {
             var portal = connection.CreateProxy<IPortalScreenCast>(ScreenCastPortal.Service, ScreenCastPortal.DesktopPath);
 
             uint version;
@@ -365,6 +374,7 @@ internal sealed class ScreenCastSession
                 throw new InvalidOperationException("CreateSession returned no session_handle");
             }
             var sessionPath = new ObjectPath(handleValue.ToString()!);
+            openedSession = sessionPath;
 
             string? restoreToken = forceDialog ? null : _tokens.Load();
             uint cursorMode = (cursorModes & _cursorMode) != 0 ? _cursorMode
@@ -411,7 +421,7 @@ internal sealed class ScreenCastSession
             fd = await portal.OpenPipeWireRemoteAsync(sessionPath, new Dictionary<string, object>()).ConfigureAwait(false);
             int rawFd = fd.DangerousGetHandle().ToInt32();
 
-            live = new Live(this, connection, sessionPath, fd, rawFd, geometries, restoreToken is not null,
+            live = new Live(this, shared, sessionPath, fd, rawFd, geometries, restoreToken is not null,
                 topologySignature ?? MonitorsSignature(X11Capturer.EnumerateMonitorsViaRandR()));
 
             var session = connection.CreateProxy<IPortalSession>(ScreenCastPortal.Service, sessionPath);
@@ -446,7 +456,12 @@ internal sealed class ScreenCastSession
             else
             {
                 fd?.Dispose();
-                connection.Dispose();
+                if (openedSession is { } path)
+                {
+                    // The shared connection outlives this attempt, so the session is closed by hand.
+                    try { await connection.CreateProxy<IPortalSession>(ScreenCastPortal.Service, path).CloseAsync().ConfigureAwait(false); }
+                    catch { /* already gone */ }
+                }
             }
             throw;
         }
@@ -455,12 +470,12 @@ internal sealed class ScreenCastSession
     public static string MonitorsSignature(IReadOnlyList<MonitorInfo> monitors)
         => string.Join(";", monitors.Select(m => $"{m.DeviceName}@{m.BoundsPx.Left},{m.BoundsPx.Top},{m.BoundsPx.Width}x{m.BoundsPx.Height}"));
 
-    /// <summary>One open portal session: its D-Bus connection (the session dies with it), the
-    /// PipeWire fd and the per-stream pipelines.</summary>
+    /// <summary>One open portal session on the shared portal connection (closed explicitly on
+    /// Dispose, dead when that connection drops), the PipeWire fd and the per-stream pipelines.</summary>
     internal sealed class Live : IDisposable
     {
         private readonly ScreenCastSession _owner;
-        private readonly Connection _connection;
+        private readonly PortalConnection _shared;
         private readonly ObjectPath _sessionPath;
         private readonly CloseSafeHandle _fd;
         private readonly int _rawFd;
@@ -477,11 +492,12 @@ internal sealed class ScreenCastSession
         public bool IsDead => _deadReason is not null;
         public event Action<Live, string>? Died;
 
-        public Live(ScreenCastSession owner, Connection connection, ObjectPath sessionPath, CloseSafeHandle fd,
+        public Live(ScreenCastSession owner, PortalConnection shared, ObjectPath sessionPath, CloseSafeHandle fd,
             int rawFd, IReadOnlyList<ScreenCastStreamGeometry> geometries, bool restoredFromToken, string topologySignature)
         {
             _owner = owner;
-            _connection = connection;
+            _shared = shared;
+            shared.Lost += OnConnectionLost;
             _sessionPath = sessionPath;
             _fd = fd;
             _rawFd = rawFd;
@@ -489,6 +505,8 @@ internal sealed class ScreenCastSession
             RestoredFromToken = restoredFromToken;
             TopologySignature = topologySignature;
         }
+
+        private void OnConnectionLost(string why) => MarkDead("the portal connection dropped: " + why);
 
         public void MarkDead(string reason)
         {
@@ -560,15 +578,15 @@ internal sealed class ScreenCastSession
                 foreach (var s in _streams.Values) s.Dispose();
                 _streams.Clear();
             }
+            _shared.Lost -= OnConnectionLost;
             try { ClosedWatch?.Dispose(); } catch { }
             try
             {
-                _connection.CreateProxy<IPortalSession>(ScreenCastPortal.Service, _sessionPath)
+                _shared.Connection.CreateProxy<IPortalSession>(ScreenCastPortal.Service, _sessionPath)
                     .CloseAsync().Wait(TimeSpan.FromSeconds(2));
             }
             catch { /* the session may already be gone */ }
             try { _fd.Dispose(); } catch { }
-            try { _connection.Dispose(); } catch { }
         }
     }
 }

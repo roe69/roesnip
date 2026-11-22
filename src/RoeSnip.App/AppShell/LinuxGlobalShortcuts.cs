@@ -7,6 +7,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using RoeSnip.Core.Diagnostics;
+using RoeSnip.Platform.Linux;
 using Tmds.DBus;
 
 namespace RoeSnip.App.AppShell;
@@ -45,25 +46,16 @@ public interface IGlobalShortcutsSession : IDBusObject
     Task CloseAsync();
 }
 
-/// <summary>xdg-desktop-portal 1.19+: lets a host (non-sandboxed) app name its app id. Must be the
-/// first portal call on the connection; older portals lack it.</summary>
-[DBusInterface("org.freedesktop.host.portal.Registry")]
-public interface IHostPortalRegistry : IDBusObject
-{
-    Task RegisterAsync(string appId, IDictionary<string, object> options);
-}
-
 /// <summary>The Wayland capture hotkey (SharpHook is X11-only). GNOME: a custom keybinding
 /// "roesnip" running "&lt;exe&gt; capture" via gsettings (silent), written only when no other custom
 /// entry already uses the binding. Elsewhere (KDE Plasma 6, Hyprland): the
-/// org.freedesktop.portal.GlobalShortcuts portal, bound as shortcut "capture" on one long-lived
-/// D-Bus connection (the portal session dies with it); it shows the desktop's dialog.</summary>
+/// org.freedesktop.portal.GlobalShortcuts portal, bound as shortcut "capture" on the process-wide
+/// <see cref="PortalConnection"/> (the app id is registered there first); it shows the desktop's dialog.</summary>
 public sealed class LinuxGlobalShortcuts : IDisposable
 {
     public enum Mechanism { None, Portal, GnomeKeybinding, UserShortcut }
 
-    private const string PortalService = "org.freedesktop.portal.Desktop";
-    private const string AppId = "net.roelite.roesnip"; // matches a net.roelite.roesnip.desktop entry, if one is installed
+    private const string PortalService = PortalConnection.PortalService;
     private const string ShortcutId = "capture";
     private static readonly ObjectPath PortalPath = new("/org/freedesktop/portal/desktop");
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(3);
@@ -220,27 +212,10 @@ public sealed class LinuxGlobalShortcuts : IDisposable
 
     private async Task<uint> ProbePortalAsync()
     {
-        string? address = Address.Session;
-        if (string.IsNullOrEmpty(address))
-        {
-            throw new InvalidOperationException("no D-Bus session bus (DBUS_SESSION_BUS_ADDRESS unset)");
-        }
-
-        var connection = new Connection(address);
+        var shared = await PortalConnection.GetAsync().ConfigureAwait(false);
+        var connection = shared.Connection;
         _connection = connection;
-        var info = await connection.ConnectAsync().ConfigureAwait(false);
-        _sender = info.LocalName.TrimStart(':').Replace('.', '_');
-
-        try
-        {
-            await connection.CreateProxy<IHostPortalRegistry>(PortalService, PortalPath)
-                .RegisterAsync(AppId, new Dictionary<string, object>()).ConfigureAwait(false);
-            FileLog.Write($"RoeSnip: portal host app id registered as {AppId}.");
-        }
-        catch (Exception ex)
-        {
-            FileLog.Write($"RoeSnip: portal host app id not registered ({ex.Message}); continuing without one.");
-        }
+        _sender = shared.SenderPart;
 
         var portal = connection.CreateProxy<IGlobalShortcutsPortal>(PortalService, PortalPath);
         uint version = await portal.GetAsync<uint>("version").ConfigureAwait(false);
@@ -552,8 +527,7 @@ public sealed class LinuxGlobalShortcuts : IDisposable
         _activatedWatch?.Dispose();
         _activatedWatch = null;
         _portal = null;
-        _connection?.Dispose();
-        _connection = null;
+        _connection = null; // shared with the capture portals: never disposed here
     }
 
     public void Dispose()
