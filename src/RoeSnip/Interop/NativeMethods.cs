@@ -198,6 +198,7 @@ public static class NativeMethods
     public static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
 
     public const uint MONITOR_DEFAULTTOPRIMARY = 0x00000001;
+    public const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
 
     // Raw HWND foreground-activation call (no WPF dispatcher-thread affinity — unlike
     // Window.Activate(), this can be called from ANY thread with just the target HWND). Used by

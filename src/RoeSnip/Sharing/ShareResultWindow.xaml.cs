@@ -7,13 +7,14 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using RoeSnip.Core.Diagnostics;
+using RoeSnip.Core.Notifications;
 using RoeSnip.Interop;
 
 namespace RoeSnip.Sharing;
 
 /// <summary>The small topmost, non-activating result toast for one share upload (ROESNIP SHARE UX):
 /// created by <see cref="ShareFlowPresenter"/> on the tray/UI thread the moment a Share click fires,
-/// positioned bottom-right of the CAPTURE monitor's work area (physical pixels via Win32
+/// positioned next to the mouse cursor inside its monitor's work area (physical pixels via Win32
 /// SetWindowPos, never WPF DIP properties - same "mixed-DPI discipline" FlashDimmer/RegionOutline
 /// already use in this codebase), and driven through exactly one of its three terminal-ish states:
 /// Uploading -&gt; (Success | Failure). Mouse-only controls throughout (no hover-reveal, per this
@@ -50,7 +51,7 @@ public partial class ShareResultWindow : Window
         _autoDismissTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
         _autoDismissTimer.Tick += (_, _) => { _autoDismissTimer.Stop(); Close(); };
 
-        PositionBottomRight();
+        PositionNextToCursor();
     }
 
     /// <summary>Uploading state: indeterminate progress + a Cancel button. <paramref name="onCancelRequested"/>
@@ -258,19 +259,22 @@ public partial class ShareResultWindow : Window
         return string.Concat(text.AsSpan(0, head), "…", text.AsSpan(text.Length - tail, tail));
     }
 
-    /// <summary>Positions and sizes this window at the CAPTURE monitor's (the one passed into the
-    /// constructor) work-area bottom-right corner, in physical pixels, before <see cref="Window.Show"/>
-    /// is ever called - same "EnsureHandle, SetWindowPos, then Show" ordering
-    /// FlashDimmer.FlashWindow.PrepareHidden uses so there is no visible jump. Best-effort: on any
-    /// failure this silently falls back to WPF's own default placement rather than surfacing a
-    /// positioning error for what is a non-load-bearing toast.</summary>
-    private void PositionBottomRight()
+    /// <summary>Positions and sizes this window next to the mouse cursor (ToastPlacement: down-right,
+    /// flipped to stay inside the cursor monitor's work area), in physical pixels via SetWindowPos
+    /// before <see cref="Window.Show"/> - the "EnsureHandle, SetWindowPos, then Show" ordering
+    /// FlashDimmer.FlashWindow.PrepareHidden uses so there is no visible jump. The DIP size is scaled
+    /// by the DPI of the monitor it lands on. No cursor: bottom-centre of the capture monitor.
+    /// Best-effort: any failure leaves WPF's default placement.</summary>
+    private void PositionNextToCursor()
     {
         try
         {
             IntPtr hwnd = new WindowInteropHelper(this).EnsureHandle();
 
-            IntPtr hMonitor = _monitor.HMonitor;
+            bool haveCursor = Overlay.FlashDimmer.TryGetCursorPos(out int cx, out int cy);
+            IntPtr hMonitor = haveCursor
+                ? NativeMethods.MonitorFromPoint(new NativeMethods.POINT { X = cx, Y = cy }, NativeMethods.MONITOR_DEFAULTTONEAREST)
+                : _monitor.HMonitor;
             var monitorInfo = new NativeMethods.MONITORINFOEX
             {
                 cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFOEX>(),
@@ -293,11 +297,16 @@ public partial class ShareResultWindow : Window
             double scale = dpiX / 96.0;
             int physicalWidth = (int)Math.Round(Width * scale);
             int physicalHeight = (int)Math.Round(Height * scale);
-            int margin = (int)Math.Round(16 * scale);
-            int x = monitorInfo.rcWork.Right - physicalWidth - margin;
-            int y = monitorInfo.rcWork.Bottom - physicalHeight - margin;
+            var w = monitorInfo.rcWork;
+            var workArea = new RoeSnip.Core.Capture.RectPhysical(w.Left, w.Top, w.Right, w.Bottom);
+            var (x, y) = haveCursor
+                ? ToastPlacement.NextToCursor(cx, cy, physicalWidth, physicalHeight, workArea,
+                    (int)Math.Round(ToastPlacement.CursorOffsetDip * scale))
+                : ToastPlacement.BottomCentre(physicalWidth, physicalHeight, workArea,
+                    (int)Math.Round(ToastPlacement.EdgeMarginDip * scale));
 
             NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_TOPMOST, x, y, physicalWidth, physicalHeight, NativeMethods.SWP_NOACTIVATE);
+            FileLog.Write($"RoeSnip: toast placed at {x},{y} ({(haveCursor ? "cursor" : "monitor fallback")})");
         }
         catch (Exception ex)
         {
