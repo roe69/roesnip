@@ -1358,8 +1358,13 @@ because a correct implementation needs live hardware this repo cannot exercise.
 - Capture exclusion on Linux and macOS: X11/Wayland compositors expose no per-window
   capture-exclusion API and Avalonia does not surface NSWindow.sharingType; overlay windows
   may appear in re-captures there (Windows gets WDA_EXCLUDEFROMCAPTURE via item 02).
-- Global hotkey on Wayland: compositors forbid global key grabs; already mitigated by the
-  one-time toast, Settings caption, and DE-shortcut docs. No further code planned.
+- Global hotkey on Wayland: compositors forbid global key grabs, so SharpHook stays X11-only.
+  AppShell/LinuxGlobalShortcuts.cs binds the hotkey through the GlobalShortcuts portal
+  (shortcut id `capture`, preferred_trigger from LinuxShortcutFormat.ToPortalTrigger, re-bound on
+  a hotkey change); without the portal, GNOME gets a gsettings custom keybinding `roesnip`
+  running `<exe> capture` when no other custom entry uses the key. The desktop owns the final
+  trigger (it may show a consent dialog or reassign the key). The one-time toast and Settings
+  caption remain for desktops where neither works. Not yet verified on a live Wayland session.
 - Instant-dim window parking on Wayland: clients cannot position windows, so the parked
   flash/overlay pool cannot exist there; Linux gets the warmup slice (item 17) only, and
   full-pool tuning needs a live Linux machine (tracked in PLAN-XPLAT.md section 7).

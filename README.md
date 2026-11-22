@@ -94,19 +94,23 @@ app, or `./RoeSnip capture` / `./RoeSnip settings` to trigger the capture
 flow or open the settings window (starting a resident instance on first run,
 signaling the existing one afterward).
 
-**Global hotkeys do not work on Wayland.** RoeSnip's hotkey hook
-(SharpHook/libuiohook) is X11-only, so on a stock GNOME or KDE Wayland
-session pressing PrintScreen does nothing — RoeSnip detects this at startup
-and never even tries to start the hook. The app shows a one-time notice
-about it and stays fully operable; the fix is to bind a desktop-environment
-keyboard shortcut to the `RoeSnip capture` CLI verb:
+**Wayland hotkey.** The hotkey hook (SharpHook/libuiohook) is X11-only, so on
+Wayland RoeSnip never starts it. Instead it binds the configured hotkey as
+shortcut `capture` ("Take a screenshot") through the
+`org.freedesktop.portal.GlobalShortcuts` portal (GNOME 48+, KDE Plasma 6,
+Hyprland); the desktop may ask once to allow it and has the final say on the
+key. Changing the hotkey in Settings re-binds it. Without that portal, on
+GNOME RoeSnip adds a custom keybinding `roesnip` that runs
+`<RoeSnip or $APPIMAGE> capture`, unless another custom shortcut already uses
+that key. Elsewhere, or when the desktop refuses, RoeSnip shows a one-time
+notice; bind a desktop shortcut to the `RoeSnip capture` CLI verb by hand:
 
-- **GNOME:** Settings → Keyboard → View and Customize Shortcuts → Custom
-  Shortcuts → add one with command `/path/to/RoeSnip capture`.
-- **KDE:** System Settings → Shortcuts → Custom Shortcuts → add a new
+- **GNOME:** Settings - Keyboard - View and Customize Shortcuts - Custom
+  Shortcuts - add one with command `/path/to/RoeSnip capture`.
+- **KDE:** System Settings - Shortcuts - Custom Shortcuts - add a new
   global shortcut that runs `/path/to/RoeSnip capture`.
 
-X11 sessions are unaffected — the hook starts normally there and the
+X11 sessions are unaffected: the hook starts normally there and the
 PrintScreen hotkey works as on Windows.
 
 ## Docs

@@ -105,6 +105,13 @@
   </ItemGroup>
   <ItemGroup Condition="'$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('linux'))">
     <ProjectReference Include="..\RoeSnip.Platform.Linux\RoeSnip.Platform.Linux.csproj" />
+    <!-- AppShell/LinuxGlobalShortcuts.cs (Wayland capture hotkey); same pin as Platform.Linux. -->
+    <PackageReference Include="Tmds.DBus" Version="0.94.1" />
   </ItemGroup>
+
+  <!-- Same condition as the Linux reference above: gates the Tmds.DBus code in AppShell. -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == '' Or $(RuntimeIdentifier.StartsWith('linux'))">
+    <DefineConstants>$(DefineConstants);LINUX_BACKEND</DefineConstants>
+  </PropertyGroup>
 
 </Project>

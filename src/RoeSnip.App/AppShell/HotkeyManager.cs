@@ -12,8 +12,8 @@ namespace RoeSnip.App.AppShell;
 /// VK/MOD_* shapes (PLAN-XPLAT.md §2.6); this class translates them to SharpHook's OS-independent
 /// key codes, so the same stored combination works on Windows, macOS (Accessibility permission
 /// required — surfaced by the failed-start log, not assumed) and X11 Linux. On Wayland the hook is
-/// never started at all (libuiohook is X11-only): the documented primary Linux activation is a DE
-/// keyboard shortcut bound to <c>RoeSnip capture</c>.
+/// never started (libuiohook is X11-only): <c>LinuxGlobalShortcuts</c> binds the hotkey
+/// through the GlobalShortcuts portal, or a GNOME custom keybinding running <c>RoeSnip capture</c>.
 ///
 /// This class is deliberately prompt-free, like the WPF original: the one-time
 /// PrintScreen/Snipping-Tool consent flow lives in TrayApp (which owns settings persistence); the
@@ -37,6 +37,11 @@ public sealed class HotkeyManager : IDisposable
     private volatile bool _unavailableOnWayland;
     private KeyCode _keyCode;
     private uint _modifiers;
+    private uint _vk;
+#if LINUX_BACKEND
+    private LinuxGlobalShortcuts? _wayland;
+    private bool _waylandStarted;
+#endif
 
     public HotkeyManager(Action onHotkey)
     {
@@ -45,13 +50,55 @@ public sealed class HotkeyManager : IDisposable
 
     /// <summary>Best-effort "the hook is up and a combination is armed". Same caveat as the WPF
     /// version's IsRegistered, but weaker still — see the class doc comment.</summary>
-    public bool IsRegistered => _armed && _hookRunning == true;
+    public bool IsRegistered => _armed && (_hookRunning == true || IsWaylandShortcutActive);
 
-    /// <summary>True once EnsureHookRunning has determined the hook can never start because this
-    /// is a Wayland session (libuiohook is X11-only). Sticky for the process lifetime — mirrors
-    /// the stderr line logged alongside it. TrayApp reads this to decide whether to show the
-    /// one-time Wayland notice and SettingsWindow reads it to decide whether to show its caption.</summary>
+    /// <summary>True on a Wayland session where no shortcut reaches RoeSnip (no GlobalShortcuts
+    /// portal, no GNOME fallback, or the bind was refused). TrayApp reads this to decide whether to
+    /// show the one-time Wayland notice and SettingsWindow whether to show its caption.</summary>
     public bool IsUnavailableOnWayland => _unavailableOnWayland;
+
+    /// <summary>Raised (on any thread) when <see cref="IsUnavailableOnWayland"/> or
+    /// <see cref="WaylandHotkeyStatus"/> changes after startup (a portal bind answered later).</summary>
+    public event Action? WaylandStatusChanged;
+
+    private bool IsWaylandShortcutActive
+    {
+        get
+        {
+#if LINUX_BACKEND
+            return _wayland?.IsActive == true;
+#else
+            return false;
+#endif
+        }
+    }
+
+    /// <summary>Text for the Wayland toast / Settings caption; null when not on Wayland.</summary>
+    public string? WaylandHotkeyStatus
+    {
+        get
+        {
+#if LINUX_BACKEND
+            if (_wayland is { IsActive: true } w)
+            {
+                string combo = w.TriggerDescription ?? HotkeyDisplayFormat.DescribeHotkey(_modifiers, _vk);
+                return w.Kind switch
+                {
+                    LinuxGlobalShortcuts.Mechanism.Portal =>
+                        $"The capture hotkey ({combo}) is registered with your desktop's global shortcuts. " +
+                        "You can change it in your desktop's keyboard settings.",
+                    LinuxGlobalShortcuts.Mechanism.UserShortcut =>
+                        $"Your desktop shortcut ({combo}) runs `RoeSnip capture`.",
+                    _ => $"The capture hotkey ({combo}) is a GNOME custom shortcut (Settings > Keyboard > Custom Shortcuts).",
+                };
+            }
+#endif
+            return _unavailableOnWayland
+                ? "Global hotkeys aren't available on this Wayland desktop. Bind a keyboard shortcut to " +
+                  "`RoeSnip capture` in your desktop settings instead."
+                : null;
+        }
+    }
 
     /// <summary>(Re)arms the hotkey from the given (already consent-resolved) settings. Called
     /// once at startup and again after SettingsWindow saves a hotkey change.</summary>
@@ -72,6 +119,15 @@ public sealed class HotkeyManager : IDisposable
 
             _keyCode = keyCode.Value;
             _modifiers = settings.HotkeyModifiers;
+            _vk = settings.HotkeyVirtualKey;
+
+#if LINUX_BACKEND
+            if (OperatingSystem.IsLinux() && IsWaylandSession())
+            {
+                RegisterWayland();
+                return;
+            }
+#endif
 
             if (!EnsureHookRunning())
             {
@@ -84,6 +140,66 @@ public sealed class HotkeyManager : IDisposable
 
     public void Unregister() => _armed = false;
 
+    // P8 audit fix: some compositors leave XDG_SESSION_TYPE unset/wrong but always set
+    // WAYLAND_DISPLAY on a Wayland session - treat either signal as Wayland.
+    private static bool IsWaylandSession() =>
+        string.Equals(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland", StringComparison.OrdinalIgnoreCase)
+        || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
+
+#if LINUX_BACKEND
+    /// <summary>Called under _gate. The first call picks the mechanism (bounded portal probe);
+    /// later calls re-bind it to the current combination. Activations are dropped while
+    /// unarmed (Settings capturing a new combination), like the hook path.</summary>
+    private void RegisterWayland()
+    {
+        if (!_waylandStarted)
+        {
+            _waylandStarted = true;
+            var shortcuts = new LinuxGlobalShortcuts(() =>
+            {
+                if (_armed)
+                {
+                    _onHotkey();
+                }
+            });
+            if (shortcuts.Start())
+            {
+                shortcuts.StatusChanged += OnWaylandStatusChanged;
+                _wayland = shortcuts;
+            }
+            else
+            {
+                shortcuts.Dispose();
+                FileLog.Write(
+                    "RoeSnip: global hotkeys are not available on this Wayland desktop (no GlobalShortcuts portal). " +
+                    "Bind a desktop-environment keyboard shortcut to `RoeSnip capture` instead.");
+            }
+        }
+
+        if (_wayland is null)
+        {
+            _unavailableOnWayland = true;
+            return;
+        }
+
+        _wayland.Apply(_modifiers, _vk);
+        _unavailableOnWayland = !_wayland.IsActive;
+        _armed = true;
+    }
+
+    private void OnWaylandStatusChanged()
+    {
+        bool unavailable = _wayland?.IsActive != true;
+        if (unavailable != _unavailableOnWayland)
+        {
+            FileLog.Write($"RoeSnip: Wayland capture hotkey {(unavailable ? "inactive" : "active")}.");
+        }
+
+        _unavailableOnWayland = unavailable;
+        WaylandStatusChanged?.Invoke();
+    }
+#endif
+
     private bool EnsureHookRunning()
     {
         if (_hookRunning is bool alreadyDecided)
@@ -91,12 +207,7 @@ public sealed class HotkeyManager : IDisposable
             return alreadyDecided;
         }
 
-        // P8 audit fix: some compositors leave XDG_SESSION_TYPE unset/wrong but always set
-        // WAYLAND_DISPLAY on a Wayland session — treat either signal as Wayland.
-        bool isWayland = string.Equals(
-                Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland",
-                StringComparison.OrdinalIgnoreCase)
-            || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
+        bool isWayland = IsWaylandSession();
         if (OperatingSystem.IsLinux() && isWayland)
         {
             // libuiohook is X11-only (PLAN-XPLAT.md §5) — never start the hook on Wayland;
@@ -217,6 +328,10 @@ public sealed class HotkeyManager : IDisposable
             _armed = false;
             _hook?.Dispose(); // stops the hook loop; RunAsync's task completes
             _hook = null;
+#if LINUX_BACKEND
+            _wayland?.Dispose(); // closes the portal session; a GNOME keybinding stays
+            _wayland = null;
+#endif
         }
     }
 }
