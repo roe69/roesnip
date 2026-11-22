@@ -4,7 +4,7 @@ namespace RoeSnip.Core.Updates;
 /// next to the install target. FileShare.None is a sharing lock on Windows and a flock(LOCK_EX) on
 /// Unix (.NET's FileShare emulation), so a second open fails even inside the same process. The
 /// kernel drops it when the holder dies; the file itself is never deleted (deleting a lock file
-/// lets two holders lock two different inodes).</summary>
+/// lets two holders lock two different inodes), except one this user cannot open at all.</summary>
 public sealed class UpdateLock : IDisposable
 {
     private readonly FileStream _stream;
@@ -23,7 +23,9 @@ public sealed class UpdateLock : IDisposable
 
     /// <summary>Takes the lock without waiting; null only when another holder has it. Any other
     /// I/O failure (unwritable folder, full disk) is rethrown with its own message, so it never
-    /// reads as "another process is updating".</summary>
+    /// reads as "another process is updating". A lock file this user cannot open (root-owned, left
+    /// by a sudo run) is deleted once and the open retried, when the folder allows the delete: no
+    /// process of this user can hold that file, so no live lock is lost.</summary>
     public static UpdateLock? TryAcquire(string lockPath)
     {
         string? dir = System.IO.Path.GetDirectoryName(lockPath);
@@ -32,6 +34,29 @@ public sealed class UpdateLock : IDisposable
             Directory.CreateDirectory(dir);
         }
 
+        try
+        {
+            return Open(lockPath);
+        }
+        catch (UnauthorizedAccessException denied) when (File.Exists(lockPath))
+        {
+            try
+            {
+                File.Delete(lockPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw denied; // folder not writable either: report the original denial
+            }
+
+            RoeSnip.Core.Diagnostics.FileLog.Write(
+                $"RoeSnip: deleted an unopenable update lock file '{lockPath}' ({denied.Message}); retrying.");
+            return Open(lockPath);
+        }
+    }
+
+    private static UpdateLock? Open(string lockPath)
+    {
         try
         {
             var stream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.None);

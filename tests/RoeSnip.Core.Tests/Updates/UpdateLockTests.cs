@@ -62,6 +62,49 @@ public sealed class UpdateLockTests : IDisposable
         Assert.ThrowsAny<IOException>(() => UpdateLock.TryAcquire(Path.Combine(notADir, "RoeSnip.exe.update.lock")));
     }
 
+    // A root-owned lock left by a sudo run: modelled with mode 000 (root opens it anyway, so the
+    // test then only checks the acquire still works).
+    [Fact]
+    public void UnopenableLockFile_InWritableFolder_IsReplaced()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(LockPath, "");
+        File.SetUnixFileMode(LockPath, UnixFileMode.None);
+
+        using UpdateLock? held = UpdateLock.TryAcquire(LockPath);
+        Assert.NotNull(held);
+        Assert.Null(UpdateLock.TryAcquire(LockPath)); // the new file is a real lock
+    }
+
+    [Fact]
+    public void UnopenableLockFile_InReadOnlyFolder_Throws()
+    {
+        if (OperatingSystem.IsWindows() || Environment.UserName == "root")
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(LockPath, "");
+        File.SetUnixFileMode(LockPath, UnixFileMode.None);
+        UnixFileMode dirMode = File.GetUnixFileMode(_dir);
+        File.SetUnixFileMode(_dir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            Assert.Throws<UnauthorizedAccessException>(() => UpdateLock.TryAcquire(LockPath));
+            Assert.True(File.Exists(LockPath));
+        }
+        finally
+        {
+            File.SetUnixFileMode(_dir, dirMode);
+        }
+    }
+
     [Theory]
     [InlineData(unchecked((int)0x80070020), true, false, true)]  // ERROR_SHARING_VIOLATION
     [InlineData(unchecked((int)0x80070021), true, false, true)]  // ERROR_LOCK_VIOLATION

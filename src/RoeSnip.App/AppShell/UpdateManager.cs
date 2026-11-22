@@ -461,15 +461,17 @@ public static class UpdateManager
         }
     }
 
-    /// <summary>Bounded-retry ".old" delete (the replaced process may still hold it). Call off the
-    /// UI thread. Never throws.</summary>
-    public static void CleanupStaleExeWithRetry()
-    {
-        if (StaleExeIsSafeToDelete())
+    /// <summary>Bounded-retry ".old" delete (the replaced process may still hold it), holding the
+    /// update lock: another process mid-update may have just put its rollback target there.
+    /// Skipped while another updater runs. Call off the UI thread. Never throws.</summary>
+    public static void CleanupStaleExeWithRetry() =>
+        WithUpdateLock(InstallTargetPath, "stale .old cleanup", () =>
         {
-            TryDeleteWithRetry(StaleExePath);
-        }
-    }
+            if (StaleExeIsSafeToDelete())
+            {
+                TryDeleteWithRetry(StaleExePath);
+            }
+        });
 
     // Not gated on IsInstalled: a portable copy shares the config dir (and so the marker) with the
     // installed copy and must not delete the installed copy's rollback target.
@@ -579,9 +581,15 @@ public static class UpdateManager
             {
                 try
                 {
+                    bool targetWasMissing = !InstallSwap.Exists(target);
                     if (InstallSwap.RepairInterruptedSwap(target, target + ".old", target + ".restore"))
                     {
                         FileLog.Write($"RoeSnip: repaired an interrupted update or rollback at '{target}'.");
+                        if (targetWasMissing && target == InstallTargetPath)
+                        {
+                            // A unit came back at the target; the marker's versions name the one that left.
+                            UpdateHealthMarker.ForgetInstalled(HealthMarkerDirectory);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1025,8 +1033,9 @@ public static class UpdateManager
     /// <summary>True when the installed unit already is <paramref name="info"/>'s release.
     /// macOS: CFBundleShortVersionString of the installed bundle's Info.plist. Windows: the
     /// installed exe's file version, else its SHA-256 against the asset's (the plain exe's for a
-    /// .gz). Linux: the AppImage's SHA-256 when the release has a digest, else the version the
-    /// health marker recorded at the last swap plus a size check. False when unsure.</summary>
+    /// .gz). Linux: the AppImage's SHA-256; a release without a digest is never "installed" (a
+    /// marker version plus size can be stale, and squashfs padding makes equal sizes likely).
+    /// False when unsure.</summary>
     private static async Task<bool> InstalledMatchesAsync(UpdateInfo info)
     {
         try
@@ -1054,15 +1063,7 @@ public static class UpdateManager
 
             string? digest = info.IsGzip ? info.PlainDigest : info.Digest;
             bool? digestMatches = await AssetDigest.VerifyAsync(InstalledExePath, digest).ConfigureAwait(false);
-            if (digestMatches is not null || !OperatingSystem.IsLinux())
-            {
-                return digestMatches == true;
-            }
-
-            UpdateHealthMarker.State marker = UpdateHealthMarker.Load(HealthMarkerDirectory);
-            string version = FormatVersionText(info.Version);
-            return (marker.InstalledVersion == version || marker.PendingVersion == version) &&
-                   (info.Size is not long size || new FileInfo(InstalledExePath).Length == size);
+            return digestMatches == true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -1287,6 +1288,8 @@ public static class UpdateManager
             BeginSwap(swapGate, info.Version);
             // The running AppImage keeps its mounted inode after the rename to ".old".
             InstallSwap.SwapIn(stagedPath, InstallTargetPath, StaleExePath);
+            // Now, not after the idle gate: a kill while it waits must not leave the old version recorded.
+            UpdateHealthMarker.RecordInstalledVersion(HealthMarkerDirectory, FormatVersionText(info.Version));
 
             if (beforeLaunch is not null)
             {

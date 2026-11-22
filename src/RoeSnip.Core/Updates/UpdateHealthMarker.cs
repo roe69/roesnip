@@ -162,6 +162,18 @@ public static class UpdateHealthMarker
         Save(directory, state with { InstalledVersion = version });
     }
 
+    /// <summary>Forgets which release the install holds and any pending verify: startup repair put
+    /// a different unit back at the target, so neither field describes it any more.</summary>
+    public static void ForgetInstalled(string directory)
+    {
+        State state = Load(directory);
+        if (state.InstalledVersion is null && state.PendingVersion is null && state.AttemptCount == 0)
+        {
+            return;
+        }
+        Save(directory, state with { InstalledVersion = null, PendingVersion = null, AttemptCount = 0 });
+    }
+
     /// <summary>Called once, as early as possible in a normal startup (before the tray icon, hotkey,
     /// or anything else that could itself crash). When the marker's PendingVersion names EXACTLY
     /// <paramref name="currentVersion"/>, this launch is a post-update verification run - the
