@@ -161,8 +161,10 @@ public class SettingsTests : IDisposable
         Assert.Equal(original.PaletteColors, loaded.PaletteColors);
         Assert.Equal(original.ShareProviders, loaded.ShareProviders);
         Assert.Equal(original.ColorFormats, loaded.ColorFormats);
+        Assert.Equal(original.GnomeShellKeybindingBackup, loaded.GnomeShellKeybindingBackup);
         var originalWithLoadedLists = original with
         {
+            GnomeShellKeybindingBackup = loaded.GnomeShellKeybindingBackup,
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
             PaletteColors = loaded.PaletteColors,
@@ -196,8 +198,10 @@ public class SettingsTests : IDisposable
         Assert.Equal(original.PaletteColors, loaded.PaletteColors);
         Assert.Equal(original.ShareProviders, loaded.ShareProviders);
         Assert.Equal(original.ColorFormats, loaded.ColorFormats);
+        Assert.Equal(original.GnomeShellKeybindingBackup, loaded.GnomeShellKeybindingBackup);
         var originalWithLoadedLists = original with
         {
+            GnomeShellKeybindingBackup = loaded.GnomeShellKeybindingBackup,
             RecentPickedColors = loaded.RecentPickedColors,
             CustomColors = loaded.CustomColors,
             PaletteColors = loaded.PaletteColors,
