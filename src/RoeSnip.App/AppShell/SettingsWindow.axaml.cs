@@ -140,6 +140,10 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         {
             WaylandHotkeyCaption.Foreground = muted;
         }
+        TakeOverPrintScreenSection.IsVisible = OperatingSystem.IsLinux();
+        TakeOverPrintScreenCheckBox.IsChecked = _original.TakeOverSystemPrintScreen;
+        InstantCaptureSection.IsVisible = InstantCaptureAccess.Applies;
+        RefreshInstantCaptureStatus();
         SaveDirectoryBox.Text = _original.SaveDirectory;
         AutoSaveHdrCheckBox.IsChecked = _original.AutoSaveHdrCopy;
         CopyOnSelectCheckBox.IsChecked = _original.CopyOnSelect;
@@ -834,6 +838,53 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         }
     }
 
+    /// <summary>Scrolls to the Wayland "Instant capture" row and focuses its button (first run,
+    /// or the portal-screenshot toast).</summary>
+    public void FocusInstantCapture()
+    {
+        if (!InstantCaptureSection.IsVisible)
+        {
+            return;
+        }
+
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            InstantCaptureSection.BringIntoView();
+            AllowInstantCaptureButton.Focus();
+        }, Avalonia.Threading.DispatcherPriority.Loaded);
+    }
+
+    private void RefreshInstantCaptureStatus()
+    {
+        if (!InstantCaptureAccess.Applies)
+        {
+            return;
+        }
+
+        bool allowed = InstantCaptureAccess.IsAllowed;
+        InstantCaptureStatus.Text = allowed ? "Allowed" : "Not allowed";
+        AllowInstantCaptureButton.IsEnabled = !allowed;
+    }
+
+    /// <summary>The only place the desktop's screen-share dialog opens without a saved token.</summary>
+    private async void AllowInstantCaptureButton_Click(object? sender, RoutedEventArgs e)
+    {
+        AllowInstantCaptureButton.IsEnabled = false;
+        InstantCaptureStatus.Text = "Waiting for your answer in the desktop's dialog...";
+        bool allowed = false;
+        try
+        {
+            allowed = await InstantCaptureAccess.RequestAsync();
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: instant capture request failed: {ex.Message}");
+        }
+
+        FileLog.Write($"RoeSnip: instant capture {(allowed ? "allowed" : "not allowed")} from Settings.");
+        RefreshInstantCaptureStatus();
+    }
+
     private void SaveButton_Click(object? sender, RoutedEventArgs e)
     {
         if (!TryValidateToneMapOverrides(out double? kneeOverride, out double? peakOverride, out string? validationError))
@@ -862,6 +913,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
             AutoSaveHdrCopy = AutoSaveHdrCheckBox.IsChecked == true,
             CopyOnSelect = CopyOnSelectCheckBox.IsChecked == true,
             ColorPickerEnabled = ColorPickerCheckBox.IsChecked == true,
+            TakeOverSystemPrintScreen = TakeOverPrintScreenCheckBox.IsChecked != false,
             ToneMapKneeOverride = kneeOverride,
             ToneMapPeakOverride = peakOverride,
             RunAtStartup = runAtStartup,

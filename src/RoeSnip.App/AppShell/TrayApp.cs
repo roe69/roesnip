@@ -337,12 +337,15 @@ public sealed class TrayApp : ITrayNotifier
             {
                 _settings = await ResolvePrintScreenConsentAsync(_settings);
             }
+            // Linux/GNOME: free the hotkey from gnome-shell before binding it (no prompt).
+            _settings = GnomePrintScreenTakeover.ApplyTakeover(_settings, previous: null);
 
             _hotkeyManager = new HotkeyManager(() => Dispatcher.UIThread.Post(TriggerCapture));
             _hotkeyManager.Register(_settings);
             _hotkeyManager.WaylandStatusChanged += () => Dispatcher.UIThread.Post(MaybeShowWaylandHotkeyNotice);
             WarnIfPrintScreenConflict();
             MaybeShowWaylandHotkeyNotice();
+            MaybeOpenInstantCaptureSetup();
 
             switch (s_initialAction)
             {
@@ -385,6 +388,51 @@ public sealed class TrayApp : ITrayNotifier
         catch (Exception ex)
         {
             FileLog.Write($"RoeSnip: failed to persist the Wayland hotkey notice flag: {ex.Message}");
+        }
+        _settings = updated;
+    }
+
+    /// <summary>Wayland, first run without a saved screen-share token: open Settings at "Allow
+    /// instant capture" once instead of letting the share dialog pop up on its own.</summary>
+    private void MaybeOpenInstantCaptureSetup()
+    {
+        if (!InstantCaptureAccess.Applies || InstantCaptureAccess.IsAllowed || _settings.InstantCaptureSetupShown)
+        {
+            return;
+        }
+
+        FileLog.Write("RoeSnip: instant capture not allowed yet; opening Settings at Allow instant capture.");
+        SaveFlag(_settings with { InstantCaptureSetupShown = true });
+        OpenSettings(focusInstantCapture: true);
+    }
+
+    /// <summary>After a user's capture went through the Screenshot portal (no screen share yet):
+    /// one toast pointing at the Settings button.</summary>
+    private void MaybeShowInstantCaptureHint()
+    {
+        if (!InstantCaptureAccess.Applies || InstantCaptureAccess.IsAllowed || _settings.InstantCaptureToastShown)
+        {
+            return;
+        }
+
+        ShowToast(
+            "Screenshots go through the desktop's screenshot tool (with its sound) until you allow instant " +
+            "capture. Click to open Settings.",
+            isError: false,
+            durationMs: 8000,
+            onClick: () => OpenSettings(focusInstantCapture: true));
+        SaveFlag(_settings with { InstantCaptureToastShown = true });
+    }
+
+    private void SaveFlag(RoeSnipSettings updated)
+    {
+        try
+        {
+            SettingsStore.Save(updated);
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: failed to persist a one-time notice flag: {ex.Message}");
         }
         _settings = updated;
     }
@@ -488,14 +536,21 @@ public sealed class TrayApp : ITrayNotifier
             // Re-enumerate for the NEXT trigger's flash placement off the hot path (monitors may
             // have changed while the overlay was up).
             RefreshMonitorCacheInBackground();
+            Dispatcher.UIThread.Post(MaybeShowInstantCaptureHint);
         }
     }
 
-    private void OpenSettings()
+    private void OpenSettings() => OpenSettings(focusInstantCapture: false);
+
+    private void OpenSettings(bool focusInstantCapture)
     {
         if (_openSettingsWindow is not null)
         {
             _openSettingsWindow.Activate();
+            if (focusInstantCapture)
+            {
+                _openSettingsWindow.FocusInstantCapture();
+            }
             return;
         }
 
@@ -518,6 +573,10 @@ public sealed class TrayApp : ITrayNotifier
         window.Closed += (_, _) => _openSettingsWindow = null;
         _openSettingsWindow = window;
         window.Show();
+        if (focusInstantCapture)
+        {
+            window.FocusInstantCapture();
+        }
     }
 
     /// <summary>Automation-only entry point (AppShell/AutomationServer.cs's `settings`/`open`
@@ -560,6 +619,7 @@ public sealed class TrayApp : ITrayNotifier
 
     private async Task ApplyUpdatedSettingsAsync(RoeSnipSettings updated)
     {
+        var previous = _settings;
         _settings = updated;
         try
         {
@@ -572,6 +632,7 @@ public sealed class TrayApp : ITrayNotifier
             {
                 _settings = await ResolvePrintScreenConsentAsync(_settings);
             }
+            _settings = GnomePrintScreenTakeover.ApplyTakeover(_settings, previous);
             _hotkeyManager?.Register(_settings);
         }
         catch (Exception ex)

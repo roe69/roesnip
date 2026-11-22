@@ -142,65 +142,83 @@ public class GnomePrintScreenTakeoverTests
     }
 
     [Fact]
-    public async Task Resolve_Yes_TakesOver_AndMarksAnswered()
+    public void Apply_DefaultOn_TakesOverWithoutAsking_AndSaves()
     {
         var fake = new FakeGsettings();
         var saved = new List<RoeSnipSettings>();
-        var result = await new GnomePrintScreenTakeover(fake.Run)
-            .ResolveAsync(BarePrint, (_, _) => Task.FromResult<bool?>(true), saved.Add);
+        var result = new GnomePrintScreenTakeover(fake.Run).Apply(BarePrint, previous: null, saved.Add);
 
-        Assert.True(result.PrintScreenPromptAnswered);
+        Assert.True(BarePrint.TakeOverSystemPrintScreen);
         Assert.Equal(0u, result.HotkeyModifiers);
         Assert.Equal("@as []", fake.Values["show-screenshot-ui"]);
+        Assert.Equal("['Print']", result.GnomeShellKeybindingBackup["show-screenshot-ui"]);
         Assert.Single(saved);
     }
 
     [Fact]
-    public async Task Resolve_No_SwitchesToCtrlPrint_LeavesGnome()
+    public void Apply_AlreadyTakenOver_ChangesNothing()
     {
         var fake = new FakeGsettings();
-        var result = await new GnomePrintScreenTakeover(fake.Run)
-            .ResolveAsync(BarePrint, (_, _) => Task.FromResult<bool?>(false), _ => { });
-
-        Assert.True(result.PrintScreenPromptAnswered);
-        Assert.Equal(HotkeyManager.ModControl, result.HotkeyModifiers);
-        Assert.Equal("['Print']", fake.Values["show-screenshot-ui"]);
-    }
-
-    [Fact]
-    public async Task Resolve_Dismissed_AsksAgainLater()
-    {
-        var fake = new FakeGsettings();
+        var takeover = new GnomePrintScreenTakeover(fake.Run);
+        var taken = takeover.Apply(BarePrint, null, _ => { });
         var saved = new List<RoeSnipSettings>();
-        var result = await new GnomePrintScreenTakeover(fake.Run)
-            .ResolveAsync(BarePrint, (_, _) => Task.FromResult<bool?>(null), saved.Add);
 
-        Assert.False(result.PrintScreenPromptAnswered);
+        Assert.Same(taken, takeover.Apply(taken, taken, saved.Add));
         Assert.Empty(saved);
+    }
+
+    [Fact]
+    public void Apply_OptOut_RestoresGnome_AndUsesCtrlPrint()
+    {
+        var fake = new FakeGsettings();
+        var takeover = new GnomePrintScreenTakeover(fake.Run);
+        var taken = takeover.Apply(BarePrint, null, _ => { });
+
+        var optedOut = takeover.Apply(taken with { TakeOverSystemPrintScreen = false }, taken, _ => { });
+
         Assert.Equal("['Print']", fake.Values["show-screenshot-ui"]);
+        Assert.Empty(optedOut.GnomeShellKeybindingBackup);
+        Assert.Equal(HotkeyManager.ModControl, optedOut.HotkeyModifiers);
+        Assert.Equal(HotkeyManager.VkSnapshot, optedOut.HotkeyVirtualKey);
     }
 
     [Fact]
-    public async Task Resolve_AlreadyAnswered_DoesNotAsk()
+    public void Apply_OptBackIn_ReturnsToPrintScreen()
     {
         var fake = new FakeGsettings();
-        bool asked = false;
-        var settings = BarePrint with { PrintScreenPromptAnswered = true };
-        var result = await new GnomePrintScreenTakeover(fake.Run)
-            .ResolveAsync(settings, (_, _) => { asked = true; return Task.FromResult<bool?>(true); }, _ => { });
+        var takeover = new GnomePrintScreenTakeover(fake.Run);
+        var optedOut = takeover.Apply(BarePrint with { TakeOverSystemPrintScreen = false }, null, _ => { });
+        Assert.Equal(HotkeyManager.ModControl, optedOut.HotkeyModifiers);
 
-        Assert.False(asked);
-        Assert.Same(settings, result);
+        var back = takeover.Apply(optedOut with { TakeOverSystemPrintScreen = true }, optedOut, _ => { });
+
+        Assert.Equal(0u, back.HotkeyModifiers);
+        Assert.Equal("@as []", fake.Values["show-screenshot-ui"]);
     }
 
     [Fact]
-    public async Task Resolve_NoConflict_DoesNotAsk()
+    public void Apply_HotkeyMovedOff_RestoresGnome()
     {
         var fake = new FakeGsettings();
-        fake.Values["show-screenshot-ui"] = "@as []";
-        bool asked = false;
-        await new GnomePrintScreenTakeover(fake.Run)
-            .ResolveAsync(BarePrint, (_, _) => { asked = true; return Task.FromResult<bool?>(true); }, _ => { });
-        Assert.False(asked);
+        var takeover = new GnomePrintScreenTakeover(fake.Run);
+        var taken = takeover.Apply(BarePrint, null, _ => { });
+
+        var moved = takeover.Apply(taken with { HotkeyModifiers = HotkeyManager.ModControl | HotkeyManager.ModShift, HotkeyVirtualKey = 0x53 }, taken, _ => { });
+
+        Assert.Equal("['Print']", fake.Values["show-screenshot-ui"]);
+        Assert.Empty(moved.GnomeShellKeybindingBackup);
+    }
+
+    [Fact]
+    public void Apply_OptOut_FreeHotkey_KeepsIt()
+    {
+        var fake = new FakeGsettings();
+        var settings = new RoeSnipSettings
+        {
+            HotkeyModifiers = HotkeyManager.ModControl | HotkeyManager.ModShift,
+            HotkeyVirtualKey = 0x53,
+            TakeOverSystemPrintScreen = false,
+        };
+        Assert.Same(settings, new GnomePrintScreenTakeover(fake.Run).Apply(settings, null, _ => { }));
     }
 }

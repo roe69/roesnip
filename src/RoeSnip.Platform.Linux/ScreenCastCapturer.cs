@@ -8,8 +8,9 @@ namespace RoeSnip.Platform.Linux;
 /// a Screenshot portal round trip (~2.7 s on GNOME, plus a shutter sound and flash). The copy is
 /// taken synchronously when the trigger's capture runs, before any overlay window exists.
 ///
-/// The first call (the tray warmup capture) opens the session; with a saved restore token that is
-/// silent and the wait is short, without one GNOME shows its share dialog and the wait is longer.
+/// The first call (the tray warmup capture) opens the session silently from a saved restore token.
+/// Without a token nothing opens until Settings' "Allow instant capture" shows the share dialog
+/// (<see cref="InstantCapture"/>); captures meanwhile use the Screenshot portal.
 /// Every failure is a transient <see cref="CaptureException"/>, never memoized.</summary>
 public sealed class ScreenCastCapturer : IScreenCapturer
 {
@@ -41,7 +42,10 @@ public sealed class ScreenCastCapturer : IScreenCapturer
         var geometry = live.StreamFor(monitor, monitors);
         if (geometry is null)
         {
-            session.ReportUnmappedMonitor(ScreenCastSession.MonitorsSignature(monitors));
+            if (!CaptureContext.IsBackground) // a reopen may show the share dialog: only for a user's capture
+            {
+                session.ReportUnmappedMonitor(ScreenCastSession.MonitorsSignature(monitors));
+            }
             throw new CaptureException(
                 $"screencast has no stream for monitor {monitor.Index} ({monitor.DeviceName})");
         }

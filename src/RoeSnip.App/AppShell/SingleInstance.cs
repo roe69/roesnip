@@ -192,10 +192,14 @@ public sealed class SingleInstance : IDisposable
     {
         try
         {
+            var watch = Stopwatch.StartNew();
             using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
             client.Connect(2000);
             client.WriteByte((byte)signal);
             client.Flush();
+            // The `capture` verb's cost is mostly this process starting; both numbers are logged.
+            double sinceStart = (DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMilliseconds;
+            FileLog.Write($"RoeSnip: signalled the resident ({signal}) in {watch.ElapsedMilliseconds} ms, {sinceStart:F0} ms after this process started");
             return true;
         }
         catch (Exception ex)
@@ -225,6 +229,7 @@ public sealed class SingleInstance : IDisposable
                 if (raw is (int)InstanceSignal.TriggerCapture or (int)InstanceSignal.TriggerSettings
                     or (int)InstanceSignal.Exit)
                 {
+                    FileLog.Write($"RoeSnip: single-instance signal {(InstanceSignal)raw} received");
                     onSignal((InstanceSignal)raw);
                 }
                 else if (raw >= 0)

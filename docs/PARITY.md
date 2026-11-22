@@ -1386,18 +1386,22 @@ because a correct implementation needs live hardware this repo cannot exercise.
   capture-exclusion API and Avalonia does not surface NSWindow.sharingType; overlay windows
   may appear in re-captures there (Windows gets WDA_EXCLUDEFROMCAPTURE via item 02).
 - Global hotkey on Wayland: compositors forbid global key grabs, so SharpHook stays X11-only.
-  AppShell/LinuxGlobalShortcuts.cs binds the hotkey through the GlobalShortcuts portal
-  (shortcut id `capture`, preferred_trigger from LinuxShortcutFormat.ToPortalTrigger, re-bound on
-  a hotkey change); without the portal, GNOME gets a gsettings custom keybinding `roesnip`
-  running `<exe> capture` when no other custom entry uses the key. The desktop owns the final
-  trigger (it may show a consent dialog or reassign the key). The one-time toast and Settings
-  caption remain for desktops where neither works. GNOME 50 live: CreateSession works, but a
-  BindShortcuts for bare Print never answered because gnome-shell's show-screenshot-ui holds it;
-  AppShell/GnomePrintScreenTakeover.cs is the analogue of the Windows Snipping Tool consent
-  (asked once via PrintScreenPromptAnswered, Yes clears only the conflicting
-  org.gnome.shell.keybindings accelerator with a backup in GnomeShellKeybindingBackup, No
-  switches to Ctrl+PrintScreen), and a key GNOME still holds is never sent to the portal. A bind
-  with no answer in 30 s falls back to the GNOME custom keybinding.
+  AppShell/LinuxGlobalShortcuts.cs: GNOME gets a gsettings custom keybinding `roesnip` running
+  `<exe> capture` (silent; skipped when another custom entry uses the key); other desktops use
+  the GlobalShortcuts portal (shortcut id `capture`, preferred_trigger from
+  LinuxShortcutFormat.ToPortalTrigger, re-bound on a hotkey change), which shows a dialog. A key
+  gnome-shell still holds is never bound; a portal bind with no answer in 30 s falls back to the
+  GNOME keybinding. GNOME 50 live: a BindShortcuts for bare Print never answered because
+  gnome-shell's show-screenshot-ui holds it. AppShell/GnomePrintScreenTakeover.cs (no prompt,
+  owner rule) clears only the conflicting org.gnome.shell.keybindings accelerator, backed up in
+  GnomeShellKeybindingBackup; Settings' TakeOverSystemPrintScreen (default on) turned off
+  restores it and moves the hotkey to Ctrl+PrintScreen. The one-time toast and Settings caption
+  remain for desktops where nothing works. No uninstall path exists to restore the backup from.
+- Wayland instant capture: the snapshot screencast's share dialog never opens on its own
+  (startup, warmup, background reopen). Without a saved token Settings opens once at "Instant
+  capture" and its "Allow instant capture" button opens the dialog (Platform.Linux
+  InstantCapture.RequestAsync); captures meanwhile use the Screenshot portal and show one toast
+  pointing at that button.
 - Instant-dim window parking on Wayland: clients cannot position windows, so the parked
   flash/overlay pool cannot exist there; Linux gets the warmup slice (item 17) only, and
   full-pool tuning needs a live Linux machine (tracked in PLAN-XPLAT.md section 7).
@@ -1902,7 +1906,8 @@ because a correct implementation needs live hardware this repo cannot exercise.
   `ApplyLoupeRadius` path in both apps.
 - [ ] 27-wayland-instant-capture (code landed, live check on GNOME Wayland outstanding): a kept-open
   xdg-desktop-portal ScreenCast session (MONITOR, multiple, cursor hidden, persist_mode=2; restore
-  token in `<config>/screencast-snapshot.token`) opened by the first capture (tray warmup), one
+  token in `<config>/screencast-snapshot.token`) opened silently by the first capture (tray warmup)
+  when a token is saved, else only from Settings' "Allow instant capture" button, one
   GStreamer pipeline per stream (`pipewiresrc ! videoconvert ! BGRx ! appsink max-buffers=1
   drop=true`) keeping the newest sample, so a capture is one copy (`Platform.Linux/
   ScreenCastCapturer.cs`, `ScreenCastSession.cs`, `ScreenCastStream.cs`). Streams map to RandR

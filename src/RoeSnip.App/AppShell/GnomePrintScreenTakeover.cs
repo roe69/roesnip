@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Threading.Tasks;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Settings;
 
@@ -11,9 +10,10 @@ namespace RoeSnip.App.AppShell;
 /// <summary>GNOME's analogue of the Windows Snipping Tool PrintScreen intercept: gnome-shell grabs
 /// Print / Shift+Print / Alt+Print for its own screenshot UI, so neither the GlobalShortcuts portal
 /// nor a custom keybinding ever receives them. Detects which org.gnome.shell.keybindings key holds
-/// the capture hotkey, clears only that accelerator on consent (original value kept in
-/// <see cref="RoeSnipSettings.GnomeShellKeybindingBackup"/>) and writes it back when the hotkey
-/// moves off it.</summary>
+/// the capture hotkey and, unless <see cref="RoeSnipSettings.TakeOverSystemPrintScreen"/> is off,
+/// clears only that accelerator (original value kept in
+/// <see cref="RoeSnipSettings.GnomeShellKeybindingBackup"/>), writing it back when the hotkey moves
+/// off it or the setting is turned off.</summary>
 public sealed class GnomePrintScreenTakeover
 {
     public const string ShellSchema = "org.gnome.shell.keybindings";
@@ -22,13 +22,6 @@ public sealed class GnomePrintScreenTakeover
     {
         "show-screenshot-ui", "screenshot", "screenshot-window", "show-screen-recording-ui",
     };
-
-    private const string PromptTitle = "RoeSnip - PrintScreen hotkey";
-    private const string PromptText =
-        "GNOME opens its own screenshot tool (with a shutter sound and flash) when you press PrintScreen, " +
-        "so RoeSnip never receives it.\n\n" +
-        "Turn off GNOME's PrintScreen shortcut so PrintScreen opens RoeSnip? (Shift/Alt+PrintScreen keep working.)\n\n" +
-        "Choosing \"No\" makes RoeSnip use Ctrl+PrintScreen instead.";
 
     private readonly Func<string[], string?> _gsettings;
 
@@ -43,70 +36,74 @@ public sealed class GnomePrintScreenTakeover
         (Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP") ?? "")
             .Split(':').Any(d => string.Equals(d, "GNOME", StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>Same semantics as TrayApp.ResolvePrintScreenConsentAsync on Windows: asked once ever
-    /// (PrintScreenPromptAnswered) and only when GNOME holds a PrintScreen hotkey; Yes clears GNOME's
-    /// binding, No switches to Ctrl+PrintScreen, a dismissed dialog asks again next launch. Also
-    /// restores GNOME keys whose accelerator the hotkey no longer uses. Call before
-    /// HotkeyManager.Register so the portal bind sees a free key.</summary>
-    public static Task<RoeSnipSettings> ResolveGnomePrintScreenConsentAsync(
-        RoeSnipSettings settings, Func<string, string, Task<bool?>> showYesNo)
+    /// <summary>Applies <see cref="RoeSnipSettings.TakeOverSystemPrintScreen"/> with no prompt. Call
+    /// before HotkeyManager.Register (startup, and every Settings save with the previous settings)
+    /// so the keybinding sees a free key. Saves the settings when it changed them.</summary>
+    public static RoeSnipSettings ApplyTakeover(RoeSnipSettings settings, RoeSnipSettings? previous)
     {
         if (!OperatingSystem.IsLinux() || !IsGnomeSession())
         {
-            return Task.FromResult(settings);
+            return settings;
         }
 
-        return new GnomePrintScreenTakeover().ResolveAsync(settings, showYesNo, SettingsStore.Save);
+        return new GnomePrintScreenTakeover().Apply(settings, previous, SettingsStore.Save);
     }
 
-    public async Task<RoeSnipSettings> ResolveAsync(
-        RoeSnipSettings settings, Func<string, string, Task<bool?>> showYesNo, Action<RoeSnipSettings> save)
+    /// <summary>On: clear GNOME's binding for the hotkey (backed up) and restore keys the hotkey
+    /// left; re-ticking after an opt-out moves Ctrl+PrintScreen back to PrintScreen. Off: restore
+    /// every backed-up key and, when GNOME then holds the PrintScreen hotkey, use Ctrl+PrintScreen.</summary>
+    public RoeSnipSettings Apply(RoeSnipSettings settings, RoeSnipSettings? previous, Action<RoeSnipSettings> save)
     {
         try
         {
-            var updated = RestoreIfMovedOff(settings, settings.HotkeyModifiers, settings.HotkeyVirtualKey);
-            bool changed = !ReferenceEquals(updated, settings);
-
-            if (updated.HotkeyVirtualKey == HotkeyManager.VkSnapshot)
+            var updated = settings;
+            if (settings.TakeOverSystemPrintScreen)
             {
+                if (previous is { TakeOverSystemPrintScreen: false }
+                    && updated.HotkeyVirtualKey == HotkeyManager.VkSnapshot
+                    && updated.HotkeyModifiers == HotkeyManager.ModControl)
+                {
+                    updated = updated with { HotkeyModifiers = 0 };
+                }
+
+                updated = RestoreIfMovedOff(updated, updated.HotkeyModifiers, updated.HotkeyVirtualKey);
                 var conflicts = Detect(updated.HotkeyModifiers, updated.HotkeyVirtualKey);
                 if (conflicts.Count > 0)
                 {
                     string accel = LinuxShortcutFormat.ToGtkAccelerator(updated.HotkeyModifiers, updated.HotkeyVirtualKey)!;
-                    string keys = string.Join(", ", conflicts.Keys);
-                    if (!updated.PrintScreenPromptAnswered)
-                    {
-                        FileLog.Write($"RoeSnip: GNOME binds {accel} to {keys}; asking to take it over.");
-                        bool? answer = await showYesNo(PromptTitle, PromptText);
-                        if (answer is null)
-                        {
-                            return Persist(updated, changed, save); // dismissed: ask again next launch
-                        }
-
-                        updated = answer == true
-                            ? TakeOver(updated, updated.HotkeyModifiers, updated.HotkeyVirtualKey) with { PrintScreenPromptAnswered = true }
-                            : updated with { HotkeyModifiers = HotkeyManager.ModControl, PrintScreenPromptAnswered = true };
-                        changed = true;
-                    }
-                    else if (conflicts.Keys.All(updated.GnomeShellKeybindingBackup.ContainsKey))
-                    {
-                        // Taken over before and GNOME set it again (an update or a reset): re-take.
-                        updated = TakeOver(updated, updated.HotkeyModifiers, updated.HotkeyVirtualKey);
-                        changed = true;
-                    }
-                    else
-                    {
-                        FileLog.Write(
-                            $"RoeSnip: GNOME binds {accel} to {keys}; the PrintScreen question was already answered, leaving GNOME's binding.");
-                    }
+                    FileLog.Write($"RoeSnip: GNOME binds {accel} to {string.Join(", ", conflicts.Keys)}; taking it over.");
+                    updated = TakeOver(updated, updated.HotkeyModifiers, updated.HotkeyVirtualKey);
+                }
+            }
+            else
+            {
+                updated = Restore(updated);
+                if (updated.HotkeyVirtualKey == HotkeyManager.VkSnapshot
+                    && updated.HotkeyModifiers != HotkeyManager.ModControl
+                    && Detect(updated.HotkeyModifiers, updated.HotkeyVirtualKey).Count > 0)
+                {
+                    FileLog.Write("RoeSnip: PrintScreen takeover is off and GNOME holds the hotkey; RoeSnip uses Ctrl+PrintScreen.");
+                    updated = updated with { HotkeyModifiers = HotkeyManager.ModControl };
                 }
             }
 
-            return Persist(updated, changed, save);
+            if (!ReferenceEquals(updated, settings))
+            {
+                try
+                {
+                    save(updated);
+                }
+                catch (Exception ex)
+                {
+                    FileLog.Write($"RoeSnip: failed to persist the GNOME PrintScreen takeover: {ex.Message}");
+                }
+            }
+
+            return updated;
         }
         catch (Exception ex)
         {
-            FileLog.Write($"RoeSnip: GNOME PrintScreen check failed, leaving GNOME's bindings: {ex.Message}");
+            FileLog.Write($"RoeSnip: GNOME PrintScreen takeover failed, leaving GNOME's bindings: {ex.Message}");
             return settings;
         }
     }
@@ -208,23 +205,6 @@ public sealed class GnomePrintScreenTakeover
             .Select(kv => kv.Key)
             .ToList();
         return movedOff.Count == 0 ? settings : Restore(settings, movedOff);
-    }
-
-    private static RoeSnipSettings Persist(RoeSnipSettings settings, bool changed, Action<RoeSnipSettings> save)
-    {
-        if (changed)
-        {
-            try
-            {
-                save(settings);
-            }
-            catch (Exception ex)
-            {
-                FileLog.Write($"RoeSnip: failed to persist the GNOME PrintScreen answer: {ex.Message}");
-            }
-        }
-
-        return settings;
     }
 
     /// <summary>Runs gsettings; stdout (trimmed) on exit 0, else null.</summary>

@@ -105,19 +105,19 @@ toggle in Settings). The installed AppImage updates itself from GitHub
 Releases. The tar.gz build only shows a notice when a new version is out.
 
 **Wayland hotkey.** The hotkey hook (SharpHook/libuiohook) is X11-only, so on
-Wayland RoeSnip never starts it. Instead it binds the configured hotkey as
+Wayland RoeSnip never starts it. On GNOME it adds a custom keybinding
+`roesnip` that runs `<RoeSnip or $APPIMAGE> capture` (no dialog), unless
+another custom shortcut already uses that key. gnome-shell grabs Print,
+Shift+Print and Alt+Print for its own screenshot tool, so RoeSnip clears
+GNOME's binding for the hotkey's key and keeps the old value to restore it.
+Settings' "PrintScreen opens RoeSnip (replaces the system screenshot key)"
+(on by default) turns this off: GNOME gets its key back and RoeSnip moves to
+Ctrl+PrintScreen. On other desktops (KDE Plasma 6, Hyprland) RoeSnip binds
 shortcut `capture` ("Take a screenshot") through the
-`org.freedesktop.portal.GlobalShortcuts` portal (GNOME 48+, KDE Plasma 6,
-Hyprland); the desktop may ask once to allow it and has the final say on the
-key. Changing the hotkey in Settings re-binds it. Without that portal, on
-GNOME RoeSnip adds a custom keybinding `roesnip` that runs
-`<RoeSnip or $APPIMAGE> capture`, unless another custom shortcut already uses
-that key. gnome-shell grabs Print, Shift+Print and Alt+Print for its own
-screenshot tool, so with a PrintScreen hotkey RoeSnip asks once whether to
-clear GNOME's binding for that key (restored when the hotkey moves off it);
-"No" switches RoeSnip to Ctrl+PrintScreen. A key GNOME still holds is never
-sent to the portal. Elsewhere, or when the desktop refuses, RoeSnip shows a one-time
-notice; bind a desktop shortcut to the `RoeSnip capture` CLI verb by hand:
+`org.freedesktop.portal.GlobalShortcuts` portal, which shows the desktop's
+dialog. Changing the hotkey in Settings re-binds it. When nothing works,
+RoeSnip shows a one-time notice; bind a desktop shortcut to the
+`RoeSnip capture` CLI verb by hand:
 
 - **GNOME:** Settings - Keyboard - View and Customize Shortcuts - Custom
   Shortcuts - add one with command `/path/to/RoeSnip capture`.
@@ -126,6 +126,13 @@ notice; bind a desktop shortcut to the `RoeSnip capture` CLI verb by hand:
 
 X11 sessions are unaffected: the hook starts normally there and the
 PrintScreen hotkey works as on Windows.
+
+**Wayland instant capture.** Instant screenshots read a kept-open screen
+share. Its dialog never opens on its own: on first run RoeSnip opens
+Settings at "Instant capture", and the "Allow instant capture" button shows
+the desktop's share dialog (pick all monitors / Entire screen). After that the
+share reopens silently on every start. Until then captures go through the
+desktop's screenshot tool (with its shutter sound).
 
 ## macOS
 

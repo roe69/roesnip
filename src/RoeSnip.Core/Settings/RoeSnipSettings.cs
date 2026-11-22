@@ -22,6 +22,13 @@ public sealed record RoeSnipSettings
     /// reaches it, mapped to their original gsettings value text (e.g. "['Print']"). Written back
     /// when the hotkey moves off that key.</summary>
     public Dictionary<string, string> GnomeShellKeybindingBackup { get; init; } = new();
+
+    /// <summary>Linux: PrintScreen opens RoeSnip, clearing the desktop's own screenshot binding for
+    /// the hotkey. Off restores that binding and moves RoeSnip to Ctrl+PrintScreen.</summary>
+    public bool TakeOverSystemPrintScreen { get; init; } = true;
+
+    public bool InstantCaptureSetupShown { get; init; } = false; // Wayland: Settings opened once at "Allow instant capture"
+    public bool InstantCaptureToastShown { get; init; } = false; // Wayland: the portal-screenshot hint toast shown once
     public bool ColorPickerEnabled { get; init; } = false;        // false => no click-to-pick, no ColorPickerWindow, no loupe colour codes
 
     /// <summary>The overlay's Copy and Upload shortcuts, same MOD_*/virtual-key shape as the

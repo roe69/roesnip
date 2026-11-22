@@ -36,6 +36,29 @@
                        IsVisible="False" Margin="0,6,0,0" FontSize="11"
                        Text="Global hotkeys aren't available on Wayland. Bind a keyboard shortcut to `RoeSnip capture` in your desktop settings instead."/>
 
+            <!-- Linux only: the desktop's own screenshot key (gnome-shell holds Print). -->
+            <StackPanel x:Name="TakeOverPrintScreenSection" IsVisible="False" Margin="0,10,0,0">
+              <CheckBox x:Name="TakeOverPrintScreenCheckBox" Content="PrintScreen opens RoeSnip (replaces the system screenshot key)" Margin="0,0,0,4"/>
+              <TextBlock Text="Unticked, the desktop's screenshot key comes back and RoeSnip uses Ctrl+PrintScreen."
+                         Margin="20,0,0,0" FontSize="11" TextWrapping="Wrap"
+                         Foreground="{StaticResource RlTextMutedBrush}"/>
+            </StackPanel>
+
+            <!-- Wayland only: the kept-open screen share behind instant screenshots. -->
+            <StackPanel x:Name="InstantCaptureSection" IsVisible="False">
+              <Border Height="1" Margin="0,12" Background="{StaticResource RlBorderBrush}"/>
+              <TextBlock Text="Instant capture" Foreground="{StaticResource RlTextPrimaryBrush}" Margin="0,0,0,6"/>
+              <TextBlock Text="GNOME asks once which screens RoeSnip may capture. Pick all monitors / Entire screen."
+                         FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"
+                         Foreground="{StaticResource RlTextMutedBrush}"/>
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock x:Name="InstantCaptureStatus" Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap"
+                           Foreground="{StaticResource RlTextMutedBrush}"/>
+                <Button x:Name="AllowInstantCaptureButton" Grid.Column="1" Content="Allow instant capture"
+                        Click="AllowInstantCaptureButton_Click"/>
+              </Grid>
+            </StackPanel>
+
             <Border Height="1" Margin="0,12" Background="{StaticResource RlBorderBrush}"/>
 
             <TextBlock Text="Save directory" Foreground="{StaticResource RlTextPrimaryBrush}" Margin="0,0,0,6"/>

@@ -53,12 +53,11 @@ public interface IHostPortalRegistry : IDBusObject
     Task RegisterAsync(string appId, IDictionary<string, object> options);
 }
 
-/// <summary>The Wayland capture hotkey (SharpHook is X11-only). Preferred: the
-/// org.freedesktop.portal.GlobalShortcuts portal (GNOME 48+, KDE Plasma 6, Hyprland), bound as
-/// shortcut "capture" and kept alive on one long-lived D-Bus connection (the portal session dies
-/// with it). Fallback when the portal or its interface is missing: on GNOME a custom keybinding
-/// "roesnip" running "&lt;exe&gt; capture" via gsettings, written only when no other custom entry
-/// already uses the binding. Persists nothing itself beyond that keybinding.</summary>
+/// <summary>The Wayland capture hotkey (SharpHook is X11-only). GNOME: a custom keybinding
+/// "roesnip" running "&lt;exe&gt; capture" via gsettings (silent), written only when no other custom
+/// entry already uses the binding. Elsewhere (KDE Plasma 6, Hyprland): the
+/// org.freedesktop.portal.GlobalShortcuts portal, bound as shortcut "capture" on one long-lived
+/// D-Bus connection (the portal session dies with it); it shows the desktop's dialog.</summary>
 public sealed class LinuxGlobalShortcuts : IDisposable
 {
     public enum Mechanism { None, Portal, GnomeKeybinding, UserShortcut }
@@ -106,6 +105,14 @@ public sealed class LinuxGlobalShortcuts : IDisposable
     /// neither the portal nor the GNOME fallback is usable.</summary>
     public bool Start()
     {
+        // GNOME first: a custom keybinding is silent, the portal shows a dialog (owner rule).
+        if (IsGnome() && Gsettings("get", LinuxShortcutFormat.GnomeMediaKeysSchema, "custom-keybindings") is not null)
+        {
+            FileLog.Write("RoeSnip: Wayland on GNOME; binding the capture hotkey as a GNOME custom keybinding (no dialog).");
+            Kind = Mechanism.GnomeKeybinding;
+            return true;
+        }
+
         FileLog.Write("RoeSnip: Wayland session; trying the GlobalShortcuts portal for the capture hotkey.");
         try
         {
@@ -127,14 +134,6 @@ public sealed class LinuxGlobalShortcuts : IDisposable
         }
 
         CloseConnection();
-
-        if (IsGnome() && Gsettings("get", LinuxShortcutFormat.GnomeMediaKeysSchema, "custom-keybindings") is not null)
-        {
-            FileLog.Write("RoeSnip: falling back to a GNOME custom keybinding for the capture hotkey.");
-            Kind = Mechanism.GnomeKeybinding;
-            return true;
-        }
-
         return false;
     }
 
