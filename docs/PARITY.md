@@ -1958,3 +1958,12 @@ because a correct implementation needs live hardware this repo cannot exercise.
   the toggles, the MP4 factory starts the recording, FinishAsync finalizes. A denied or
   undecided microphone records the take without it and logs why. GIF takes crop the stream
   frame in the helper (no cursor). Captures and recordings exclude RoeSnip's own windows.
+- [ ] 30-toast-at-cursor (code landed, live check outstanding): toasts open 16 DIP down-right of
+  the cursor, flipped left/up to stay inside the cursor monitor's work area
+  (`Core/Notifications/ToastPlacement.cs`, ToastPlacementTests). WPF: ShareResultWindow via
+  GetCursorPos + MonitorFromPoint, sized with that monitor's DPI; the tray balloons stay Windows
+  notifications. Avalonia: ShowToast and ShareResultWindow through `AppShell/ToastAnchor.cs`
+  (Windows GetCursorPos, macOS NSEvent.mouseLocation, X11 XQueryPointer; Wayland: last pointer
+  position an overlay saw, then XQueryPointer through XWayland, then bottom-centre of a monitor).
+  On Linux the position is re-applied once 150 ms after opening if the window manager moved it.
+  Log: `toast placed at X,Y (cursor|cursor via XWayland|last-known|monitor fallback)`.

@@ -181,6 +181,38 @@ public sealed class X11Capturer : IScreenCapturer
         }
     }
 
+    /// <summary>Pointer position in root (physical px) coordinates via XQueryPointer. Under XWayland
+    /// it is where the pointer last was over an X window; false when no X display or the pointer
+    /// is on another X screen.</summary>
+    public static bool TryQueryPointer(out int x, out int y)
+    {
+        x = 0;
+        y = 0;
+        lock (XlibLock)
+        {
+            IntPtr display = XOpenDisplay(IntPtr.Zero);
+            if (display == IntPtr.Zero)
+            {
+                return false;
+            }
+            try
+            {
+                nuint root = XDefaultRootWindow(display);
+                if (XQueryPointer(display, root, out _, out _, out int rx, out int ry, out _, out _, out _) == 0)
+                {
+                    return false;
+                }
+                x = rx;
+                y = ry;
+                return true;
+            }
+            finally
+            {
+                XCloseDisplay(display);
+            }
+        }
+    }
+
     /// <summary>Enumerates active monitors via XRandR (connected outputs with an active CRTC).
     /// Contract per ICaptureBackend.EnumerateMonitors: never throws for a single bad entry (logs
     /// and omits it); returns an empty list only if enumeration itself fails entirely (e.g. no X
@@ -468,6 +500,11 @@ public sealed class X11Capturer : IScreenCapturer
 
     [DllImport(LibX11)]
     private static extern int XDestroyImage(IntPtr image);
+
+    [DllImport(LibX11)]
+    private static extern int XQueryPointer(
+        IntPtr display, nuint window, out nuint rootReturn, out nuint childReturn,
+        out int rootX, out int rootY, out int winX, out int winY, out uint mask);
 
     [DllImport(LibX11)]
     private static extern IntPtr XSetErrorHandler(XErrorHandlerDelegate? handler);

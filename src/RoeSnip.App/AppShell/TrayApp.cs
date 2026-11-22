@@ -1958,10 +1958,10 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
-    /// <summary>A small topmost, non-activating toast window near the bottom-right of the primary
-    /// screen's work area — the Avalonia stand-in for the WPF NotifyIcon balloons (Avalonia's
-    /// TrayIcon has no notification API). Positioned BEFORE Show() (physical pixels, primary
-    /// screen only — never repositioned after showing, per the mixed-DPI discipline). Any failure
+    /// <summary>A small topmost, non-activating toast window next to the mouse cursor (ToastAnchor)
+    /// - the Avalonia stand-in for the WPF NotifyIcon balloons (Avalonia's TrayIcon has no
+    /// notification API). Positioned BEFORE Show() in physical pixels (re-applied after showing
+    /// only on Linux, where the window manager may move it). Any failure
     /// here is swallowed after logging; toasts are best-effort UX, never load-bearing.</summary>
     private void ShowToast(string message, bool isError, int durationMs, Action? onClick)
     {
@@ -2003,16 +2003,8 @@ public sealed class TrayApp : ITrayNotifier
                 TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent },
             };
 
-            // Physical-pixel positioning from the primary screen's work area, set BEFORE Show().
-            var primary = window.Screens.Primary;
-            if (primary is not null)
-            {
-                double scale = primary.Scaling;
-                var wa = primary.WorkingArea;
-                int px = wa.X + wa.Width - (int)Math.Round((toastWidth + 16) * scale);
-                int py = wa.Y + wa.Height - (int)Math.Round((toastHeight + 16) * scale);
-                window.Position = new PixelPoint(px, py);
-            }
+            // Physical-pixel position next to the cursor, set BEFORE Show().
+            ToastAnchor.Place(window, toastWidth, toastHeight);
 
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(durationMs) };
             timer.Tick += (_, _) => { timer.Stop(); window.Close(); };

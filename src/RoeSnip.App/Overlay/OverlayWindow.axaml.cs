@@ -832,6 +832,8 @@ public partial class OverlayWindow : Window
         var px = ToPhysical(dip);
         _lastHoverPx = px;
         _lastKeyModifiers = e.KeyModifiers;
+        // Wayland has no global pointer query: toasts fall back to where RoeSnip last saw it.
+        AppShell.ToastAnchor.NotePointer(this.PointToScreen(dip));
 
         if (_dragMode == DragMode.ToolbarMove)
         {

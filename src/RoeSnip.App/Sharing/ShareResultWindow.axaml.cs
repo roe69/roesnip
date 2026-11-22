@@ -15,7 +15,7 @@ namespace RoeSnip.App.Sharing;
 
 /// <summary>The small topmost, non-activating result toast for one share upload (ROESNIP SHARE UX):
 /// created by <see cref="ShareFlowPresenter"/> on the Avalonia UI thread the moment a Share click
-/// fires, positioned bottom-right of the CAPTURE screen's work area - same physical-pixel-before-
+/// fires, positioned next to the mouse cursor (ToastAnchor) - same physical-pixel-before-
 /// Show() recipe as TrayApp.ShowToast, grown from that primitive into a real 3-state window - and
 /// driven through exactly one of Uploading -&gt; (Success | Failure). Mouse-only controls throughout
 /// (no hover-reveal, per this app's standing no-hidden-controls rule); Esc/Ctrl+C are wired too since
@@ -66,7 +66,7 @@ public partial class ShareResultWindow : Window
         _autoDismissTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
         _autoDismissTimer.Tick += (_, _) => { _autoDismissTimer.Stop(); Close(); };
 
-        PositionBottomRight();
+        PositionNextToCursor();
     }
 
     /// <summary>Uploading state: indeterminate progress + a Cancel button. See the WPF app's
@@ -255,43 +255,14 @@ public partial class ShareResultWindow : Window
         return string.Concat(text.AsSpan(0, head), "…", text.AsSpan(text.Length - tail, tail));
     }
 
-    /// <summary>Positions this window at the CAPTURE screen's work-area bottom-right corner, in
-    /// physical pixels, before <see cref="Window.Show"/> is ever called - the exact math TrayApp.
-    /// ShowToast used to use (WorkingArea + Scaling), just resolved against the monitor the capture
-    /// came from instead of always the primary one. Screen correlation mirrors OverlayWindow.
-    /// TryPlaceOnScreen's own bounds-matching (no monitor passed, or none matches - e.g. unplugged
-    /// between capture and toast - falls back to the primary screen, since the toast still needs to
-    /// show somewhere). Best-effort: any failure silently falls back to Avalonia's own default
-    /// placement.</summary>
-    private void PositionBottomRight()
+    /// <summary>Positions this window next to the mouse cursor (ToastAnchor), in physical pixels,
+    /// before <see cref="Window.Show"/>. With no known pointer it goes bottom-centre of the CAPTURE
+    /// screen (else the primary). Best-effort: any failure leaves Avalonia's default placement.</summary>
+    private void PositionNextToCursor()
     {
         try
         {
-            Screen? screen = null;
-            if (_monitor is { } monitor)
-            {
-                var bounds = monitor.BoundsPx;
-                foreach (var candidate in Screens.All)
-                {
-                    var b = candidate.Bounds;
-                    if (b.X == bounds.Left && b.Y == bounds.Top && b.Width == bounds.Width && b.Height == bounds.Height)
-                    {
-                        screen = candidate;
-                        break;
-                    }
-                }
-            }
-            screen ??= Screens.Primary;
-            if (screen is null)
-            {
-                return;
-            }
-
-            double scale = screen.Scaling;
-            var workingArea = screen.WorkingArea;
-            int x = workingArea.X + workingArea.Width - (int)Math.Round((Width + 16) * scale);
-            int y = workingArea.Y + workingArea.Height - (int)Math.Round((Height + 16) * scale);
-            Position = new PixelPoint(x, y);
+            RoeSnip.App.AppShell.ToastAnchor.Place(this, Width, Height, _monitor?.BoundsPx);
         }
         catch (Exception ex)
         {
