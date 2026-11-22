@@ -331,6 +331,50 @@ public sealed class CrossPlatformInstallTests : IDisposable
     }
 
     [Fact]
+    public void RepairInterruptedSwap_CrashBeforeTargetToOld_PutsGoodBackAtOld()
+    {
+        // Crash inside RestorePrevious after old -> staging: target bad, staging good, old empty.
+        string target = Path.Combine(_tempDir, "RoeSnip.AppImage");
+        File.WriteAllText(target, "bad");
+        File.WriteAllText(target + ".restore", "good");
+
+        Assert.True(InstallSwap.RepairInterruptedSwap(target, target + ".old", target + ".restore"));
+        Assert.Equal("bad", File.ReadAllText(target));
+        Assert.Equal("good", File.ReadAllText(target + ".old"));
+        Assert.False(File.Exists(target + ".restore"));
+
+        // The rollback can then run as usual.
+        InstallSwap.RestorePrevious(target, target + ".old", target + ".restore");
+        Assert.Equal("good", File.ReadAllText(target));
+    }
+
+    [Fact]
+    public void RepairInterruptedSwap_KeepsRestore_WhenOldAlsoPresent()
+    {
+        string target = Path.Combine(_tempDir, "RoeSnip.AppImage");
+        File.WriteAllText(target, "v3");
+        File.WriteAllText(target + ".old", "v2");
+        File.WriteAllText(target + ".restore", "v1");
+
+        Assert.False(InstallSwap.RepairInterruptedSwap(target, target + ".old", target + ".restore"));
+        Assert.Equal("v1", File.ReadAllText(target + ".restore"));
+    }
+
+    [Fact]
+    public void RestorePrevious_NeverDeletesAnOccupiedSlot()
+    {
+        string target = Path.Combine(_tempDir, "RoeSnip.AppImage");
+        File.WriteAllText(target, "bad");
+        File.WriteAllText(target + ".old", "older");
+        File.WriteAllText(target + ".restore", "good");
+
+        Assert.Throws<IOException>(() => InstallSwap.RestorePrevious(target, target + ".old", target + ".restore"));
+        Assert.Equal("bad", File.ReadAllText(target));
+        Assert.Equal("older", File.ReadAllText(target + ".old"));
+        Assert.Equal("good", File.ReadAllText(target + ".restore"));
+    }
+
+    [Fact]
     public void RepairInterruptedSwap_NoOpWhenTargetPresentOrNothingToRestore()
     {
         string target = Path.Combine(_tempDir, "RoeSnip.app");

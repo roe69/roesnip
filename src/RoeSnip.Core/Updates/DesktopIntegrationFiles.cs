@@ -27,8 +27,10 @@ public static class DesktopIntegrationFiles
     }
 
     /// <summary>~/.local/share/applications/net.roelite.roesnip.desktop: launches the AppImage; the "Capture"
-    /// action runs the `capture` verb (signals the resident, or starts one and captures).</summary>
-    public static string LinuxMenuEntry(string appImagePath, string? version)
+    /// action runs the `capture` verb (signals the resident, or starts one and captures).
+    /// <paramref name="noDisplay"/> hides it from menus (a portal-only entry for a non-installed run);
+    /// the portal still resolves a hidden entry.</summary>
+    public static string LinuxMenuEntry(string appImagePath, string? version, bool noDisplay = false)
     {
         string exec = QuoteExecArg(appImagePath);
         var sb = new StringBuilder();
@@ -42,6 +44,10 @@ public static class DesktopIntegrationFiles
         sb.Append("Terminal=false\n");
         sb.Append("Categories=Graphics;Utility;\n");
         sb.Append("StartupNotify=false\n");
+        if (noDisplay)
+        {
+            sb.Append("NoDisplay=true\n");
+        }
         if (!string.IsNullOrEmpty(version))
         {
             sb.Append("X-AppImage-Version=").Append(version).Append('\n');
@@ -72,26 +78,48 @@ public static class DesktopIntegrationFiles
         return false;
     }
 
+    /// <summary>True when the entry's [Desktop Entry] group says NoDisplay=true.</summary>
+    public static bool EntryHidden(string entry)
+    {
+        foreach (string raw in entry.Split('\n'))
+        {
+            string line = raw.Trim();
+            if (line.StartsWith('[') && line != "[Desktop Entry]")
+            {
+                return false;
+            }
+            if (line.Equals("NoDisplay=true", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// <summary>What the portal-registration menu entry should launch, or null to leave the file as
-    /// it is. An entry for the installed AppImage is never replaced; with an install on disk the
-    /// entry points at it; otherwise at <paramref name="launcher"/> ($APPIMAGE, else the process
-    /// path), rewritten when that path changes.</summary>
+    /// it is. With an install on disk the entry points at it and an entry already launching it is
+    /// never replaced; otherwise at <paramref name="launcher"/> ($APPIMAGE, else the process path),
+    /// rewritten when that path changes or the entry is still visible (a non-install entry is
+    /// written NoDisplay, see <see cref="RegistrationEntryHidden"/>). An entry naming a missing
+    /// install is replaced too: GLib rejects a desktop file whose Exec binary is gone.</summary>
     public static string? RegistrationEntryExec(string? existingEntry, string installedAppImage, bool installExists, string? launcher)
     {
-        if (existingEntry is not null && EntryLaunches(existingEntry, installedAppImage))
-        {
-            return null;
-        }
         if (installExists)
         {
-            return installedAppImage;
+            return existingEntry is not null && EntryLaunches(existingEntry, installedAppImage) ? null : installedAppImage;
         }
         if (string.IsNullOrEmpty(launcher))
         {
             return null;
         }
-        return existingEntry is not null && EntryLaunches(existingEntry, launcher) ? null : launcher;
+        return existingEntry is not null && EntryLaunches(existingEntry, launcher) && EntryHidden(existingEntry)
+            ? null
+            : launcher;
     }
+
+    /// <summary>A registration entry is hidden from menus unless it launches the install.</summary>
+    public static bool RegistrationEntryHidden(string exec, string installedAppImage) =>
+        !string.Equals(exec, installedAppImage, StringComparison.Ordinal);
 
     /// <summary>The systemd unit (last path segment ending in .scope or .service) of the unified
     /// "0::" line of /proc/self/cgroup, else of the first line that has one; null if none.</summary>

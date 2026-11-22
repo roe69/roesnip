@@ -7,6 +7,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using RoeSnip.Core.Diagnostics;
+using RoeSnip.Core.Updates;
 using RoeSnip.Platform.Linux;
 using Tmds.DBus;
 
@@ -442,8 +443,7 @@ public sealed class LinuxGlobalShortcuts : IDisposable
             return;
         }
 
-        string? appImage = Environment.GetEnvironmentVariable("APPIMAGE");
-        string? exe = !string.IsNullOrEmpty(appImage) ? appImage : Environment.ProcessPath;
+        string? exe = CaptureExecutable();
         string? listText = Gsettings("get", LinuxShortcutFormat.GnomeMediaKeysSchema, "custom-keybindings");
         if (string.IsNullOrEmpty(exe) || listText is null)
         {
@@ -463,6 +463,18 @@ public sealed class LinuxGlobalShortcuts : IDisposable
             string schema = LinuxShortcutFormat.GnomeCustomKeybindingSchema + ":" + path;
             string? command = FirstString(Gsettings("get", schema, "command"));
             string? binding = FirstString(Gsettings("get", schema, "binding"));
+            if (LinuxShortcutFormat.IsRoeSnipCaptureCommand(command)
+                && LinuxShortcutFormat.CommandBinaryMissing(command, File.Exists))
+            {
+                // A deleted build: the key would do nothing. Point it at a binary that exists.
+                string repointed = LinuxShortcutFormat.CaptureCommand(exe);
+                if (Gsettings("set", schema, "command", LinuxShortcutFormat.GVariantString(repointed)) is not null)
+                {
+                    FileLog.Write($"RoeSnip: GNOME custom shortcut {path} ran missing '{command}'; now '{repointed}'.");
+                    command = repointed;
+                }
+            }
+
             if (LinuxShortcutFormat.IsRoeSnipCaptureCommand(command))
             {
                 FileLog.Write($"RoeSnip: GNOME custom shortcut {path} already runs '{command}' ({binding}); leaving it.");
@@ -502,6 +514,16 @@ public sealed class LinuxGlobalShortcuts : IDisposable
         TriggerDescription = accel;
         _gnomeAccel = ok ? accel : null;
         SetActive(ok);
+    }
+
+    // Our entry is rewritten on every start (the first Register), so a command naming a deleted
+    // build is replaced by this one.
+    private static string? CaptureExecutable()
+    {
+        string installed = UpdateInstallLayout.LinuxAppImagePath(
+            Environment.GetEnvironmentVariable, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        return LinuxShortcutFormat.PreferredCaptureExecutable(
+            installed, File.Exists(installed), Environment.GetEnvironmentVariable("APPIMAGE"), Environment.ProcessPath);
     }
 
     private static string? FirstString(string? gvariant) =>

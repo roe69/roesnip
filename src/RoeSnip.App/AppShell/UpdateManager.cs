@@ -421,12 +421,12 @@ public static class UpdateManager
     private static bool StaleExeIsSafeToDelete() =>
         UpdateHealthMarker.Load(HealthMarkerDirectory).PendingVersion is null;
 
-    /// <summary>Deletes only abandoned download/staging leftovers, never ".old".</summary>
+    /// <summary>Deletes only abandoned download/staging leftovers, never ".old" or ".restore" (after
+    /// an interrupted rollback it can hold the only good build; startup repair moves it back).</summary>
     public static void CleanupDownloadLeftover()
     {
         TryDelete(DownloadingExePath);
         TryDelete(GzDownloadingExePath);
-        TryDelete(RestoreStagingPath);
         if (OperatingSystem.IsMacOS())
         {
             TryDelete(MacStagingDir);
@@ -507,7 +507,7 @@ public static class UpdateManager
             {
                 if (InstallSwap.RepairInterruptedSwap(target, target + ".old", target + ".restore"))
                 {
-                    FileLog.Write($"RoeSnip: '{target}' was missing after an interrupted update - restored it.");
+                    FileLog.Write($"RoeSnip: repaired an interrupted update or rollback at '{target}'.");
                 }
             }
             catch (Exception ex)
@@ -557,6 +557,10 @@ public static class UpdateManager
                 $"RoeSnip: {badVersion} failed to reach the startup health milestone {attemptCount} times in a row - " +
                 "restoring the previous build and quarantining this version.");
 
+            if (OperatingSystem.IsWindows())
+            {
+                TryDelete(RestoreStagingPath); // the .new download there, never a rollback unit
+            }
             InstallSwap.RestorePrevious(InstallTargetPath, StaleExePath, RestoreStagingPath);
             UpdateHealthMarker.Quarantine(HealthMarkerDirectory, badVersion);
             LaunchInstalledCopy();

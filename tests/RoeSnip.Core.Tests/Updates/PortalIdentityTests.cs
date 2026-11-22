@@ -56,11 +56,40 @@ public sealed class PortalIdentityTests
     }
 
     [Fact]
-    public void Installed_entry_is_never_replaced()
+    public void Installed_entry_is_never_replaced_while_the_install_exists()
     {
         string entry = DesktopIntegrationFiles.LinuxMenuEntry(Installed, "2.6.0");
         Assert.Null(DesktopIntegrationFiles.RegistrationEntryExec(entry, Installed, installExists: true, "/tmp/RoeSnip.AppImage"));
-        Assert.Null(DesktopIntegrationFiles.RegistrationEntryExec(entry, Installed, installExists: false, "/tmp/RoeSnip.AppImage"));
+    }
+
+    [Fact]
+    public void Entry_for_an_uninstalled_AppImage_moves_to_the_launcher()
+    {
+        // GLib rejects a desktop file whose Exec binary is missing, so Register would fail forever.
+        string entry = DesktopIntegrationFiles.LinuxMenuEntry(Installed, "2.6.0");
+        Assert.Equal("/tmp/RoeSnip.AppImage", DesktopIntegrationFiles.RegistrationEntryExec(entry, Installed, installExists: false, "/tmp/RoeSnip.AppImage"));
+    }
+
+    [Fact]
+    public void Non_install_entry_is_hidden_from_menus_install_entry_is_not()
+    {
+        Assert.True(DesktopIntegrationFiles.RegistrationEntryHidden("/tmp/RoeSnip.AppImage", Installed));
+        Assert.False(DesktopIntegrationFiles.RegistrationEntryHidden(Installed, Installed));
+
+        string hidden = DesktopIntegrationFiles.LinuxMenuEntry("/tmp/RoeSnip.AppImage", null, noDisplay: true);
+        Assert.Contains("\nNoDisplay=true\n", hidden);
+        Assert.True(DesktopIntegrationFiles.EntryHidden(hidden));
+        string visible = DesktopIntegrationFiles.LinuxMenuEntry(Installed, "2.6.0");
+        Assert.DoesNotContain("NoDisplay", visible);
+        Assert.False(DesktopIntegrationFiles.EntryHidden(visible));
+    }
+
+    [Fact]
+    public void Visible_entry_for_the_launcher_is_rewritten_hidden()
+    {
+        // Entries written before NoDisplay showed a scratch build in the app menu.
+        string visible = DesktopIntegrationFiles.LinuxMenuEntry("/a/RoeSnip.AppImage", null);
+        Assert.Equal("/a/RoeSnip.AppImage", DesktopIntegrationFiles.RegistrationEntryExec(visible, Installed, installExists: false, "/a/RoeSnip.AppImage"));
     }
 
     [Fact]
@@ -75,7 +104,7 @@ public sealed class PortalIdentityTests
     public void Not_installed_points_at_the_launcher_and_follows_it()
     {
         Assert.Equal("/a/RoeSnip.AppImage", DesktopIntegrationFiles.RegistrationEntryExec(null, Installed, installExists: false, "/a/RoeSnip.AppImage"));
-        string current = DesktopIntegrationFiles.LinuxMenuEntry("/a/RoeSnip.AppImage", null);
+        string current = DesktopIntegrationFiles.LinuxMenuEntry("/a/RoeSnip.AppImage", null, noDisplay: true);
         Assert.Null(DesktopIntegrationFiles.RegistrationEntryExec(current, Installed, installExists: false, "/a/RoeSnip.AppImage"));
         Assert.Equal("/b/RoeSnip.AppImage", DesktopIntegrationFiles.RegistrationEntryExec(current, Installed, installExists: false, "/b/RoeSnip.AppImage"));
     }

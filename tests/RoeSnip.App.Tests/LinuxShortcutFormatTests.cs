@@ -139,4 +139,45 @@ public class LinuxShortcutFormatTests
     {
         Assert.Equal(expected, LinuxShortcutFormat.IsRoeSnipCaptureCommand(command));
     }
+
+    [Fact]
+    public void PreferredCaptureExecutable_PrefersTheInstall()
+    {
+        const string installed = "/home/u/.local/share/RoeSnip/RoeSnip.AppImage";
+        Assert.Equal(installed, LinuxShortcutFormat.PreferredCaptureExecutable(installed, true, "/tmp/x/RoeSnip.AppImage", "/tmp/.mount_a/RoeSnip"));
+        Assert.Equal("/tmp/x/RoeSnip.AppImage", LinuxShortcutFormat.PreferredCaptureExecutable(installed, false, "/tmp/x/RoeSnip.AppImage", "/tmp/.mount_a/RoeSnip"));
+        Assert.Equal("/scratch/RoeSnip", LinuxShortcutFormat.PreferredCaptureExecutable(installed, false, null, "/scratch/RoeSnip"));
+        Assert.Equal("/scratch/RoeSnip", LinuxShortcutFormat.PreferredCaptureExecutable(installed, false, "", "/scratch/RoeSnip"));
+    }
+
+    [Theory]
+    [InlineData("/opt/RoeSnip/RoeSnip capture", "/opt/RoeSnip/RoeSnip")]
+    [InlineData("'/home/u/My Apps/RoeSnip.AppImage' capture", "/home/u/My Apps/RoeSnip.AppImage")]
+    [InlineData(@"'/a/it'\''s/RoeSnip' capture", "/a/it's/RoeSnip")]
+    [InlineData(@"/a/b\ c/RoeSnip capture", "/a/b c/RoeSnip")]
+    [InlineData("  roesnip capture", "roesnip")]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void CommandExecutable_UndoesShellQuote(string? command, string? expected)
+    {
+        Assert.Equal(expected, LinuxShortcutFormat.CommandExecutable(command));
+    }
+
+    [Fact]
+    public void CommandExecutable_RoundTripsCaptureCommand()
+    {
+        foreach (string path in new[] { "/opt/RoeSnip/RoeSnip", "/home/u/My Apps/RoeSnip.AppImage", "/a/it's/RoeSnip" })
+        {
+            Assert.Equal(path, LinuxShortcutFormat.CommandExecutable(LinuxShortcutFormat.CaptureCommand(path)));
+        }
+    }
+
+    [Fact]
+    public void CommandBinaryMissing_OnlyForAbsentAbsolutePaths()
+    {
+        Assert.True(LinuxShortcutFormat.CommandBinaryMissing("/gone/RoeSnip capture", _ => false));
+        Assert.False(LinuxShortcutFormat.CommandBinaryMissing("/here/RoeSnip capture", _ => true));
+        Assert.False(LinuxShortcutFormat.CommandBinaryMissing("roesnip capture", _ => false));
+        Assert.False(LinuxShortcutFormat.CommandBinaryMissing(null, _ => false));
+    }
 }

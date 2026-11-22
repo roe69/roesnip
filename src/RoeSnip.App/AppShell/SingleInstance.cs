@@ -40,8 +40,10 @@ public sealed class SingleInstance : IDisposable
 {
     // Off Windows a plain .NET mutex name is scoped to the Unix session (getsid), and a LaunchAgent,
     // `open -n`, GNOME autostart and a GNOME menu launch each land in a different one: Global\ plus
-    // the user name makes it one lock per user. The pipe is a socket in the per-user TMPDIR (macOS)
-    // or the shared /tmp (Linux), reachable from every session; the user name keeps users apart.
+    // the user name makes it one lock per user. The pipe is a socket <temp>/CoreFxPipe_<name> in the
+    // per-user TMPDIR (macOS, ~49 chars) or the shared /tmp (Linux), reachable from every session.
+    // sun_path holds 103 chars, so the name is the short "rsnip-<uid>", and CurrentUserOnly makes the
+    // listener owner-only and the client refuse a socket another user squats on.
     private const string WindowsName = "RoeSnip.App-SingleInstance";
 
     // Builds before the per-user names: session-scoped mutex, this socket name.
@@ -49,11 +51,35 @@ public sealed class SingleInstance : IDisposable
 
     private static readonly string PipeName = OperatingSystem.IsWindows()
         ? WindowsName
-        : WindowsName + "-" + SafeUserName();
+        : UnixPipeName(EffectiveUserId());
 
+    // Kept across the pipe rename so a resident from the user-name pipe builds still holds our lock.
     private static string MutexName => OperatingSystem.IsWindows()
         ? @"Global\" + WindowsName
-        : @"Global\" + PipeName;
+        : @"Global\" + UserNamePipeName;
+
+    // The pipe name of the builds that named it by user (too long for sun_path past ~16 chars).
+    private static string UserNamePipeName => WindowsName + "-" + SafeUserName();
+
+    private static PipeOptions OwnerOnly =>
+        OperatingSystem.IsWindows() ? PipeOptions.None : PipeOptions.CurrentUserOnly;
+
+    /// <summary>The off-Windows pipe name for a uid: short enough for any TMPDIR's socket path.</summary>
+    public static string UnixPipeName(uint uid) => "rsnip-" + uid.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "geteuid")]
+    private static extern uint GetEuid();
+
+    private static uint EffectiveUserId()
+    {
+        try { return GetEuid(); }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            // Still short and per user: a hash of the user name.
+            byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(SafeUserName()));
+            return BitConverter.ToUInt32(hash, 0);
+        }
+    }
 
     // getpwuid(geteuid()) name; anything but [A-Za-z0-9._-] dropped so it stays a valid file name.
     private static string SafeUserName()
@@ -85,7 +111,8 @@ public sealed class SingleInstance : IDisposable
 
     /// <summary>Off Windows: a resident from a build that still used the session-scoped lock holds
     /// none of ours (the update that started this process is one), so ask it to exit over its old
-    /// socket. Only tried when that socket file exists, so a normal start pays nothing.</summary>
+    /// socket; a stale socket of the user-name pipe builds is removed the same way. Only tried when
+    /// that socket file exists, so a normal start pays nothing.</summary>
     private static void RetireLegacyResident()
     {
         if (OperatingSystem.IsWindows())
@@ -93,28 +120,40 @@ public sealed class SingleInstance : IDisposable
             return;
         }
 
+        SignalOlderBuild(LegacyUnixPipeName, removeStaleSocket: true);
+        SignalOlderBuild(UserNamePipeName, removeStaleSocket: true);
+    }
+
+    /// <summary>Sends Exit over an older build's socket when that socket file exists. True when sent.</summary>
+    private static bool SignalOlderBuild(string pipeName, bool removeStaleSocket)
+    {
         // .NET's Unix pipe socket path: <temp>/CoreFxPipe_<name>.
-        string socket = Path.Combine(Path.GetTempPath(), "CoreFxPipe_" + LegacyUnixPipeName);
+        string socket = Path.Combine(Path.GetTempPath(), "CoreFxPipe_" + pipeName);
         try
         {
             if (!File.Exists(socket))
             {
-                return;
+                return false;
             }
 
-            using var client = new NamedPipeClientStream(".", LegacyUnixPipeName, PipeDirection.Out);
+            using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.CurrentUserOnly);
             client.Connect(500);
             client.WriteByte((byte)InstanceSignal.Exit);
             client.Flush();
-            FileLog.Write("RoeSnip: asked a resident from an older build to exit");
+            FileLog.Write($"RoeSnip: asked a resident from an older build to exit ({pipeName})");
+            return true;
         }
         catch (Exception ex)
         {
-            // A stale socket (connect spins until the timeout on it): remove it so the next start
-            // skips the probe.
-            FileLog.Write($"RoeSnip: no older-build resident answered ({ex.Message}), removing its socket");
-            try { File.Delete(socket); }
-            catch (Exception deleteEx) when (deleteEx is IOException or UnauthorizedAccessException) { }
+            if (removeStaleSocket)
+            {
+                // A stale socket (connect spins until the timeout on it): remove it so the next
+                // start skips the probe.
+                FileLog.Write($"RoeSnip: no older-build resident answered on {pipeName} ({ex.Message}), removing its socket");
+                try { File.Delete(socket); }
+                catch (Exception deleteEx) when (deleteEx is IOException or UnauthorizedAccessException) { }
+            }
+            return false;
         }
     }
 
@@ -152,7 +191,11 @@ public sealed class SingleInstance : IDisposable
             return Acquired(mutex);
         }
 
-        SignalExistingInstance(InstanceSignal.Exit);
+        if (!SignalExistingInstance(InstanceSignal.Exit) && !OperatingSystem.IsWindows())
+        {
+            // The resident is a user-name pipe build (same lock, old socket name).
+            SignalOlderBuild(UserNamePipeName, removeStaleSocket: false);
+        }
         if (TryAcquireMutex(mutex, signalWaitTimeout))
         {
             return Acquired(mutex);
@@ -271,7 +314,7 @@ public sealed class SingleInstance : IDisposable
         try
         {
             var watch = Stopwatch.StartNew();
-            using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
+            using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out, OwnerOnly);
             client.Connect(2000);
             client.WriteByte((byte)signal);
             client.Flush();
@@ -301,7 +344,7 @@ public sealed class SingleInstance : IDisposable
             {
                 using var server = new NamedPipeServerStream(
                     PipeName, PipeDirection.In, maxNumberOfServerInstances: 1,
-                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                    PipeTransmissionMode.Byte, PipeOptions.Asynchronous | OwnerOnly);
                 await server.WaitForConnectionAsync(token).ConfigureAwait(false);
                 int raw = server.ReadByte();
                 if (raw is (int)InstanceSignal.TriggerCapture or (int)InstanceSignal.TriggerSettings

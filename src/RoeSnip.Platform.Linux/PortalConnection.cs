@@ -174,8 +174,10 @@ public sealed class PortalConnection
             }
 
             Directory.CreateDirectory(Path.GetDirectoryName(entryPath)!);
-            File.WriteAllText(entryPath, DesktopIntegrationFiles.LinuxMenuEntry(exec, null));
-            FileLog.Write($"RoeSnip: wrote {entryPath} (Exec {exec}) so the portal can name RoeSnip.");
+            // A scratch / tar.gz / Downloads run gets a portal-only entry, not a menu item.
+            bool hidden = DesktopIntegrationFiles.RegistrationEntryHidden(exec, installed);
+            File.WriteAllText(entryPath, DesktopIntegrationFiles.LinuxMenuEntry(exec, null, hidden));
+            FileLog.Write($"RoeSnip: wrote {entryPath} (Exec {exec}{(hidden ? ", NoDisplay" : "")}) so the portal can name RoeSnip.");
             return true;
         }
         catch (Exception ex)

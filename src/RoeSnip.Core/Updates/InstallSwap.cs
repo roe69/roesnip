@@ -84,14 +84,21 @@ public static class InstallSwap
         }
     }
 
-    /// <summary>Startup repair after a crash mid-swap: when <paramref name="target"/> is missing,
-    /// moves back <paramref name="restoreStaging"/> (a crash inside <see cref="RestorePrevious"/>;
-    /// it holds the good unit) or else <paramref name="old"/> (a crash inside <see cref="SwapIn"/>).
-    /// Returns true when it restored something. Throws on failure.</summary>
+    /// <summary>Startup repair after a crash mid-swap. When <paramref name="target"/> is missing it
+    /// moves back <paramref name="restoreStaging"/> (a crash inside <see cref="RestorePrevious"/>
+    /// after target -> old; it holds the good unit) or else <paramref name="old"/> (a crash inside
+    /// <see cref="SwapIn"/>). When target is present but a crash inside RestorePrevious left the
+    /// good unit at restoreStaging with <paramref name="old"/> empty, it moves it back to old so the
+    /// rollback can run again. Returns true when it moved something. Throws on failure.</summary>
     public static bool RepairInterruptedSwap(string target, string old, string restoreStaging)
     {
         if (Exists(target))
         {
+            if (Exists(restoreStaging) && !Exists(old))
+            {
+                Move(restoreStaging, old);
+                return true;
+            }
             return false;
         }
 
@@ -112,10 +119,15 @@ public static class InstallSwap
 
     /// <summary>Crash-loop rollback: puts <paramref name="old"/> back at <paramref name="target"/>
     /// and parks the bad unit at <paramref name="old"/> (deleted by the next clean launch), using
-    /// <paramref name="staging"/> as the free slot for the three-way rename. Throws on failure.</summary>
+    /// <paramref name="staging"/> as the free slot for the three-way rename. Staging may hold the
+    /// only good unit from an earlier interrupted rollback, so it is never deleted: an occupied slot
+    /// throws. Throws on failure.</summary>
     public static void RestorePrevious(string target, string old, string staging)
     {
-        Delete(staging);
+        if (Exists(staging))
+        {
+            throw new IOException($"Rollback slot '{staging}' is occupied.");
+        }
         Move(old, staging);
         if (Exists(target))
         {

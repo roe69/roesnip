@@ -165,6 +165,65 @@ public static class LinuxShortcutFormat
     /// <summary>The custom keybinding command: the installed executable and the capture verb.</summary>
     public static string CaptureCommand(string executablePath) => ShellQuote(executablePath) + " capture";
 
+    /// <summary>The binary a keybinding should run: the installed AppImage when it exists (a
+    /// scratch or Downloads copy can be deleted), else $APPIMAGE, else the process path.</summary>
+    public static string? PreferredCaptureExecutable(string? installedAppImage, bool installExists, string? appImage, string? processPath)
+    {
+        if (installExists && !string.IsNullOrEmpty(installedAppImage))
+        {
+            return installedAppImage;
+        }
+        return !string.IsNullOrEmpty(appImage) ? appImage : processPath;
+    }
+
+    /// <summary>The first word of a command, with POSIX single quotes (as <see cref="ShellQuote"/>
+    /// writes them) and backslash escapes undone; null when empty.</summary>
+    public static string? CommandExecutable(string? command)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return null;
+        }
+
+        var word = new StringBuilder();
+        string s = command.TrimStart();
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\'')
+            {
+                int end = s.IndexOf('\'', i + 1);
+                if (end < 0)
+                {
+                    end = s.Length;
+                }
+                word.Append(s, i + 1, end - i - 1);
+                i = end;
+            }
+            else if (c == '\\' && i + 1 < s.Length)
+            {
+                word.Append(s[++i]);
+            }
+            else if (char.IsWhiteSpace(c))
+            {
+                break;
+            }
+            else
+            {
+                word.Append(c);
+            }
+        }
+        return word.Length > 0 ? word.ToString() : null;
+    }
+
+    /// <summary>True when the command runs an absolute path that <paramref name="exists"/> says is
+    /// gone. A bare name (found via PATH) is never stale.</summary>
+    public static bool CommandBinaryMissing(string? command, Func<string, bool> exists)
+    {
+        string? exe = CommandExecutable(command);
+        return exe is not null && exe.StartsWith('/') && !exists(exe);
+    }
+
     /// <summary>True for a command that already runs a RoeSnip capture (a shortcut the user made).</summary>
     public static bool IsRoeSnipCaptureCommand(string? command)
     {
