@@ -65,24 +65,25 @@ public sealed class UpdateLockTests : IDisposable
     // A root-owned lock left by a sudo run: modelled with mode 000 (root opens it anyway, so the
     // test then only checks the acquire still works).
     [Fact]
-    public void UnopenableLockFile_InWritableFolder_IsReplaced()
+    public void ReadOnlyLockFile_IsLockedThroughAReadHandle_AndKept()
     {
-        if (OperatingSystem.IsWindows())
+        if (OperatingSystem.IsWindows() || Environment.UserName == "root")
         {
             return;
         }
 
         Directory.CreateDirectory(_dir);
         File.WriteAllText(LockPath, "");
-        File.SetUnixFileMode(LockPath, UnixFileMode.None);
+        File.SetUnixFileMode(LockPath, UnixFileMode.UserRead | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
 
         using UpdateLock? held = UpdateLock.TryAcquire(LockPath);
         Assert.NotNull(held);
-        Assert.Null(UpdateLock.TryAcquire(LockPath)); // the new file is a real lock
+        Assert.Null(UpdateLock.TryAcquire(LockPath)); // still exclusive through the read-only handle
+        Assert.True(File.Exists(LockPath));
     }
 
     [Fact]
-    public void UnopenableLockFile_InReadOnlyFolder_Throws()
+    public void UnreadableLockFile_Throws_AndIsNeverDeleted()
     {
         if (OperatingSystem.IsWindows() || Environment.UserName == "root")
         {
@@ -92,17 +93,9 @@ public sealed class UpdateLockTests : IDisposable
         Directory.CreateDirectory(_dir);
         File.WriteAllText(LockPath, "");
         File.SetUnixFileMode(LockPath, UnixFileMode.None);
-        UnixFileMode dirMode = File.GetUnixFileMode(_dir);
-        File.SetUnixFileMode(_dir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
-        try
-        {
-            Assert.Throws<UnauthorizedAccessException>(() => UpdateLock.TryAcquire(LockPath));
-            Assert.True(File.Exists(LockPath));
-        }
-        finally
-        {
-            File.SetUnixFileMode(_dir, dirMode);
-        }
+
+        Assert.Throws<UnauthorizedAccessException>(() => UpdateLock.TryAcquire(LockPath));
+        Assert.True(File.Exists(LockPath));
     }
 
     [Theory]

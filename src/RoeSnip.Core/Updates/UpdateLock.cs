@@ -4,7 +4,7 @@ namespace RoeSnip.Core.Updates;
 /// next to the install target. FileShare.None is a sharing lock on Windows and a flock(LOCK_EX) on
 /// Unix (.NET's FileShare emulation), so a second open fails even inside the same process. The
 /// kernel drops it when the holder dies; the file itself is never deleted (deleting a lock file
-/// lets two holders lock two different inodes), except one this user cannot open at all.</summary>
+/// lets two holders lock two different inodes).</summary>
 public sealed class UpdateLock : IDisposable
 {
     private readonly FileStream _stream;
@@ -23,9 +23,8 @@ public sealed class UpdateLock : IDisposable
 
     /// <summary>Takes the lock without waiting; null only when another holder has it. Any other
     /// I/O failure (unwritable folder, full disk) is rethrown with its own message, so it never
-    /// reads as "another process is updating". A lock file this user cannot open (root-owned, left
-    /// by a sudo run) is deleted once and the open retried, when the folder allows the delete: no
-    /// process of this user can hold that file, so no live lock is lost.</summary>
+    /// reads as "another process is updating". A lock file this user cannot write is locked through a
+    /// read-only handle instead.</summary>
     public static UpdateLock? TryAcquire(string lockPath)
     {
         string? dir = System.IO.Path.GetDirectoryName(lockPath);
@@ -38,28 +37,22 @@ public sealed class UpdateLock : IDisposable
         {
             return Open(lockPath);
         }
-        catch (UnauthorizedAccessException denied) when (File.Exists(lockPath))
+        catch (UnauthorizedAccessException) when (File.Exists(lockPath))
         {
-            try
-            {
-                File.Delete(lockPath);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                throw denied; // folder not writable either: report the original denial
-            }
-
-            RoeSnip.Core.Diagnostics.FileLog.Write(
-                $"RoeSnip: deleted an unopenable update lock file '{lockPath}' ({denied.Message}); retrying.");
-            return Open(lockPath);
+            // A lock file this user cannot write (root-owned, left by a sudo run): lock it through a
+            // read-only handle. FileShare.None still takes flock(LOCK_EX) on a read-only fd (checked
+            // on .NET 8 Linux), so a live root holder still reads as busy. Never delete it: two
+            // processes recreating it would lock two different inodes.
+            return Open(lockPath, FileAccess.Read);
         }
     }
 
-    private static UpdateLock? Open(string lockPath)
+    private static UpdateLock? Open(string lockPath, FileAccess access = FileAccess.ReadWrite)
     {
         try
         {
-            var stream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.None);
+            var stream = new FileStream(lockPath, access == FileAccess.Read ? FileMode.Open : FileMode.OpenOrCreate,
+                access, FileShare.None, 1, FileOptions.None);
             return new UpdateLock(stream, lockPath);
         }
         catch (IOException ex) when (IsHeldElsewhere(ex, OperatingSystem.IsWindows(), OperatingSystem.IsMacOS()))
