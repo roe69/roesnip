@@ -1972,7 +1972,8 @@ because a correct implementation needs live hardware this repo cannot exercise.
   asks for cursor_mode METADATA (4) when the portal offers it, else HIDDEN; pixels stay
   cursorless. pipewiresrc only turns the cursor meta into a position-only ROI meta and drops
   mutter's cursor-only buffers, so `Platform.Linux/PipeWireCursorReader.cs` links a second
-  libpipewire-0.3 input to each node on a dup of the same portal fd (no second share dialog),
+  libpipewire-0.3 input to each node on a second OpenPipeWireRemote fd of the same session (no
+  second share dialog; a dup of the gst fd shares its socket and broke both cores live),
   requests SPA_META_Cursor and requeues every buffer at once (`Core/Capture/SpaPod.cs`,
   `SpaCursorMeta.cs`, ScreenCastCursorMetaTests). `ScreenCastCursor` maps it to desktop px.
   Wayland recordings draw the sprite into each region frame (`Core/Recording/CursorCompositor.cs`),

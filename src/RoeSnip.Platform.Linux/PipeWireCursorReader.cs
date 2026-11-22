@@ -8,9 +8,11 @@ namespace RoeSnip.Platform.Linux;
 /// (session opened with cursor_mode METADATA). pipewiresrc requests the cursor meta but only turns
 /// its position into a ROI meta, with no sprite, and drops mutter's cursor-only buffers (chunk size
 /// 0), so the cursor would freeze over a still screen. This consumer runs alongside the GStreamer
-/// pipelines on a dup of the same portal fd (no second share dialog), links a second input to each
-/// node with a format that intersects the one already fixed, never maps pixel data and requeues
-/// every buffer at once.</summary>
+/// pipelines on its own OpenPipeWireRemote fd of the same session (no second share dialog; never a
+/// dup of the gst fd: that shares one socket between two cores), links a second input to each node
+/// (mutter shares its buffers between links) with a format that intersects the one already fixed,
+/// asks for no Buffers param (the output's are used), never maps pixel data and requeues every
+/// buffer at once. The cursor meta range must reach mutter's fixed 384x384 size (589872 B).</summary>
 internal sealed unsafe class PipeWireCursorReader : IDisposable
 {
     private const string Lib = "libpipewire-0.3.so.0";
@@ -138,6 +140,7 @@ internal sealed unsafe class PipeWireCursorReader : IDisposable
         private CursorSprite? _sprite;
         private int _bufW, _bufH;
         private long _sequence;
+        private bool _buffersLogged;
 
         public uint NodeId { get; }
         public volatile int StreamState;
@@ -244,7 +247,9 @@ internal sealed unsafe class PipeWireCursorReader : IDisposable
                     IntPtr* list = stackalloc IntPtr[2];
                     list[0] = (IntPtr)hp;
                     list[1] = (IntPtr)cp;
-                    pw_stream_update_params(n._stream, list, 2);
+                    int rc = pw_stream_update_params(n._stream, list, 2);
+                    FileLog.Write($"RoeSnip: screencast cursor stream node {n.NodeId} format {w}x{h}, " +
+                        $"asked for Header {SpaPod.MetaHeaderSize} B + Cursor up to {MaxSpriteSize}x{MaxSpriteSize} (update_params {rc})");
                 }
             }
             catch (Exception ex)
@@ -256,7 +261,14 @@ internal sealed unsafe class PipeWireCursorReader : IDisposable
         private static void OnAddBuffer(IntPtr data, IntPtr pwBuffer)
         {
             if (From(data) is not { } n || pwBuffer == IntPtr.Zero) return;
-            if (FindCursorMeta(*(IntPtr*)pwBuffer, out _, out _)) n.MetaSeen = true;
+            bool has = FindCursorMeta(*(IntPtr*)pwBuffer, out _, out int size);
+            if (!n._buffersLogged)
+            {
+                n._buffersLogged = true;
+                FileLog.Write($"RoeSnip: screencast cursor stream node {n.NodeId} buffers: " +
+                    (has ? $"cursor meta {size} B" : "no cursor meta"));
+            }
+            if (has) n.MetaSeen = true;
         }
 
         private static void OnProcess(IntPtr data)

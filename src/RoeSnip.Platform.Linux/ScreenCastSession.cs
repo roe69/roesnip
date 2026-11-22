@@ -456,7 +456,25 @@ internal sealed class ScreenCastSession
             }
             if (cursorMode == ScreenCastPortal.CursorMetadata)
             {
-                StartCursorMetadata(live, rawFd, geometries);
+                // Its own remote (no dialog on a started session): a dup of the gst fd shares the
+                // socket, and two PipeWire cores on one socket break each other (seen live: the gst
+                // streams' nodes vanished and the cursor streams failed "Buffer allocation failed").
+                CloseSafeHandle? cursorFd = null;
+                try
+                {
+                    cursorFd = await portal.OpenPipeWireRemoteAsync(sessionPath, new Dictionary<string, object>()).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    FileLog.Write($"RoeSnip: screencast cursor metadata: unavailable (second OpenPipeWireRemote failed: {ex.Message})");
+                }
+                if (cursorFd is not null)
+                {
+                    using (cursorFd) // the reader connects on its own dup
+                    {
+                        StartCursorMetadata(live, cursorFd.DangerousGetHandle().ToInt32(), geometries);
+                    }
+                }
             }
             else
             {
