@@ -1979,3 +1979,12 @@ because a correct implementation needs live hardware this repo cannot exercise.
   and a cursor-only move emits a frame, matching Windows recordings. Log:
   `screencast cursor metadata: on (...)|unavailable (<why>)` 3 s after the session opens; the
   recording line ends `cursor from screencast metadata` or `without cursor (...)`.
+- [ ] 32-toast-follows-pointer (code landed, live check outstanding): a visible toast moves with
+  the pointer at ~60 Hz, only when it moved (`Core/Notifications/ToastFollower.cs`,
+  ToastFollowerTests): it holds still while the pointer is closer than its placement gap and
+  freezes for good once the pointer is inside it, or within 40 DIP and 4 DIP closer than that gap,
+  so it stays clickable. WPF: ShareResultWindow (GetCursorPos, SetWindowPos NOACTIVATE).
+  Avalonia: every ToastAnchor.Place window (ShowToast, ShareResultWindow) via Windows
+  GetCursorPos, macOS NSEvent, X11 XQueryPointer, Wayland the screencast cursor metadata (no
+  probe); Wayland's placement source order is now `cursor (screencast)`, last-known, probe,
+  XWayland. Log on close: `toast followed the pointer (N moves, frozen when approached|never approached, source)`.

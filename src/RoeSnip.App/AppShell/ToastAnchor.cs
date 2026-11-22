@@ -14,7 +14,8 @@ namespace RoeSnip.App.AppShell;
 /// <summary>Places toast windows next to the mouse cursor (Core ToastPlacement), in Avalonia's
 /// physical-pixel Position space. Cursor source per OS: Windows GetCursorPos, macOS
 /// NSEvent.mouseLocation, X11 XQueryPointer. Wayland gives clients no global pointer, so it uses
-/// a pointer position a RoeSnip window saw in the last 2 s, then a PointerProbe, then XQueryPointer
+/// the snapshot screencast's cursor metadata (ScreenCastCursor), then a pointer position a RoeSnip
+/// window saw in the last 2 s, then a PointerProbe, then XQueryPointer
 /// through XWayland (stale while the pointer is over a native Wayland window), then the older
 /// last-seen position, then the bottom-centre of a monitor.</summary>
 internal static class ToastAnchor
@@ -41,7 +42,8 @@ internal static class ToastAnchor
     /// <summary>Sets <paramref name="window"/>.Position (before Show) for a toast of the given DIP
     /// size and logs the source used. <paramref name="fallbackMonitor"/> is the monitor to use when
     /// no pointer position is known (else the primary). On Linux the position is re-applied once
-    /// after the window opens if the window manager moved it.</summary>
+    /// after the window opens if the window manager moved it. While open the window follows the
+    /// pointer (<see cref="Follow"/>).</summary>
     public static void Place(Window window, double widthDip, double heightDip, RectPhysical? fallbackMonitor = null)
     {
         var screens = window.Screens.All;
@@ -89,20 +91,151 @@ internal static class ToastAnchor
         window.Position = target;
         FileLog.Write($"RoeSnip: toast placed at {target.X},{target.Y} ({source})");
 
-        if (OperatingSystem.IsLinux())
+        var placedFor = pointer is { } pf && index >= 0 ? (pf.X, pf.Y) : ((int, int)?)null;
+        new Follow(window, widthDip, heightDip, target, placedFor).Attach();
+    }
+
+    /// <summary>Moves a visible toast with the pointer (Core ToastFollower) at ~60 Hz, only when
+    /// the pointer moved, and freezes it once the pointer heads into it so it stays clickable.
+    /// Pointer sources: GetCursorPos, NSEvent, XQueryPointer on X11, the screencast cursor
+    /// metadata on Wayland (no probes: they would flash windows under the pointer).</summary>
+    private sealed class Follow
+    {
+        private static readonly TimeSpan Tick = TimeSpan.FromMilliseconds(16);
+        private static readonly TimeSpan ScreensFor = TimeSpan.FromSeconds(1);
+
+        private readonly Window _window;
+        private readonly double _widthDip;
+        private readonly double _heightDip;
+        private readonly ToastFollower _follower;
+        private readonly DispatcherTimer _timer;
+        private PixelPoint _target;
+        private IReadOnlyList<Screen>? _screens;
+        private List<RectPhysical>? _bounds;
+        private long _screensAt;
+        private int _moves;
+        private string _source = "";
+
+        public Follow(Window window, double widthDip, double heightDip, PixelPoint target, (int X, int Y)? placedFor)
         {
-            // A plain borderless window is placed by the window manager on X11/XWayland; put it
-            // back once if it was moved (the target is already inside the work area).
-            window.Opened += (_, _) => DispatcherTimer.RunOnce(() =>
+            _window = window;
+            _widthDip = widthDip;
+            _heightDip = heightDip;
+            _target = target;
+            double scale = window.Screens.ScreenFromPoint(target)?.Scaling ?? 1.0;
+            _follower = new ToastFollower(placedFor, RectPhysical.FromSize(target.X, target.Y,
+                (int)Math.Round(widthDip * scale), (int)Math.Round(heightDip * scale)));
+            _timer = new DispatcherTimer { Interval = Tick };
+            _timer.Tick += (_, _) => OnTick();
+        }
+
+        public void Attach()
+        {
+            _window.Opened += (_, _) =>
             {
-                if (window.IsVisible && window.Position != target)
+                if (OperatingSystem.IsLinux())
                 {
-                    FileLog.Write($"RoeSnip: toast moved by the window manager to {window.Position.X},{window.Position.Y}, placing it back at {target.X},{target.Y}");
-                    window.Position = target;
+                    // A plain borderless window is placed by the window manager on X11/XWayland; put
+                    // it back once if it was moved (the target is already inside the work area).
+                    DispatcherTimer.RunOnce(() =>
+                    {
+                        if (_window.IsVisible && _window.Position != _target)
+                        {
+                            FileLog.Write($"RoeSnip: toast moved by the window manager to {_window.Position.X},{_window.Position.Y}, placing it back at {_target.X},{_target.Y}");
+                            _window.Position = _target;
+                        }
+                    }, TimeSpan.FromMilliseconds(150));
                 }
-            }, TimeSpan.FromMilliseconds(150));
+                _timer.Start();
+            };
+            _window.PointerEntered += (_, _) => _follower.Freeze();
+            _window.Closed += (_, _) =>
+            {
+                _timer.Stop();
+                if (_moves > 0)
+                {
+                    FileLog.Write($"RoeSnip: toast followed the pointer ({_moves} moves, {(_follower.Frozen ? "frozen when approached" : "never approached")}, {_source})");
+                }
+            };
+        }
+
+        private void OnTick()
+        {
+            try
+            {
+                if (!_window.IsVisible || _follower.Frozen) return;
+                if (_screens is null || System.Diagnostics.Stopwatch.GetElapsedTime(_screensAt) > ScreensFor)
+                {
+                    _screens = _window.Screens.All;
+                    _bounds = new List<RectPhysical>(_screens.Count);
+                    foreach (var s in _screens)
+                    {
+                        _bounds.Add(RectPhysical.FromSize(s.Bounds.X, s.Bounds.Y, s.Bounds.Width, s.Bounds.Height));
+                    }
+                    _screensAt = System.Diagnostics.Stopwatch.GetTimestamp();
+                }
+                var screens = _screens;
+                if (!TryLivePointer(screens, out var p, out _source)) return;
+                int index = ToastPlacement.MonitorIndexAt(_bounds!, p.X, p.Y);
+                if (index < 0) return;
+                var screen = screens[index];
+                var (w, h, wa) = Measure(screen, _widthDip, _heightDip);
+                double own = _window.RenderScaling > 0 ? _window.RenderScaling : screen.Scaling;
+                var pos = _window.Position;
+                var current = RectPhysical.FromSize(pos.X, pos.Y,
+                    (int)Math.Round(_widthDip * own), (int)Math.Round(_heightDip * own));
+                if (_follower.Step(p.X, p.Y, current, wa, w, h, screen.Scaling) is { } next)
+                {
+                    _target = new PixelPoint(next.X, next.Y);
+                    _window.Position = _target;
+                    _moves++;
+                }
+            }
+            catch (Exception ex)
+            {
+                _timer.Stop();
+                FileLog.Write($"RoeSnip: toast follow stopped ({ex.Message})");
+            }
         }
     }
+
+    /// <summary>The pointer from a source cheap enough to poll; false when none answers.</summary>
+    private static bool TryLivePointer(IReadOnlyList<Screen> screens, out PixelPoint pointer, out string source)
+    {
+        pointer = default;
+        source = "cursor";
+        if (OperatingSystem.IsWindows())
+        {
+            if (!GetCursorPos(out var pt)) return false;
+            pointer = new PixelPoint(pt.X, pt.Y);
+            return true;
+        }
+        if (OperatingSystem.IsMacOS())
+        {
+            if (TryMacCursor(screens) is not { } mac) return false;
+            pointer = mac;
+            return true;
+        }
+#if LINUX_BACKEND
+        if (OperatingSystem.IsLinux())
+        {
+            if (IsWayland)
+            {
+                source = "cursor (screencast)";
+                if (!RoeSnip.Platform.Linux.ScreenCastCursor.TryGetDesktopPosition(out int wx, out int wy)) return false;
+                pointer = new PixelPoint(wx, wy);
+                return true;
+            }
+            if (!RoeSnip.Platform.Linux.X11Capturer.TryQueryPointer(out int x, out int y)) return false;
+            pointer = new PixelPoint(x, y);
+            return true;
+        }
+#endif
+        return false;
+    }
+
+    private static bool IsWayland =>
+        string.Equals(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland", StringComparison.OrdinalIgnoreCase);
 
     private static (int W, int H, RectPhysical WorkArea) Measure(Screen screen, double widthDip, double heightDip)
     {
@@ -127,7 +260,12 @@ internal static class ToastAnchor
 #if LINUX_BACKEND
             else if (OperatingSystem.IsLinux())
             {
-                bool wayland = string.Equals(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland", StringComparison.OrdinalIgnoreCase);
+                bool wayland = IsWayland;
+                if (wayland && RoeSnip.Platform.Linux.ScreenCastCursor.TryGetDesktopPosition(out int cx, out int cy))
+                {
+                    source = "cursor (screencast)";
+                    return new PixelPoint(cx, cy);
+                }
                 if (wayland && LastPointerFresh && _lastPointer is { } seen)
                 {
                     // Also reuses a probe result, so a toast and the share window probe once.
