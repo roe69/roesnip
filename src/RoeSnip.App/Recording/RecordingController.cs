@@ -982,7 +982,13 @@ public sealed class RecordingSession
             {
                 pausedTotal += now - Volatile.Read(ref _pauseStartTicks); // stopped mid-pause
             }
-            try { _encoder?.FinishAsync(now - pausedTotal).GetAwaiter().GetResult(); }
+            long endTicks = now - pausedTotal;
+            // MP4 frames carry 100 ns since the first frame (WriteFrame above), GIF raw ticks: the
+            // end moment must be in the same domain the encoder was fed.
+            long? end = _format == RecordingFormat.Mp4
+                ? (epochTicks is long e ? (long)((endTicks - e) / freq * 10_000_000.0) : null)
+                : endTicks;
+            try { _encoder?.FinishAsync(end).GetAwaiter().GetResult(); }
             catch (Exception ex) { FileLog.Write($"RoeSnip: recording finalize failed: {ex}"); }
         }
     }

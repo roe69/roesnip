@@ -131,14 +131,39 @@ public sealed unsafe class GstMp4Encoder : IVideoEncoder
                     Buffer.MemoryCopy(src + (long)y * srcStride, dst + (long)y * rowBytes, rowBytes, copy);
                 }
             }
+            // The source only emits on screen change, so the last frame must be shown again at the
+            // stop moment (FinishAsync) or a static tail shrinks to one frame interval.
+            _lastFrame ??= new byte[size];
+            Marshal.Copy(map.Data, _lastFrame, 0, size);
         }
         finally
         {
             Gst.gst_buffer_unmap(buffer, &map);
         }
-        Gst.SetBufferTiming(buffer, timestamp100ns * 100, _frameDurationNs);
+        _lastPtsNs = timestamp100ns * 100;
+        Gst.SetBufferTiming(buffer, _lastPtsNs, _frameDurationNs);
         Push(_videoSrc, buffer, "video");
         return true;
+    }
+
+    private byte[]? _lastFrame;
+    private long _lastPtsNs = -1;
+
+    private void PushStaticTail(long endNs)
+    {
+        long tailPts = endNs - _frameDurationNs;
+        if (_lastFrame is null || tailPts <= _lastPtsNs) return;
+        IntPtr buffer = NewBuffer(_lastFrame.Length, out Gst.MapInfo map);
+        try
+        {
+            Marshal.Copy(_lastFrame, 0, map.Data, _lastFrame.Length);
+        }
+        finally
+        {
+            Gst.gst_buffer_unmap(buffer, &map);
+        }
+        Gst.SetBufferTiming(buffer, tailPts, _frameDurationNs);
+        Push(_videoSrc, buffer, "video");
     }
 
     public void WriteAudioSamples(byte[] pcm, int length, long timestamp100ns)
@@ -198,6 +223,7 @@ public sealed unsafe class GstMp4Encoder : IVideoEncoder
             if (!_anyAudio) PushAudio(new byte[AudioSampleRate / 50 * AudioBlockAlign], AudioSampleRate / 50 * AudioBlockAlign, 0);
             Gst.gst_app_src_end_of_stream(_audioSrc);
         }
+        if (endTimestampTicks is long end) PushStaticTail(end * 100);
         Gst.gst_app_src_end_of_stream(_videoSrc);
         string? result = Gst.WaitEos(_bus, 30_000_000_000L);
         Gst.gst_element_set_state(_pipeline, Gst.StateNull);
