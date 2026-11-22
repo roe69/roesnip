@@ -64,8 +64,8 @@ public interface IVideoEncoder : IDisposable
 /// registry, <see cref="GifVideoEncoder"/> is Core-native and constructed directly by callers on
 /// every OS. Registered by RoeSnip.Platform.Windows's <c>Mp4Encoder</c> via a
 /// <c>[ModuleInitializer]</c>, the exact same pattern as <c>RoeSnip.Core.Capture.CaptureBackendRegistry</c>.
-/// Linux/macOS register no candidate today (<see cref="RecordingCapabilities.SupportsMp4"/> is false
-/// there) — callers are expected to check that flag before ever calling <see cref="Create"/>, so
+/// Linux registers <c>RoeSnip.Platform.Linux.GstMp4Encoder</c> (GStreamer); macOS registers no
+/// candidate (<see cref="RecordingCapabilities.SupportsMp4"/> is false there) - callers are expected to check that flag before ever calling <see cref="Create"/>, so
 /// reaching this with no registrant is a caller bug, not a graceful-degrade path (hence the throw,
 /// mirroring <c>CaptureBackendRegistry.CreateForCurrentPlatform</c>'s own contract, unlike
 /// <see cref="RecordingCapabilitiesRegistry"/>'s intentionally non-throwing fallback).</summary>

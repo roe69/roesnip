@@ -1,0 +1,499 @@
+using System.Diagnostics;
+using RoeSnip.Core.Capture;
+using RoeSnip.Core.Diagnostics;
+using Tmds.DBus;
+
+namespace RoeSnip.Platform.Linux;
+
+/// <summary>A kept-open org.freedesktop.portal.ScreenCast session (MONITOR sources, multiple,
+/// persist_mode=2) with one GStreamer pipeline per shared monitor. Process-wide per purpose:
+/// <see cref="Snapshot"/> (cursor hidden, every stream started at open, kept for the process life)
+/// and <see cref="Recording"/> (cursor embedded, streams started on demand, closed after a take).
+/// The restore token is saved per purpose so the share dialog appears once; a restore that still
+/// shows a dialog means the token was rejected (GNOME then saves a new one).
+///
+/// Opening runs on a background task. Callers wait for it with a bound; while an open is in
+/// flight the Screenshot portal must not be used (GNOME plays a shutter sound for every call),
+/// see <see cref="ScreenshotPortalAllowed"/>.</summary>
+internal sealed class ScreenCastSession
+{
+    public static readonly ScreenCastSession Snapshot = new("snapshot", ScreenCastPortal.CursorHidden, startAllStreams: true);
+    public static readonly ScreenCastSession Recording = new("recording", ScreenCastPortal.CursorEmbedded, startAllStreams: false);
+
+    private static readonly TimeSpan DialogTimeout = TimeSpan.FromSeconds(180);
+    private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(20);
+    private const long ReopenMinIntervalMs = 10_000;
+    private const long RetryAfterFailureMs = 30_000;
+    private static int s_indicatorLogged;
+
+    private readonly string _purpose;
+    private readonly uint _cursorMode;
+    private readonly bool _startAllStreams;
+    private readonly ScreenCastTokenStore _tokens;
+    private readonly object _gate = new();
+    private Task<Live?>? _opening;
+    private Live? _live;
+    private string? _deniedReason;     // the user cancelled the dialog: never re-ask this process
+    private string? _lastFailure;      // last open failed: Screenshot portal fallback allowed
+    private long _retryAfterTick;
+    private long _lastOpenStartTick;
+    private bool _forceDialogNext;
+    private bool _dialogAttemptedForTopology;
+    private int _generation; // bumped by Close(); an open finishing under an older one is dropped
+
+    private ScreenCastSession(string purpose, uint cursorMode, bool startAllStreams)
+    {
+        _purpose = purpose;
+        _cursorMode = cursorMode;
+        _startAllStreams = startAllStreams;
+        _tokens = ScreenCastTokenStore.ForPurpose(purpose);
+    }
+
+    public static bool IsWaylandSession =>
+        string.Equals(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland", StringComparison.OrdinalIgnoreCase)
+        || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
+
+    public bool HasSavedToken => _tokens.Load() is not null;
+
+    /// <summary>True when the Screenshot portal may be used as a last resort: not Wayland, or the
+    /// screencast cannot be opened (denied, unsupported, last open failed) and no open is in flight.
+    /// <paramref name="reason"/> carries why the screencast is unavailable.</summary>
+    public bool ScreenshotPortalAllowed(out string reason)
+    {
+        lock (_gate)
+        {
+            if (!IsWaylandSession) { reason = "X11 session"; return true; }
+            if (_deniedReason is not null) { reason = _deniedReason; return true; }
+            if (_opening is { IsCompleted: false }) { reason = "screencast is still opening"; return false; }
+            if (_live is not null) { reason = "screencast is open"; return false; }
+            if (_lastFailure is not null) { reason = _lastFailure; return true; }
+            reason = "screencast not opened yet";
+            return false;
+        }
+    }
+
+    /// <summary>Returns the open session, starting an open if none is live, and waits up to
+    /// <paramref name="wait"/> for it. Null with <paramref name="reason"/> when not ready.</summary>
+    public Live? Acquire(TimeSpan wait, out string reason)
+    {
+        Task<Live?> task;
+        lock (_gate)
+        {
+            if (_live is { IsDead: false } live) { reason = ""; return live; }
+            if (_live is not null) DropLiveLocked("a stream died");
+            if (_deniedReason is not null) { reason = _deniedReason; return null; }
+            if (_opening is null || _opening.IsCompleted)
+            {
+                if (_lastFailure is not null && Environment.TickCount64 < _retryAfterTick)
+                {
+                    reason = _lastFailure;
+                    return null;
+                }
+                _opening = StartOpenLocked();
+            }
+            task = _opening;
+        }
+
+        if (!task.Wait(wait))
+        {
+            reason = "screencast is still opening (share dialog waiting for an answer?)";
+            return null;
+        }
+        Live? result = task.Result;
+        lock (_gate)
+        {
+            reason = result is null ? (_deniedReason ?? _lastFailure ?? "screencast open failed") : "";
+        }
+        return result;
+    }
+
+    /// <summary>Starts an open in the background if nothing is live or opening (warmup, or after a
+    /// stream died). Never shows the dialog unless no token is saved.</summary>
+    public void OpenInBackground()
+    {
+        lock (_gate)
+        {
+            if (_live is { IsDead: false } || _deniedReason is not null) return;
+            if (_opening is { IsCompleted: false }) return;
+            if (_lastFailure is not null && Environment.TickCount64 < _retryAfterTick) return;
+            _opening = StartOpenLocked();
+        }
+    }
+
+    /// <summary>A capture found no stream for a monitor (hotplug, or the user shared fewer
+    /// monitors). Reopens with the token once; if that still misses a monitor the next reopen
+    /// drops the token so the dialog can offer every monitor, once per topology.</summary>
+    public void ReportUnmappedMonitor(string monitorsSignature)
+    {
+        lock (_gate)
+        {
+            if (Environment.TickCount64 - _lastOpenStartTick < ReopenMinIntervalMs) return;
+            if (_live is null || _opening is { IsCompleted: false }) return;
+            if (_live.TopologySignature != monitorsSignature)
+            {
+                _dialogAttemptedForTopology = false; // new topology: the token may cover it
+            }
+            else if (!_dialogAttemptedForTopology)
+            {
+                _forceDialogNext = true;
+                _dialogAttemptedForTopology = true;
+            }
+            else
+            {
+                return; // already asked for this topology
+            }
+            FileLog.Write($"RoeSnip: screencast {_purpose} has no stream for a monitor; reopening" +
+                (_forceDialogNext ? " with the share dialog" : " with the saved token"));
+            DropLiveLocked("monitor topology changed");
+            _opening = StartOpenLocked(monitorsSignature);
+        }
+    }
+
+    /// <summary>True once the share dialog was already shown again for this topology and a
+    /// monitor is still not shared: that monitor may use the Screenshot portal.</summary>
+    public bool GaveUpOnUnmapped(string monitorsSignature)
+    {
+        lock (_gate)
+        {
+            return _dialogAttemptedForTopology && _live is not null && _live.TopologySignature == monitorsSignature;
+        }
+    }
+
+    /// <summary>Closes the session (recording purpose after a take). The token stays saved.</summary>
+    public void Close()
+    {
+        lock (_gate)
+        {
+            _generation++;
+            if (_live is not null) DropLiveLocked("closed by RoeSnip");
+        }
+    }
+
+    private void DropLiveLocked(string why)
+    {
+        var live = _live;
+        _live = null;
+        if (live is null) return;
+        FileLog.Write($"RoeSnip: screencast {_purpose} session closing ({why})");
+        _ = Task.Run(live.Dispose);
+    }
+
+    private Task<Live?> StartOpenLocked(string? topologySignature = null)
+    {
+        _lastOpenStartTick = Environment.TickCount64;
+        bool forceDialog = _forceDialogNext;
+        _forceDialogNext = false;
+        int generation = _generation;
+        return Task.Run(async () =>
+        {
+            try
+            {
+                var live = await OpenAsync(forceDialog, topologySignature).ConfigureAwait(false);
+                live.Died += OnLiveDied;
+                lock (_gate)
+                {
+                    if (generation != _generation)
+                    {
+                        // Close() ran while this open was in flight (a take ended first).
+                        _ = Task.Run(live.Dispose);
+                        return null;
+                    }
+                    _live = live;
+                    _lastFailure = null;
+                }
+                return (Live?)live;
+            }
+            catch (Exception ex)
+            {
+                string reason = ex is PortalResponseException or InvalidOperationException or TimeoutException
+                    ? ex.Message
+                    : $"{ex.GetType().Name}: {ex.Message}";
+                lock (_gate)
+                {
+                    _lastFailure = reason;
+                    _retryAfterTick = Environment.TickCount64 + RetryAfterFailureMs;
+                    if (ex is PortalResponseException { Response: 1 })
+                    {
+                        _deniedReason = reason;
+                    }
+                }
+                FileLog.Write($"RoeSnip: screencast {_purpose} session failed to open: {reason}");
+                return null;
+            }
+        });
+    }
+
+    private void OnLiveDied(Live live, string why)
+    {
+        bool reopen;
+        lock (_gate)
+        {
+            if (!ReferenceEquals(_live, live)) return;
+            DropLiveLocked(why);
+            reopen = _startAllStreams && Environment.TickCount64 - _lastOpenStartTick >= ReopenMinIntervalMs;
+        }
+        // Silent with a saved token; the snapshot stream is the capture path, so get it back now.
+        if (reopen && HasSavedToken) OpenInBackground();
+    }
+
+    private async Task<Live> OpenAsync(bool forceDialog, string? topologySignature)
+    {
+        var watch = Stopwatch.StartNew();
+        if (!Gst.Available)
+        {
+            throw new InvalidOperationException("GStreamer unavailable: " + Gst.UnavailableReason);
+        }
+        foreach (var element in new[] { "pipewiresrc", "videoconvert", "appsink" })
+        {
+            if (!Gst.HasElement(element))
+            {
+                throw new InvalidOperationException($"GStreamer element '{element}' is not installed");
+            }
+        }
+
+        string? address = Address.Session;
+        if (string.IsNullOrEmpty(address))
+        {
+            throw new InvalidOperationException("no D-Bus session bus");
+        }
+
+        var connection = new Connection(address);
+        CloseSafeHandle? fd = null;
+        Live? live = null;
+        try
+        {
+            var info = await connection.ConnectAsync().ConfigureAwait(false);
+            string sender = info.LocalName.TrimStart(':').Replace('.', '_');
+            var portal = connection.CreateProxy<IPortalScreenCast>(ScreenCastPortal.Service, ScreenCastPortal.DesktopPath);
+
+            uint version;
+            try
+            {
+                version = await portal.GetAsync<uint>("version").ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("the ScreenCast portal is not available: " + ex.Message);
+            }
+            uint cursorModes = 0;
+            try { cursorModes = await portal.GetAsync<uint>("AvailableCursorModes").ConfigureAwait(false); }
+            catch { /* version 1 portals have no cursor modes */ }
+
+            var created = await ScreenCastPortal.RequestAsync(connection, sender, "CreateSession",
+                token => portal.CreateSessionAsync(new Dictionary<string, object>
+                {
+                    ["handle_token"] = token,
+                    ["session_handle_token"] = "roesnip_" + Guid.NewGuid().ToString("N"),
+                }), StepTimeout).ConfigureAwait(false);
+            if (!created.TryGetValue("session_handle", out var handleValue) || handleValue is null)
+            {
+                throw new InvalidOperationException("CreateSession returned no session_handle");
+            }
+            var sessionPath = new ObjectPath(handleValue.ToString()!);
+
+            string? restoreToken = forceDialog ? null : _tokens.Load();
+            uint cursorMode = (cursorModes & _cursorMode) != 0 ? _cursorMode
+                : (cursorModes & ScreenCastPortal.CursorHidden) != 0 ? ScreenCastPortal.CursorHidden : 0;
+            var select = new Dictionary<string, object>
+            {
+                ["types"] = ScreenCastPortal.SourceMonitor,
+                ["multiple"] = true,
+            };
+            if (cursorMode != 0) select["cursor_mode"] = cursorMode;
+            if (version >= 4)
+            {
+                select["persist_mode"] = ScreenCastPortal.PersistUntilRevoked;
+                if (restoreToken is not null) select["restore_token"] = restoreToken;
+            }
+            await ScreenCastPortal.RequestAsync(connection, sender, "SelectSources",
+                token =>
+                {
+                    select["handle_token"] = token;
+                    return portal.SelectSourcesAsync(sessionPath, select);
+                }, StepTimeout).ConfigureAwait(false);
+
+            IDictionary<string, object> started;
+            try
+            {
+                started = await ScreenCastPortal.RequestAsync(connection, sender, "Start",
+                    token => portal.StartAsync(sessionPath, "", new Dictionary<string, object> { ["handle_token"] = token }),
+                    DialogTimeout).ConfigureAwait(false);
+            }
+            catch (PortalResponseException)
+            {
+                _tokens.Save(null); // a denied or broken restore must not be replayed
+                throw;
+            }
+
+            var geometries = ScreenCastPortal.ParseStreams(started.TryGetValue("streams", out var sv) ? sv : null);
+            if (geometries.Count == 0)
+            {
+                throw new InvalidOperationException("Start returned no streams");
+            }
+            string? newToken = started.TryGetValue("restore_token", out var tv) ? tv as string : null;
+            if (!string.IsNullOrEmpty(newToken)) _tokens.Save(newToken);
+
+            fd = await portal.OpenPipeWireRemoteAsync(sessionPath, new Dictionary<string, object>()).ConfigureAwait(false);
+            int rawFd = fd.DangerousGetHandle().ToInt32();
+
+            live = new Live(this, connection, sessionPath, fd, rawFd, geometries, restoreToken is not null,
+                topologySignature ?? MonitorsSignature(X11Capturer.EnumerateMonitorsViaRandR()));
+
+            var session = connection.CreateProxy<IPortalSession>(ScreenCastPortal.Service, sessionPath);
+            live.ClosedWatch = await session.WatchClosedAsync(
+                _ => live.MarkDead("the portal closed the session"),
+                ex => live.MarkDead("session watch failed: " + ex.Message)).ConfigureAwait(false);
+
+            if (_startAllStreams)
+            {
+                foreach (var g in geometries) live.GetStream(g.NodeId);
+                foreach (var g in geometries) live.GetStream(g.NodeId)?.WaitForFirstSample(TimeSpan.FromSeconds(1));
+            }
+
+            watch.Stop();
+            FileLog.Write(
+                $"RoeSnip: screencast {_purpose} session open in {watch.ElapsedMilliseconds} ms " +
+                $"(portal v{version}, cursor_mode {cursorMode}, {(restoreToken is not null ? "restored from token" : "share dialog")}, " +
+                $"token {(string.IsNullOrEmpty(newToken) ? "not returned" : "saved")}): " +
+                string.Join(", ", geometries.Select(g => $"node {g.NodeId} at {g.X},{g.Y} {g.Width}x{g.Height}")));
+            if (Interlocked.Exchange(ref s_indicatorLogged, 1) == 0)
+            {
+                FileLog.Write("RoeSnip: screencast open - GNOME shows its screen-sharing indicator in the top bar while it stays open");
+            }
+            return live;
+        }
+        catch
+        {
+            if (live is not null)
+            {
+                live.Dispose(); // owns the fd and the connection
+            }
+            else
+            {
+                fd?.Dispose();
+                connection.Dispose();
+            }
+            throw;
+        }
+    }
+
+    public static string MonitorsSignature(IReadOnlyList<MonitorInfo> monitors)
+        => string.Join(";", monitors.Select(m => $"{m.DeviceName}@{m.BoundsPx.Left},{m.BoundsPx.Top},{m.BoundsPx.Width}x{m.BoundsPx.Height}"));
+
+    /// <summary>One open portal session: its D-Bus connection (the session dies with it), the
+    /// PipeWire fd and the per-stream pipelines.</summary>
+    internal sealed class Live : IDisposable
+    {
+        private readonly ScreenCastSession _owner;
+        private readonly Connection _connection;
+        private readonly ObjectPath _sessionPath;
+        private readonly CloseSafeHandle _fd;
+        private readonly int _rawFd;
+        private readonly Dictionary<uint, ScreenCastStream> _streams = new();
+        private readonly object _gate = new();
+        private volatile string? _deadReason;
+        private int _disposed;
+        private readonly Dictionary<string, IReadOnlyDictionary<int, ScreenCastStreamGeometry>> _mappingCache = new();
+
+        public IReadOnlyList<ScreenCastStreamGeometry> Geometries { get; }
+        public bool RestoredFromToken { get; }
+        public string TopologySignature { get; }
+        public IDisposable? ClosedWatch { get; set; }
+        public bool IsDead => _deadReason is not null;
+        public event Action<Live, string>? Died;
+
+        public Live(ScreenCastSession owner, Connection connection, ObjectPath sessionPath, CloseSafeHandle fd,
+            int rawFd, IReadOnlyList<ScreenCastStreamGeometry> geometries, bool restoredFromToken, string topologySignature)
+        {
+            _owner = owner;
+            _connection = connection;
+            _sessionPath = sessionPath;
+            _fd = fd;
+            _rawFd = rawFd;
+            Geometries = geometries;
+            RestoredFromToken = restoredFromToken;
+            TopologySignature = topologySignature;
+        }
+
+        public void MarkDead(string reason)
+        {
+            if (_deadReason is not null || Volatile.Read(ref _disposed) != 0) return;
+            _deadReason = reason;
+            FileLog.Write($"RoeSnip: screencast {_owner._purpose} session lost: {reason}");
+            Died?.Invoke(this, reason);
+        }
+
+        /// <summary>The stream mapped to <paramref name="monitor"/> under the current monitor list.</summary>
+        public ScreenCastStreamGeometry? StreamFor(MonitorInfo monitor, IReadOnlyList<MonitorInfo> allMonitors)
+        {
+            string sig = MonitorsSignature(allMonitors);
+            IReadOnlyDictionary<int, ScreenCastStreamGeometry> map;
+            lock (_gate)
+            {
+                if (_mappingCache.TryGetValue(sig, out var cached))
+                {
+                    map = cached;
+                }
+                else
+                {
+                    map = ScreenCastStreamMapping.Map(Geometries, allMonitors);
+                    _mappingCache[sig] = map;
+                    FileLog.Write($"RoeSnip: screencast {_owner._purpose} stream mapping: " +
+                        string.Join(", ", allMonitors.Select(m =>
+                            map.TryGetValue(m.Index, out var g) ? $"{m.DeviceName} -> node {g.NodeId}" : $"{m.DeviceName} -> none")));
+                }
+            }
+            return map.TryGetValue(monitor.Index, out var hit) ? hit : null;
+        }
+
+        /// <summary>The running pipeline for a node, started on first use. Null if it cannot start
+        /// (the session is then marked dead).</summary>
+        public ScreenCastStream? GetStream(uint nodeId)
+        {
+            lock (_gate)
+            {
+                if (IsDead || _disposed != 0) return null;
+                if (_streams.TryGetValue(nodeId, out var existing))
+                {
+                    if (!existing.IsDead) return existing;
+                    string why = existing.DeadReason ?? "stream died";
+                    _streams.Remove(nodeId);
+                    existing.Dispose();
+                    ThreadPool.QueueUserWorkItem(_ => MarkDead(why));
+                    return null;
+                }
+                var geometry = Geometries.FirstOrDefault(g => g.NodeId == nodeId);
+                try
+                {
+                    var stream = new ScreenCastStream(_rawFd, geometry);
+                    _streams[nodeId] = stream;
+                    return stream;
+                }
+                catch (Exception ex)
+                {
+                    ThreadPool.QueueUserWorkItem(_ => MarkDead("pipeline start failed: " + ex.Message));
+                    return null;
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            lock (_gate)
+            {
+                foreach (var s in _streams.Values) s.Dispose();
+                _streams.Clear();
+            }
+            try { ClosedWatch?.Dispose(); } catch { }
+            try
+            {
+                _connection.CreateProxy<IPortalSession>(ScreenCastPortal.Service, _sessionPath)
+                    .CloseAsync().Wait(TimeSpan.FromSeconds(2));
+            }
+            catch { /* the session may already be gone */ }
+            try { _fd.Dispose(); } catch { }
+            try { _connection.Dispose(); } catch { }
+        }
+    }
+}

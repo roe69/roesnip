@@ -9,10 +9,9 @@ namespace RoeSnip.Core.Recording;
 /// every OS.</summary>
 public sealed record RecordingCapabilities(bool SupportsMp4, bool SupportsMicrophone, bool SupportsLoopback)
 {
-    /// <summary>The Linux/macOS answer until those Platform.* projects grow a real MP4/WASAPI-
-    /// equivalent backend (PipeWire/CoreAudio, or an ffmpeg encoder) — none of which this item
-    /// scaffolds speculatively (per this repo's minimal-fixes convention). Recording on those OSes
-    /// degrades to GIF-only, silent takes; this is that degrade's own descriptor, not an error.</summary>
+    /// <summary>The macOS answer, and the Linux answer when GStreamer or an H.264 encoder is
+    /// missing: recording degrades to GIF-only, silent takes; this is that degrade's own
+    /// descriptor, not an error.</summary>
     public static readonly RecordingCapabilities None = new(SupportsMp4: false, SupportsMicrophone: false, SupportsLoopback: false);
 }
 

@@ -16,10 +16,10 @@ public readonly record struct AudioChunk(byte[] Pcm, long QpcTicks);
 /// (RoeSnip.Core.Capture) the same way <see cref="IVideoEncoder"/> mirrors it for video. Windows
 /// implements this via WASAPI (<c>RoeSnip.Platform.Windows.AudioCaptureDevice</c>, ported from the
 /// WPF app's own <c>AudioCaptureEngine</c> — see that class's doc comment for the mixing/gap-fill
-/// design this interface preserves verbatim, sample callback and all); Linux/macOS register no
-/// factory at all (<see cref="RecordingCapabilities.SupportsMicrophone"/>/
-/// <see cref="RecordingCapabilities.SupportsLoopback"/> both false there), so RecordingController
-/// never even asks <see cref="AudioCaptureDeviceRegistry"/> for one on those OSes.
+/// design this interface preserves verbatim, sample callback and all); Linux implements it via
+/// GStreamer pulsesrc (<c>RoeSnip.Platform.Linux.GstAudioCaptureDevice</c>); macOS registers no
+/// factory (<see cref="RecordingCapabilities.SupportsMicrophone"/>/
+/// <see cref="RecordingCapabilities.SupportsLoopback"/> both false there).
 ///
 /// All members are the capture-thread's own internal WASAPI polling loop reaching across to whichever
 /// thread calls them — see the WPF app's <c>AudioCaptureEngine</c> class doc for the full

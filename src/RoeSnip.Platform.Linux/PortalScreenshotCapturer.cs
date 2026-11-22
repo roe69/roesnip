@@ -58,8 +58,33 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
         _enumerateMonitors = enumerateMonitors;
     }
 
+    // The reason last logged for using this capturer; logged again only when it changes.
+    private static string? s_loggedFallbackReason;
+
     public CapturedFrame Capture(MonitorInfo monitor)
     {
+        // GNOME plays a shutter sound and flashes the screen for every Screenshot portal call:
+        // only a last resort when the screencast cannot be opened (or this monitor is not shared),
+        // and never for a capture nobody asked for.
+        if (CaptureContext.IsBackground)
+        {
+            throw new CaptureException("screenshot portal not used for a background capture");
+        }
+        if (!ScreenCastSession.Snapshot.ScreenshotPortalAllowed(out string castReason))
+        {
+            var monitors = _enumerateMonitors();
+            if (!ScreenCastSession.Snapshot.GaveUpOnUnmapped(ScreenCastSession.MonitorsSignature(monitors)))
+            {
+                throw new CaptureException($"screenshot portal not used ({castReason})");
+            }
+            castReason = $"monitor {monitor.DeviceName} is not in the screen share";
+        }
+        if (!string.Equals(Interlocked.Exchange(ref s_loggedFallbackReason, castReason), castReason, StringComparison.Ordinal))
+        {
+            FileLog.Write(
+                $"RoeSnip: screencast unavailable ({castReason}), falling back to the screenshot portal (GNOME plays a shutter sound)");
+        }
+
         Task<DesktopShot> task;
         lock (_gate)
         {

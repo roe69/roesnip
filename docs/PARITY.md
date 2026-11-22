@@ -1348,6 +1348,33 @@ existing WPF test suite is the proof.
       precedent items 12/23 already established), so this plus a green build is the available
       verification; RoeSnipTheme.xaml's own DEFINITION ORDER rule was preserved (RlDangerTextBrush
       added to section 1 alongside the other base tokens, before section 2's ErrorBrush).
+- [ ] 13e-xplat-install-self-update (code landed, live update on Linux and macOS outstanding):
+      install, start at login and self-update on Linux and macOS, same shape as Windows
+      (AppShell/UpdateManager.cs, StartupManager.cs, LinuxDesktopIntegration.cs; path, asset,
+      file-content and swap logic in Core/Updates, unit-tested in CrossPlatformInstallTests and
+      UpdateManagerTests). Asset per OS + ProcessArchitecture (UpdateAssetNames):
+      RoeSnipApp-win-<x64|arm64>.exe(.gz), RoeSnip-linux-<arch>.AppImage,
+      RoeSnip-osx-<arch>.app.tar.gz.
+      - Linux, only from an AppImage ($APPIMAGE): Install copies it to
+        $XDG_DATA_HOME/RoeSnip/RoeSnip.AppImage (default ~/.local/share), writes
+        applications/net.roelite.roesnip.desktop (named after the portal app id; a "Capture"
+        action runs `capture`), copies $APPDIR/roesnip.png to icons/hicolor/256x256/apps, and
+        $XDG_CONFIG_HOME/autostart/net.roelite.roesnip.desktop; the Downloads AppImage is deleted
+        on the installed copy's next start. Update: download to RoeSnip.AppImage.new, size +
+        SHA-256 check, chmod 755, rename target -> .old and .new -> target, idle gate, pending
+        marker, exec the AppImage.
+      - macOS, only from a .app bundle: Install copies the bundle with /usr/bin/ditto to
+        ~/Applications/RoeSnip.app (the source bundle is left alone) and writes
+        ~/Library/LaunchAgents/net.roelite.roesnip.plist (RunAtLoad, ProgramArguments = the
+        bundle executable). Update: download the .app.tar.gz, verify, /usr/bin/tar -xzf into
+        ~/Applications/.RoeSnip-update, idle gate, then rename RoeSnip.app -> RoeSnip.app.old and
+        the staged bundle into place (swap after the idle gate: a folder-published app loads
+        assemblies lazily from its bundle path), /usr/bin/xattr -dr com.apple.quarantine,
+        relaunch with /usr/bin/open -n.
+      - Crash-loop guard (UpdateHealthMarker) and .old restore run on every self-updating copy;
+        replace-on-run matches a Linux AppImage process by the APPIMAGE in /proc/<pid>/environ.
+        The idle gate also waits for a running recording. Settings' start-at-login toggle now
+        writes the autostart entry / LaunchAgent.
 
 ## Platform limitations (accepted)
 
@@ -1370,15 +1397,18 @@ because a correct implementation needs live hardware this repo cannot exercise.
   full-pool tuning needs a live Linux machine (tracked in PLAN-XPLAT.md section 7).
 - Elevated run-at-startup: schtasks/UAC is a Windows concept; the control is hidden on
   Linux/macOS rather than emulated (no root-daemon equivalent is appropriate for a tray app).
-- MP4 encoding and audio capture off Windows: Media Foundation and WASAPI have no portable
-  analog; recording degrades to GIF-only with audio toggles disabled until a PipeWire /
-  CoreAudio (or ffmpeg) backend is scoped as its own project.
-- Self-update swap for the Linux AppImage and macOS .dmg: a wrong atomic-swap strategy can
-  brick an install and cannot be end-to-end tested here; those platforms get a passive
-  new-version notice with a link (item 13) until a real update strategy is decided and
-  tested live.
-- Windows staging-ring GPU readback (item 20) has no Linux/macOS equivalent; non-Windows
-  recording pays plain per-frame readback cost.
+- MP4 encoding and audio capture on macOS: no CoreAudio/AVFoundation backend; recording
+  degrades to GIF-only with audio toggles disabled. Linux has them through GStreamer (item 28)
+  and degrades the same way when GStreamer or an H.264 encoder is missing.
+- GNOME screen-sharing indicator: the kept-open Wayland screencast (item 27) shows GNOME's
+  sharing icon in the top bar for as long as the tray runs; logged once at session open.
+- Self-update off Windows needs the AppImage (Linux) or the .app bundle (macOS, item 13e): a
+  Linux tar.gz / dev publish folder run, and an AppImage or bundle not yet installed, only get
+  the passive new-version notice. The macOS bundle is ad-hoc signed and the signature changes
+  every build, so macOS may ask for Screen Recording permission again after an update.
+- Windows staging-ring GPU readback (item 20) has no Linux/macOS equivalent; Wayland
+  recording crops straight from the screencast stream's newest frame (item 28), X11 and macOS
+  recording pay a full per-frame capture.
 - RegionOutline's click-through region-boundary marker (item 21) is Windows-only: it needs
   WS_EX_TRANSPARENT-style OS-level click-through with no portable equivalent (X11/Wayland have
   no comparable mechanism through Avalonia, and Wayland forbids a client positioning its own
@@ -1393,14 +1423,14 @@ because a correct implementation needs live hardware this repo cannot exercise.
   item 18); it stays unimplemented elsewhere.
 - Resume-from-sleep capture-stack re-warm (post-sleep resilience pass, see Notes) is
   Windows-only: Microsoft.Win32.SystemEvents.PowerModeChanged has no Linux/macOS analog
-  wired here, and there is genuinely nothing to invalidate on those platforms anyway — the
-  portal and scksnap backends hold no permanently-warm per-monitor device/framepool cache
-  the way WgcCapturer does. Non-Windows degrades to a no-op (the first post-wake capture
-  provisions on demand, which is those backends' normal path). Same for the flash Esc
+  wired here. The scksnap backend holds no warm cache; the Wayland screencast (item 27) does,
+  and recovers by reopening with its token when a stream errors or the portal closes the
+  session, which the first post-wake capture triggers if the wake killed it. Same for the flash Esc
   WH_KEYBOARD_LL hook and the flash watchdog's raw SetWindowPos: both live behind the flash
   architecture, which is itself Windows-only.
-- Wayland portal robustness and mixed-DPI portal slicing remain in PLAN-XPLAT.md section 7;
-  both need live Linux hardware and are deliberately not duplicated as items here.
+- Mixed-DPI portal slicing remains in PLAN-XPLAT.md section 7 for the Screenshot-portal
+  fallback; the screencast path maps each stream to its monitor and nearest-samples a buffer
+  whose size differs from the RandR bounds (logged once), which needs a mixed-DPI rig to verify.
 
 ## Notes
 
@@ -1864,3 +1894,24 @@ because a correct implementation needs live hardware this repo cannot exercise.
   `IsMagnifierActive` rule although its loupe itself is still always visible (see 24). Automation:
   `state` reports `loupeRadius` + `pointerScale`, new `zoom {radius}` command shares the wheel's
   `ApplyLoupeRadius` path in both apps.
+- [ ] 27-wayland-instant-capture (code landed, live check on GNOME Wayland outstanding): a kept-open
+  xdg-desktop-portal ScreenCast session (MONITOR, multiple, cursor hidden, persist_mode=2; restore
+  token in `<config>/screencast-snapshot.token`) opened by the first capture (tray warmup), one
+  GStreamer pipeline per stream (`pipewiresrc ! videoconvert ! BGRx ! appsink max-buffers=1
+  drop=true`) keeping the newest sample, so a capture is one copy (`Platform.Linux/
+  ScreenCastCapturer.cs`, `ScreenCastSession.cs`, `ScreenCastStream.cs`). Streams map to RandR
+  monitors by position/size (`Core/Capture/ScreenCastStreamMapping.cs`). A dead stream or a
+  portal Closed signal drops the session and reopens it with the token; a monitor with no
+  stream reopens once with the token, then once with the dialog. The Screenshot portal (GNOME
+  shutter sound + flash) is a last resort only: it refuses while the screencast is open or
+  opening, and inside `Core.Capture.CaptureContext.BeginBackground()`. X11 sessions use XGetImage
+  first, the Screenshot portal last.
+- [ ] 28-linux-recording (code landed, live check outstanding): MP4 through GStreamer
+  (`Platform.Linux/GstMp4Encoder.cs`: appsrc BGRA -> videoconvert -> first H.264 encoder that
+  passes a test encode in the order nvh264enc, vah264enc, vaapih264enc, x264enc, openh264enc ->
+  h264parse -> mp4mux; AAC via fdkaacenc/avenc_aac/voaacenc/faac, else Opus), audio through
+  pulsesrc (mic = default source, system = `@DEFAULT_MONITOR@`, audiomixer when both;
+  `GstAudioCaptureDevice.cs`), Wayland region frames cropped from a cursor-embedded recording
+  screencast (`screencast-recording.token`, closed at hard stop; falls back to the cursorless
+  snapshot session). RecordingCapabilities reports MP4/mic/loopback on Linux only when the
+  GStreamer elements exist. X11 recording uses the polled X11 source with the same encoder.

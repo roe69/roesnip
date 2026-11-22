@@ -2,32 +2,37 @@ using RoeSnip.Core.Capture;
 
 namespace RoeSnip.Platform.Linux;
 
-/// <summary>Linux capture backend (PLAN-XPLAT.md §3.4): composes the xdg-desktop-portal capturer
-/// (primary — correct on Wayland and X11-with-portals) and the raw X11 XGetImage capturer
-/// (fallback — portal-less X sessions) into Core's <see cref="FallbackCaptureBackend"/>, so the
-/// same persisted once-broken-skip-forever memo behavior Windows uses applies here for free.
-///
-/// Monitor enumeration uses XRandR regardless of which capturer ultimately succeeds (both need the
-/// same bounds list, and the portal has no per-monitor handles of its own) — this keeps
-/// RoeSnip.Platform.Linux independent of RoeSnip.App/Avalonia like every other Platform.* project.
-/// SdrWhiteNits=240 / AdvancedColorActive=false are pinned unconditionally (no ACM/HDR concept on
-/// Linux in v1 — PLAN-XPLAT.md §6 flag 6) and every frame is Bgra8Srgb passthrough with the
-/// documented SdrWhiteInBufferUnits=1.0 sentinel.</summary>
+/// <summary>Linux capture backend: an ordered capturer list in Core's
+/// <see cref="FallbackCaptureBackend"/>.
+///   Wayland: the kept-open ScreenCast stream (<see cref="ScreenCastCapturer"/>), then the
+///     Screenshot portal as a last resort (it refuses while the screencast is open or opening,
+///     since GNOME plays a shutter sound per call). No X11 capturer: XGetImage refuses on Wayland.
+///   X11: XGetImage first, the Screenshot portal last.
+/// Monitor enumeration is XRandR (XWayland on Wayland) for every capturer.
+/// SdrWhiteNits=240 / AdvancedColorActive=false are pinned (no HDR concept on Linux in v1) and
+/// every frame is Bgra8Srgb with the SdrWhiteInBufferUnits=1.0 sentinel.</summary>
 public sealed class LinuxCaptureBackend : ICaptureBackend
 {
     private readonly FallbackCaptureBackend _inner;
 
     public LinuxCaptureBackend()
     {
+        IScreenCapturer[] capturers = ScreenCastSession.IsWaylandSession
+            ? new IScreenCapturer[]
+            {
+                new ScreenCastCapturer(EnumerateMonitorsCore),
+                new PortalScreenshotCapturer(EnumerateMonitorsCore),
+            }
+            : new IScreenCapturer[]
+            {
+                new X11Capturer(),
+                new PortalScreenshotCapturer(EnumerateMonitorsCore),
+            };
         _inner = new FallbackCaptureBackend(
-            "Linux (xdg-desktop-portal/X11)",
+            ScreenCastSession.IsWaylandSession ? "Linux (ScreenCast portal/Screenshot portal)" : "Linux (X11/Screenshot portal)",
             supportsHdrExport: false,
             EnumerateMonitorsCore,
-            new IScreenCapturer[]
-            {
-                new PortalScreenshotCapturer(EnumerateMonitorsCore),
-                new X11Capturer(),
-            },
+            capturers,
             CaptureCache.Default);
     }
 
@@ -38,7 +43,14 @@ public sealed class LinuxCaptureBackend : ICaptureBackend
 
     public IReadOnlyList<CapturedFrame> CaptureAll(
         IReadOnlyList<MonitorInfo>? monitors = null, int? onlyMonitorIndex = null)
-        => _inner.CaptureAll(monitors, onlyMonitorIndex);
+    {
+        // The tray warmup thread (TrayApp.StartWarmup names it) captures for nobody: never let it
+        // reach the Screenshot portal's shutter sound, even when the screencast cannot open.
+        using var background = Thread.CurrentThread.Name == "RoeSnip-Warmup"
+            ? CaptureContext.BeginBackground()
+            : null;
+        return _inner.CaptureAll(monitors, onlyMonitorIndex);
+    }
 
     private static IReadOnlyList<MonitorInfo> EnumerateMonitorsCore()
         => X11Capturer.EnumerateMonitorsViaRandR();
@@ -47,8 +59,7 @@ public sealed class LinuxCaptureBackend : ICaptureBackend
 file static class ModuleInit
 {
     // CA2255 warns against ModuleInitializer in libraries, but cross-assembly self-registration
-    // into CaptureBackendRegistry is exactly the pattern PLAN-XPLAT.md §2.3/§3.4 mandates for
-    // every Platform.* project (Core/App never name a concrete backend type).
+    // into CaptureBackendRegistry is the pattern every Platform.* project uses.
 #pragma warning disable CA2255
     [System.Runtime.CompilerServices.ModuleInitializer]
 #pragma warning restore CA2255
