@@ -235,11 +235,9 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         }
         UpdateFrequencyCombo.SelectedItem = selected ?? hourly ?? UpdateFrequencyCombo.Items[0];
 
-        // Windows portable/dev copies never run the update loop at all (TrayApp.Start's
-        // IsInstalled guard); Linux/macOS run the passive-notice loop unconditionally but never
-        // self-apply anything. Either way the combo still saves a value (for whenever a portable
-        // copy might get installed later), but a hint makes clear what today's behavior actually
-        // is instead of leaving the user to wonder why "updates don't work".
+        // Only the installed copy self-updates (TrayApp.Start's IsInstalled guard). A Windows
+        // portable copy checks nothing; a Linux/macOS copy that is not installed (or cannot
+        // self-update: tar.gz, dev folder) only gets the notice. The hint says which applies.
         bool installed;
         try
         {
@@ -251,11 +249,14 @@ public partial class SettingsWindow : Avalonia.Controls.Window
             installed = true; // fail toward showing no hint rather than a possibly-wrong one
         }
 
-        string? hint = OperatingSystem.IsWindows()
-            ? (installed
+        bool selfUpdates = UpdateManager.SelfUpdateSupported;
+        string? hint = !selfUpdates
+            ? "This copy only notifies you about new versions. Run the AppImage (Linux) or the .app (macOS) to get automatic updates."
+            : installed
                 ? null
-                : "This portable copy never checks for updates. Use Install RoeSnip in the tray menu to turn updates on.")
-            : "On Linux and macOS, RoeSnip only notifies you about new versions. Downloads stay manual.";
+                : OperatingSystem.IsWindows()
+                    ? "This portable copy never checks for updates. Use Install RoeSnip in the tray menu to turn updates on."
+                    : "This copy only notifies you about new versions. Use Install RoeSnip in the tray menu to turn on automatic updates.";
 
         UpdateFrequencyHintText.Text = hint ?? string.Empty;
         UpdateFrequencyHintText.IsVisible = hint is not null;

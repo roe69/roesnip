@@ -1,46 +1,112 @@
 using System;
+using System.IO;
 using System.Runtime.Versioning;
 using Microsoft.Win32;
 using RoeSnip.Core.Diagnostics;
+using RoeSnip.Core.Updates;
 
 namespace RoeSnip.App.AppShell;
 
-/// <summary>Run-at-startup toggle. Windows: the per-user HKCU Run key, ported unchanged from
-/// src/RoeSnip/App/StartupManager.cs (PLAN-XPLAT.md §3.2) — no admin rights needed, no scheduled
-/// task, no installer hook; code-reviewed rather than unit-tested (it mutates the real registry).
-/// macOS/Linux: a documented no-op that logs to stderr — DESIGN-XPLAT.md does not specify
-/// run-at-startup behavior there (PLAN-XPLAT.md §6 flag 5: a real implementation needs a
-/// LaunchAgents plist / XDG autostart .desktop file, out of scope this pass) — so the Settings
-/// toggle is honest about having no effect rather than throwing or silently lying.
-///
-/// DELIBERATE deviation from the WPF app's value name ("RoeSnip"): both apps ship this cycle and
-/// may be installed side by side; sharing the Run value name would make each app's toggle
-/// overwrite/delete the other's autostart entry. This app registers as "RoeSnip.App" instead —
-/// flagged in the WP-X2 report.</summary>
+/// <summary>Run-at-login toggle, per OS:
+/// - Windows: the per-user HKCU Run value "RoeSnip.App" (ported from src/RoeSnip/App/StartupManager.cs;
+///   distinct from the WPF app's "RoeSnip" so the two apps never overwrite each other's entry).
+/// - Linux: an XDG autostart entry, $XDG_CONFIG_HOME/autostart/net.roelite.roesnip.desktop.
+/// - macOS: a LaunchAgent, ~/Library/LaunchAgents/net.roelite.roesnip.plist (RunAtLoad; launchd
+///   picks it up at the next login).
+/// The entry points at <see cref="UpdateManager.CurrentLaunchPath"/> (the AppImage on Linux, never
+/// its per-run mount path). Mutates the real registry / user dirs, so it is reviewed by eye; the
+/// file contents come from DesktopIntegrationFiles (unit-tested).</summary>
 public static class StartupManager
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string ValueName = "RoeSnip.App";
 
+    private static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+    private static string? Env(string name) => Environment.GetEnvironmentVariable(name);
+
+    private static string LinuxAutostartPath => UpdateInstallLayout.LinuxAutostartPath(Env, Home);
+
+    private static string MacLaunchAgentPath => UpdateInstallLayout.MacLaunchAgentPath(Home);
+
     public static void SetRunAtStartup(bool enabled)
     {
-        if (!OperatingSystem.IsWindows())
+        if (OperatingSystem.IsWindows())
         {
-            FileLog.Write("RoeSnip: run-at-startup is not yet implemented on this OS.");
+            SetRunAtStartupWindows(enabled);
             return;
         }
 
-        SetRunAtStartupWindows(enabled);
+        // Prefer the installed copy when it exists, so a portable run never repoints login
+        // startup away from the install.
+        string? path = UpdateManager.InstallExists ? UpdateManager.InstalledLaunchPath : UpdateManager.CurrentLaunchPath;
+        SetRunAtStartupFor(enabled, path);
+    }
+
+    /// <summary>Linux / macOS: writes (or removes) the login entry for <paramref name="launchPath"/>.</summary>
+    public static void SetRunAtStartupFor(bool enabled, string? launchPath)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            SetRunAtStartupWindows(enabled);
+            return;
+        }
+
+        string entryPath;
+        if (OperatingSystem.IsLinux())
+        {
+            entryPath = LinuxAutostartPath;
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            entryPath = MacLaunchAgentPath;
+        }
+        else
+        {
+            FileLog.Write("RoeSnip: run-at-startup is not implemented on this OS.");
+            return;
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            LinuxDesktopIntegration.DeleteLegacySibling(entryPath);
+        }
+
+        if (!enabled)
+        {
+            if (File.Exists(entryPath))
+            {
+                File.Delete(entryPath);
+            }
+            return;
+        }
+
+        if (string.IsNullOrEmpty(launchPath))
+        {
+            throw new InvalidOperationException("Could not determine the current executable path.");
+        }
+
+        string content = OperatingSystem.IsLinux()
+            ? DesktopIntegrationFiles.LinuxAutostartEntry(launchPath)
+            : DesktopIntegrationFiles.MacLaunchAgent(launchPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(entryPath)!);
+        File.WriteAllText(entryPath, content);
     }
 
     public static bool IsRunAtStartupEnabled()
     {
-        if (!OperatingSystem.IsWindows())
+        if (OperatingSystem.IsWindows())
         {
-            return false;
+            return IsRunAtStartupEnabledWindows();
         }
 
-        return IsRunAtStartupEnabledWindows();
+        if (OperatingSystem.IsLinux())
+        {
+            string path = LinuxAutostartPath;
+            return File.Exists(path) && DesktopIntegrationFiles.AutostartEntryEnabled(File.ReadAllText(path));
+        }
+
+        return OperatingSystem.IsMacOS() && File.Exists(MacLaunchAgentPath);
     }
 
     [SupportedOSPlatform("windows")]

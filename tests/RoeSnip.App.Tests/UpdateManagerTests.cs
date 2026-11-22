@@ -1,6 +1,8 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using RoeSnip.App.AppShell;
+using RoeSnip.Core.Updates;
 using Xunit;
 
 namespace RoeSnip.App.Tests;
@@ -248,10 +250,86 @@ public class UpdateManagerTests
     public void InstallDir_DiffersFromWpfAppsInstallDir()
     {
         // Both products can be installed side by side (docs/PARITY.md) - the directory names must
-        // never collide.
+        // never collide. Windows only: elsewhere InstallDir is the Linux/macOS location.
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
         string localAppData = System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData);
         Assert.Equal(System.IO.Path.Combine(localAppData, "RoeSnip.App"), UpdateManager.InstallDir);
         Assert.NotEqual(System.IO.Path.Combine(localAppData, "RoeSnip"), UpdateManager.InstallDir);
+    }
+
+    // ---------- per-OS/arch asset selection ----------
+
+    private static string MultiAssetRelease(string tag) =>
+        $"{{\"tag_name\":\"{tag}\",\"assets\":[" +
+        "{\"name\":\"RoeSnip.exe\",\"browser_download_url\":\"https://example.invalid/wpf\"}," +
+        "{\"name\":\"RoeSnipApp-win-x64.exe\",\"browser_download_url\":\"https://example.invalid/win-x64\"}," +
+        "{\"name\":\"RoeSnipApp-win-arm64.exe\",\"browser_download_url\":\"https://example.invalid/win-arm64\"}," +
+        "{\"name\":\"RoeSnipApp-win-arm64.exe.gz\",\"browser_download_url\":\"https://example.invalid/win-arm64-gz\",\"digest\":\"sha256:" + new string('a', 64) + "\",\"size\":5}," +
+        "{\"name\":\"RoeSnip-linux-x64.AppImage\",\"browser_download_url\":\"https://example.invalid/linux-x64\",\"digest\":\"sha256:" + new string('b', 64) + "\",\"size\":7}," +
+        "{\"name\":\"RoeSnip-linux-arm64.AppImage\",\"browser_download_url\":\"https://example.invalid/linux-arm64\"}," +
+        "{\"name\":\"RoeSnip-linux-x64.tar.gz\",\"browser_download_url\":\"https://example.invalid/linux-x64-tar\"}," +
+        "{\"name\":\"RoeSnip-osx-arm64.dmg\",\"browser_download_url\":\"https://example.invalid/osx-arm64-dmg\"}," +
+        "{\"name\":\"RoeSnip-osx-arm64.app.tar.gz\",\"browser_download_url\":\"https://example.invalid/osx-arm64\"}," +
+        "{\"name\":\"RoeSnip-osx-x64.app.tar.gz\",\"browser_download_url\":\"https://example.invalid/osx-x64\"}" +
+        "]}";
+
+    [Theory]
+    [InlineData(UpdatePlatform.Windows, Architecture.X64, "https://example.invalid/win-x64", false)]
+    [InlineData(UpdatePlatform.Windows, Architecture.Arm64, "https://example.invalid/win-arm64-gz", true)]
+    [InlineData(UpdatePlatform.Linux, Architecture.X64, "https://example.invalid/linux-x64", false)]
+    [InlineData(UpdatePlatform.Linux, Architecture.Arm64, "https://example.invalid/linux-arm64", false)]
+    [InlineData(UpdatePlatform.MacOS, Architecture.Arm64, "https://example.invalid/osx-arm64", false)]
+    [InlineData(UpdatePlatform.MacOS, Architecture.X64, "https://example.invalid/osx-x64", false)]
+    public void ParseUpdateInfo_PicksThisPlatformsAsset(UpdatePlatform platform, Architecture arch, string expectedUrl, bool gz)
+    {
+        var info = UpdateManager.ParseUpdateInfo(
+            Parse(MultiAssetRelease("v1.2.0")), V100, UpdateAssetNames.For(platform, arch), requireAsset: true);
+        Assert.NotNull(info);
+        Assert.Equal(expectedUrl, info!.DownloadUrl);
+        Assert.Equal(gz, info.IsGzip);
+    }
+
+    [Fact]
+    public void ParseUpdateInfo_LinuxAsset_CarriesItsOwnDigestAndSize()
+    {
+        var info = UpdateManager.ParseUpdateInfo(
+            Parse(MultiAssetRelease("v1.2.0")), V100, UpdateAssetNames.For(UpdatePlatform.Linux, Architecture.X64), requireAsset: true);
+        Assert.Equal("sha256:" + new string('b', 64), info!.Digest);
+        Assert.Equal(7, info.Size);
+    }
+
+    [Fact]
+    public void ParseUpdateInfo_RequireAsset_MissingForThisPlatform_ReturnsNull()
+    {
+        string json = "{\"tag_name\":\"v1.2.0\",\"assets\":[{\"name\":\"RoeSnipApp-win-x64.exe\",\"browser_download_url\":\"https://example.invalid/w\"}]}";
+        Assert.Null(UpdateManager.ParseUpdateInfo(
+            Parse(json), V100, UpdateAssetNames.For(UpdatePlatform.MacOS, Architecture.Arm64), requireAsset: true));
+        // Passive notice (requireAsset false) still reports the version.
+        var info = UpdateManager.ParseUpdateInfo(
+            Parse(json), V100, UpdateAssetNames.For(UpdatePlatform.MacOS, Architecture.Arm64), requireAsset: false);
+        Assert.NotNull(info);
+        Assert.Null(info!.DownloadUrl);
+    }
+
+    [Fact]
+    public void ParseUpdateInfo_NullSelection_NoDownloadUrl()
+    {
+        Assert.Null(UpdateManager.ParseUpdateInfo(Parse(MultiAssetRelease("v1.2.0")), V100, assets: null, requireAsset: true));
+        Assert.Null(UpdateManager.ParseUpdateInfo(Parse(MultiAssetRelease("v1.2.0")), V100, assets: null, requireAsset: false)!.DownloadUrl);
+    }
+
+    [Fact]
+    public void ParseUpdateInfo_AssemblyVersionWithRevision_ComparesAsSameRelease()
+    {
+        // The assembly reports x.y.z.0; the tag is x.y.z - the same release must not re-offer itself.
+        Assert.Null(UpdateManager.ParseUpdateInfo(Parse(MultiAssetRelease("v1.2.0")), new Version(1, 2, 0, 0),
+            UpdateAssetNames.For(UpdatePlatform.Linux, Architecture.X64), requireAsset: true));
+        Assert.NotNull(UpdateManager.ParseUpdateInfo(Parse(MultiAssetRelease("v1.2.1")), new Version(1, 2, 0, 0),
+            UpdateAssetNames.For(UpdatePlatform.Linux, Architecture.X64), requireAsset: true));
     }
 
     [Fact]

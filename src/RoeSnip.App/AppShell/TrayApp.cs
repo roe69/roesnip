@@ -180,11 +180,12 @@ public sealed class TrayApp : ITrayNotifier
         // crash (settings load, the tray icon itself). See
         // UpdateManager.CheckUpdateHealthAtStartup's own doc comment for the full contract; when it
         // restores and relaunches the previous build, this process's only remaining job is to get
-        // out of the way immediately - no tray icon, no hotkey, nothing. Windows only (the
-        // self-update swap this guards is Windows-only, item 13d) - Linux/macOS never write a
-        // pending-verify marker in the first place, so there is nothing to check there.
+        // out of the way immediately - no tray icon, no hotkey, nothing. Every copy that can
+        // self-update (Windows, a Linux AppImage, a macOS .app bundle); a Linux tar.gz / dev folder
+        // run never writes a pending-verify marker.
+        bool selfUpdates = UpdateManager.SelfUpdateSupported;
         UpdateManager.HealthCheckAction healthAction = UpdateManager.HealthCheckAction.ProceedImmediateCleanup;
-        if (OperatingSystem.IsWindows())
+        if (selfUpdates)
         {
             healthAction = UpdateManager.CheckUpdateHealthAtStartup();
             if (healthAction == UpdateManager.HealthCheckAction.Restored)
@@ -222,13 +223,11 @@ public sealed class TrayApp : ITrayNotifier
         // — a background loop that checks GitHub for a newer release and, if found, downloads and
         // applies it automatically (see CheckForUpdatesAndAutoApplyAsync for the idle-wait guard on
         // the relaunch that follows), then repeats on a user-configurable cadence for as long as
-        // this process lives. A startup-only check almost never actually delivers an update: this
-        // app spends its life as a tray resident running for weeks between launches, not being
-        // relaunched often enough to land on a fresh release. RunUpdateLoopAsync's first iteration
-        // IS the old startup check; the periodic re-checks after it are what actually keep a
-        // long-lived resident current. Windows-only, per the class's own doc comment; Linux/macOS
-        // instead get a passive "new version available" notice loop with no self-swap (item 13d).
-        if (OperatingSystem.IsWindows())
+        // this process lives (a tray resident runs for weeks, so a startup-only check almost never
+        // lands a release). Self-updating copies: Windows, a Linux AppImage, a macOS .app bundle.
+        // A Linux tar.gz / dev folder run, and a not-yet-installed AppImage / bundle, get the
+        // passive "new version available" notice loop instead.
+        if (selfUpdates)
         {
             // Crash-loop guard: when this launch is still pending health verification
             // (ProceedDeferredCleanup), the ".old" rollback target must survive until the health
@@ -244,10 +243,8 @@ public sealed class TrayApp : ITrayNotifier
                 UpdateManager.CleanupDownloadLeftover();
             }
             // Background cleanup that may need a bounded retry (a still-locked file must never
-            // stall startup): the source exe a prior Install() "move" left behind AND the ".old" a
-            // just-applied update swapped out. A named method (not an inline lambda) so the
-            // platform-compat analyzer can see this Task.Run reference is itself directly inside
-            // the IsWindows() guard above — it cannot see through an anonymous method body.
+            // stall startup): the source a prior Install() "move" left behind AND the ".old" a
+            // just-applied update swapped out.
             _ = Task.Run(RunPendingUpdateFileCleanup);
             if (healthAction == UpdateManager.HealthCheckAction.ProceedImmediateCleanup)
             {
@@ -256,20 +253,18 @@ public sealed class TrayApp : ITrayNotifier
             else
             {
                 // The health milestone (hardening item 7): this launch is a post-update
-                // verification run. RunHealthMilestoneAsync is itself [SupportedOSPlatform("windows")]
-                // (like RunUpdateLoopAsync below), so it can call CompleteHealthMilestone directly
-                // without needing a Task.Run wrapper purely for the analyzer's sake - unlike
-                // RunPendingUpdateFileCleanup/RunImmediateStaleExeCleanup above, which are
-                // synchronous blocking I/O and genuinely need offloading off this thread.
+                // verification run.
                 _ = RunHealthMilestoneAsync();
             }
             if (UpdateManager.IsInstalled)
             {
-                // Gating once here (rather than inside the loop, on every wake) is sound because
-                // IsInstalled derives from Environment.ProcessPath, which cannot change for the
-                // lifetime of this process. Named method, not an inline lambda, for the same
-                // platform-compat-analyzer reason as RunPendingUpdateFileCleanup above.
+                // Gated once here: what this process runs from cannot change while it lives.
                 _ = RunUpdateLoopAsync();
+            }
+            else if (!OperatingSystem.IsWindows())
+            {
+                // A Linux AppImage / macOS bundle run before Install keeps the notice it had.
+                _ = RunPassiveNoticeLoopAsync();
             }
         }
         else
@@ -285,17 +280,28 @@ public sealed class TrayApp : ITrayNotifier
         Dispatcher.UIThread.Post(() => _ = CompleteStartupAsync());
     }
 
-    [SupportedOSPlatform("windows")]
     private static void RunPendingUpdateFileCleanup()
     {
         UpdateManager.ProcessPendingSourceCleanup();
         if (UpdateManager.IsInstalled)
         {
-            // Startup ensure (not just install-time): installs made before the shortcut feature
-            // existed gain search findability on their first launch after updating, and a
-            // user-deleted/corrupted shortcut heals itself. No-op when it already points right.
-            StartMenuShortcut.EnsureFor(UpdateManager.InstalledExePath);
+            // Startup ensure (not just install-time): a user-deleted shortcut / menu entry heals
+            // itself. No-op when it is already right.
+            if (OperatingSystem.IsWindows())
+            {
+                StartMenuShortcut.EnsureFor(UpdateManager.InstalledExePath);
+            }
+            else if (OperatingSystem.IsLinux())
+            {
+                LinuxDesktopIntegration.EnsureMenuEntry(UpdateManager.InstallTargetPath, UpdateManager.CurrentVersionText);
+            }
         }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
         // Hardening item 10: reclaims the %TEMP%\.net\RoeSnip single-file self-extraction folders
         // every launch of this build leaves behind (never cleaned up by the .NET host itself; see
         // RoeSnip.Core.Updates.SelfExtractCleanup's own doc comment - this app and the WPF app share
@@ -309,19 +315,14 @@ public sealed class TrayApp : ITrayNotifier
     /// <summary>Crash-loop guard (hardening item 7): the ".old" retry-cleanup, split out of
     /// <see cref="RunPendingUpdateFileCleanup"/> so it can be skipped independently when this
     /// launch is still pending health verification (see the healthAction branch at the Start() call
-    /// site) - a named zero-arg method, not a lambda, for the same platform-compat-analyzer reason
-    /// as RunPendingUpdateFileCleanup.</summary>
-    [SupportedOSPlatform("windows")]
+    /// site).</summary>
     private static void RunImmediateStaleExeCleanup() => UpdateManager.CleanupStaleExeWithRetry();
 
     /// <summary>Crash-loop guard (hardening item 7): the health milestone, called directly (not via
     /// Task.Run - unlike RunPendingUpdateFileCleanup/RunImmediateStaleExeCleanup above, this method
     /// does no blocking I/O until AFTER its own await, so nothing here needs offloading off the
     /// calling thread) once a <see cref="UpdateManager.HealthCheckAction.ProceedDeferredCleanup"/>
-    /// launch has been up for ~15s. Marked [SupportedOSPlatform("windows")] itself, like
-    /// RunUpdateLoopAsync, so the platform-compat analyzer accepts the CompleteHealthMilestone call
-    /// inside it without needing a surrounding guard at every call site.</summary>
-    [SupportedOSPlatform("windows")]
+    /// launch has been up for ~15s.</summary>
     private async Task RunHealthMilestoneAsync()
     {
         await Task.Delay(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
@@ -1107,16 +1108,16 @@ public sealed class TrayApp : ITrayNotifier
     /// then launches the new build so replace-on-run hands off to it) before returning. No tray
     /// icon and no single-instance mutex are ever created here — this process's only job is to
     /// perform the swap and exit, leaving the freshly-launched new build as the running instance.
-    /// Windows-only (self-update has no portable swap strategy — item 13d); other OSes print a
-    /// pointer to the release page instead. Returns 0 on "updated"/"already current"/"not
-    /// applicable here", 1 only if the check/download/swap itself errored; never throws.</summary>
+    /// Only for copies that self-update (Windows, a Linux AppImage, a macOS .app bundle). Returns 0
+    /// on "updated"/"already current"/"not applicable here", 1 only if the check/download/swap
+    /// itself errored; never throws.</summary>
     private static int RunSelfUpdateNow()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!UpdateManager.SelfUpdateSupported)
         {
             Console.Out.WriteLine(
-                "RoeSnip: --self-update-now is only available on Windows; grab the latest release " +
-                "manually from the release page on other platforms.");
+                "RoeSnip: --self-update-now needs the AppImage (Linux) or the .app bundle (macOS); " +
+                "grab the latest release manually from the release page for this copy.");
             return 0;
         }
 
@@ -1156,19 +1157,16 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
-    [SupportedOSPlatform("windows")]
     private void OnInstallRoeSnipClicked(object? sender, EventArgs e) => InstallRoeSnip();
 
-    [SupportedOSPlatform("windows")]
     private void OnCheckForUpdatesClicked(object? sender, EventArgs e) => _ = CheckForUpdatesFromMenuAsync();
 
-    /// <summary>The "Install RoeSnip" context-menu item (Windows only, only shown when
-    /// <see cref="UpdateManager.InstallExists"/> is false): copies this portable/dev run into
-    /// %LOCALAPPDATA%\RoeSnip.App and hands off to it, then exits this process so the installed
+    /// <summary>The "Install RoeSnip" context-menu item (self-updating copies only, shown while
+    /// <see cref="UpdateManager.InstallExists"/> is false): copies this run to the install location
+    /// (%LOCALAPPDATA%\RoeSnip.App, ~/.local/share/RoeSnip, ~/Applications) and hands off to it, then exits this process so the installed
     /// copy takes over. Runs off the UI thread (file copy + registry write) and never lets a
     /// failure take the tray down with it: UpdateManager.Install rethrows on failure, so the catch
     /// here shows an error toast and the exit is skipped, leaving the tray running as it was.</summary>
-    [SupportedOSPlatform("windows")]
     private void InstallRoeSnip()
     {
         _ = Task.Run(() =>
@@ -1185,7 +1183,7 @@ public sealed class TrayApp : ITrayNotifier
         });
     }
 
-    /// <summary>The periodic update loop (Windows only; only started when
+    /// <summary>The periodic update loop (self-updating copies; only started when
     /// <see cref="UpdateManager.IsInstalled"/> is true — see the Start() call site's comment).
     /// Scheduling itself (iteration-zero startup check, 1-minute settings-poll wake, wall-clock
     /// elapsed, jitter, StartupOnly handling) is <see cref="UpdatePolling.RunPeriodicAsync"/> — see
@@ -1193,15 +1191,11 @@ public sealed class TrayApp : ITrayNotifier
     /// the two things that differ per app/platform: where the frequency setting lives
     /// (<c>_settings.UpdateCheckFrequency</c>, re-read fresh on every call so SettingsWindow's
     /// onSaved callback (ApplyUpdatedSettingsAsync) reassigning <c>_settings</c> takes effect on the
-    /// very next wake) and what a tick means (CheckForUpdatesAndAutoApplyAsync). Named method (not
-    /// run inline in Start()) purely so the platform-compat analyzer can see it is directly inside
-    /// the IsWindows() guard — it cannot see through an anonymous method body (same trick as
-    /// RunPendingUpdateFileCleanup).</summary>
-    [SupportedOSPlatform("windows")]
+    /// very next wake) and what a tick means (CheckForUpdatesAndAutoApplyAsync).</summary>
     private Task RunUpdateLoopAsync() =>
         UpdatePolling.RunPeriodicAsync(() => _settings.UpdateCheckFrequency, CheckForUpdatesAndAutoApplyAsync);
 
-    /// <summary>One check-and-apply cycle (Windows only). Says nothing when there is nothing to
+    /// <summary>One check-and-apply cycle. Says nothing when there is nothing to
     /// offer (no update, no network, private-repo 404, a 304/rate-limit backoff —
     /// CheckForUpdateAsync already swallows all of that and returns null). When a newer release
     /// does exist, applies it automatically — no click required — but the beforeLaunch delegate
@@ -1214,7 +1208,6 @@ public sealed class TrayApp : ITrayNotifier
     /// regardless, only the notification is latched. Called both as the loop's iteration zero
     /// (RunUpdateLoopAsync) and, on every subsequent tick, as the actual periodic recheck — never
     /// blocks its caller beyond its own await chain.</summary>
-    [SupportedOSPlatform("windows")]
     private async Task CheckForUpdatesAndAutoApplyAsync()
     {
         UpdateManager.UpdateCheckResult result = await UpdateManager.CheckForUpdateAsync().ConfigureAwait(false);
@@ -1252,21 +1245,22 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Polled rather than event-driven: capture sessions are short-lived (seconds) and
     /// AppComposition exposes no completion signal, so a coarse poll is the simplest thing that
-    /// cannot miss a state change. Once a Recording subsystem lands (item 20) this must also poll
-    /// its own "active" flag, mirroring the WPF reference's RecordingController.IsActive check.</summary>
+    /// cannot miss a state change. A running recording counts as busy too (WPF reference:
+    /// RecordingController.IsActive).</summary>
     private static async Task WaitForIdleAsync()
     {
-        while (AppComposition.IsCaptureBusy)
+        while (AppComposition.IsCaptureBusy ||
+               Recording.RecordingOrchestrator.IsActive ||
+               Recording.RecordingController.IsActive)
         {
             await Task.Delay(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
         }
     }
 
-    /// <summary>The "Check for updates" context-menu item (Windows only): unlike the silent
+    /// <summary>The "Check for updates" context-menu item: unlike the silent
     /// startup check, this always reports back via a toast/dialog rather than staying silent — a
     /// deliberate, occasional, user-initiated click should always get a visible answer (up to
     /// date / update offered / check failed).</summary>
-    [SupportedOSPlatform("windows")]
     private async Task CheckForUpdatesFromMenuAsync()
     {
         UpdateManager.UpdateCheckResult result;
@@ -1317,7 +1311,6 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Must already be on the UI thread. Asks Yes/No (Avalonia has no blocking
     /// MessageBox — see ShowYesNoDialogAsync) and applies immediately on Yes.</summary>
-    [SupportedOSPlatform("windows")]
     private async Task OfferUpdateAsync(UpdateManager.UpdateInfo update)
     {
         bool? answer = await ShowYesNoDialogAsync(
@@ -1336,7 +1329,6 @@ public sealed class TrayApp : ITrayNotifier
     /// if the automatic download/swap failed. Latched once per release version (see
     /// <see cref="_updateToastShownForVersion"/>) so an hourly retry against a persistently failing
     /// download doesn't spam a fresh toast every tick.</summary>
-    [SupportedOSPlatform("windows")]
     private void ShowUpdateAvailableToast(UpdateManager.UpdateInfo info)
     {
         ShowToast(
@@ -1350,7 +1342,6 @@ public sealed class TrayApp : ITrayNotifier
     /// via replace-on-run, so this instance simply gets told to exit shortly afterwards — nothing
     /// further to do here. On failure, surfaces it as an error toast instead of letting it vanish
     /// into an unobserved task.</summary>
-    [SupportedOSPlatform("windows")]
     private async Task ApplyUpdateFromToastAsync(UpdateManager.UpdateInfo info)
     {
         try
@@ -1365,26 +1356,15 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
-    /// <summary>Linux/macOS periodic equivalent of <see cref="RunUpdateLoopAsync"/>. Scheduling is
-    /// the same shared <see cref="UpdatePolling.RunPeriodicAsync"/> skeleton both Windows loops in
-    /// this class use (this used to be a hand-duplicated third copy of that ~25-line Task.Delay
-    /// skeleton, defended on the theory that staying textually parallel with the Windows loop was
-    /// worth the duplication - a third near-identical copy appearing is exactly the evidence that
-    /// argument was wrong: a future jitter/DST fix needs to land once, not three times, and Core is
-    /// where framework-free logic shared by both apps already lives). The only thing that differs
-    /// here is what a tick means: <see cref="CheckForNewVersionPassivelyAsync"/> instead of an
-    /// auto-applying check — there is no install directory or exe-swap strategy on these platforms
-    /// (item 13d), only a heads-up notice. No IsInstalled/IsWindows guard here: this is only ever
-    /// started from the non-Windows branch of Start(), and there is no "installed copy" concept on
-    /// Linux/macOS to gate on — every launch runs the loop.</summary>
+    /// <summary>Linux/macOS copies that do not self-update (a tar.gz / dev folder run, or an
+    /// AppImage / .app bundle not yet installed): same <see cref="UpdatePolling.RunPeriodicAsync"/>
+    /// schedule as <see cref="RunUpdateLoopAsync"/>, but a tick is
+    /// <see cref="CheckForNewVersionPassivelyAsync"/>, a heads-up notice only.</summary>
     private Task RunPassiveNoticeLoopAsync() =>
         UpdatePolling.RunPeriodicAsync(() => _settings.UpdateCheckFrequency, CheckForNewVersionPassivelyAsync);
 
-    /// <summary>Linux/macOS (item 13d): no install directory, no exe swap strategy that can be
-    /// tested here (see docs/PARITY.md's accepted-limitations list) — just a passive heads-up that
-    /// a newer release exists, linking straight to the GitHub release page so the user can grab it
-    /// themselves (an AppImage/.dmg download, same as their first install). Never auto-applies
-    /// anything. Latched to once per release version (<see cref="_passiveNoticeShownForVersion"/>)
+    /// <summary>Passive notice (item 13d): a toast linking the GitHub release page, never an
+    /// automatic download. Latched to once per release version (<see cref="_passiveNoticeShownForVersion"/>)
     /// so the now-periodic cadence (see <see cref="RunPassiveNoticeLoopAsync"/>) re-alerts whenever
     /// a NEWER release ships but never repeats the same notice tick after tick.
     ///
@@ -2026,10 +2006,9 @@ public sealed class TrayApp : ITrayNotifier
             menu.Items.Add(settingsItem);
             menu.Items.Add(aboutItem);
 
-            // Self-update (item 13b) is a Windows-only feature (install-to-LOCALAPPDATA + the
-            // atomic exe swap have no portable equivalent) — Linux/macOS get a passive background
-            // notice instead (CheckForNewVersionPassivelyAsync), no menu items.
-            if (OperatingSystem.IsWindows())
+            // Install + self-update (item 13b): Windows, a Linux AppImage, a macOS .app bundle. A
+            // Linux tar.gz / dev folder run only gets the passive notice, no menu items.
+            if (UpdateManager.SelfUpdateSupported)
             {
                 menu.Items.Add(new NativeMenuItemSeparator());
                 if (!UpdateManager.InstallExists)

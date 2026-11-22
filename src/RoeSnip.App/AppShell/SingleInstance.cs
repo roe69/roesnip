@@ -134,7 +134,8 @@ public sealed class SingleInstance : IDisposable
                     continue;
                 }
 
-                string? path = TryGetMainModulePath(p);
+                // Linux AppImage: compare the APPIMAGE file, not the per-run /tmp/.mount_* exe.
+                string? path = UpdateManager.ProcessIdentityPath(p, TryGetMainModulePath(p));
                 if (path is null || !ownPaths.Contains(path))
                 {
                     continue; // not one of THIS app's own exe paths — e.g. the WPF resident.
@@ -157,8 +158,12 @@ public sealed class SingleInstance : IDisposable
     private static HashSet<string> OwnExecutablePaths()
     {
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddPath(paths, UpdateManager.CurrentLaunchPath);
         AddPath(paths, Environment.ProcessPath);
-        AddPath(paths, UpdateManager.InstalledExePath);
+        foreach (string installed in UpdateManager.InstalledIdentityPaths())
+        {
+            AddPath(paths, installed);
+        }
         return paths;
     }
 

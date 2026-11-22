@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using System.Threading;
@@ -16,131 +17,141 @@ using RoeSnip.Core.Updates;
 
 namespace RoeSnip.App.AppShell;
 
-/// <summary>Install-to-%LOCALAPPDATA%\RoeSnip.App + self-update from GitHub Releases, ported from
-/// src/RoeSnip/App/UpdateManager.cs (WPF reference, esp. :41-48, :59-75, :206-309, :349-358,
-/// :435-527). The actual install/swap/registry mechanics are WINDOWS ONLY (replace-on-run's
-/// takeover, the atomic .old/.new exe swap, and the HKCU Run key all assume a real Windows install
-/// directory and executable) — <see cref="Install"/>/<see cref="ApplyUpdateAsync"/>/
-/// <see cref="CleanupStaleUpdateFiles"/>/<see cref="CleanupStaleExeWithRetry"/>/
-/// <see cref="ProcessPendingSourceCleanup"/> are all attributed windows-only and TrayApp never
-/// calls them off Windows (item 13d: Linux/macOS only get a passive "new version available" toast
-/// linking the release page, never a self-swap — see docs/PARITY.md's accepted-limitations list).
-/// <see cref="CheckForUpdateAsync"/> and the CurrentVersion*/<see cref="InstallExists"/>/
-/// <see cref="IsInstalled"/> reads are portable (an Assembly version read plus a GET to the GitHub
-/// API is OS-agnostic) so they compile and run identically everywhere — that's what the passive
-/// Linux/macOS notice reuses.
+/// <summary>Install + self-update from GitHub Releases for the cross-platform app, ported from
+/// src/RoeSnip/App/UpdateManager.cs (WPF reference). One install unit per OS, swapped by rename
+/// with a ".old" rollback copy:
+/// - Windows: %LOCALAPPDATA%\RoeSnip.App\RoeSnip.exe from "RoeSnipApp-win-&lt;arch&gt;.exe(.gz)".
+/// - Linux: $XDG_DATA_HOME/RoeSnip/RoeSnip.AppImage from "RoeSnip-linux-&lt;arch&gt;.AppImage", only
+///   when this process runs from an AppImage ($APPIMAGE). A tar.gz / dev folder run gets the
+///   passive "new version" notice instead.
+/// - macOS: ~/Applications/RoeSnip.app from "RoeSnip-osx-&lt;arch&gt;.app.tar.gz", only when this
+///   process runs from a .app bundle.
 ///
-/// DISTINCT identity from the WPF app's own UpdateManager (both apps can be installed side by
-/// side; see docs/PARITY.md's Notes section): <see cref="InstallDir"/> is
-/// %LOCALAPPDATA%\RoeSnip.App (not \RoeSnip), the Run key value is "RoeSnip.App" (matches
-/// <see cref="StartupManager"/>'s own value name, not the WPF app's "RoeSnip"), and the release
-/// asset this downloads is "RoeSnipApp-win-x64.exe" — NOT "RoeSnip.exe", which is the WPF app's
-/// own asset name. Matching that name here would let this self-updater silently download and swap
-/// itself for the WPF exe, bricking the install; release.yml publishes both assets under their own
-/// distinct names specifically so this can never happen.
+/// Identity is DISTINCT from the WPF app (both can be installed side by side): own install dir,
+/// Run value "RoeSnip.App", and never the WPF asset "RoeSnip.exe" (UpdateAssetNames).
 ///
-/// Every public entry point here is a convenience, never load-bearing: a private repo (404 until
-/// the release goes public), no network, a truncated download, or a locked file must never throw
-/// out into the tray or leave the install dir without a runnable exe. Not covered by an automated
-/// test for the file-system/registry mutation paths, for the same reason the WPF reference isn't —
-/// they mutate the real registry/filesystem and talk to a real HTTP endpoint, reviewed by eye
-/// instead. The pure JSON-parsing/version-compare core (<see cref="ParseUpdateInfo"/>) is fully
-/// unit-tested (RoeSnip.App.Tests/UpdateManagerTests.cs) since it takes no network or OS
-/// dependency at all.</summary>
+/// Every public entry point is a convenience, never load-bearing: no network, a private repo, a
+/// truncated download or a locked file must never throw into the tray or leave the install without
+/// a runnable copy. The JSON parse (<see cref="ParseUpdateInfo(JsonElement, Version, bool)"/>) and
+/// the path / swap / file-content helpers in RoeSnip.Core.Updates are unit-tested; the live
+/// download and relaunch are verified by hand.</summary>
 public static class UpdateManager
 {
     private const string GitHubOwner = "roe69";
     private const string GitHubRepo = "roesnip";
 
-    // Load-bearing exact match against release.yml's Windows RoeSnip.App asset name — see the
-    // class doc comment's warning about never letting this collide with the WPF app's own
-    // "RoeSnip.exe" asset.
-    private const string ReleaseAssetName = "RoeSnipApp-win-x64.exe";
+    // The asset names this exact process downloads (OS + ProcessArchitecture). Null on an OS/arch
+    // no release ships for - such a process never self-updates.
+    private static readonly UpdateAssetSelection? Assets = UpdateAssetNames.ForCurrentProcess();
 
-    // release.yml attaches this alongside the plain asset (hardening item 9: gzip -9 cuts ~61% off
-    // the transit size fleet-wide, at zero cost to the installed-file tradeoff - the exe on disk
-    // stays byte-identical and uncompressed). ParseUpdateInfo prefers this asset when present and
-    // falls back to the plain one so a CI slip that only publishes one of the two never blocks
-    // updates.
-    private const string GzReleaseAssetName = ReleaseAssetName + ".gz";
+    // The pre-arm64 Windows names, used by the legacy ParseUpdateInfo overload the tests call.
+    private static readonly UpdateAssetSelection WindowsX64Assets =
+        UpdateAssetNames.For(UpdatePlatform.Windows, Architecture.X64)!;
 
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
-    // Matches StartupManager.ValueName exactly — both write/read the same HKCU value, so this
-    // updater's Install() and the Settings "run at startup" toggle can never fight over two
-    // different values for the same app.
+    // Matches StartupManager's own value name so Install() and the Settings toggle never fight.
     private const string RunValueName = "RoeSnip.App";
 
-    // One shared HttpClient for the process lifetime (never one-per-call — see MSDN's socket
-    // exhaustion guidance) with the User-Agent GitHub's API mandates and rejects requests without.
     private static readonly HttpClient HttpClient = CreateHttpClient();
 
-    // Serializes ApplyUpdateAsync across callers: the silent startup auto-update can be parked in
-    // its beforeLaunch idle-wait for minutes with the new exe already swapped in, and without this
-    // a concurrent manual "Check for updates" click would download into the same
-    // DownloadingExePath (IOException) and, worse, launch (and kill this process via
-    // replace-on-run) with no idle check of its own — defeating the whole point of the startup
-    // path's guard. Queueing here means a manual click during that window simply waits; it
-    // completes only after the parked call's own launch has already ended the process.
+    // Serializes ApplyUpdateAsync: the silent auto-update can be parked in its beforeLaunch idle
+    // wait while a manual "Check for updates" click arrives; the click must queue, not race the
+    // same staging paths.
     private static readonly SemaphoreSlim ApplyUpdateLock = new(1, 1);
 
-    // One shared instance for the process lifetime, matching HttpClient above - its in-memory ETag
-    // is exactly what makes a periodic tray-resident check cheap (see the class's own doc comment):
-    // a fresh instance every call would throw the ETag away and turn every periodic check back into
-    // a full, uncached GET.
+    // One instance for the process lifetime: its in-memory ETag is what makes periodic checks cheap.
     private static readonly GitHubLatestReleaseClient ReleaseClient = new(GitHubOwner, GitHubRepo);
 
+    private static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+    private static string? Env(string name) => Environment.GetEnvironmentVariable(name);
+
+    /// <summary>Directory holding the install unit: %LOCALAPPDATA%\RoeSnip.App,
+    /// ~/.local/share/RoeSnip, or ~/Applications.</summary>
     public static string InstallDir { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RoeSnip.App");
+        OperatingSystem.IsMacOS() ? Path.Combine(Home, "Applications")
+        : OperatingSystem.IsLinux() ? UpdateInstallLayout.LinuxInstallDir(Env, Home)
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RoeSnip.App");
 
-    public static string InstalledExePath { get; } = Path.Combine(InstallDir, "RoeSnip.exe");
+    /// <summary>The unit an update swaps: the exe (Windows), the AppImage (Linux) or the .app bundle
+    /// directory (macOS).</summary>
+    public static string InstallTargetPath { get; } =
+        OperatingSystem.IsMacOS() ? UpdateInstallLayout.MacBundlePath(Home)
+        : OperatingSystem.IsLinux() ? UpdateInstallLayout.LinuxAppImagePath(Env, Home)
+        : Path.Combine(InstallDir, "RoeSnip.exe");
 
-    private static string StaleExePath => InstalledExePath + ".old";
-    private static string DownloadingExePath => Path.Combine(InstallDir, "RoeSnip.exe.new");
+    /// <summary>The installed copy's executable: what replace-on-run matches a running process's
+    /// MainModule path against (on Linux the AppImage file, matched via the process's APPIMAGE).</summary>
+    public static string InstalledExePath { get; } =
+        OperatingSystem.IsMacOS() ? UpdateInstallLayout.MacBundleExecutable(InstallTargetPath) : InstallTargetPath;
 
-    // Distinct temp name for the compressed transit asset, so a download in flight never collides
-    // with DownloadingExePath (the decompressed target ApplyUpdateCoreAsync's existing swap logic
-    // already expects) and both are independently coverable by CleanupStaleUpdateFiles.
-    private static string GzDownloadingExePath => DownloadingExePath + ".gz";
+    /// <summary>The unit THIS process runs from: Environment.ProcessPath (Windows), $APPIMAGE
+    /// (Linux, null outside an AppImage), or the enclosing .app bundle (macOS, null outside one).</summary>
+    public static string? RunningInstallUnitPath =>
+        OperatingSystem.IsMacOS() ? UpdateInstallLayout.BundleOf(Environment.ProcessPath)
+        : OperatingSystem.IsLinux() ? UpdateInstallLayout.RunningAppImage(Env)
+        : Environment.ProcessPath;
 
-    private static string PendingSourceCleanupMarkerPath => Path.Combine(InstallDir, "pending-source-cleanup.txt");
+    /// <summary>What a launcher (autostart, LaunchAgent, Run key) should start to get THIS copy:
+    /// the AppImage on Linux (the process path is a per-run mount), else the process path.</summary>
+    public static string? CurrentLaunchPath =>
+        OperatingSystem.IsLinux() ? UpdateInstallLayout.RunningAppImage(Env) ?? Environment.ProcessPath
+        : Environment.ProcessPath;
 
-    /// <summary>Where the crash-loop-guard marker (update-health.json) lives - the portable config
-    /// directory (<see cref="ConfigPaths.ConfigDirectory"/>), never <see cref="InstallDir"/>: the
-    /// install dir is exactly what an update swap replaces wholesale, so a marker written there
-    /// could never survive across the swap it exists to guard.</summary>
+    /// <summary>True when this copy can install itself and self-update: always on Windows (x64 /
+    /// arm64), on Linux only from an AppImage, on macOS only from a .app bundle.</summary>
+    public static bool SelfUpdateSupported =>
+        Assets is not null && (OperatingSystem.IsWindows() || RunningInstallUnitPath is not null);
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    private static string StaleExePath => InstallTargetPath + ".old";
+
+    // The staged unit swapped in: Windows RoeSnip.exe.new, Linux RoeSnip.AppImage.new, macOS the
+    // extracted bundle inside MacStagingDir (same volume as the target, so the swap is a rename).
+    private static string DownloadingExePath =>
+        OperatingSystem.IsMacOS() ? Path.Combine(MacStagingDir, UpdateInstallLayout.MacBundleName)
+        : OperatingSystem.IsLinux() ? InstallTargetPath + ".new"
+        : Path.Combine(InstallDir, "RoeSnip.exe.new");
+
+    // The raw download when it is not the staged unit itself: the Windows .gz transit asset, or the
+    // macOS .app.tar.gz.
+    private static string GzDownloadingExePath =>
+        OperatingSystem.IsMacOS() ? Path.Combine(InstallDir, ".RoeSnip-update.app.tar.gz")
+        : DownloadingExePath + ".gz";
+
+    private static string MacStagingDir => Path.Combine(InstallDir, ".RoeSnip-update");
+
+    // Free slot for the crash-loop restore's three-way rename (a sibling, so it stays a rename).
+    private static string RestoreStagingPath =>
+        OperatingSystem.IsWindows() ? DownloadingExePath : InstallTargetPath + ".restore";
+
+    private static string PendingSourceCleanupMarkerPath =>
+        OperatingSystem.IsMacOS()
+            ? Path.Combine(ConfigPaths.ConfigDirectory, "pending-source-cleanup.txt")
+            : Path.Combine(InstallDir, "pending-source-cleanup.txt");
+
+    /// <summary>The crash-loop marker lives in the config directory, never the install dir (which an
+    /// update replaces).</summary>
     private static string HealthMarkerDirectory => ConfigPaths.ConfigDirectory;
 
-    /// <summary>Hardening item 8: records the outcome of an update check (or check+apply) to the
-    /// durable last-update-status.json breadcrumb, so a missed toast can still be answered later
-    /// via <see cref="LastCheckSummary"/> in the About box. Best-effort, never throws - see
-    /// UpdateStatusMarker.Record's own doc comment.</summary>
     public static void RecordLastCheckOutcome(string? version, string outcome) =>
         UpdateStatusMarker.Record(HealthMarkerDirectory, version, outcome);
 
-    /// <summary>One user-facing line describing the last recorded update check, or null when
-    /// nothing has ever been recorded - see UpdateStatusMarker.DescribeLastCheck.</summary>
     public static string? LastCheckSummary() => UpdateStatusMarker.DescribeLastCheck(HealthMarkerDirectory);
 
-    /// <summary>The running build's version, straight off the assembly (set by the csproj's
-    /// &lt;Version&gt;) — compared against each release's tag_name.</summary>
+    /// <summary>The running build's version (csproj &lt;Version&gt;), compared against tag_name.</summary>
     public static Version CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0, 0);
 
-    /// <summary>"1.0.4"-shaped display text for <see cref="CurrentVersion"/> — the SDK always
-    /// fills in a Revision component (always 0 for this project's x.y.z &lt;Version&gt; scheme),
-    /// which reads as noise ("1.0.4.0") anywhere this is shown to the user (About window, tray
-    /// tooltip, update-check result). Matches the release tag's own x.y.z shape exactly. Portable
-    /// (no OS check) — item 13c surfaces this in About/tooltip on every OS.</summary>
+    /// <summary>"x.y.z" display text (the SDK's always-0 Revision dropped).</summary>
     public static string CurrentVersionText => FormatVersionText(CurrentVersion);
 
-    /// <summary>Shared by <see cref="CurrentVersionText"/> and the crash-loop guard (which needs
-    /// the identical "x.y.z" text for a RELEASE's <see cref="Version"/>, parsed from a tag rather
-    /// than an assembly, to compare equal to it in UpdateHealthMarker's string-keyed marker).</summary>
     private static string FormatVersionText(Version v) => $"{v.Major}.{v.Minor}.{v.Build}";
 
-    /// <summary>True when an installed copy already exists on disk
-    /// (%LOCALAPPDATA%\RoeSnip.App\RoeSnip.exe), regardless of whether THIS process is that copy.
+    /// <summary>True when an installed copy exists on disk, whether or not this process is it.
     /// Gates the one-time "Install RoeSnip" tray item.</summary>
     public static bool InstallExists
     {
@@ -151,15 +162,12 @@ public static class UpdateManager
         }
     }
 
-    /// <summary>True when this process is already running FROM the installed copy. Update-checks
-    /// only make sense when it's true (a portable/dev copy has nothing sensible to swap itself
-    /// for); the "Install RoeSnip" item is gated on <see cref="InstallExists"/> instead, not
-    /// this.</summary>
+    /// <summary>True when this process runs FROM the installed copy. Only then does it self-update.</summary>
     public static bool IsInstalled
     {
         get
         {
-            string? current = Environment.ProcessPath;
+            string? current = RunningInstallUnitPath;
             if (string.IsNullOrEmpty(current))
             {
                 return false;
@@ -168,9 +176,9 @@ public static class UpdateManager
             try
             {
                 return string.Equals(
-                    Path.GetFullPath(current),
-                    Path.GetFullPath(InstalledExePath),
-                    StringComparison.OrdinalIgnoreCase);
+                    Path.GetFullPath(current).TrimEnd(Path.DirectorySeparatorChar),
+                    Path.GetFullPath(InstallTargetPath).TrimEnd(Path.DirectorySeparatorChar),
+                    PathComparison);
             }
             catch (Exception ex) when (ex is IOException or ArgumentException or NotSupportedException)
             {
@@ -179,81 +187,66 @@ public static class UpdateManager
         }
     }
 
+    /// <summary>Executable paths a running instance of THIS app may have (replace-on-run's
+    /// last-resort kill only touches these): the installed exe and, off Windows, its ".old" slot
+    /// (an instance still running from the unit an update just renamed aside).</summary>
+    public static string[] InstalledIdentityPaths() =>
+        OperatingSystem.IsWindows()
+            ? new[] { InstalledExePath }
+            : OperatingSystem.IsMacOS()
+                ? new[] { InstalledExePath, UpdateInstallLayout.MacBundleExecutable(StaleExePath) }
+                : new[] { InstalledExePath, StaleExePath };
+
+    /// <summary>The path replace-on-run compares for a candidate process: on Linux an AppImage
+    /// process is identified by its APPIMAGE (its exe is a per-run /tmp/.mount_* path).</summary>
+    public static string? ProcessIdentityPath(Process p, string? mainModulePath)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return mainModulePath;
+        }
+
+        try
+        {
+            string environ = File.ReadAllText($"/proc/{p.Id}/environ");
+            return UpdateInstallLayout.AppImageFromEnviron(environ) ?? mainModulePath;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return mainModulePath;
+        }
+    }
+
     private static HttpClient CreateHttpClient()
     {
-        // AutomaticDecompression only kicks in when the server actually sends a Content-Encoding
-        // header (the releases/latest JSON does - 8475 -> 1256 bytes measured live; the binary
-        // asset download doesn't, so this has zero effect there), and it's a no-op on a 304's empty
-        // body, so it's free to turn on for every request this client makes rather than special-cased.
+        // AutomaticDecompression only applies when the server sends Content-Encoding (the JSON does;
+        // the binary asset download does not).
         var handler = new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate };
-        // Default 100s timeout (see ShareManager.CreateHttpClient's own comment for this exact bug
-        // class) deterministically fails the largest Windows asset download below sustained
-        // broadband speeds - a slow-but-working connection would then retry-and-fail every hourly
-        // check forever. 15 minutes comfortably covers that download on very ordinary consumer
-        // upstream while still eventually giving up on a truly hung connection.
+        // The default 100 s timeout fails the largest asset on slow broadband every time.
         var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(15) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("RoeSnip.App-Updater");
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         return client;
     }
 
-    // ---------------- portable: version check (every OS) ----------------
+    // ---------------- version check (every OS) ----------------
 
-    /// <summary>The latest GitHub release worth telling the user about: its version, the direct
-    /// download URL for the chosen Windows asset (null when this OS/release has none — never used
-    /// off Windows), the release page URL (what the Linux/macOS passive notice links to), and that
-    /// same asset's "digest"/"size" fields straight off the releases payload (used by
-    /// <see cref="ApplyUpdateAsync"/> to verify the download - see AssetDigest's doc comment).
-    /// <see cref="Digest"/> is null whenever the payload didn't carry one - callers fail open on
-    /// that, never fail closed. <see cref="IsGzip"/> is true when <see cref="DownloadUrl"/> points
-    /// at the ".gz" transit asset (preferred whenever present - see <see cref="ParseUpdateInfo"/>)
-    /// rather than the plain exe - <see cref="ApplyUpdateAsync"/> decompresses it after digest
-    /// verification, before the swap.</summary>
-    /// <param name="PlainDigest">The UNCOMPRESSED asset's own sha256 digest, carried alongside
-    /// <paramref name="Digest"/> (the CHOSEN asset's digest - the .gz's, when
-    /// <paramref name="IsGzip"/>) so <see cref="ApplyUpdateAsync"/> can verify the decompressed
-    /// bytes actually swapped into the install directory, not just the compressed transit bytes.
-    /// Null whenever the release payload had no plain-asset digest to offer, same fail-open
-    /// contract as <see cref="Digest"/> itself.</param>
+    /// <summary>The latest release worth telling the user about. <see cref="DownloadUrl"/> is the
+    /// chosen asset for this OS/arch (the Windows ".gz" sibling when present, then
+    /// <see cref="IsGzip"/>); null when the release has none. <see cref="Digest"/>/<see cref="Size"/>
+    /// belong to that chosen asset; <see cref="PlainDigest"/> to the uncompressed Windows exe.
+    /// Digests are null when the payload carried none - callers fail open on that.</summary>
     public sealed record UpdateInfo(Version Version, string? DownloadUrl, string ReleaseUrl, string? Digest = null, long? Size = null, bool IsGzip = false, string? PlainDigest = null);
 
-    /// <summary>Result of one <see cref="CheckForUpdateAsync"/> call. <see cref="Update"/> is
-    /// non-null only when a genuinely newer release was found. <see cref="Failed"/> distinguishes a
-    /// CONFIRMED "no update" (a parsed payload or a 304) from an INCONCLUSIVE probe (rate-limited,
-    /// network down, GitHub 5xx, unparseable response) - callers must never record the latter as
-    /// "up to date": see the last-update-status.json breadcrumb this exists to keep honest.
-    /// <see cref="FailureDetail"/> is only set when <see cref="Failed"/> is true.</summary>
+    /// <summary><see cref="Update"/> is non-null only for a genuinely newer release.
+    /// <see cref="Failed"/> separates a CONFIRMED no-update from an inconclusive probe - never record
+    /// the latter as "up to date".</summary>
     public sealed record UpdateCheckResult(UpdateInfo? Update, bool Failed, string? FailureDetail);
 
-    /// <summary>Checks the GitHub Releases API for a newer published build. Never throws. The
-    /// result's <see cref="UpdateCheckResult.Update"/> is null whenever there's nothing to offer:
-    /// the repo is private (404), there's no network, the response doesn't parse, the release isn't
-    /// newer than <see cref="CurrentVersion"/> (see <see cref="ParseUpdateInfo"/> for the full
-    /// gating), or GitHub answered 304/rate-limited - but <see cref="UpdateCheckResult.Failed"/>
-    /// tells callers whether that null means a CONFIRMED no-update (304, or a parsed payload with
-    /// nothing newer) or an INCONCLUSIVE probe (rate-limited, network failure, GitHub 5xx, malformed
-    /// response) that taught us nothing about whether an update exists.
-    ///
-    /// Routed through <see cref="ReleaseClient"/> (see GitHubLatestReleaseClient's own doc comment
-    /// for the full contract): a conditional If-None-Match request that comes back 304 costs nothing
-    /// against GitHub's unauthenticated rate limit, which is what makes an hourly-by-default periodic
-    /// loop (see TrayApp's periodic update loop) cheap on both Windows (full auto-apply) and
-    /// Linux/macOS (passive notice). The ETag is committed when this method is about to return a
-    /// confirmed no-update because there's genuinely no update - never on a rate-limited/failed
-    /// probe, so a stored ETag always safely means "304 = still no update"; if an update was found
-    /// but its later download/apply failed, the next check gets a full uncached GET and a real
-    /// chance to retry rather than silently 304'ing forever.
-    /// <paramref name="bypassBackoff"/> forces a live network attempt even inside an active
-    /// rate-limit backoff window - the manual "Check for updates" menu item passes true because a
-    /// deliberate user click deserves a real answer.
-    /// <paramref name="commitEvenWhenUpdateFound"/> is for the Linux/macOS passive notice ONLY (see
-    /// <c>TrayApp.CheckForNewVersionPassivelyAsync</c>): that path never downloads or applies
-    /// anything, it just shows a once-per-version toast, so there is no retry to protect by
-    /// withholding the ETag - and withholding it anyway would mean every hourly tick between a
-    /// release shipping and the user manually upgrading (potentially weeks, since downloads stay
-    /// manual there) re-fetches the full payload instead of getting a free 304. A genuinely NEWER
-    /// release still changes the resource and answers 200 regardless of a stale ETag, so committing
-    /// here cannot mask a real new release.</summary>
+    /// <summary>Checks GitHub for a newer release. Never throws. The ETag is committed only on a
+    /// confirmed no-update (or when <paramref name="commitEvenWhenUpdateFound"/>: the passive-notice
+    /// caller, which never downloads, so has no retry to protect). <paramref name="bypassBackoff"/>
+    /// forces a live attempt inside a rate-limit backoff (manual "Check for updates").</summary>
     public static async Task<UpdateCheckResult> CheckForUpdateAsync(bool bypassBackoff = false, bool commitEvenWhenUpdateFound = false)
     {
         try
@@ -273,26 +266,17 @@ public static class UpdateManager
             }
 
             using JsonDocument document = probe.Json!;
-            UpdateInfo? update = ParseUpdateInfo(document.RootElement, CurrentVersion, requireWindowsAsset: OperatingSystem.IsWindows());
+            UpdateInfo? update = ParseUpdateInfo(document.RootElement, CurrentVersion, Assets, requireAsset: SelfUpdateSupported);
             if (update is not null && UpdateHealthMarker.IsQuarantined(HealthMarkerDirectory, update.Version))
             {
-                // This exact release already crash-looped on this machine and was auto-rolled-back
-                // (Windows only - see UpdateHealthMarker's own doc comment) - never re-offer it, even
-                // as a Linux/macOS passive notice. The ordinary downgrade guard inside
-                // ParseUpdateInfo (releaseVersion <= currentVersion) cannot catch this: the
-                // quarantined release IS newer than CurrentVersion, that's the whole reason it looked
-                // like an update. A fixed re-release under a newer version number clears the
-                // quarantine automatically (IsQuarantined's own side effect).
+                // This release crash-looped here and was rolled back - never re-offer it. A newer
+                // release clears the quarantine.
                 FileLog.Write($"RoeSnip: skipping update to {update.Version} - quarantined after repeated startup failures.");
                 update = null;
             }
 
             if (update is null || commitEvenWhenUpdateFound)
             {
-                // No update found in this payload - or the passive-notice caller has already fully
-                // processed whatever was found and there is nothing left to retry. See this method's
-                // doc comment for why an update-found-but-not-yet-applied Windows path must never
-                // reach this line.
                 ReleaseClient.CommitETag(probe.ETag);
             }
 
@@ -300,34 +284,24 @@ public static class UpdateManager
         }
         catch (Exception ex)
         {
-            // A private repo (404), a network failure, or a malformed response all mean the same
-            // thing to the caller re: whether to apply anything: nothing available right now. Never
-            // let any of it crash the tray — log to stderr and move on. But it IS a failed probe, not
-            // a confirmed up-to-date, so it must be reported as such (Failed: true).
             FileLog.Write($"RoeSnip: update check failed (non-fatal): {ex.Message}");
             return new UpdateCheckResult(null, Failed: true, FailureDetail: ex.Message);
         }
     }
 
-    /// <summary>Pure parse of one GitHub "releases/latest" JSON response — no network, unit-tested
-    /// directly against literal JSON (<c>requireWindowsAsset</c> is an explicit parameter, not an
-    /// internal <c>OperatingSystem.IsWindows()</c> read, purely so both branches are testable from
-    /// this Windows-hosted test project without needing a second OS to run on). Returns null
-    /// whenever there's nothing actionable: no tag_name, an unparseable version, or a release
-    /// that isn't strictly newer than <paramref name="currentVersion"/>. When
-    /// <paramref name="requireWindowsAsset"/> is true (the real Windows caller), ALSO returns null
-    /// when the release has no "RoeSnipApp-win-x64.exe" asset — a "version available" notice this
-    /// OS could never actually apply would be worse than silence, matching the WPF reference's
-    /// original all-or-nothing gate. When false (the Linux/macOS passive-notice caller),
-    /// DownloadUrl is populated when present but never required — that notice only needs Version
-    /// and ReleaseUrl.
-    ///
-    /// Scans for BOTH the ".gz" and plain Windows asset names and prefers the ".gz" one when
-    /// present (hardening item 9) - each asset carries its OWN digest/size, never mixed across the
-    /// two, so verification in <see cref="ApplyUpdateAsync"/> always checks the exact bytes that
-    /// were actually downloaded. Falling back to the plain asset when no ".gz" entry exists
-    /// protects against a release.yml slip that only publishes one of the two.</summary>
-    public static UpdateInfo? ParseUpdateInfo(JsonElement root, Version currentVersion, bool requireWindowsAsset)
+    /// <summary>Legacy overload: parses against the Windows x64 asset names
+    /// ("RoeSnipApp-win-x64.exe" + ".gz"). <paramref name="requireWindowsAsset"/> as in
+    /// <see cref="ParseUpdateInfo(JsonElement, Version, UpdateAssetSelection?, bool)"/>.</summary>
+    public static UpdateInfo? ParseUpdateInfo(JsonElement root, Version currentVersion, bool requireWindowsAsset) =>
+        ParseUpdateInfo(root, currentVersion, WindowsX64Assets, requireWindowsAsset);
+
+    /// <summary>Pure parse of one "releases/latest" response. Null when there is nothing
+    /// actionable: no tag, an unparseable version, a release not strictly newer than
+    /// <paramref name="currentVersion"/>, or (when <paramref name="requireAsset"/>) no matching
+    /// asset - a notice this copy could never apply is worse than silence. The ".gz" sibling is
+    /// preferred when <paramref name="assets"/> names one and the release has it; each asset keeps
+    /// its own digest/size. Names match case-insensitively.</summary>
+    public static UpdateInfo? ParseUpdateInfo(JsonElement root, Version currentVersion, UpdateAssetSelection? assets, bool requireAsset)
     {
         if (!root.TryGetProperty("tag_name", out JsonElement tagElement))
         {
@@ -355,9 +329,10 @@ public static class UpdateManager
         long? plainSize = null;
         string? gzUrl = null, gzDigest = null;
         long? gzSize = null;
-        if (root.TryGetProperty("assets", out JsonElement assets) && assets.ValueKind == JsonValueKind.Array)
+        if (assets is not null &&
+            root.TryGetProperty("assets", out JsonElement assetArray) && assetArray.ValueKind == JsonValueKind.Array)
         {
-            foreach (JsonElement asset in assets.EnumerateArray())
+            foreach (JsonElement asset in assetArray.EnumerateArray())
             {
                 if (!asset.TryGetProperty("name", out JsonElement nameElement) ||
                     !asset.TryGetProperty("browser_download_url", out JsonElement urlElement))
@@ -371,13 +346,13 @@ public static class UpdateManager
                     ? sizeValue
                     : null;
 
-                if (string.Equals(name, GzReleaseAssetName, StringComparison.OrdinalIgnoreCase))
+                if (assets.Gz is not null && string.Equals(name, assets.Gz, StringComparison.OrdinalIgnoreCase))
                 {
                     gzUrl = urlElement.GetString();
                     gzDigest = digest;
                     gzSize = size;
                 }
-                else if (string.Equals(name, ReleaseAssetName, StringComparison.OrdinalIgnoreCase))
+                else if (string.Equals(name, assets.Primary, StringComparison.OrdinalIgnoreCase))
                 {
                     plainUrl = urlElement.GetString();
                     plainDigest = digest;
@@ -386,17 +361,17 @@ public static class UpdateManager
             }
         }
 
-        string? downloadUrl = !string.IsNullOrEmpty(gzUrl) ? gzUrl : plainUrl;
-        string? chosenDigest = !string.IsNullOrEmpty(gzUrl) ? gzDigest : plainDigest;
-        long? chosenSize = !string.IsNullOrEmpty(gzUrl) ? gzSize : plainSize;
         bool isGzip = !string.IsNullOrEmpty(gzUrl);
+        string? downloadUrl = isGzip ? gzUrl : plainUrl;
+        string? chosenDigest = isGzip ? gzDigest : plainDigest;
+        long? chosenSize = isGzip ? gzSize : plainSize;
 
         if (releaseVersion <= currentVersion)
         {
             return null;
         }
 
-        if (requireWindowsAsset && string.IsNullOrEmpty(downloadUrl))
+        if (requireAsset && string.IsNullOrEmpty(downloadUrl))
         {
             return null;
         }
@@ -404,15 +379,10 @@ public static class UpdateManager
         return new UpdateInfo(releaseVersion, downloadUrl, releaseUrl, chosenDigest, chosenSize, isGzip, plainDigest);
     }
 
-    // ---------------- Windows-only: cleanup / install / apply ----------------
+    // ---------------- cleanup ----------------
 
-    /// <summary>Best-effort delete of update leftovers (a ".old" from a prior swap that's unlocked
-    /// once that older process exited, and any ".new" abandoned by a download that never
-    /// completed). Called once, synchronously, at startup. Never throws. Skips the ".old" delete
-    /// (never the ".new" ones) when <see cref="StaleExeIsSafeToDelete"/> says a pending-verify
-    /// marker is live - see that method's own doc comment for why THIS process being a portable/dev
-    /// run does not by itself mean nothing else needs ".old".</summary>
-    [SupportedOSPlatform("windows")]
+    /// <summary>Startup cleanup of swap leftovers: ".old" (unless a pending-verify marker still
+    /// needs it as the rollback target) and any abandoned staging download. Never throws.</summary>
     public static void CleanupStaleUpdateFiles()
     {
         if (StaleExeIsSafeToDelete())
@@ -420,16 +390,11 @@ public static class UpdateManager
             TryDelete(StaleExePath);
         }
 
-        TryDelete(DownloadingExePath);
-        TryDelete(GzDownloadingExePath);
+        CleanupDownloadLeftover();
     }
 
-    /// <summary>Background bounded-retry delete of the ".old" exe a prior update swapped out —
-    /// right after an update hand-off the just-replaced process can still be exiting and holding
-    /// its renamed exe locked, so <see cref="CleanupStaleUpdateFiles"/>'s single synchronous
-    /// attempt can miss it. Never throws; call on a background thread. Guarded by
-    /// <see cref="StaleExeIsSafeToDelete"/> - see that method's own doc comment.</summary>
-    [SupportedOSPlatform("windows")]
+    /// <summary>Bounded-retry ".old" delete (the replaced process may still hold it). Call off the
+    /// UI thread. Never throws.</summary>
     public static void CleanupStaleExeWithRetry()
     {
         if (StaleExeIsSafeToDelete())
@@ -438,66 +403,41 @@ public static class UpdateManager
         }
     }
 
-    /// <summary>Guards every ".old" delete in this class (both <see cref="CleanupStaleUpdateFiles"/>
-    /// and <see cref="CleanupStaleExeWithRetry"/>): false whenever <see cref="HealthMarkerDirectory"/>'s
-    /// update-health.json still names a pending-verify version, since ".old" is that launch's
-    /// rollback target for as long as the marker says so - see UpdateHealthMarker's own doc comment
-    /// for the crash-loop guard this protects. Deliberately NOT gated on <see cref="IsInstalled"/>:
-    /// a portable/dev copy launched while an INSTALLED copy's update is still pending verification
-    /// shares the very same <see cref="HealthMarkerDirectory"/> (the settings/config directory, not
-    /// the install dir) and would otherwise happily delete the installed copy's ".old" out from
-    /// under it - the marker itself is untouched by that, so a later crash-looping launch of the
-    /// installed copy would reach its own restore branch with nothing left to restore.</summary>
+    // Not gated on IsInstalled: a portable copy shares the config dir (and so the marker) with the
+    // installed copy and must not delete the installed copy's rollback target.
     private static bool StaleExeIsSafeToDelete() =>
         UpdateHealthMarker.Load(HealthMarkerDirectory).PendingVersion is null;
 
-    /// <summary>Deletes only the abandoned ".new" download leftover, never <see cref="StaleExePath"/>
-    /// - used at startup instead of <see cref="CleanupStaleUpdateFiles"/> when the crash-loop guard
-    /// (<see cref="CheckUpdateHealthAtStartup"/>) determines this launch is still pending health
-    /// verification, so the ".old" rollback target must survive until the health milestone
-    /// (<see cref="CompleteHealthMilestone"/>) proves this launch didn't crash-loop.</summary>
-    [SupportedOSPlatform("windows")]
+    /// <summary>Deletes only abandoned download/staging leftovers, never ".old".</summary>
     public static void CleanupDownloadLeftover()
     {
         TryDelete(DownloadingExePath);
         TryDelete(GzDownloadingExePath);
+        TryDelete(RestoreStagingPath);
+        if (OperatingSystem.IsMacOS())
+        {
+            TryDelete(MacStagingDir);
+        }
     }
 
-    // ---------------- Crash-loop guard (hardening item 7) ----------------
+    // ---------------- Crash-loop guard ----------------
 
-    /// <summary>What <see cref="CheckUpdateHealthAtStartup"/> found and what the caller (TrayApp)
-    /// must do next.</summary>
     public enum HealthCheckAction
     {
-        /// <summary>Nothing pending (not installed, no marker, or a marker for some other version) -
-        /// start up exactly as before this feature existed, cleaning up ".old"/".new" immediately.</summary>
+        /// <summary>Nothing pending: start normally and clean up ".old"/".new" now.</summary>
         ProceedImmediateCleanup,
 
-        /// <summary>This launch is a post-update verification run that has not yet failed
-        /// <see cref="UpdateHealthMarker.RollbackAttemptThreshold"/> times - start up normally, but
-        /// the caller must defer ".old" cleanup to <see cref="CompleteHealthMilestone"/> once this
-        /// launch proves itself (only ".new" leftovers, via <see cref="CleanupDownloadLeftover"/>,
-        /// are safe to clean up immediately).</summary>
+        /// <summary>Post-update verification run below the rollback threshold: start normally, keep
+        /// ".old" until <see cref="CompleteHealthMilestone"/>.</summary>
         ProceedDeferredCleanup,
 
-        /// <summary>The previous build was just restored and relaunched - the caller must exit
-        /// immediately without creating a tray icon, registering the hotkey, or doing anything
-        /// else; this process's only remaining job was to hand off.</summary>
+        /// <summary>The previous build was restored and relaunched: exit immediately.</summary>
         Restored,
     }
 
-    /// <summary>Crash-loop guard entry point (Windows only - the self-update swap this guards has
-    /// no equivalent on Linux/macOS, item 13d): call once, as early as possible in TrayApp.Start
-    /// (before the tray icon/hotkey/anything else that could itself crash). See
-    /// UpdateHealthMarker's own doc comment for the full three-part design (pending-verify, health
-    /// milestone, quarantine); this method is the file-system half of it - deciding whether an
-    /// auto-restore is warranted and, if so, performing it.
-    ///
-    /// A portable/dev run (<see cref="IsInstalled"/> false) can never have a pending marker that
-    /// means anything - it never goes through <see cref="ApplyUpdateAsync"/> - so it always gets
-    /// <see cref="HealthCheckAction.ProceedImmediateCleanup"/>, identical to every launch before
-    /// this feature existed.</summary>
-    [SupportedOSPlatform("windows")]
+    /// <summary>Call first thing in TrayApp.Start. Counts this launch against a pending-verify
+    /// marker (written by <see cref="ApplyUpdateAsync"/> right before it relaunched) and restores
+    /// ".old" once the threshold of launches that never reached the health milestone is hit.</summary>
     public static HealthCheckAction CheckUpdateHealthAtStartup()
     {
         if (!IsInstalled)
@@ -508,13 +448,11 @@ public static class UpdateManager
         UpdateHealthMarker.State state = UpdateHealthMarker.RecordLaunchAttempt(HealthMarkerDirectory, CurrentVersionText);
         if (state.PendingVersion != CurrentVersionText)
         {
-            // No marker, or a marker naming some other version (e.g. a hand-rolled downgrade) -
-            // this launch isn't a post-update verification run.
             return HealthCheckAction.ProceedImmediateCleanup;
         }
 
         if (state.AttemptCount >= UpdateHealthMarker.RollbackAttemptThreshold &&
-            File.Exists(StaleExePath) &&
+            InstallSwap.Exists(StaleExePath) &&
             TryRestorePreviousBuild(state.AttemptCount))
         {
             return HealthCheckAction.Restored;
@@ -523,18 +461,8 @@ public static class UpdateManager
         return HealthCheckAction.ProceedDeferredCleanup;
     }
 
-    /// <summary>The health milestone: call once, after a <see cref="HealthCheckAction.ProceedDeferredCleanup"/>
-    /// launch has stayed up long enough to be trusted (TrayApp's own "tray icon shown plus ~15s of
-    /// uptime" gate). Clears the pending-verify marker for THIS process's own version - this build is
-    /// proven, the next update starts a fresh cycle - and only then runs the ".old" cleanup
-    /// <see cref="CheckUpdateHealthAtStartup"/> deferred, since it is only safe to delete the
-    /// rollback target once this launch is known not to be crash-looping. Skips the ".old" cleanup
-    /// entirely when ClearPending reports nothing of this version's was actually pending (a fast
-    /// chained update already overwrote the marker with a newer version's own pending-verify state -
-    /// see ClearPending's own doc comment): that ".old" is the NEWER launch's rollback target, not
-    /// this one's, and deleting it here would leave the newer build with nothing to restore to if it
-    /// turns out to be the bad release.</summary>
-    [SupportedOSPlatform("windows")]
+    /// <summary>Health milestone (tray up + ~15 s): clears this version's pending marker, then
+    /// deletes ".old" - skipped when a newer chained update already owns the marker.</summary>
     public static void CompleteHealthMilestone()
     {
         if (UpdateHealthMarker.ClearPending(HealthMarkerDirectory, CurrentVersionText))
@@ -543,19 +471,9 @@ public static class UpdateManager
         }
     }
 
-    /// <summary>Restores the ".old" build over <see cref="InstalledExePath"/>, quarantines the
-    /// currently-running (bad) version so <see cref="CheckForUpdateAsync"/> never re-offers it, and
-    /// relaunches the restored build. The currently-running exe can be renamed out from under this
-    /// very process - the same trick every update swap already relies on (Windows allows renaming a
-    /// running executable's file; the process keeps running against its now-renamed handle) - so
-    /// the bad exe is rotated into <see cref="StaleExePath"/>'s slot rather than deleted outright,
-    /// letting the RESTORED build's own next-launch cleanup (<see cref="CheckUpdateHealthAtStartup"/>'s
-    /// ProceedImmediateCleanup path, since the marker was just cleared by
-    /// <see cref="UpdateHealthMarker.Quarantine"/>) delete it normally instead of inventing a second
-    /// cleanup path for a one-off leftover file. Returns false (never throws) on any failure, so the
-    /// caller falls back to letting this launch continue as an ordinary (if still potentially bad)
-    /// startup rather than getting stuck.</summary>
-    [SupportedOSPlatform("windows")]
+    /// <summary>Restores ".old" over the target (the running bad unit is renamed into the ".old"
+    /// slot - renaming a running exe / AppImage / bundle is allowed), quarantines this version and
+    /// relaunches. False on any failure so this launch just continues.</summary>
     private static bool TryRestorePreviousBuild(int attemptCount)
     {
         string badVersion = CurrentVersionText;
@@ -565,15 +483,9 @@ public static class UpdateManager
                 $"RoeSnip: {badVersion} failed to reach the startup health milestone {attemptCount} times in a row - " +
                 "restoring the previous build and quarantining this version.");
 
-            string stagingPath = DownloadingExePath; // idle at this point: this runs before any download could start
-            TryDelete(stagingPath);
-            File.Move(StaleExePath, stagingPath);      // good build -> staging
-            File.Move(InstalledExePath, StaleExePath); // bad running exe -> the ".old" slot (cleaned up normally next launch)
-            File.Move(stagingPath, InstalledExePath);  // good build -> installed
-
+            InstallSwap.RestorePrevious(InstallTargetPath, StaleExePath, RestoreStagingPath);
             UpdateHealthMarker.Quarantine(HealthMarkerDirectory, badVersion);
-
-            Process.Start(new ProcessStartInfo(InstalledExePath) { UseShellExecute = true });
+            LaunchInstalledCopy();
             return true;
         }
         catch (Exception ex)
@@ -587,10 +499,7 @@ public static class UpdateManager
     {
         try
         {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
+            InstallSwap.Delete(path);
         }
         catch (Exception ex)
         {
@@ -601,17 +510,17 @@ public static class UpdateManager
     private static void TryDeleteWithRetry(string path)
     {
         const int maxAttempts = 10;
-        const int retryDelayMs = 200; // ~2s total, bounded so a still-locked file never stalls startup
+        const int retryDelayMs = 200; // ~2 s total, so a locked file never stalls startup
         for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
             try
             {
-                if (!File.Exists(path))
+                if (!InstallSwap.Exists(path))
                 {
                     return;
                 }
 
-                File.Delete(path);
+                InstallSwap.Delete(path);
                 return;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -627,76 +536,156 @@ public static class UpdateManager
         }
     }
 
-    /// <summary>Copies the currently-running exe to %LOCALAPPDATA%\RoeSnip.App, points the HKCU
-    /// Run key + RunAtStartup setting at that copy, and launches it — the installed copy then
-    /// takes over via replace-on-run (item 13a), so this call never needs to terminate the caller
-    /// itself. Every failure is caught, logged, and rethrown so the caller (TrayApp) keeps running
-    /// and shows an error instead of exiting on a silent failure.</summary>
-    [SupportedOSPlatform("windows")]
+    // ---------------- launch helpers ----------------
+
+    /// <summary>Starts the installed copy; it then takes over via replace-on-run (which ends this
+    /// process). Linux execs the AppImage directly (shell-execute would go through xdg-open);
+    /// macOS goes through /usr/bin/open -n so LaunchServices starts the bundle.</summary>
+    private static void LaunchInstalledCopy()
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            var psi = new ProcessStartInfo("/usr/bin/open") { UseShellExecute = false };
+            psi.ArgumentList.Add("-n");
+            psi.ArgumentList.Add(InstallTargetPath);
+            using Process? _ = Process.Start(psi);
+        }
+        else if (OperatingSystem.IsLinux())
+        {
+            using Process? _ = Process.Start(new ProcessStartInfo(InstallTargetPath) { UseShellExecute = false });
+        }
+        else
+        {
+            using Process? _ = Process.Start(new ProcessStartInfo(InstalledExePath) { UseShellExecute = true });
+        }
+    }
+
+    /// <summary>Runs a system tool and throws when it exits non-zero or hangs past 5 minutes.</summary>
+    private static void RunTool(string file, params string[] args)
+    {
+        var psi = new ProcessStartInfo(file)
+        {
+            UseShellExecute = false,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+        };
+        foreach (string a in args)
+        {
+            psi.ArgumentList.Add(a);
+        }
+
+        using Process process = Process.Start(psi) ?? throw new IOException($"Could not start {file}.");
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
+        _ = process.StandardOutput.ReadToEndAsync();
+        if (!process.WaitForExit(TimeSpan.FromMinutes(5)))
+        {
+            try { process.Kill(); } catch { /* already gone */ }
+            throw new IOException($"{file} timed out.");
+        }
+
+        if (process.ExitCode != 0)
+        {
+            throw new IOException($"{file} exited {process.ExitCode}: {stderr.Result.Trim()}");
+        }
+    }
+
+    private static void MakeExecutable(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
+    }
+
+    /// <summary>Strips com.apple.quarantine from a bundle so Gatekeeper does not block the swapped-in
+    /// copy. Best-effort: xattr exits non-zero when the attribute is absent.</summary>
+    private static void StripQuarantine(string bundlePath)
+    {
+        try
+        {
+            RunTool("/usr/bin/xattr", "-dr", "com.apple.quarantine", bundlePath);
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: xattr quarantine strip skipped (non-fatal): {ex.Message}");
+        }
+    }
+
+    // ---------------- install ----------------
+
+    /// <summary>Copies this copy to the install location, turns on start-at-login (+ the Start Menu
+    /// shortcut / Linux menu entry), and launches the installed copy, which takes over via
+    /// replace-on-run. Logs and rethrows on failure so the tray shows an error and keeps running.</summary>
     public static void Install()
     {
         try
         {
-            string? currentExe = Environment.ProcessPath;
-            if (string.IsNullOrEmpty(currentExe))
+            string? sourceUnit = RunningInstallUnitPath;
+            if (string.IsNullOrEmpty(sourceUnit))
             {
-                FileLog.Write("RoeSnip: install failed - could not determine the current executable path.");
+                FileLog.Write("RoeSnip: install failed - could not determine what this copy runs from.");
                 return;
             }
 
             Directory.CreateDirectory(InstallDir);
 
-            if (string.Equals(Path.GetFullPath(currentExe), Path.GetFullPath(InstalledExePath), StringComparison.OrdinalIgnoreCase))
+            if (IsInstalled)
             {
-                // Already running from the installed location - nothing to install.
                 return;
             }
 
-            // Stage the copy under a temp name, then swap it into place, so InstalledExePath is
-            // never observable half-written. Same swap discipline ApplyUpdateAsync uses.
+            // Stage next to the target, then rename into place, so the target is never observable
+            // half-written.
             string stagingPath = DownloadingExePath;
             TryDelete(stagingPath);
-            File.Copy(currentExe, stagingPath, overwrite: true);
-
-            TryDelete(StaleExePath);
-            bool movedExisting = false;
-            if (File.Exists(InstalledExePath))
+            if (OperatingSystem.IsMacOS())
             {
-                // Rename any existing install out of the way first — works even when a running
-                // installed instance holds it locked (renaming a running exe is allowed on
-                // Windows; that process keeps running against its now-renamed handle until it
-                // exits, and CleanupStaleExeWithRetry deletes the .old once it does).
-                File.Move(InstalledExePath, StaleExePath);
-                movedExisting = true;
+                TryDelete(MacStagingDir);
+                Directory.CreateDirectory(MacStagingDir);
+                RunTool("/usr/bin/ditto", sourceUnit, stagingPath);
+            }
+            else
+            {
+                File.Copy(sourceUnit, stagingPath, overwrite: true);
+                MakeExecutable(stagingPath);
+            }
+
+            // Works even while an installed instance runs: it keeps its renamed file/bundle.
+            InstallSwap.SwapIn(stagingPath, InstallTargetPath, StaleExePath);
+            if (OperatingSystem.IsMacOS())
+            {
+                TryDelete(MacStagingDir);
+                StripQuarantine(InstallTargetPath);
             }
 
             try
             {
-                File.Move(stagingPath, InstalledExePath);
-            }
-            catch
-            {
-                // Never leave the install location without a runnable exe: put the prior copy back.
-                if (movedExisting && !File.Exists(InstalledExePath) && File.Exists(StaleExePath))
+                if (OperatingSystem.IsWindows())
                 {
-                    File.Move(StaleExePath, InstalledExePath);
+                    SetInstalledRunAtStartup();
                 }
-
-                throw;
-            }
-
-            try
-            {
-                SetInstalledRunAtStartup();
+                else
+                {
+                    StartupManager.SetRunAtStartupFor(true, InstalledLaunchPath);
+                }
             }
             catch (Exception ex)
             {
                 FileLog.Write($"RoeSnip: install could not set run-at-startup (non-fatal): {ex.Message}");
             }
 
-            // Make the freshly-installed app findable in Windows search: nothing under
-            // %LOCALAPPDATA% is indexed, only a Start Menu shortcut is. Never throws.
-            StartMenuShortcut.EnsureFor(InstalledExePath);
+            if (OperatingSystem.IsWindows())
+            {
+                // Nothing under %LOCALAPPDATA% is search-indexed; a Start Menu shortcut is.
+                StartMenuShortcut.EnsureFor(InstalledExePath);
+            }
+            else if (OperatingSystem.IsLinux())
+            {
+                LinuxDesktopIntegration.EnsureMenuEntry(InstallTargetPath, CurrentVersionText);
+            }
 
             try
             {
@@ -708,20 +697,22 @@ public static class UpdateManager
                 FileLog.Write($"RoeSnip: install could not persist the run-at-startup setting (non-fatal): {ex.Message}");
             }
 
-            // Make install behave like a MOVE, not a copy: the source exe can't delete itself
-            // while it's still running, so record it for the installed copy to clean up on its
-            // next startup, once the replace-on-run handoff below has this process exit and
-            // release its file lock.
-            try
+            // Install is a MOVE on Windows and Linux: the installed copy deletes the source on its
+            // next start (this process still holds it). macOS leaves the source bundle alone (it is
+            // usually on the read-only .dmg, or in /Applications by the user's choice).
+            if (!OperatingSystem.IsMacOS())
             {
-                File.WriteAllText(PendingSourceCleanupMarkerPath, currentExe);
-            }
-            catch (Exception ex)
-            {
-                FileLog.Write($"RoeSnip: could not record source exe for post-install cleanup (non-fatal): {ex.Message}");
+                try
+                {
+                    File.WriteAllText(PendingSourceCleanupMarkerPath, sourceUnit);
+                }
+                catch (Exception ex)
+                {
+                    FileLog.Write($"RoeSnip: could not record source exe for post-install cleanup (non-fatal): {ex.Message}");
+                }
             }
 
-            Process.Start(new ProcessStartInfo(InstalledExePath) { UseShellExecute = true });
+            LaunchInstalledCopy();
         }
         catch (Exception ex)
         {
@@ -730,13 +721,12 @@ public static class UpdateManager
         }
     }
 
-    /// <summary>Best-effort cleanup of the source exe a prior <see cref="Install"/> "move" left
-    /// behind (see the marker written there): reads <see cref="PendingSourceCleanupMarkerPath"/>
-    /// if present and, only when the recorded path exists, is a file literally named
-    /// "RoeSnip.exe", and is NOT <see cref="InstalledExePath"/>, deletes it with a short bounded
-    /// retry. The marker is removed afterward regardless of whether the delete succeeded. Runs on
-    /// a background thread; never throws into the tray.</summary>
-    [SupportedOSPlatform("windows")]
+    /// <summary>What autostart / LaunchAgent entries point at for the installed copy.</summary>
+    public static string InstalledLaunchPath => InstalledExePath;
+
+    /// <summary>Deletes the source a prior <see cref="Install"/> "move" left behind: only a file
+    /// named "RoeSnip.exe" (Windows) or "RoeSnip*.AppImage" (Linux) that is not the installed copy.
+    /// The marker is removed either way. Never throws.</summary>
     public static void ProcessPendingSourceCleanup()
     {
         string markerPath = PendingSourceCleanupMarkerPath;
@@ -748,11 +738,16 @@ public static class UpdateManager
             }
 
             string sourcePath = File.ReadAllText(markerPath).Trim();
+            if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath))
+            {
+                return;
+            }
 
-            if (!string.IsNullOrEmpty(sourcePath) &&
-                File.Exists(sourcePath) &&
-                string.Equals(Path.GetFileName(sourcePath), "RoeSnip.exe", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(InstalledExePath), StringComparison.OrdinalIgnoreCase))
+            bool disposable = OperatingSystem.IsWindows()
+                ? string.Equals(Path.GetFileName(sourcePath), "RoeSnip.exe", StringComparison.OrdinalIgnoreCase) &&
+                  !string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(InstalledExePath), StringComparison.OrdinalIgnoreCase)
+                : OperatingSystem.IsLinux() && UpdateInstallLayout.IsDisposableLinuxSource(sourcePath, InstallTargetPath);
+            if (disposable)
             {
                 TryDeleteWithRetry(sourcePath);
             }
@@ -767,10 +762,8 @@ public static class UpdateManager
         }
     }
 
-    /// <summary>Writes the HKCU Run key directly for <see cref="InstalledExePath"/>. Mirrors
-    /// StartupManager.SetRunAtStartup(true), but that helper always points at
-    /// Environment.ProcessPath — here the CALLER is still the non-installed process, so the key
-    /// has to be pointed at the installed copy explicitly instead.</summary>
+    /// <summary>The HKCU Run value for <see cref="InstalledExePath"/> (StartupManager always
+    /// points at the running process, which here is still the non-installed copy).</summary>
     [SupportedOSPlatform("windows")]
     private static void SetInstalledRunAtStartup()
     {
@@ -779,24 +772,42 @@ public static class UpdateManager
         key?.SetValue(RunValueName, $"\"{InstalledExePath}\"", RegistryValueKind.String);
     }
 
-    /// <summary>Downloads the release's Windows exe, swaps it in for <see cref="InstalledExePath"/>,
-    /// and launches it — the new build then takes over via replace-on-run, which kills this
-    /// process. A truncated/failed download never touches the installed exe; a failure partway
-    /// through the swap rolls back to the previous exe so the install is never left without a
-    /// runnable copy. <paramref name="beforeLaunch"/> is awaited after the swap-in succeeds and
-    /// right before Process.Start — the swap itself is safe to do while the app is busy, but the
-    /// launch is not: replace-on-run would kill this instance mid-snip. Callers driven by an
-    /// explicit user click pass null and apply as soon as it is their turn; the silent startup
-    /// auto-update passes a delegate that waits for the app to go idle first. Calls are serialized
-    /// on <see cref="ApplyUpdateLock"/>. Rethrows on failure so the caller can surface it to the
-    /// user.</summary>
-    [SupportedOSPlatform("windows")]
+    // ---------------- apply ----------------
+
+    /// <summary>Downloads this OS/arch's asset, verifies size + SHA-256 against the release
+    /// payload, swaps it in with a ".old" rollback, writes the pending-verify marker and launches
+    /// the new build (which ends this process via replace-on-run). <paramref name="beforeLaunch"/>
+    /// is the idle gate: awaited right before the launch on Windows/Linux, and before the bundle
+    /// swap on macOS (a folder-published app lazily loads assemblies from its bundle path, so the
+    /// old process must not keep running against a swapped bundle). Serialized on
+    /// <see cref="ApplyUpdateLock"/>. Rethrows on failure; the installed copy is never left without
+    /// a runnable unit.</summary>
     public static async Task ApplyUpdateAsync(UpdateInfo info, Func<Task>? beforeLaunch = null)
     {
         await ApplyUpdateLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            await ApplyUpdateCoreAsync(info, beforeLaunch).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(info.DownloadUrl))
+            {
+                throw new InvalidOperationException($"No downloadable asset for {info.Version} on this platform.");
+            }
+
+            if (OperatingSystem.IsWindows())
+            {
+                await ApplyUpdateWindowsAsync(info, beforeLaunch).ConfigureAwait(false);
+            }
+            else if (OperatingSystem.IsLinux())
+            {
+                await ApplyUpdateLinuxAsync(info, beforeLaunch).ConfigureAwait(false);
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                await ApplyUpdateMacAsync(info, beforeLaunch).ConfigureAwait(false);
+            }
+            else
+            {
+                throw new PlatformNotSupportedException("Self-update is not available on this OS.");
+            }
         }
         finally
         {
@@ -804,27 +815,55 @@ public static class UpdateManager
         }
     }
 
-    [SupportedOSPlatform("windows")]
-    private static async Task ApplyUpdateCoreAsync(UpdateInfo info, Func<Task>? beforeLaunch)
+    /// <summary>Downloads <see cref="UpdateInfo.DownloadUrl"/> to <paramref name="fetchPath"/> and
+    /// checks size and digest. Deletes the file and throws on any mismatch.</summary>
+    private static async Task DownloadAndVerifyAsync(UpdateInfo info, string fetchPath)
     {
-        if (string.IsNullOrEmpty(info.DownloadUrl))
+        using (HttpResponseMessage response = await HttpClient
+                   .GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead)
+                   .ConfigureAwait(false))
         {
-            // ParseUpdateInfo already refuses to return an UpdateInfo without this on Windows, but
-            // ApplyUpdateAsync is public — guard the contract explicitly rather than trusting every
-            // caller got there through CheckForUpdateAsync.
-            throw new InvalidOperationException($"No downloadable Windows asset for {info.Version}.");
+            response.EnsureSuccessStatusCode();
+            await using Stream source = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            await using (FileStream destination = File.Create(fetchPath))
+            {
+                await source.CopyToAsync(destination).ConfigureAwait(false);
+            }
         }
 
-        string downloadPath = DownloadingExePath; // final decompressed exe - the swap logic below always uses this slot
-        // Distinct temp name for a ".gz" transit asset (item 9) - kept separate from downloadPath
-        // so a failure between "downloaded" and "decompressed" never confuses the two, and so
-        // CleanupStaleUpdateFiles can find either kind of leftover independently. Equal to
-        // downloadPath itself when the chosen asset is the plain exe (no gz step happens at all).
+        var downloaded = new FileInfo(fetchPath);
+        if (!downloaded.Exists || downloaded.Length == 0)
+        {
+            TryDelete(fetchPath);
+            throw new IOException($"Downloaded update for {info.Version} was empty or missing.");
+        }
+
+        if (info.Size is long expectedSize && downloaded.Length != expectedSize)
+        {
+            TryDelete(fetchPath);
+            throw new IOException(
+                $"Downloaded update for {info.Version} was {downloaded.Length} bytes, expected {expectedSize} (truncated download).");
+        }
+
+        bool? digestVerified = await AssetDigest.VerifyAsync(fetchPath, info.Digest).ConfigureAwait(false);
+        if (digestVerified == false)
+        {
+            TryDelete(fetchPath);
+            throw new IOException($"Downloaded update for {info.Version} failed SHA-256 verification.");
+        }
+
+        if (digestVerified is null)
+        {
+            // Fail open: no digest in the payload (see AssetDigest for why fail-closed adds nothing).
+            FileLog.Write($"RoeSnip: update to {info.Version} has no verifiable digest in the release payload - skipping hash check.");
+        }
+    }
+
+    private static async Task ApplyUpdateWindowsAsync(UpdateInfo info, Func<Task>? beforeLaunch)
+    {
+        string downloadPath = DownloadingExePath; // the decompressed exe the swap uses
         string fetchPath = info.IsGzip ? GzDownloadingExePath : downloadPath;
-        // Set when the swap-in fails AND the rollback-to-previous-exe recovery also fails: the
-        // outer catch's usual "always delete downloadPath" cleanup would otherwise throw away the
-        // one surviving, already digest-verified asset on a disk that has no runnable exe left at
-        // all — see the inner catch below for the full recovery chain this guards.
+        // Set when the swap-in AND its rollback both failed: keep the one verified asset on disk.
         bool preserveDownload = false;
         try
         {
@@ -835,60 +874,10 @@ public static class UpdateManager
                 TryDelete(fetchPath);
             }
 
-            using (HttpResponseMessage response = await HttpClient
-                       .GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead)
-                       .ConfigureAwait(false))
-            {
-                response.EnsureSuccessStatusCode();
-                await using Stream source = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                await using (FileStream destination = File.Create(fetchPath))
-                {
-                    await source.CopyToAsync(destination).ConfigureAwait(false);
-                }
-            }
-
-            var downloaded = new FileInfo(fetchPath);
-            if (!downloaded.Exists || downloaded.Length == 0)
-            {
-                TryDelete(fetchPath);
-                throw new IOException($"Downloaded update for {info.Version} was empty or missing.");
-            }
-
-            if (info.Size is long expectedSize && downloaded.Length != expectedSize)
-            {
-                // Cheap truncation catch ahead of the hash - a short/long download is almost always
-                // a broken transfer, and saying so plainly beats a generic "digest mismatch". This
-                // compares against the CHOSEN asset's own size (the .gz asset's when info.IsGzip),
-                // never the decompressed size.
-                TryDelete(fetchPath);
-                throw new IOException(
-                    $"Downloaded update for {info.Version} was {downloaded.Length} bytes, expected {expectedSize} (truncated download).");
-            }
-
-            bool? digestVerified = await AssetDigest.VerifyAsync(fetchPath, info.Digest).ConfigureAwait(false);
-            if (digestVerified == false)
-            {
-                // Bytes don't match GitHub's own published sha256 for this asset - corruption or a
-                // tampered download-CDN path. Never swap this into the install; the caller's normal
-                // failure path (log + rethrow) leaves the current exe untouched and retries next cycle.
-                TryDelete(fetchPath);
-                throw new IOException($"Downloaded update for {info.Version} failed SHA-256 verification.");
-            }
-
-            if (digestVerified is null)
-            {
-                // The release payload had no usable "digest" field (older GitHub API shape, or
-                // genuinely absent) - fail OPEN rather than block updates on a field this project
-                // doesn't control. See AssetDigest's doc comment for why fail-closed here wouldn't
-                // add real security anyway (digest and URL travel the same channel).
-                FileLog.Write($"RoeSnip: update to {info.Version} has no verifiable digest in the release payload - skipping hash check.");
-            }
+            await DownloadAndVerifyAsync(info, fetchPath).ConfigureAwait(false);
 
             if (info.IsGzip)
             {
-                // fetchPath's bytes are already digest-verified above - decompress into the plain
-                // exe the rest of this method (and every downstream caller) expects, then drop the
-                // now-redundant .gz. Sub-second local CPU; never inline with the swap itself.
                 try
                 {
                     await GzipAssetDecompressor.DecompressAsync(fetchPath, downloadPath).ConfigureAwait(false);
@@ -902,12 +891,7 @@ public static class UpdateManager
 
                 TryDelete(fetchPath);
 
-                // The check above only proved the COMPRESSED transit bytes matched what CI uploaded -
-                // it says nothing about what GzipStream (or a release.yml packaging slip) actually
-                // produced on decompression. The release payload carries the plain exe's own digest
-                // for exactly this: verify the bytes about to be swapped into the install directory
-                // are the actual published exe, not just "some file that decompressed from a
-                // correctly-hashed .gz".
+                // The .gz digest proves the transit bytes; this proves the exe about to be swapped in.
                 bool? plainVerified = await AssetDigest.VerifyAsync(downloadPath, info.PlainDigest).ConfigureAwait(false);
                 if (plainVerified == false)
                 {
@@ -917,18 +901,11 @@ public static class UpdateManager
 
                 if (plainVerified is null)
                 {
-                    // Same fail-open policy as the compressed-asset check above (AssetDigest's own
-                    // doc comment) - a release with no plain-asset digest in the payload must not
-                    // block updates.
                     FileLog.Write($"RoeSnip: decompressed update to {info.Version} has no verifiable plain-asset digest - skipping the post-decompression hash check.");
                 }
             }
 
-            // Retried, not a bare delete: a prior .old can still be held locked by a sibling
-            // process that is only now exiting (see TryDeleteWithRetry's own doc comment). A
-            // one-shot TryDelete losing that race would make the File.Move below throw
-            // "destination exists" AFTER the ~180 MB download above already completed, wasting it
-            // for a purely transient lock instead of the ~2s bounded wait paying for itself.
+            // Retried: a prior .old can still be locked by a process that is only now exiting.
             TryDeleteWithRetry(StaleExePath);
 
             bool renamedCurrent = false;
@@ -944,12 +921,8 @@ public static class UpdateManager
             }
             catch
             {
-                // Roll back: never leave the install without a runnable exe. This recovery move can
-                // itself fail (the realistic trigger is the same kind of transient AV sharing
-                // violation on a fresh exe that failed the move above) - guard it separately so
-                // that failure doesn't fall straight through to the outer catch, which would delete
-                // downloadPath unconditionally and brick the install with neither a runnable exe nor
-                // the one verified asset left to recover from by hand.
+                // Roll back; the rollback itself can hit the same transient AV lock, so it is
+                // guarded separately and a last-resort retry of the forward move follows.
                 bool recovered = false;
                 if (renamedCurrent && !File.Exists(InstalledExePath) && File.Exists(StaleExePath))
                 {
@@ -966,10 +939,6 @@ public static class UpdateManager
 
                 if (!recovered && !File.Exists(InstalledExePath))
                 {
-                    // Last resort: retry the same move. A running, digest-verified new build beats
-                    // an install directory left with no runnable exe at all, and the original
-                    // failure is plausibly transient (a momentary AV lock), so a second attempt can
-                    // succeed even though the rollback above just failed the identical way.
                     try
                     {
                         File.Move(downloadPath, InstalledExePath);
@@ -989,15 +958,9 @@ public static class UpdateManager
                 await beforeLaunch().ConfigureAwait(false);
             }
 
-            // Crash-loop guard (hardening item 7): record the version we're about to launch into as
-            // pending health verification BEFORE starting it, so the new process's own startup
-            // (UpdateManager.CheckUpdateHealthAtStartup) sees the marker on its very first launch.
-            // Must be written here, not by the new process itself on its own first line of Main -
-            // this process is the one that knows for certain a swap just happened; the new process
-            // only knows "I am this version", which is exactly as true on every ordinary relaunch.
+            // Written by THIS process (it knows a swap just happened) before the new one starts.
             UpdateHealthMarker.RecordPendingUpdate(HealthMarkerDirectory, FormatVersionText(info.Version));
-
-            Process.Start(new ProcessStartInfo(InstalledExePath) { UseShellExecute = true });
+            LaunchInstalledCopy();
         }
         catch (Exception ex)
         {
@@ -1010,6 +973,78 @@ public static class UpdateManager
                 }
             }
 
+            FileLog.Write($"RoeSnip: update to {info.Version} failed: {ex.Message}");
+            throw;
+        }
+    }
+
+    private static async Task ApplyUpdateLinuxAsync(UpdateInfo info, Func<Task>? beforeLaunch)
+    {
+        string stagedPath = DownloadingExePath; // RoeSnip.AppImage.new, next to the target
+        try
+        {
+            Directory.CreateDirectory(InstallDir);
+            TryDelete(stagedPath);
+
+            await DownloadAndVerifyAsync(info, stagedPath).ConfigureAwait(false);
+            MakeExecutable(stagedPath);
+
+            // The running AppImage keeps its mounted inode after the rename to ".old".
+            InstallSwap.SwapIn(stagedPath, InstallTargetPath, StaleExePath);
+
+            if (beforeLaunch is not null)
+            {
+                await beforeLaunch().ConfigureAwait(false);
+            }
+
+            UpdateHealthMarker.RecordPendingUpdate(HealthMarkerDirectory, FormatVersionText(info.Version));
+            LaunchInstalledCopy();
+        }
+        catch (Exception ex)
+        {
+            TryDelete(stagedPath);
+            FileLog.Write($"RoeSnip: update to {info.Version} failed: {ex.Message}");
+            throw;
+        }
+    }
+
+    private static async Task ApplyUpdateMacAsync(UpdateInfo info, Func<Task>? beforeLaunch)
+    {
+        string tarPath = GzDownloadingExePath;
+        string stagedBundle = DownloadingExePath; // ~/Applications/.RoeSnip-update/RoeSnip.app
+        try
+        {
+            Directory.CreateDirectory(InstallDir);
+            TryDelete(tarPath);
+            TryDelete(MacStagingDir);
+
+            await DownloadAndVerifyAsync(info, tarPath).ConfigureAwait(false);
+
+            Directory.CreateDirectory(MacStagingDir);
+            RunTool("/usr/bin/tar", "-xzf", tarPath, "-C", MacStagingDir);
+            TryDelete(tarPath);
+            if (!File.Exists(UpdateInstallLayout.MacBundleExecutable(stagedBundle)))
+            {
+                throw new IOException($"Update archive for {info.Version} did not contain {UpdateInstallLayout.MacBundleName}.");
+            }
+
+            // Idle gate BEFORE the swap (see this method group's doc comment).
+            if (beforeLaunch is not null)
+            {
+                await beforeLaunch().ConfigureAwait(false);
+            }
+
+            InstallSwap.SwapIn(stagedBundle, InstallTargetPath, StaleExePath);
+            TryDelete(MacStagingDir);
+            StripQuarantine(InstallTargetPath);
+
+            UpdateHealthMarker.RecordPendingUpdate(HealthMarkerDirectory, FormatVersionText(info.Version));
+            LaunchInstalledCopy();
+        }
+        catch (Exception ex)
+        {
+            TryDelete(tarPath);
+            TryDelete(MacStagingDir);
             FileLog.Write($"RoeSnip: update to {info.Version} failed: {ex.Message}");
             throw;
         }
