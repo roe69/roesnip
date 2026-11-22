@@ -1,7 +1,7 @@
 name: build-scksnap
 
-# Builds RoeSnip's macOS capture helper (helpers/scksnap) on a macOS runner — it cannot be built
-# on the Windows dev machine (PLAN-XPLAT.md §3.5 / DESIGN-XPLAT.md "Verification reality").
+# Builds RoeSnip's macOS capture helper (helpers/scksnap) on a macOS runner - it cannot be built
+# on the Windows dev machine (PLAN-XPLAT.md section 3.5 / DESIGN-XPLAT.md "Verification reality").
 # Artifact: scksnap.tar.gz containing the universal, ad-hoc-signed 'scksnap' binary.
 
 on:
@@ -27,13 +27,14 @@ jobs:
 
       - name: Build universal binary
         working-directory: helpers/scksnap
+        # Info.plist is embedded (__TEXT,__info_plist) for NSMicrophoneUsageDescription.
         run: |
-          swiftc -parse-as-library -O \
-            -target arm64-apple-macos13.0 \
-            -o scksnap-arm64 Sources/Scksnap.swift
-          swiftc -parse-as-library -O \
-            -target x86_64-apple-macos13.0 \
-            -o scksnap-x86_64 Sources/Scksnap.swift
+          for arch in arm64 x86_64; do
+            swiftc -parse-as-library -O \
+              -target ${arch}-apple-macos13.0 \
+              -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist \
+              -o scksnap-${arch} Sources/*.swift
+          done
           lipo -create -output scksnap scksnap-arm64 scksnap-x86_64
           lipo -info scksnap
 
@@ -43,9 +44,16 @@ jobs:
           codesign --force --sign - --identifier net.roelite.roesnip.scksnap scksnap
           codesign --display --verbose=2 scksnap
 
-      - name: Smoke test (list verb — CoreGraphics enumeration, no TCC needed)
+      - name: Smoke test (list verb - CoreGraphics enumeration, no TCC needed)
         working-directory: helpers/scksnap
         run: ./scksnap list
+
+      - name: Smoke test (serve mode answers a ping, exits on stdin EOF)
+        working-directory: helpers/scksnap
+        run: |
+          out=$( (printf '\x05\x00\x00\x00\x09\x01\x00\x00\x00'; sleep 2) | ./scksnap serve | od -An -tx1 | tr -d ' \n')
+          echo "reply: $out"
+          test "$out" = "09000000010000000001000000"
 
       - name: Package (tar preserves the executable bit and signature)
         working-directory: helpers/scksnap

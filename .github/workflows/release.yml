@@ -346,7 +346,9 @@ jobs:
         working-directory: helpers/scksnap
         run: |
           set -euo pipefail
-          swiftc -parse-as-library -O -target ${{ matrix.swift_target }} -o scksnap Sources/Scksnap.swift
+          swiftc -parse-as-library -O -target ${{ matrix.swift_target }} \
+            -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker Info.plist \
+            -o scksnap Sources/*.swift
           codesign --force --sign - --identifier net.roelite.roesnip.scksnap scksnap
 
       - name: Package unsigned .dmg and .app.tar.gz
@@ -378,6 +380,7 @@ jobs:
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleIconFile</key><string>RoeSnip</string>
             <key>LSMinimumSystemVersion</key><string>13.0</string>
+            <key>NSMicrophoneUsageDescription</key><string>RoeSnip records your microphone into screen recordings when you turn it on.</string>
           </dict>
           </plist>
           EOF

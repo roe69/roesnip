@@ -1,13 +1,11 @@
-using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using RoeSnip.Core.Capture;
 
 namespace RoeSnip.Platform.MacOS;
 
-/// <summary>Thrown when macOS denies Screen Recording (TCC) permission — scksnap's distinct exit
+/// <summary>Thrown when macOS denies Screen Recording (TCC) permission - scksnap's distinct exit
 /// code 82. This is a FIRST-CLASS, UI-surfaced error per DESIGN-XPLAT.md, not a generic capture
 /// failure: the app should tell the user to grant Screen Recording to scksnap in
 /// System Settings &gt; Privacy &amp; Security and retry, rather than silently showing zero frames.
@@ -34,8 +32,10 @@ public sealed record ScksnapDisplay(
     double EdrPotentialHeadroom,
     bool IsPrimary);
 
-/// <summary>One decoded scksnap frame file. <see cref="FormatCode"/>: 1 = FP16 RGBA
-/// extended-linear-sRGB (macOS EDR convention, 1.0 == SDR white), 2 = BGRA8 sRGB.</summary>
+/// <summary>One decoded SCKSNAP1 frame. <see cref="FormatCode"/>: 1 = FP16 RGBA
+/// extended-linear-sRGB (macOS EDR convention, 1.0 == SDR white), 2 = BGRA8 sRGB.
+/// <see cref="Source"/>, <see cref="AgeMs"/> and <see cref="Sequence"/> are zero from the one-shot
+/// helper; serve-mode frames say stream (1) or screenshot (2), stream frames carry age and counter.</summary>
 public sealed record ScksnapFrame(
     uint FormatCode,
     int Width,
@@ -46,19 +46,19 @@ public sealed record ScksnapFrame(
     double Scale,
     double EdrHeadroom,
     bool IsPrimary,
-    byte[] Pixels);
+    byte[] Pixels,
+    uint Source = 0,
+    uint AgeMs = 0,
+    ulong Sequence = 0);
 
-/// <summary>Shells out to the <c>scksnap</c> Swift helper binary (helpers/scksnap/ — built by the
-/// build-scksnap GitHub Actions workflow, NOT on this machine) and parses its output. The CLI
-/// contract, exit codes and the "SCKSNAP1" temp-file wire format are documented at the top of
-/// helpers/scksnap/Sources/Scksnap.swift and in helpers/scksnap/README.md — keep all three in sync.</summary>
+/// <summary>The one-shot <c>scksnap</c> verbs (a process per call): the fallback when
+/// <see cref="ScksnapServer"/> cannot run. The CLI contract, exit codes and the SCKSNAP1 format are
+/// documented at the top of helpers/scksnap/Sources/Scksnap.swift and in helpers/scksnap/README.md.</summary>
 public sealed class ScksnapHelperClient
 {
     /// <summary>scksnap's distinct exit code for a TCC Screen Recording denial.</summary>
     public const int TccDeniedExitCode = 82;
 
-    private const string Magic = "SCKSNAP1";
-    private const int MinHeaderSize = 96;
     private const int HelperTimeoutMs = 30_000;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -73,9 +73,9 @@ public sealed class ScksnapHelperClient
     public ScksnapHelperClient(string helperPath) => _helperPath = helperPath;
 
     /// <summary>Resolves the helper binary's path. <c>ROESNIP_SCKSNAP_PATH</c> overrides (testing);
-    /// otherwise the helper ships next to the RoeSnip executable — <see cref="AppContext.BaseDirectory"/>
+    /// otherwise the helper ships next to the RoeSnip executable - <see cref="AppContext.BaseDirectory"/>
     /// is that directory both for a flat <c>dotnet publish</c> layout and inside an app bundle's
-    /// <c>Contents/MacOS/</c> (PLAN-XPLAT.md §6 flag 8: the flat-sibling layout is the decision here,
+    /// <c>Contents/MacOS/</c> (PLAN-XPLAT.md section 6 flag 8: the flat-sibling layout is the decision here,
     /// since a bare Avalonia publish is not a .app bundle; a future bundling step keeps working
     /// because BaseDirectory is Contents/MacOS in that layout too).</summary>
     public static string LocateHelper()
@@ -87,7 +87,7 @@ public sealed class ScksnapHelperClient
 
     /// <summary>Runs <c>scksnap list</c> and parses the JSON display array. Needs no TCC permission
     /// (the helper enumerates via CoreGraphics/NSScreen only). Throws <see cref="CaptureException"/>
-    /// on any failure — callers treat that as "enumeration itself failed" (§2.3 contract).</summary>
+    /// on any failure - callers treat that as "enumeration itself failed" (section 2.3 contract).</summary>
     public IReadOnlyList<ScksnapDisplay> ListDisplays()
     {
         var (exitCode, stdout, stderr) = Run("list", null);
@@ -96,9 +96,15 @@ public sealed class ScksnapHelperClient
             throw new CaptureException(
                 $"scksnap list failed (exit {exitCode}): {Trimmed(stderr)}");
         }
+        return ParseDisplays(stdout);
+    }
+
+    /// <summary>Parses the <c>list</c> JSON (one-shot stdout or the serve list reply).</summary>
+    public static IReadOnlyList<ScksnapDisplay> ParseDisplays(string json)
+    {
         try
         {
-            return JsonSerializer.Deserialize<List<ScksnapDisplay>>(stdout, JsonOptions)
+            return JsonSerializer.Deserialize<List<ScksnapDisplay>>(json, JsonOptions)
                 ?? new List<ScksnapDisplay>();
         }
         catch (JsonException ex)
@@ -140,64 +146,17 @@ public sealed class ScksnapHelperClient
         }
     }
 
-    /// <summary>Decodes the "SCKSNAP1" wire format (96-byte little-endian header + raw pixel rows) —
+    /// <summary>Decodes the "SCKSNAP1" wire format (96-byte little-endian header + raw pixel rows) -
     /// field table at the top of helpers/scksnap/Sources/Scksnap.swift.</summary>
     public static ScksnapFrame ParseFrameFile(string path)
-    {
-        byte[] bytes = File.ReadAllBytes(path);
-        if (bytes.Length < MinHeaderSize ||
-            Encoding.ASCII.GetString(bytes, 0, 8) != Magic)
-        {
-            throw new CaptureException($"scksnap frame file {path} has a bad or missing SCKSNAP1 header.");
-        }
-
-        var span = bytes.AsSpan();
-        uint headerSize = BinaryPrimitives.ReadUInt32LittleEndian(span[8..]);
-        uint formatCode = BinaryPrimitives.ReadUInt32LittleEndian(span[12..]);
-        int width = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(span[16..]));
-        int height = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(span[20..]));
-        int stride = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(span[24..]));
-        uint displayId = BinaryPrimitives.ReadUInt32LittleEndian(span[28..]);
-        int boundsX = BinaryPrimitives.ReadInt32LittleEndian(span[32..]);
-        int boundsY = BinaryPrimitives.ReadInt32LittleEndian(span[36..]);
-        int boundsW = BinaryPrimitives.ReadInt32LittleEndian(span[40..]);
-        int boundsH = BinaryPrimitives.ReadInt32LittleEndian(span[44..]);
-        double scale = BitConverter.UInt64BitsToDouble(BinaryPrimitives.ReadUInt64LittleEndian(span[48..]));
-        double edrHeadroom = BitConverter.UInt64BitsToDouble(BinaryPrimitives.ReadUInt64LittleEndian(span[56..]));
-        bool isPrimary = BinaryPrimitives.ReadUInt32LittleEndian(span[64..]) != 0;
-
-        if (headerSize < MinHeaderSize || headerSize > bytes.Length)
-        {
-            throw new CaptureException($"scksnap frame file {path} reports invalid headerSize {headerSize}.");
-        }
-        if (width <= 0 || height <= 0 || stride <= 0)
-        {
-            throw new CaptureException(
-                $"scksnap frame file {path} reports degenerate geometry {width}x{height} stride {stride}.");
-        }
-        long expectedPixelBytes = (long)stride * height;
-        if (bytes.Length - headerSize < expectedPixelBytes)
-        {
-            throw new CaptureException(
-                $"scksnap frame file {path} is truncated: expected {expectedPixelBytes} pixel bytes after the " +
-                $"{headerSize}-byte header, found {bytes.Length - headerSize}.");
-        }
-
-        byte[] pixels = new byte[expectedPixelBytes];
-        Array.Copy(bytes, (int)headerSize, pixels, 0, (int)expectedPixelBytes);
-
-        return new ScksnapFrame(
-            formatCode, width, height, stride, displayId,
-            RectPhysical.FromSize(boundsX, boundsY, boundsW, boundsH),
-            scale, edrHeadroom, isPrimary, pixels);
-    }
+        => ScksnapProtocol.ParseFrame(File.ReadAllBytes(path), $"scksnap frame file {path}");
 
     private (int ExitCode, string Stdout, string Stderr) Run(string verb, string? argument)
     {
         if (!File.Exists(_helperPath))
         {
             throw new CaptureException(
-                $"scksnap helper not found at \"{_helperPath}\" — it is built by the build-scksnap " +
+                $"scksnap helper not found at \"{_helperPath}\" - it is built by the build-scksnap " +
                 "GitHub Actions workflow and must ship next to the RoeSnip executable " +
                 "(or be pointed at via ROESNIP_SCKSNAP_PATH).");
         }

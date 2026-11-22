@@ -1382,9 +1382,10 @@ These are not work items. They are behaviors whose honest resolution on the name
 "document and degrade gracefully", either because the OS has no equivalent capability or
 because a correct implementation needs live hardware this repo cannot exercise.
 
-- Capture exclusion on Linux and macOS: X11/Wayland compositors expose no per-window
-  capture-exclusion API and Avalonia does not surface NSWindow.sharingType; overlay windows
-  may appear in re-captures there (Windows gets WDA_EXCLUDEFROMCAPTURE via item 02).
+- Capture exclusion on Linux: X11/Wayland compositors expose no per-window capture-exclusion
+  API; overlay windows may appear in re-captures there (Windows gets WDA_EXCLUDEFROMCAPTURE via
+  item 02). macOS excludes the parent RoeSnip app in scksnap's SCContentFilter (item 29), from
+  the first capture after RoeSnip has a window ScreenCaptureKit lists.
 - Global hotkey on Wayland: compositors forbid global key grabs, so SharpHook stays X11-only.
   AppShell/LinuxGlobalShortcuts.cs: GNOME gets a gsettings custom keybinding `roesnip` running
   `<exe> capture` (silent; skipped when another custom entry uses the key); other desktops use
@@ -1408,9 +1409,11 @@ because a correct implementation needs live hardware this repo cannot exercise.
   full-pool tuning needs a live Linux machine (tracked in PLAN-XPLAT.md section 7).
 - Elevated run-at-startup: schtasks/UAC is a Windows concept; the control is hidden on
   Linux/macOS rather than emulated (no root-daemon equivalent is appropriate for a tray app).
-- MP4 encoding and audio capture on macOS: no CoreAudio/AVFoundation backend; recording
-  degrades to GIF-only with audio toggles disabled. Linux has them through GStreamer (item 28)
-  and degrades the same way when GStreamer or an H.264 encoder is missing.
+- MP4 and audio degrade to GIF-only with audio toggles disabled on Linux when GStreamer or an
+  H.264 encoder is missing (item 28), and on macOS when `scksnap serve` cannot run (item 29).
+- macOS screen-recording indicator: the kept-open snapshot streams (item 29) keep macOS's
+  screen-capture indicator on while the tray runs, and macOS 15 may re-ask periodically
+  whether scksnap may keep capturing.
 - GNOME screen-sharing indicator: the kept-open Wayland screencast (item 27) shows GNOME's
   sharing icon in the top bar for as long as the tray runs; logged once at session open.
 - Self-update off Windows needs the AppImage (Linux) or the .app bundle (macOS, item 13e): a
@@ -1418,8 +1421,9 @@ because a correct implementation needs live hardware this repo cannot exercise.
   the passive new-version notice. The macOS bundle is ad-hoc signed and the signature changes
   every build, so macOS may ask for Screen Recording permission again after an update.
 - Windows staging-ring GPU readback (item 20) has no Linux/macOS equivalent; Wayland
-  recording crops straight from the screencast stream's newest frame (item 28), X11 and macOS
-  recording pay a full per-frame capture.
+  recording crops straight from the screencast stream's newest frame (item 28), macOS GIF
+  recording crops the kept-open SCStream frame in the helper and macOS MP4 is recorded by the
+  helper itself (item 29); X11 recording pays a full per-frame capture.
 - RegionOutline's click-through region-boundary marker (item 21) is Windows-only: it needs
   WS_EX_TRANSPARENT-style OS-level click-through with no portable equivalent (X11/Wayland have
   no comparable mechanism through Avalonia, and Wayland forbids a client positioning its own
@@ -1434,7 +1438,8 @@ because a correct implementation needs live hardware this repo cannot exercise.
   item 18); it stays unimplemented elsewhere.
 - Resume-from-sleep capture-stack re-warm (post-sleep resilience pass, see Notes) is
   Windows-only: Microsoft.Win32.SystemEvents.PowerModeChanged has no Linux/macOS analog
-  wired here. The scksnap backend holds no warm cache; the Wayland screencast (item 27) does,
+  wired here. scksnap serve closes its snapshot streams on NSWorkspace wake / screen-parameter
+  notifications and reopens them on the next capture (item 29); the Wayland screencast (item 27)
   and recovers by reopening with its token when a stream errors or the portal closes the
   session, which the first post-wake capture triggers if the wake killed it. Same for the flash Esc
   WH_KEYBOARD_LL hook and the flash watchdog's raw SetWindowPos: both live behind the flash
@@ -1927,3 +1932,19 @@ because a correct implementation needs live hardware this repo cannot exercise.
   screencast (`screencast-recording.token`, closed at hard stop; falls back to the cursorless
   snapshot session). RecordingCapabilities reports MP4/mic/loopback on Linux only when the
   GStreamer elements exist. X11 recording uses the polled X11 source with the same encoder.
+- [ ] 29-macos-serve-recording (code landed, not yet built or run on a Mac): `scksnap serve`
+  (`helpers/scksnap/Sources/Serve.swift`, length-prefixed protocol on stdin/stdout, mirrored by
+  `Platform.MacOS/ScksnapProtocol.cs`) is started once by the first capture (tray warmup) and
+  restarted after a crash by `ScksnapServer.cs`. Snapshots copy the latest frame of a kept-open
+  SCStream per display (`SnapshotStreams.swift`; HDR displays on macOS 15 + Apple Silicon use
+  the HDR stream preset, rendered to FP16 extended linear sRGB through Core Image), with
+  SCScreenshotManager as the per-display fallback and the one-shot `scksnap capture` process
+  behind that. A background (warmup) capture never shows the Screen Recording prompt; a denial
+  still surfaces as ScreenRecordingPermissionDeniedException. MP4: the helper records the region
+  itself (`Recorder.swift`: SCStream sourceRect + cursor + system audio, microphone through
+  AVCaptureSession, mixed into one AAC track, H.264 through AVAssetWriter); pause drops samples
+  and closes the gap, the mic is released while paused. The Core seams carry it unchanged
+  (`Platform.MacOS/MacRecording.cs`): the region source opens the take, the audio factory records
+  the toggles, the MP4 factory starts the recording, FinishAsync finalizes. A denied or
+  undecided microphone records the take without it and logs why. GIF takes crop the stream
+  frame in the helper (no cursor). Captures and recordings exclude RoeSnip's own windows.

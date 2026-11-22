@@ -24,6 +24,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\RoeSnip.Core\RoeSnip.Core.csproj" />
+    <!-- Pure scksnap protocol code; its registrations are gated on OperatingSystem.IsMacOS(). -->
+    <ProjectReference Include="..\..\src\RoeSnip.Platform.MacOS\RoeSnip.Platform.MacOS.csproj" />
   </ItemGroup>
 
 </Project>
