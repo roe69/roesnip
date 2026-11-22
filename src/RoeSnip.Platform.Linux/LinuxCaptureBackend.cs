@@ -5,9 +5,10 @@ namespace RoeSnip.Platform.Linux;
 /// <summary>Linux capture backend: an ordered capturer list in Core's
 /// <see cref="FallbackCaptureBackend"/>.
 ///   Wayland: the kept-open ScreenCast stream (<see cref="ScreenCastCapturer"/>), then the
-///     Screenshot portal as a last resort (it refuses while the screencast is open or opening,
-///     since GNOME plays a shutter sound per call). No X11 capturer: XGetImage refuses on Wayland.
-///   X11: XGetImage first, the Screenshot portal last.
+///     Screenshot portal, which refuses unless the desktop cannot screencast at all and never runs
+///     on GNOME (shutter sound and flash, <see cref="LinuxCapturePolicy"/>). No X11 capturer:
+///     XGetImage refuses on Wayland.
+///   X11: XGetImage first, the Screenshot portal last (not on GNOME).
 /// Monitor enumeration is XRandR (XWayland on Wayland) for every capturer.
 /// SdrWhiteNits=240 / AdvancedColorActive=false are pinned (no HDR concept on Linux in v1) and
 /// every frame is Bgra8Srgb with the SdrWhiteInBufferUnits=1.0 sentinel.</summary>

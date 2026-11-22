@@ -25,7 +25,8 @@ public interface IPortalRequest : IDBusObject
         Action<Exception>? onError = null);
 }
 
-/// <summary>Primary Linux capturer (PLAN-XPLAT.md §3.4): asks xdg-desktop-portal for a silent,
+/// <summary>Last-resort Linux capturer, only where the desktop cannot screencast and never on GNOME
+/// (<see cref="LinuxCapturePolicy"/>). Asks xdg-desktop-portal for a silent,
 /// non-interactive screenshot of the WHOLE virtual desktop (one PNG file URI), decodes it via
 /// SkiaSharp, and slices this monitor's rectangle out of it using the RandR-enumerated bounds —
 /// verifying the pixel scale at runtime by comparing the PNG's dimensions to the RandR virtual
@@ -60,29 +61,30 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
 
     // The reason last logged for using this capturer; logged again only when it changes.
     private static string? s_loggedFallbackReason;
+    private static string? s_loggedRefusal;
 
     public CapturedFrame Capture(MonitorInfo monitor)
     {
-        // GNOME plays a shutter sound and flashes the screen for every Screenshot portal call:
-        // only a last resort when the screencast cannot be opened (or this monitor is not shared),
-        // and never for a capture nobody asked for.
-        if (CaptureContext.IsBackground)
+        // GNOME plays a shutter sound and flashes the screen for every Screenshot portal call: never
+        // there, never for a capture nobody asked for, elsewhere only when the desktop cannot
+        // screencast at all (no ScreenCast portal / GStreamer).
+        var session = ScreenCastSession.Snapshot;
+        if (!LinuxCapturePolicy.ScreenshotPortalAllowed(LinuxCapturePolicy.IsGnomeDesktop,
+                CaptureContext.IsBackground, session.State, out string refusal))
         {
-            throw new CaptureException("screenshot portal not used for a background capture");
-        }
-        if (!ScreenCastSession.Snapshot.ScreenshotPortalAllowed(out string castReason))
-        {
-            var monitors = _enumerateMonitors();
-            if (!ScreenCastSession.Snapshot.GaveUpOnUnmapped(ScreenCastSession.MonitorsSignature(monitors)))
+            string why = $"{refusal}; screencast: {session.UnavailableReason}";
+            if (!CaptureContext.IsBackground &&
+                !string.Equals(Interlocked.Exchange(ref s_loggedRefusal, why), why, StringComparison.Ordinal))
             {
-                throw new CaptureException($"screenshot portal not used ({castReason})");
+                FileLog.Write($"RoeSnip: screenshot portal not used ({why})");
             }
-            castReason = $"monitor {monitor.DeviceName} is not in the screen share";
+            throw new CaptureException($"screenshot portal not used ({why})");
         }
+        string castReason = session.UnavailableReason;
         if (!string.Equals(Interlocked.Exchange(ref s_loggedFallbackReason, castReason), castReason, StringComparison.Ordinal))
         {
             FileLog.Write(
-                $"RoeSnip: screencast unavailable ({castReason}), falling back to the screenshot portal (GNOME plays a shutter sound)");
+                $"RoeSnip: screencast unavailable ({castReason}), falling back to the screenshot portal");
         }
 
         Task<DesktopShot> task;

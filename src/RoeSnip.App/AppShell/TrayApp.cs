@@ -65,6 +65,7 @@ public sealed class TrayApp : ITrayNotifier
     private NativeMenuItem? _copyAgainItem;
     private NativeMenuItem? _saveLastItem;
     private bool _exiting;
+    private bool _shareRequestInFlight; // UI thread only
 #if WINDOWS
     // Kept in a field so ExitApplication can DETACH it (SystemEvents is process-global): a
     // broadcast landing after teardown must not run a resume re-warm against a shut-down app.
@@ -345,7 +346,6 @@ public sealed class TrayApp : ITrayNotifier
             _hotkeyManager.WaylandStatusChanged += () => Dispatcher.UIThread.Post(MaybeShowWaylandHotkeyNotice);
             WarnIfPrintScreenConflict();
             MaybeShowWaylandHotkeyNotice();
-            MaybeOpenInstantCaptureSetup();
 
             switch (s_initialAction)
             {
@@ -392,49 +392,56 @@ public sealed class TrayApp : ITrayNotifier
         _settings = updated;
     }
 
-    /// <summary>Wayland, first run without a saved screen-share token: open Settings at "Allow
-    /// instant capture" once instead of letting the share dialog pop up on its own.</summary>
-    private void MaybeOpenInstantCaptureSetup()
+    /// <summary>Wayland, a user's capture before instant capture was allowed: asks for the screen
+    /// share (the Settings button's dialog) and captures from the stream once allowed. Never the
+    /// Screenshot portal in its place (GNOME's shutter sound and screen flash).</summary>
+    private async Task AskForScreenShareThenCaptureAsync()
     {
-        if (!InstantCaptureAccess.Applies || InstantCaptureAccess.IsAllowed || _settings.InstantCaptureSetupShown)
+        if (_shareRequestInFlight)
         {
+            FileLog.Write("RoeSnip: capture ignored: the screen-share dialog is still waiting for an answer");
             return;
         }
-
-        FileLog.Write("RoeSnip: instant capture not allowed yet; opening Settings at Allow instant capture.");
-        SaveFlag(_settings with { InstantCaptureSetupShown = true });
-        OpenSettings(focusInstantCapture: true);
-    }
-
-    /// <summary>After a user's capture went through the Screenshot portal (no screen share yet):
-    /// one toast pointing at the Settings button.</summary>
-    private void MaybeShowInstantCaptureHint()
-    {
-        if (!InstantCaptureAccess.Applies || InstantCaptureAccess.IsAllowed || _settings.InstantCaptureToastShown)
-        {
-            return;
-        }
-
-        ShowToast(
-            "Screenshots go through the desktop's screenshot tool (with its sound) until you allow instant " +
-            "capture. Click to open Settings.",
-            isError: false,
-            durationMs: 8000,
-            onClick: () => OpenSettings(focusInstantCapture: true));
-        SaveFlag(_settings with { InstantCaptureToastShown = true });
-    }
-
-    private void SaveFlag(RoeSnipSettings updated)
-    {
+        _shareRequestInFlight = true;
         try
         {
-            SettingsStore.Save(updated);
+            FileLog.Write($"RoeSnip: capture before instant capture was allowed ({InstantCaptureAccess.UnavailableReason}); asking for the screen share");
+            ShowToast(
+                "Allow RoeSnip to see your screens once: pick Entire screen / all monitors, then Share. " +
+                "Next time PrintScreen is instant.",
+                isError: false,
+                durationMs: 10000,
+                onClick: null);
+
+            ScreenShareRequestResult result;
+            try
+            {
+                result = await InstantCaptureAccess.RequestAsync("a capture");
+            }
+            catch (Exception ex)
+            {
+                FileLog.Write($"RoeSnip: screen-share request failed: {ex.Message}");
+                result = ScreenShareRequestResult.Declined;
+            }
+            FileLog.Write($"RoeSnip: screen share for a capture: {result}");
+
+            if (result == ScreenShareRequestResult.Declined)
+            {
+                ShowToast(
+                    "No screenshot taken: screen access was not allowed. Press PrintScreen again, " +
+                    "or use Settings > Allow instant capture.",
+                    isError: true,
+                    durationMs: 8000,
+                    onClick: () => OpenSettings(focusInstantCapture: true));
+                return;
+            }
+            // Allowed: the stream is open. Unsupported: the backend's policy decides (never GNOME's portal).
+            TriggerCaptureCore(mayAskForShare: false);
         }
-        catch (Exception ex)
+        finally
         {
-            FileLog.Write($"RoeSnip: failed to persist a one-time notice flag: {ex.Message}");
+            _shareRequestInFlight = false;
         }
-        _settings = updated;
     }
 
     private void OnInstanceSignal(InstanceSignal signal)
@@ -458,7 +465,9 @@ public sealed class TrayApp : ITrayNotifier
         });
     }
 
-    private void TriggerCapture()
+    private void TriggerCapture() => TriggerCaptureCore(mayAskForShare: true);
+
+    private void TriggerCaptureCore(bool mayAskForShare)
     {
         // A recording is live: PrtScr stops+saves it instead of starting a new capture flow (item
         // 21d, WPF reference TrayApp.cs:255-260). Deliberately BEFORE MarkTriggerTimestamp below: a
@@ -467,6 +476,14 @@ public sealed class TrayApp : ITrayNotifier
         if (Recording.RecordingOrchestrator.IsActive)
         {
             Recording.RecordingOrchestrator.RequestPrtScrAction();
+            return;
+        }
+
+        // Wayland before instant capture is allowed: ask for the share first, then capture from the
+        // stream. Before MarkTriggerTimestamp so capture-to-overlay measures the stream path.
+        if (mayAskForShare && InstantCaptureAccess.CaptureMustAskFirst)
+        {
+            _ = AskForScreenShareThenCaptureAsync();
             return;
         }
 
@@ -536,7 +553,6 @@ public sealed class TrayApp : ITrayNotifier
             // Re-enumerate for the NEXT trigger's flash placement off the hot path (monitors may
             // have changed while the overlay was up).
             RefreshMonitorCacheInBackground();
-            Dispatcher.UIThread.Post(MaybeShowInstantCaptureHint);
         }
     }
 

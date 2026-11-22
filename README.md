@@ -128,11 +128,12 @@ X11 sessions are unaffected: the hook starts normally there and the
 PrintScreen hotkey works as on Windows.
 
 **Wayland instant capture.** Instant screenshots read a kept-open screen
-share. Its dialog never opens on its own: on first run RoeSnip opens
-Settings at "Instant capture", and the "Allow instant capture" button shows
-the desktop's share dialog (pick all monitors / Entire screen). After that the
-share reopens silently on every start. Until then captures go through the
-desktop's screenshot tool (with its shutter sound).
+share. Its dialog never opens on its own: the first PrintScreen (or
+Settings' "Allow instant capture" button) shows the desktop's share dialog
+(pick all monitors / Entire screen, then Share) and the capture follows once
+allowed. After that the share reopens silently on every start. The desktop's
+screenshot tool (shutter sound and screen flash) is never used on GNOME, and
+elsewhere only when the desktop has no screen-share support.
 
 ## macOS
 

@@ -12,17 +12,17 @@ namespace RoeSnip.Platform.Linux;
 /// The restore token is saved per purpose so the share dialog appears once; a restore that still
 /// shows a dialog means the token was rejected (GNOME then saves a new one).
 ///
-/// Opening runs on a background task. Callers wait for it with a bound; while an open is in
-/// flight the Screenshot portal must not be used (GNOME plays a shutter sound for every call),
-/// see <see cref="ScreenshotPortalAllowed"/>.</summary>
+/// Opening runs on a background task. Callers wait for it with a bound. The Screenshot portal is
+/// used only when the desktop cannot screencast at all (<see cref="State"/> Unsupported) and never
+/// on GNOME (shutter sound and flash), see <see cref="LinuxCapturePolicy"/>.</summary>
 internal sealed class ScreenCastSession
 {
     public static readonly ScreenCastSession Snapshot = new("snapshot", ScreenCastPortal.CursorHidden, startAllStreams: true, needsPermission: true);
     public static readonly ScreenCastSession Recording = new("recording", ScreenCastPortal.CursorEmbedded, startAllStreams: false, needsPermission: false);
 
     /// <summary>Why the snapshot session does not open: no saved token and the user has not pressed
-    /// Settings' "Allow instant capture" (the share dialog never opens on its own).</summary>
-    public const string NotAllowedReason = "instant capture not allowed yet (Settings > Allow instant capture)";
+    /// asked (a capture or Settings' "Allow instant capture"); the dialog never opens on its own.</summary>
+    public const string NotAllowedReason = "instant capture not allowed yet (press PrintScreen or Settings > Allow instant capture)";
 
     private static readonly TimeSpan DialogTimeout = TimeSpan.FromSeconds(180);
     private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(20);
@@ -38,7 +38,8 @@ internal sealed class ScreenCastSession
     private Task<Live?>? _opening;
     private Live? _live;
     private string? _deniedReason;     // the user cancelled the dialog: never re-ask this process
-    private string? _lastFailure;      // last open failed: Screenshot portal fallback allowed
+    private string? _lastFailure;      // last open failed (retried after RetryAfterFailureMs)
+    private string? _unsupportedReason; // the desktop cannot screencast: never retried this process
     private long _retryAfterTick;
     private long _lastOpenStartTick;
     private bool _forceDialogNext;
@@ -69,8 +70,42 @@ internal sealed class ScreenCastSession
         get { lock (_gate) { return _live is { IsDead: false }; } }
     }
 
+    /// <summary>The snapshot screencast state for <see cref="LinuxCapturePolicy"/>; X11 is Unsupported.</summary>
+    public ScreenCastState State
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (!IsWaylandSession || _unsupportedReason is not null) return ScreenCastState.Unsupported;
+                if (_live is { IsDead: false }) return ScreenCastState.Live;
+                if (_opening is { IsCompleted: false }) return ScreenCastState.Opening;
+                if (_deniedReason is not null) return ScreenCastState.Denied;
+                if (_lastFailure is not null) return ScreenCastState.Failed;
+                return ScreenCastState.Idle;
+            }
+        }
+    }
+
+    /// <summary>Why the screencast cannot be used right now (for logs); empty when live.</summary>
+    public string UnavailableReason
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (!IsWaylandSession) return "X11 session";
+                if (_unsupportedReason is not null) return _unsupportedReason;
+                if (_live is { IsDead: false }) return "";
+                if (_opening is { IsCompleted: false }) return "screencast is still opening";
+                return _deniedReason ?? _lastFailure ?? (_needsPermission && !_dialogRequested && !HasSavedToken
+                    ? NotAllowedReason : "screencast not opened yet");
+            }
+        }
+    }
+
     /// <summary>The share dialog is allowed only with a saved token (silent restore) or after the
-    /// user asked for it from Settings. Logs the refusal once per process.</summary>
+    /// user asked for it (a capture or Settings). Logs the refusal once per process.</summary>
     private bool NotAllowedLocked()
     {
         if (!_needsPermission || _dialogRequested || HasSavedToken)
@@ -84,42 +119,35 @@ internal sealed class ScreenCastSession
         return true;
     }
 
-    /// <summary>Settings' "Allow instant capture": opens the session with the share dialog. True
-    /// when the session ends up open. Clears an earlier refusal, since the user asked again.</summary>
-    public Task<bool> RequestPermissionAsync()
+    /// <summary>Opens the session with the share dialog (Settings' "Allow instant capture", or a
+    /// user's capture before it was allowed). Clears an earlier refusal, since the user asked again.</summary>
+    public Task<ScreenShareRequestResult> RequestPermissionAsync(string source)
     {
         Task<Live?> task;
         lock (_gate)
         {
+            if (!IsWaylandSession || _unsupportedReason is not null)
+            {
+                return Task.FromResult(ScreenShareRequestResult.Unsupported);
+            }
             _dialogRequested = true;
             _deniedReason = null;
             _lastFailure = null;
             _retryAfterTick = 0;
-            if (_live is { IsDead: false }) return Task.FromResult(true);
+            if (_live is { IsDead: false }) return Task.FromResult(ScreenShareRequestResult.Allowed);
             if (_live is not null) DropLiveLocked("a stream died");
             if (_opening is null || _opening.IsCompleted) _opening = StartOpenLocked();
             task = _opening;
         }
-        FileLog.Write($"RoeSnip: screencast {_purpose} share dialog requested from Settings");
-        return task.ContinueWith(t => t.Result is not null, TaskScheduler.Default);
-    }
-
-    /// <summary>True when the Screenshot portal may be used as a last resort: not Wayland, or the
-    /// screencast cannot be opened (denied, unsupported, last open failed) and no open is in flight.
-    /// <paramref name="reason"/> carries why the screencast is unavailable.</summary>
-    public bool ScreenshotPortalAllowed(out string reason)
-    {
-        lock (_gate)
+        FileLog.Write($"RoeSnip: screencast {_purpose} share dialog requested from {source}");
+        return task.ContinueWith(t =>
         {
-            if (!IsWaylandSession) { reason = "X11 session"; return true; }
-            if (_deniedReason is not null) { reason = _deniedReason; return true; }
-            if (_opening is { IsCompleted: false }) { reason = "screencast is still opening"; return false; }
-            if (_live is not null) { reason = "screencast is open"; return false; }
-            if (_lastFailure is not null) { reason = _lastFailure; return true; }
-            if (NotAllowedLocked()) { reason = NotAllowedReason; return true; }
-            reason = "screencast not opened yet";
-            return false;
-        }
+            if (t.Result is not null) return ScreenShareRequestResult.Allowed;
+            lock (_gate)
+            {
+                return _unsupportedReason is not null ? ScreenShareRequestResult.Unsupported : ScreenShareRequestResult.Declined;
+            }
+        }, TaskScheduler.Default);
     }
 
     /// <summary>Returns the open session, starting an open if none is live, and waits up to
@@ -131,6 +159,7 @@ internal sealed class ScreenCastSession
         {
             if (_live is { IsDead: false } live) { reason = ""; return live; }
             if (_live is not null) DropLiveLocked("a stream died");
+            if (_unsupportedReason is not null) { reason = _unsupportedReason; return null; }
             if (_deniedReason is not null) { reason = _deniedReason; return null; }
             if (_opening is null || _opening.IsCompleted)
             {
@@ -153,7 +182,7 @@ internal sealed class ScreenCastSession
         Live? result = task.Result;
         lock (_gate)
         {
-            reason = result is null ? (_deniedReason ?? _lastFailure ?? "screencast open failed") : "";
+            reason = result is null ? (_unsupportedReason ?? _deniedReason ?? _lastFailure ?? "screencast open failed") : "";
         }
         return result;
     }
@@ -164,7 +193,7 @@ internal sealed class ScreenCastSession
     {
         lock (_gate)
         {
-            if (_live is { IsDead: false } || _deniedReason is not null) return;
+            if (_live is { IsDead: false } || _deniedReason is not null || _unsupportedReason is not null) return;
             if (_opening is { IsCompleted: false }) return;
             if (_lastFailure is not null && Environment.TickCount64 < _retryAfterTick) return;
             if (NotAllowedLocked()) return;
@@ -198,16 +227,6 @@ internal sealed class ScreenCastSession
                 (_forceDialogNext ? " with the share dialog" : " with the saved token"));
             DropLiveLocked("monitor topology changed");
             _opening = StartOpenLocked(monitorsSignature);
-        }
-    }
-
-    /// <summary>True once the share dialog was already shown again for this topology and a
-    /// monitor is still not shared: that monitor may use the Screenshot portal.</summary>
-    public bool GaveUpOnUnmapped(string monitorsSignature)
-    {
-        lock (_gate)
-        {
-            return _dialogAttemptedForTopology && _live is not null && _live.TopologySignature == monitorsSignature;
         }
     }
 
@@ -268,6 +287,10 @@ internal sealed class ScreenCastSession
                     {
                         _deniedReason = reason;
                     }
+                    if (ex is ScreenCastUnsupportedException)
+                    {
+                        _unsupportedReason = reason;
+                    }
                 }
                 FileLog.Write($"RoeSnip: screencast {_purpose} session failed to open: {reason}");
                 return null;
@@ -293,20 +316,20 @@ internal sealed class ScreenCastSession
         var watch = Stopwatch.StartNew();
         if (!Gst.Available)
         {
-            throw new InvalidOperationException("GStreamer unavailable: " + Gst.UnavailableReason);
+            throw new ScreenCastUnsupportedException("GStreamer unavailable: " + Gst.UnavailableReason);
         }
         foreach (var element in new[] { "pipewiresrc", "videoconvert", "appsink" })
         {
             if (!Gst.HasElement(element))
             {
-                throw new InvalidOperationException($"GStreamer element '{element}' is not installed");
+                throw new ScreenCastUnsupportedException($"GStreamer element '{element}' is not installed");
             }
         }
 
         string? address = Address.Session;
         if (string.IsNullOrEmpty(address))
         {
-            throw new InvalidOperationException("no D-Bus session bus");
+            throw new ScreenCastUnsupportedException("no D-Bus session bus");
         }
 
         var connection = new Connection(address);
@@ -325,7 +348,7 @@ internal sealed class ScreenCastSession
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException("the ScreenCast portal is not available: " + ex.Message);
+                throw new ScreenCastUnsupportedException("the ScreenCast portal is not available: " + ex.Message);
             }
             uint cursorModes = 0;
             try { cursorModes = await portal.GetAsync<uint>("AvailableCursorModes").ConfigureAwait(false); }
@@ -548,4 +571,10 @@ internal sealed class ScreenCastSession
             try { _connection.Dispose(); } catch { }
         }
     }
+}
+
+/// <summary>The desktop cannot screencast at all (no portal, no GStreamer pipewiresrc, no bus).</summary>
+internal sealed class ScreenCastUnsupportedException : InvalidOperationException
+{
+    public ScreenCastUnsupportedException(string message) : base(message) { }
 }

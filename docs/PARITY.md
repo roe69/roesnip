@@ -1398,10 +1398,11 @@ because a correct implementation needs live hardware this repo cannot exercise.
   restores it and moves the hotkey to Ctrl+PrintScreen. The one-time toast and Settings caption
   remain for desktops where nothing works. No uninstall path exists to restore the backup from.
 - Wayland instant capture: the snapshot screencast's share dialog never opens on its own
-  (startup, warmup, background reopen). Without a saved token Settings opens once at "Instant
-  capture" and its "Allow instant capture" button opens the dialog (Platform.Linux
-  InstantCapture.RequestAsync); captures meanwhile use the Screenshot portal and show one toast
-  pointing at that button.
+  (startup, warmup, background reopen). Without a saved token a user's capture (TrayApp
+  TriggerCapture) or Settings' "Allow instant capture" opens it (Platform.Linux
+  InstantCapture.RequestAsync); the capture then runs from the stream, a declined dialog takes
+  no capture. Core LinuxCapturePolicy: the Screenshot portal never runs on GNOME, elsewhere only
+  when the screencast is unsupported (no portal / GStreamer / bus).
 - Instant-dim window parking on Wayland: clients cannot position windows, so the parked
   flash/overlay pool cannot exist there; Linux gets the warmup slice (item 17) only, and
   full-pool tuning needs a live Linux machine (tracked in PLAN-XPLAT.md section 7).

@@ -9,8 +9,9 @@ namespace RoeSnip.Platform.Linux;
 /// taken synchronously when the trigger's capture runs, before any overlay window exists.
 ///
 /// The first call (the tray warmup capture) opens the session silently from a saved restore token.
-/// Without a token nothing opens until Settings' "Allow instant capture" shows the share dialog
-/// (<see cref="InstantCapture"/>); captures meanwhile use the Screenshot portal.
+/// Without a token nothing opens until the share dialog is asked for (<see cref="InstantCapture"/>:
+/// the first user capture or Settings' "Allow instant capture"); the Screenshot portal is never the
+/// stand-in on GNOME.
 /// Every failure is a transient <see cref="CaptureException"/>, never memoized.</summary>
 public sealed class ScreenCastCapturer : IScreenCapturer
 {
