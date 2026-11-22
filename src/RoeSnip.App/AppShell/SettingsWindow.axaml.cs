@@ -25,6 +25,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
 {
     private readonly RoeSnipSettings _original;
     private readonly Action<RoeSnipSettings> _onSaved;
+    private readonly string? _waylandHotkeyStatus;
     private readonly bool _hotkeyUnavailableOnWayland;
 
     // Item 14 / WPF Bugs 2 & 5 (SettingsWindow.xaml.cs:34-43): the global hotkey and this
@@ -71,10 +72,11 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     private bool _loadingElevationState;
 
     // Parameterless ctor for the XAML loader/previewer only.
-    public SettingsWindow() : this(RoeSnipSettings.Default, hotkeyUnavailableOnWayland: false, _ => { }, () => { }, () => { }, () => { }) { }
+    public SettingsWindow() : this(RoeSnipSettings.Default, waylandHotkeyStatus: null, hotkeyUnavailableOnWayland: false, _ => { }, () => { }, () => { }, () => { }) { }
 
     public SettingsWindow(
         RoeSnipSettings settings,
+        string? waylandHotkeyStatus,
         bool hotkeyUnavailableOnWayland,
         Action<RoeSnipSettings> onSaved,
         Action suspendGlobalHotkey,
@@ -85,6 +87,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
 
         _original = settings;
         _current = settings;
+        _waylandHotkeyStatus = waylandHotkeyStatus;
         _hotkeyUnavailableOnWayland = hotkeyUnavailableOnWayland;
         _onSaved = onSaved;
         _suspendGlobalHotkey = suspendGlobalHotkey;
@@ -128,7 +131,15 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     {
         HotkeyDisplay.Text = HotkeyDisplayFormat.DescribeHotkey(_pendingModifiers, _pendingVirtualKey);
         RefreshShortcutDisplays();
-        WaylandHotkeyCaption.IsVisible = _hotkeyUnavailableOnWayland;
+        // Wayland hotkey status (null off Wayland): danger red only when no shortcut reaches RoeSnip.
+        WaylandHotkeyCaption.IsVisible = _waylandHotkeyStatus is not null;
+        WaylandHotkeyCaption.Text = _waylandHotkeyStatus ?? string.Empty;
+        if (!_hotkeyUnavailableOnWayland &&
+            this.TryFindResource("RlTextMutedBrush", ActualThemeVariant, out object? mutedBrush) &&
+            mutedBrush is Avalonia.Media.IBrush muted)
+        {
+            WaylandHotkeyCaption.Foreground = muted;
+        }
         SaveDirectoryBox.Text = _original.SaveDirectory;
         AutoSaveHdrCheckBox.IsChecked = _original.AutoSaveHdrCopy;
         CopyOnSelectCheckBox.IsChecked = _original.CopyOnSelect;

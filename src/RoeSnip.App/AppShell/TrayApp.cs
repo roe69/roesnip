@@ -339,6 +339,7 @@ public sealed class TrayApp : ITrayNotifier
 
             _hotkeyManager = new HotkeyManager(() => Dispatcher.UIThread.Post(TriggerCapture));
             _hotkeyManager.Register(_settings);
+            _hotkeyManager.WaylandStatusChanged += () => Dispatcher.UIThread.Post(MaybeShowWaylandHotkeyNotice);
             WarnIfPrintScreenConflict();
             MaybeShowWaylandHotkeyNotice();
 
@@ -358,20 +359,19 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
-    /// <summary>The one-time Wayland no-global-hotkey notice: fires only when HotkeyManager
-    /// determined the hook can never start on this session (libuiohook is X11-only) and the flag
-    /// hasn't already been shown. The flag is persisted immediately after the toast is raised, so
+    /// <summary>The one-time Wayland hotkey notice: shows HotkeyManager.WaylandHotkeyStatus (how the
+    /// capture shortcut works on this session, or that none does) once, also when the status
+    /// arrives late (WaylandStatusChanged, a portal bind answering after startup). The flag is persisted immediately after the toast is raised, so
     /// a crash-loop during startup can never show it more than once ever.</summary>
     private void MaybeShowWaylandHotkeyNotice()
     {
-        if (_hotkeyManager is null || !_hotkeyManager.IsUnavailableOnWayland || _settings.WaylandHotkeyNoticeShown)
+        if (_hotkeyManager?.WaylandHotkeyStatus is not string status || _settings.WaylandHotkeyNoticeShown)
         {
             return;
         }
 
         ShowToast(
-            "Global hotkeys aren't available on Wayland — bind a keyboard shortcut to `RoeSnip capture` " +
-            "in your desktop settings",
+            status,
             isError: false,
             durationMs: 8000,
             onClick: null);
@@ -498,10 +498,10 @@ public sealed class TrayApp : ITrayNotifier
             return;
         }
 
-        bool hotkeyUnavailableOnWayland = _hotkeyManager?.IsUnavailableOnWayland == true;
         var window = new SettingsWindow(
             _settings,
-            hotkeyUnavailableOnWayland,
+            _hotkeyManager?.WaylandHotkeyStatus,
+            _hotkeyManager?.IsUnavailableOnWayland == true,
             updated => _ = ApplyUpdatedSettingsAsync(updated),
             // Bugs 2 & 5 (SettingsWindow's own field-level doc comment): suspend the hotkey only
             // for the (brief) span it is actively capturing a new combination; Unregister/Register
