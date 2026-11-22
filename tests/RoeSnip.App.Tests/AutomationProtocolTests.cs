@@ -539,7 +539,7 @@ public class AutomationProtocolTests
             new[]
             {
                 "state", "trigger", "select", "record", "preset", "fps", "chrome", "escape", "screenshot",
-                "confirm", "settings", "lastcapture", "tray", "zoom",
+                "confirm", "settings", "lastcapture", "tray", "zoom", "toast",
             },
             AutomationProtocol.KnownCommands);
     }

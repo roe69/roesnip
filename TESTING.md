@@ -280,6 +280,11 @@ mouse wheel uses (`OverlayWindow.ApplyLoupeRadius`), so `state` then shows the m
 `loupeRadius`/`pointerScale`. Errors outside an overlay session. The zoom is per session; nothing
 persists.
 
+#### `toast` (cross-platform app only)
+
+`{"cmd":"toast","text":"..."}` shows an info toast through `TrayApp.ShowToast`, so its placement can
+be checked with a `screenshot` and the log line `toast placed at X,Y (source)`.
+
 #### `trigger`
 
 Opens the capture overlay — the same action as `--signal-capture` / the hotkey / the tray icon's
