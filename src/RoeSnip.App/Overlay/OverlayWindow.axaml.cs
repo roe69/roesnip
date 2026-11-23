@@ -103,7 +103,6 @@ public partial class OverlayWindow : Window
 
     private double _scaleX = 1.0, _scaleY = 1.0;
     private RectPhysical? _selectionPx;
-    private Avalonia.PixelRect? _linuxBoundsPx;
 
     /// <summary>The frozen preview bitmap backing <see cref="_previewImage"/>. Kept in its own
     /// field (O4 audit fix) so it can be explicitly disposed — WriteableBitmap owns native/GPU
@@ -370,15 +369,6 @@ public partial class OverlayWindow : Window
         // partway through the session, or the window was closed before ever being shown).
         Closed += (_, _) => DisposePreviewBitmap();
         Closed += (_, _) => _toolCursorCache.Dispose();
-        Closed += (_, _) =>
-        {
-            if (_linuxBoundsPx is not null)
-            {
-#pragma warning disable CA1416
-                RoeSnip.Platform.Linux.LinuxOverlayHelper.ReleaseOverlay();
-#pragma warning restore CA1416
-            }
-        };
 
         // Tunnel-routed handlers are the Avalonia analog of WPF's Preview* events — they run
         // before any child control (toolbar buttons, text editor) sees the event.
@@ -402,20 +392,6 @@ public partial class OverlayWindow : Window
         // different effective scale than the Screen did.
         Opened += (_, _) =>
         {
-            if (_linuxBoundsPx is { } lb)
-            {
-                var handle = TryGetPlatformHandle();
-                if (handle is not null)
-                {
-                    // _linuxBoundsPx is only set when OperatingSystem.IsLinux() is true; CA1416
-                    // cannot follow the indirect guard.
-#pragma warning disable CA1416
-                    RoeSnip.Platform.Linux.LinuxOverlayHelper.SetOverrideRedirect(
-                        handle.Handle, lb.X, lb.Y, lb.Width, lb.Height);
-#pragma warning restore CA1416
-                }
-            }
-
             // D6 parity (WPF OverlayWindow.xaml.cs:536-555): exclude this overlay window from
             // screen capture. The platform handle only exists once Opened fires, so this can't
             // move any earlier. See WindowCaptureExclusion's doc comment for why permanent
@@ -493,9 +469,6 @@ public partial class OverlayWindow : Window
         Position = new PixelPoint(bounds.Left, bounds.Top);
         Width = bounds.Width / scale;
         Height = bounds.Height / scale;
-        _linuxBoundsPx = OperatingSystem.IsLinux()
-            ? new Avalonia.PixelRect(bounds.Left, bounds.Top, bounds.Width, bounds.Height)
-            : null;
 
         PropagateDeviceScale();
         UpdateDimGeometry();
