@@ -17,21 +17,23 @@ namespace RoeSnip.App.Overlay;
 /// src/RoeSnip/Overlay/SelectionAdorner.cs.</summary>
 public sealed class SelectionAdorner : Control
 {
-    private const double HandleSizePx = 10.0;
     private const double HandleHitPaddingPx = 7.0;
 
-    private static readonly IBrush BorderBrushColor = new SolidColorBrush(Color.FromRgb(0x2E, 0xC8, 0xFF));
-    private static readonly IBrush HandleFill = Brushes.White;
-    private static readonly IBrush BadgeBackground = new SolidColorBrush(Color.FromArgb(0xD0, 0x10, 0x10, 0x12));
+    // Two-tone border: a dark under-stroke for contrast on light content, light dashes on top.
+    // Internal: Magnifier reuses these for the loupe's selection-border preview.
+    internal static readonly IPen BorderUnderPen = new Pen(
+        new SolidColorBrush(Color.FromArgb(0xB0, 0x00, 0x00, 0x00)), 1.0);
+    internal static readonly IPen BorderDashPen = new Pen(
+        new SolidColorBrush(Color.FromArgb(0xFF, 0xDC, 0xDC, 0xE0)), 1.0,
+        new DashStyle(new double[] { 3, 3 }, 0));
+    private static readonly IPen CornerUnderPen = new Pen(
+        new SolidColorBrush(Color.FromArgb(0xC0, 0x00, 0x00, 0x00)), 3.0);
+    private static readonly IPen CornerPen = new Pen(
+        new SolidColorBrush(Color.FromArgb(0xFF, 0xF5, 0xF5, 0xF8)), 2.0);
 
-    /// <summary>The exact border pen this adorner draws the live crop edge with — widened from a
-    /// per-render allocation to a shared field (capture-fidelity spec item 3) so <see cref="Magnifier"/>
-    /// can reuse the identical stroke when previewing the selection border inside the loupe while
-    /// dragging a new selection, making that preview unambiguously "this is the crop edge" rather than
-    /// a made-up style. Avalonia-side counterpart to the WPF app's two frozen BorderUnderPen/
-    /// BorderDashPen fields — this app keeps its own single-tone border language (not the WPF
-    /// two-tone dash) both here and inside the loupe; see CAPTURE-FIDELITY-SPEC.md item 3.</summary>
-    internal static readonly IPen BorderPen = new Pen(BorderBrushColor, 1.5);
+    private const double CornerArmDip = 13.0;
+
+    private static readonly IBrush BadgeBackground = new SolidColorBrush(Color.FromArgb(0xD0, 0x10, 0x10, 0x12));
 
     public RectPhysical? SelectionPx { get; set; }
     public double DeviceScaleX { get; set; } = 1.0;
@@ -128,21 +130,15 @@ public sealed class SelectionAdorner : Control
 
         var dipRect = new Rect(r.Left / sx, r.Top / sy, Math.Max(0, r.Width / sx), Math.Max(0, r.Height / sy));
 
-        dc.DrawRectangle(null, BorderPen, dipRect);
+        // Snap to the pixel grid so a 1px line stays crisp.
+        var edgeRect = new Rect(
+            Math.Round(dipRect.Left) + 0.5, Math.Round(dipRect.Top) + 0.5,
+            Math.Max(0, Math.Round(dipRect.Width) - 1), Math.Max(0, Math.Round(dipRect.Height) - 1));
 
-        double handleDip = HandleSizePx / Math.Max(sx, sy);
-        foreach (var (center, real) in HandleCentersWithRealFlag(dipRect))
-        {
-            if (!real)
-            {
-                // Cross-monitor selection: a handle sitting on a monitor-boundary clip (not a real
-                // edge of the true selection) has nothing to grab there — see RealEdges' own doc
-                // comment. The dashed border above still marks the clip either way.
-                continue;
-            }
-            var handleRect = new Rect(center.X - handleDip / 2, center.Y - handleDip / 2, handleDip, handleDip);
-            dc.DrawRectangle(HandleFill, BorderPen, handleRect);
-        }
+        dc.DrawRectangle(null, BorderUnderPen, edgeRect);
+        dc.DrawRectangle(null, BorderDashPen, edgeRect);
+
+        DrawCornerBrackets(dc, edgeRect, RealEdges);
 
         if (SuppressBadge)
         {
@@ -166,25 +162,39 @@ public sealed class SelectionAdorner : Control
         dc.DrawText(formatted, new Point(badgeRect.Left + badgePad, badgeRect.Top + badgePad));
     }
 
-    /// <summary>Same 8 handle positions as before, paired with whether that handle sits on a REAL
-    /// edge of the true selection per <see cref="RealEdges"/> (a corner needs BOTH adjacent edges
-    /// real; a side handle needs just its own edge) — every ordinary, non-spanning selection has
-    /// RealEdges == All, so every handle comes back true there, matching the pre-spanning behavior
-    /// exactly.</summary>
-    private IEnumerable<(Point Center, bool Real)> HandleCentersWithRealFlag(Rect r)
+    private static void DrawCornerBrackets(DrawingContext dc, Rect r, SelectionEdges realEdges)
     {
-        bool leftReal = (RealEdges & SelectionEdges.Left) != 0;
-        bool topReal = (RealEdges & SelectionEdges.Top) != 0;
-        bool rightReal = (RealEdges & SelectionEdges.Right) != 0;
-        bool bottomReal = (RealEdges & SelectionEdges.Bottom) != 0;
+        double arm = Math.Min(CornerArmDip, Math.Min(r.Width, r.Height) / 2);
+        if (arm <= 1)
+            return;
 
-        yield return (new Point(r.Left, r.Top), leftReal && topReal);
-        yield return (new Point(r.Left + r.Width / 2, r.Top), topReal);
-        yield return (new Point(r.Right, r.Top), rightReal && topReal);
-        yield return (new Point(r.Right, r.Top + r.Height / 2), rightReal);
-        yield return (new Point(r.Right, r.Bottom), rightReal && bottomReal);
-        yield return (new Point(r.Left + r.Width / 2, r.Bottom), bottomReal);
-        yield return (new Point(r.Left, r.Bottom), leftReal && bottomReal);
-        yield return (new Point(r.Left, r.Top + r.Height / 2), leftReal);
+        bool topLeftReal = (realEdges & (SelectionEdges.Left | SelectionEdges.Top)) == (SelectionEdges.Left | SelectionEdges.Top);
+        bool topRightReal = (realEdges & (SelectionEdges.Right | SelectionEdges.Top)) == (SelectionEdges.Right | SelectionEdges.Top);
+        bool bottomRightReal = (realEdges & (SelectionEdges.Right | SelectionEdges.Bottom)) == (SelectionEdges.Right | SelectionEdges.Bottom);
+        bool bottomLeftReal = (realEdges & (SelectionEdges.Left | SelectionEdges.Bottom)) == (SelectionEdges.Left | SelectionEdges.Bottom);
+
+        foreach (var pen in new[] { CornerUnderPen, CornerPen })
+        {
+            if (topLeftReal)
+            {
+                dc.DrawLine(pen, new Point(r.Left, r.Top), new Point(r.Left + arm, r.Top));
+                dc.DrawLine(pen, new Point(r.Left, r.Top), new Point(r.Left, r.Top + arm));
+            }
+            if (topRightReal)
+            {
+                dc.DrawLine(pen, new Point(r.Right, r.Top), new Point(r.Right - arm, r.Top));
+                dc.DrawLine(pen, new Point(r.Right, r.Top), new Point(r.Right, r.Top + arm));
+            }
+            if (bottomRightReal)
+            {
+                dc.DrawLine(pen, new Point(r.Right, r.Bottom), new Point(r.Right - arm, r.Bottom));
+                dc.DrawLine(pen, new Point(r.Right, r.Bottom), new Point(r.Right, r.Bottom - arm));
+            }
+            if (bottomLeftReal)
+            {
+                dc.DrawLine(pen, new Point(r.Left, r.Bottom), new Point(r.Left + arm, r.Bottom));
+                dc.DrawLine(pen, new Point(r.Left, r.Bottom), new Point(r.Left, r.Bottom - arm));
+            }
+        }
     }
 }

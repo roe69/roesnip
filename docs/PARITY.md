@@ -1882,15 +1882,10 @@ because a correct implementation needs live hardware this repo cannot exercise.
   edge pen rather than inventing a new style: WPF widened `SelectionAdorner`'s private
   `BorderUnderPen`/`BorderDashPen` fields to `internal` and draws both (its two-tone dark-understroke-
   plus-light-dash look); Avalonia extracted its per-render `new Pen(BorderBrushColor, 1.5)` allocation
-  into a shared `internal static readonly IPen BorderPen` field on `SelectionAdorner` and draws that
-  one pen (its existing single-tone look) — deliberately NOT porting WPF's two-tone dash into
-  Avalonia in this pass, an unrelated larger visual-parity change out of scope here.
-  **TODO(parity, no owner assigned yet):** this means the loupe border preview is NOT visually
-  identical across apps (WPF two-tone dark-understroke-plus-light-dash vs. Avalonia single-tone
-  cyan) — same as the two apps' existing on-screen crop borders already weren't. If pixel-identical
-  loupe/crop borders become a requirement, port WPF's `BorderUnderPen`/`BorderDashPen` pair into
-  Avalonia's `SelectionAdorner` (and reuse it here) in one pass covering both the crop border and
-  the loupe preview, rather than treating them as separate asks. Both draw the
+  into shared `internal static readonly IPen BorderUnderPen`/`BorderDashPen` fields on
+  `SelectionAdorner` (ported from WPF's identical pair: dark under-stroke + light dashes, corner
+  L-brackets with `CornerUnderPen`/`CornerPen`, pixel-snap offset) and draws both. The loupe
+  preview in `Magnifier` also draws both pens, matching WPF. Both draw the
   border between the swatch grid and the crosshair block (never after the crosshair, which must stay
   the topmost/last-drawn pixel-precision indicator), clipped to exactly the loupe's own square (WPF:
   `PushClip(new RectangleGeometry(...))`; Avalonia: `PushClip(Rect)` directly) so an edge outside the

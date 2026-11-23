@@ -243,7 +243,8 @@ public sealed class Magnifier : Control
             var mapped = MapSelectionToLoupeRect(selectionPx, cx, cy, _sampleRadius, loupeLeft, loupeTop, swatchDip);
             using (dc.PushClip(new Rect(loupeLeft, loupeTop, loupeSize, loupeSize)))
             {
-                dc.DrawRectangle(null, SelectionAdorner.BorderPen, mapped);
+                dc.DrawRectangle(null, SelectionAdorner.BorderUnderPen, mapped);
+                dc.DrawRectangle(null, SelectionAdorner.BorderDashPen, mapped);
             }
         }
 
