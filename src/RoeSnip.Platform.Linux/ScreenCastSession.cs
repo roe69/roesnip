@@ -316,6 +316,9 @@ internal sealed class ScreenCastSession
             DropLiveLocked(why);
             reopen = _startAllStreams && Environment.TickCount64 - _lastOpenStartTick >= ReopenMinIntervalMs;
         }
+        // GNOME closes screencasts at screen lock / logout; a restore asked then waits unseen (Start
+        // got no portal response within 180s). Leave that one to the next capture or the next start.
+        if (why.StartsWith("the portal closed the session", StringComparison.Ordinal)) return;
         // Silent with a saved token; the snapshot stream is the capture path, so get it back now.
         if (reopen && HasSavedToken) OpenInBackground();
     }
@@ -406,18 +409,12 @@ internal sealed class ScreenCastSession
                     return portal.SelectSourcesAsync(sessionPath, select);
                 }, StepTimeout).ConfigureAwait(false);
 
-            IDictionary<string, object> started;
-            try
-            {
-                started = await ScreenCastPortal.RequestAsync(connection, sender, "Start",
-                    token => portal.StartAsync(sessionPath, "", new Dictionary<string, object> { ["handle_token"] = token }),
-                    DialogTimeout).ConfigureAwait(false);
-            }
-            catch (PortalResponseException)
-            {
-                _tokens.Save(null); // a denied or broken restore must not be replayed
-                throw;
-            }
+            // A failed Start keeps the saved token: a timeout (locked screen) or a dismissed dialog
+            // says nothing about it, and deleting it made every later login ask again. A token GNOME
+            // no longer honours just brings up its dialog (prefilled), whose answer saves a new one.
+            IDictionary<string, object> started = await ScreenCastPortal.RequestAsync(connection, sender, "Start",
+                token => portal.StartAsync(sessionPath, "", new Dictionary<string, object> { ["handle_token"] = token }),
+                DialogTimeout).ConfigureAwait(false);
 
             var geometries = ScreenCastPortal.ParseStreams(started.TryGetValue("streams", out var sv) ? sv : null);
             if (geometries.Count == 0)
