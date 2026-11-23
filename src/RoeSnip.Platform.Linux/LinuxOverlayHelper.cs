@@ -9,8 +9,13 @@ namespace RoeSnip.Platform.Linux;
 /// <c>WindowState.FullScreen</c>) rearranges the user's desktop when the overlay opens - the
 /// override_redirect path avoids both the animation AND the strut-offset problem that fullscreen
 /// was introduced to solve, because an override-redirect window is placed exactly where we ask,
-/// with no WM adjustments. Called from OverlayWindow's Opened handler (the platform handle only
-/// exists once the window has been shown).</summary>
+/// with no WM adjustments.
+///
+/// Keyboard input: XWayland does not deliver keyboard events to override-redirect windows at all
+/// unless an active <c>XGrabKeyboard</c> is held on the SAME display connection. The grab is
+/// released when the display is closed, so this helper keeps one static display connection open
+/// for the lifetime of the overlay session. <see cref="ReleaseOverlay"/> closes it (and the
+/// grab) when the overlay session ends; unmapping the grab window also releases the grab.</summary>
 [SupportedOSPlatform("linux")]
 public static class LinuxOverlayHelper
 {
@@ -43,6 +48,9 @@ public static class LinuxOverlayHelper
         int ownerEvents, int pointerMode, int keyboardMode, nuint time);
 
     [DllImport(LibX11)]
+    private static extern int XUngrabKeyboard(IntPtr display, nuint time);
+
+    [DllImport(LibX11)]
     private static extern int XFlush(IntPtr display);
 
     [DllImport(LibX11)]
@@ -51,8 +59,6 @@ public static class LinuxOverlayHelper
     [DllImport(LibX11)]
     private static extern int XCloseDisplay(IntPtr display);
 
-    // Only the override_redirect field matters (selected by CwOverrideRedirect); the rest of
-    // the struct is laid out so the field sits at its correct offset in XSetWindowAttributes.
     [StructLayout(LayoutKind.Sequential)]
     private struct XSetWindowAttributes
     {
@@ -71,39 +77,45 @@ public static class LinuxOverlayHelper
         public int override_redirect;
     }
 
+    // Kept open so the XGrabKeyboard active grab persists. Closed by ReleaseOverlay().
+    private static IntPtr _grabDisplay;
+
     /// <summary>Unmaps the window, sets override_redirect, remaps it at the given monitor bounds,
-    /// and grabs the keyboard (XWayland does not route keys to override-redirect windows without an
-    /// active grab). Returns true on success.</summary>
+    /// and grabs the keyboard on a persistent display connection. Returns true on success.</summary>
     public static bool SetOverrideRedirect(IntPtr windowXid, int x, int y, int width, int height)
     {
         if (windowXid == IntPtr.Zero)
             return false;
 
-        IntPtr display = XOpenDisplay(IntPtr.Zero);
-        if (display == IntPtr.Zero)
+        if (_grabDisplay == IntPtr.Zero)
+            _grabDisplay = XOpenDisplay(IntPtr.Zero);
+        if (_grabDisplay == IntPtr.Zero)
             return false;
 
-        try
-        {
-            nuint xid = (nuint)(ulong)windowXid;
+        nuint xid = (nuint)(ulong)windowXid;
 
-            XUnmapWindow(display, xid);
+        XUnmapWindow(_grabDisplay, xid);
 
-            var attrs = new XSetWindowAttributes { override_redirect = 1 };
-            XChangeWindowAttributes(display, xid, CwOverrideRedirect, ref attrs);
+        var attrs = new XSetWindowAttributes { override_redirect = 1 };
+        XChangeWindowAttributes(_grabDisplay, xid, CwOverrideRedirect, ref attrs);
 
-            XMoveResizeWindow(display, xid, x, y, (uint)Math.Max(1, width), (uint)Math.Max(1, height));
-            XMapRaised(display, xid);
-            XSetInputFocus(display, xid, RevertToParent, CurrentTime);
-            // Override-redirect windows don't receive WM-mediated keyboard focus on
-            // XWayland. An active grab routes all key events to this window regardless.
-            XGrabKeyboard(display, xid, 1, GrabModeAsync, GrabModeAsync, CurrentTime);
-            XFlush(display);
-            return true;
-        }
-        finally
-        {
-            XCloseDisplay(display);
-        }
+        XMoveResizeWindow(_grabDisplay, xid, x, y, (uint)Math.Max(1, width), (uint)Math.Max(1, height));
+        XMapRaised(_grabDisplay, xid);
+        XSetInputFocus(_grabDisplay, xid, RevertToParent, CurrentTime);
+        XGrabKeyboard(_grabDisplay, xid, 1, GrabModeAsync, GrabModeAsync, CurrentTime);
+        XFlush(_grabDisplay);
+        return true;
+    }
+
+    /// <summary>Releases the keyboard grab and closes the persistent display connection.
+    /// Call once when the overlay session ends (e.g. from the window's Closed handler).</summary>
+    public static void ReleaseOverlay()
+    {
+        if (_grabDisplay == IntPtr.Zero)
+            return;
+        XUngrabKeyboard(_grabDisplay, CurrentTime);
+        XFlush(_grabDisplay);
+        XCloseDisplay(_grabDisplay);
+        _grabDisplay = IntPtr.Zero;
     }
 }

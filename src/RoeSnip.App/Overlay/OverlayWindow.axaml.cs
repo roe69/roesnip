@@ -370,6 +370,15 @@ public partial class OverlayWindow : Window
         // partway through the session, or the window was closed before ever being shown).
         Closed += (_, _) => DisposePreviewBitmap();
         Closed += (_, _) => _toolCursorCache.Dispose();
+        Closed += (_, _) =>
+        {
+            if (_linuxBoundsPx is not null)
+            {
+#pragma warning disable CA1416
+                RoeSnip.Platform.Linux.LinuxOverlayHelper.ReleaseOverlay();
+#pragma warning restore CA1416
+            }
+        };
 
         // Tunnel-routed handlers are the Avalonia analog of WPF's Preview* events — they run
         // before any child control (toolbar buttons, text editor) sees the event.
