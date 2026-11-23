@@ -17,6 +17,7 @@ public static class LinuxOverlayHelper
     private const string LibX11 = "libX11.so.6";
     private const nuint CwOverrideRedirect = 1 << 9;
     private const int RevertToParent = 2;
+    private const int GrabModeAsync = 1;
     private const nuint CurrentTime = 0;
 
     [DllImport(LibX11)]
@@ -36,6 +37,10 @@ public static class LinuxOverlayHelper
     [DllImport(LibX11)]
     private static extern int XSetInputFocus(IntPtr display, nuint window,
         int revertTo, nuint time);
+
+    [DllImport(LibX11)]
+    private static extern int XGrabKeyboard(IntPtr display, nuint grabWindow,
+        int ownerEvents, int pointerMode, int keyboardMode, nuint time);
 
     [DllImport(LibX11)]
     private static extern int XFlush(IntPtr display);
@@ -66,8 +71,9 @@ public static class LinuxOverlayHelper
         public int override_redirect;
     }
 
-    /// <summary>Unmaps the window, sets override_redirect, remaps it at the given monitor bounds
-    /// and grabs keyboard focus. Returns true on success.</summary>
+    /// <summary>Unmaps the window, sets override_redirect, remaps it at the given monitor bounds,
+    /// and grabs the keyboard (XWayland does not route keys to override-redirect windows without an
+    /// active grab). Returns true on success.</summary>
     public static bool SetOverrideRedirect(IntPtr windowXid, int x, int y, int width, int height)
     {
         if (windowXid == IntPtr.Zero)
@@ -89,6 +95,9 @@ public static class LinuxOverlayHelper
             XMoveResizeWindow(display, xid, x, y, (uint)Math.Max(1, width), (uint)Math.Max(1, height));
             XMapRaised(display, xid);
             XSetInputFocus(display, xid, RevertToParent, CurrentTime);
+            // Override-redirect windows don't receive WM-mediated keyboard focus on
+            // XWayland. An active grab routes all key events to this window regardless.
+            XGrabKeyboard(display, xid, 1, GrabModeAsync, GrabModeAsync, CurrentTime);
             XFlush(display);
             return true;
         }
