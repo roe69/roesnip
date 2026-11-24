@@ -296,6 +296,25 @@ public sealed class TrayApp : ITrayNotifier
             // rollback target" concerns those cleanups exist for.
             SelfExtractCleanup.CleanupSiblingExtractionDirs();
         });
+        if (healthAction == UpdateManager.HealthCheckAction.ProceedDeferredCleanup
+            && UpdateManager.FirstLaunchAfterUpdate
+            && _notifyIcon is not null)
+        {
+            // Updates install on their own (UpdateCheckFrequency); say so once, after the fact.
+            string version = UpdateManager.CurrentVersionText;
+            DetachActiveBalloonHandler();
+            _activeBalloonClickHandler = (_, _) =>
+            {
+                DetachActiveBalloonHandler();
+                try { Process.Start(new ProcessStartInfo(UpdateManager.ReleasePageUrl(version)) { UseShellExecute = true }); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: could not open the release page: {ex.Message}"); }
+            };
+            _notifyIcon.BalloonTipClicked += _activeBalloonClickHandler;
+            _notifyIcon.BalloonTipTitle = "RoeSnip";
+            _notifyIcon.BalloonTipText = $"RoeSnip updated to {version} - click for what's new";
+            _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+            _notifyIcon.ShowBalloonTip(8000);
+        }
         if (healthAction == UpdateManager.HealthCheckAction.ProceedDeferredCleanup)
         {
             // The health milestone (hardening item 7): this launch is a post-update verification

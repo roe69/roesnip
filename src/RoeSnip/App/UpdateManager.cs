@@ -106,6 +106,14 @@ public static class UpdateManager
     /// update-check result). Matches the release tag's own x.y.z shape exactly.</summary>
     public static string CurrentVersionText => FormatVersionText(CurrentVersion);
 
+    /// <summary>True for the first launch of a build a self-update just installed (set by
+    /// <see cref="CheckUpdateHealthAtStartup"/>): TrayApp says "updated to X" once.</summary>
+    public static bool FirstLaunchAfterUpdate { get; private set; }
+
+    /// <summary>The GitHub release page (its notes) for <paramref name="version"/>.</summary>
+    public static string ReleasePageUrl(string version) =>
+        $"https://github.com/{GitHubOwner}/{GitHubRepo}/releases/tag/v{version}";
+
     /// <summary>Shared by <see cref="CurrentVersionText"/> and the crash-loop guard (which needs
     /// the identical "x.y.z" text for a RELEASE's <see cref="Version"/>, parsed from a tag rather
     /// than an assembly, to compare equal to it in UpdateHealthMarker's string-keyed marker).</summary>
@@ -287,6 +295,7 @@ public static class UpdateManager
             // this launch isn't a post-update verification run.
             return HealthCheckAction.ProceedImmediateCleanup;
         }
+        FirstLaunchAfterUpdate = state.AttemptCount == 1;
 
         if (state.AttemptCount >= UpdateHealthMarker.RollbackAttemptThreshold &&
             File.Exists(StaleExePath) &&
