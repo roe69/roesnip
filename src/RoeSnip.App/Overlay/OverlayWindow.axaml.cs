@@ -469,6 +469,19 @@ public partial class OverlayWindow : Window
         Position = new PixelPoint(bounds.Left, bounds.Top);
         Width = bounds.Width / scale;
         Height = bounds.Height / scale;
+        if (OperatingSystem.IsLinux())
+        {
+            // A plain monitor-sized window is kept inside the work area by GNOME (top bar and dock
+            // stay over it, usable) and zooms in like a newly opened window. Fullscreen covers the
+            // panels; UTILITY keeps GNOME Shell from animating the open, close and fullscreen
+            // resize (it animates only NORMAL/DIALOG). Both before the first map. Keyboard focus
+            // still lands on the overlay (OverlayController activates it).
+            if (TryGetPlatformHandle() is { } handle)
+            {
+                RoeSnip.Platform.Linux.X11WindowType.Set(handle.Handle, "_NET_WM_WINDOW_TYPE_UTILITY");
+            }
+            WindowState = WindowState.FullScreen;
+        }
 
         PropagateDeviceScale();
         UpdateDimGeometry();
