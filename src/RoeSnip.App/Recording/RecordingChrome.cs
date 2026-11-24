@@ -123,6 +123,10 @@ public sealed class RecordingChrome : Window
     /// take on the clipboard as a file. Same division of labour as SaveRequested/ShareRequested: the
     /// chrome only raises the request, RecordingController owns the temp path and does the work.</summary>
     public event Action? CopyRequested;
+    /// <summary>Ctrl+C (Cmd+C on macOS) pressed while this window has keyboard focus in Reviewing or
+    /// the finished-take prompt. Off Windows only: there the chrome takes focus on entering Reviewing
+    /// (<see cref="TakeKeyboardFocus"/>) since no global hook exists; Windows uses ReviewCopyHook.</summary>
+    public event Action? CopyShortcutPressed;
     /// <summary>"Record another" on the post-save prompt - re-arm for a new take, same region.</summary>
     public event Action? RecordAnotherRequested;
     /// <summary>"Done" on the post-save prompt - tear the session down.</summary>
@@ -314,13 +318,14 @@ public sealed class RecordingChrome : Window
 
         // Copy sits beside Save/Share (all three Reviewing-only), quiet like Share: it puts the take
         // on the clipboard as a file so it can be pasted straight into a chat/file manager with no
-        // save-then-attach detour. On Windows Ctrl+C does the same thing (ReviewCopyHook); the
-        // button is what makes it discoverable, and on Linux/macOS it is the only way in.
+        // save-then-attach detour. Ctrl+C does the same thing (ReviewCopyHook on Windows, this
+        // window's own key handler elsewhere); the button is what makes it discoverable.
         _copyButton = BuildPrimaryButton(string.Empty);
         _copyButton.Content = BuildIcon(Icons.Copy, TextOnPrimary);
         _copyButton.Padding = new Thickness(8, 5, 8, 5);
         _copyButton.Margin = new Thickness(4, 0, 0, 0);
-        ToolTip.SetTip(_copyButton, "Copy to clipboard (Ctrl+C on Windows)");
+        ToolTip.SetTip(_copyButton, OperatingSystem.IsMacOS() ? "Copy to clipboard (Cmd+C)" : "Copy to clipboard (Ctrl+C)");
+        AddHandler(KeyDownEvent, OnChromeKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         _copyButton.Click += (_, _) => CopyRequested?.Invoke();
 
         _cancelButton = BuildIconButton(Icons.Cancel, "Cancel (discards this take)", isDanger: true, size: 11);
@@ -766,6 +771,35 @@ public sealed class RecordingChrome : Window
         _state = ChromeState.Reviewing;
         _showingRestartConfirm = false;
         ApplyState();
+    }
+
+    /// <summary>Off Windows: activates the chrome so its Ctrl+C handler receives the key. Only once
+    /// a take is finished - nothing is being recorded then, so taking focus costs nothing.</summary>
+    public void TakeKeyboardFocus()
+    {
+        Activate();
+        DispatcherTimer.RunOnce(
+            () => RoeSnip.Core.Diagnostics.FileLog.Write($"RoeSnip: review chrome asked for keyboard focus (active={IsActive})"),
+            TimeSpan.FromMilliseconds(500));
+    }
+
+    private void OnChromeKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (OperatingSystem.IsWindows() || e.Key != Key.C)
+        {
+            return;
+        }
+        if (_state != ChromeState.Reviewing && !_showingDonePrompt)
+        {
+            return;
+        }
+        var command = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
+        if (e.KeyModifiers != command)
+        {
+            return; // Shift/Alt held too is some other shortcut
+        }
+        e.Handled = true;
+        CopyShortcutPressed?.Invoke();
     }
 
     /// <summary>Called by the orchestrator immediately before <see cref="EnterReviewing"/>, with a

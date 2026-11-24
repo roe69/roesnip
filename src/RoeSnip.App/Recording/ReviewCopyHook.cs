@@ -10,9 +10,8 @@ namespace RoeSnip.App.Recording;
 /// RecordingChrome is deliberately ShowActivated=false with Focusable=false buttons so it never
 /// steals focus from whatever is being recorded - which also means it never receives a keystroke.
 /// Ported from the WPF app's Recording/ReviewCopyHook.cs; the DllImports compile everywhere but
-/// <see cref="TryInstall"/> returns null off Windows, where the chrome's Copy button is the only
-/// way in (X11/Wayland/macOS each need their own global-shortcut mechanism, and neither has one
-/// wired in this port - documented in docs/PARITY.md).
+/// <see cref="TryInstall"/> returns null off Windows, where the chrome takes focus in Reviewing and
+/// handles Ctrl+C itself (RecordingChrome.TakeKeyboardFocus).
 ///
 /// The keystroke PASSES THROUGH (CallNextHookEx) rather than being swallowed - see the WPF twin's
 /// own doc comment. The hook lives only from entering Reviewing to leaving it.</summary>

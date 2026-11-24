@@ -106,6 +106,7 @@ public sealed class RecordingOrchestrator
         _chrome.SaveRequested += () => Save();
         _chrome.ShareRequested += () => RequestShare();
         _chrome.CopyRequested += () => RequestCopyToClipboard();
+        _chrome.CopyShortcutPressed += () => CopyOnCtrlC();
         _chrome.RecordAnotherRequested += () => _session.RecordAnotherTake();
         _chrome.DoneRequested += () => _session.FinishAfterTake();
         _chrome.CopyAgainRequested += () => CopyFinishedTakeAgain();
@@ -168,10 +169,15 @@ public sealed class RecordingOrchestrator
                 // _settingsAtStart snapshot) matters here specifically.
                 _chrome.SetShareAvailable(ResolveFreshDefaultShareProvider() is not null);
                 _chrome.EnterReviewing();
-                // Ctrl+C copies the take while it waits here (Windows only - see ReviewCopyHook).
+                // Ctrl+C copies the take while it waits here: a global hook on Windows
+                // (ReviewCopyHook), elsewhere the chrome takes focus and handles the key itself.
                 DisposeReviewCopyHook();
                 _reviewCopyHook = ReviewCopyHook.TryInstall(() =>
                     Dispatcher.UIThread.Post(CopyOnCtrlC));
+                if (!OperatingSystem.IsWindows())
+                {
+                    _chrome.TakeKeyboardFocus();
+                }
                 break;
         }
     }

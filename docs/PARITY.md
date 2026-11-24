@@ -1650,9 +1650,10 @@ because a correct implementation needs live hardware this repo cannot exercise.
   hit RPC_E_CANTCALLOUT_ININPUTSYNCCALL (0x8001010D) - a hook callback is an input-synchronous
   context where outgoing COM/WinRT calls are refused, which abandoned the encoder thread and lost
   the take; the work is now always POSTED to the dispatcher.
-  Accepted platform gap: Ctrl+C without focus needs a low-level keyboard hook, which is a Windows
-  mechanism - on Linux/macOS the Avalonia port's Copy BUTTON is the only route (X11/Wayland/macOS
-  would each need their own global-shortcut plumbing, not wired here).
+  Ctrl+C without focus needs a low-level keyboard hook, which is a Windows mechanism - on
+  Linux/macOS the Avalonia chrome activates itself on entering Reviewing and handles Ctrl+C (Cmd+C)
+  as an ordinary key (`RecordingChrome.TakeKeyboardFocus` / `OnChromeKeyDown`); if the desktop
+  refuses the activation, one click on the chrome gives it focus.
 - Recording chrome follow-ups (2026-08, both apps' Recording/RecordingChrome.cs +
   ReviewCopyHook.cs), all three on direct user feedback after the flow above shipped:
   (a) Ctrl+C is no longer SWALLOWED by the review hook - it passes through so whatever has focus
