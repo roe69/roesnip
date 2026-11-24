@@ -908,6 +908,9 @@ public sealed class RecordingSession
 
                         epochTicks ??= effectiveTicks;
                         framesWritten++;
+                        // Both encoders take 100 ns since the first frame. Raw Stopwatch ticks are
+                        // 100 ns only on Windows (1 ns on Linux/macOS: GIF delays came out 100x long).
+                        long timestamp100ns = (long)((effectiveTicks - epochTicks.Value) / freq * 10_000_000.0);
 
                         if (_format == RecordingFormat.Mp4)
                         {
@@ -916,7 +919,6 @@ public sealed class RecordingSession
                             int mp4Len = frame.Width * 4 * frame.Height;
                             if (mp4Tonemap is null || mp4Tonemap.Length != mp4Len) mp4Tonemap = new byte[mp4Len];
                             var sdr = RoeSnip.Core.Imaging.SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts, mp4Tonemap);
-                            long timestamp100ns = (long)((effectiveTicks - epochTicks.Value) / freq * 10_000_000.0);
                             _encoder!.WriteFrame(sdr, timestamp100ns);
                         }
                         else
@@ -938,7 +940,7 @@ public sealed class RecordingSession
                             // skips no-change frames, crops to the changed region, and patches each
                             // frame's delay to its real display duration once the next frame lands
                             // (the "patch-behind delta delay" this item is required to preserve).
-                            if (_encoder!.WriteFrame(encodeSource, effectiveTicks))
+                            if (_encoder!.WriteFrame(encodeSource, timestamp100ns))
                             {
                                 gifUseA = !gifUseA; // harmless housekeeping only
                             }
@@ -983,11 +985,8 @@ public sealed class RecordingSession
                 pausedTotal += now - Volatile.Read(ref _pauseStartTicks); // stopped mid-pause
             }
             long endTicks = now - pausedTotal;
-            // MP4 frames carry 100 ns since the first frame (WriteFrame above), GIF raw ticks: the
-            // end moment must be in the same domain the encoder was fed.
-            long? end = _format == RecordingFormat.Mp4
-                ? (epochTicks is long e ? (long)((endTicks - e) / freq * 10_000_000.0) : null)
-                : endTicks;
+            // Same domain the frames were fed in: 100 ns since the first frame.
+            long? end = epochTicks is long e ? (long)((endTicks - e) / freq * 10_000_000.0) : null;
             try { _encoder?.FinishAsync(end).GetAwaiter().GetResult(); }
             catch (Exception ex) { FileLog.Write($"RoeSnip: recording finalize failed: {ex}"); }
         }
