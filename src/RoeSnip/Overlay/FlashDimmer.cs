@@ -663,6 +663,22 @@ internal static class FlashDimmer
             var hwnd = new WindowInteropHelper(this).EnsureHandle();
             CachedHwnd = hwnd;
 
+            // Mixed-DPI: keep this window's physical bounds through WM_DPICHANGED (see DpiRectPin)
+            // and give it its own monitor's DPI while still hidden; it would otherwise keep the DPI
+            // of the monitor it was created on, and the move on screen would resize it.
+            _dpiHook = DpiRectPin.Attach(
+                hwnd,
+                () =>
+                {
+                    var b = Monitor.BoundsPx;
+                    return DpiRectPin.Rect(_intendOnScreen ? b.Left : OffScreenX, b.Top, b.Width, b.Height);
+                },
+                "flash dimmer");
+            var mb = Monitor.BoundsPx;
+            NativeMethods.SetWindowPos(
+                hwnd, IntPtr.Zero, mb.Left, mb.Top, mb.Width, mb.Height,
+                NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOZORDER);
+
             // WS_EX_TOOLWINDOW (park-don't-hide): this window is about to become permanently
             // OS-visible for the app's entire lifetime (see below) — without this extended style it
             // would show up as its own Alt+Tab entry despite always living either parked at
@@ -726,6 +742,9 @@ internal static class FlashDimmer
         // x:[-1440, 2560]) — this window's permanent "not dimming anything" position.
         private const int OffScreenX = 60000;
 
+        private volatile bool _intendOnScreen;
+        private HwndSourceHook? _dpiHook;
+
         private const uint WDA_EXCLUDEFROMCAPTURE = 0x00000011;
 
         [DllImport("user32.dll", SetLastError = true)]
@@ -756,6 +775,7 @@ internal static class FlashDimmer
             }
             var b = Monitor.BoundsPx;
             int x = onScreen ? b.Left : OffScreenX;
+            _intendOnScreen = onScreen;
             NativeMethods.SetWindowPos(
                 hwnd, NativeMethods.HWND_TOPMOST, x, b.Top, b.Width, b.Height, NativeMethods.SWP_NOACTIVATE);
             if (onScreen)
@@ -779,6 +799,7 @@ internal static class FlashDimmer
                 return;
             }
             var b = Monitor.BoundsPx;
+            _intendOnScreen = false;
             NativeMethods.SetWindowPos(
                 hwnd, NativeMethods.HWND_TOPMOST, OffScreenX, b.Top, b.Width, b.Height,
                 NativeMethods.SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);

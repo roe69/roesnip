@@ -554,6 +554,19 @@ public partial class OverlayWindow : Window
         var bounds = _frame.Monitor.BoundsPx;
         var hwnd = new WindowInteropHelper(this).Handle;
 
+        // Mixed-DPI: the HWND gets the DPI of whichever monitor Windows created it on, and a parked
+        // window (off every monitor) never changes it. Pin WM_DPICHANGED's rect to where the window
+        // is going, then move the still-hidden window onto its monitor so it takes that monitor's
+        // DPI before the first layout (the pin parks it again if the DPI changed). The move on
+        // screen later re-pins in case Windows did not send it for a hidden window.
+        _dpiHook = DpiRectPin.Attach(
+            hwnd,
+            () => DpiRectPin.Rect(_onScreen ? bounds.Left : OffScreenX, bounds.Top, bounds.Width, bounds.Height),
+            "overlay window");
+        NativeMethods.SetWindowPos(
+            hwnd, IntPtr.Zero, bounds.Left, bounds.Top, bounds.Width, bounds.Height,
+            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOZORDER);
+
         var source = PresentationSource.FromVisual(this);
         if (source?.CompositionTarget is { } target)
         {
@@ -632,9 +645,28 @@ public partial class OverlayWindow : Window
             NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
     }
 
-    // Far off the virtual desktop (monitors span roughly x:[-1440, 2560]); the window renders here
-    // invisibly, then OnFirstContentRendered snaps it to its real monitor bounds already painted.
+    // Right of every monitor (Windows clamps it to 32767); the window renders here invisibly, then
+    // OnFirstContentRendered snaps it to its real monitor bounds already painted.
     private const int OffScreenX = 60000;
+
+    private bool _onScreen;
+    private HwndSourceHook? _dpiHook;
+
+    /// <summary>The window moved onto a monitor with another scale: DpiRectPin kept its physical
+    /// bounds, so only the DIP-to-pixel factors change.</summary>
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        _scaleX = newDpi.DpiScaleX;
+        _scaleY = newDpi.DpiScaleY;
+        Annotations.DeviceScaleX = _scaleX;
+        Annotations.DeviceScaleY = _scaleY;
+        Adorner.DeviceScaleX = _scaleX;
+        Adorner.DeviceScaleY = _scaleY;
+        MagnifierControl.DeviceScaleX = _scaleX;
+        MagnifierControl.DeviceScaleY = _scaleY;
+        UpdateDimGeometry();
+    }
 
     private void OnFirstContentRendered(object? sender, EventArgs e)
     {
@@ -658,6 +690,7 @@ public partial class OverlayWindow : Window
     {
         var bounds = _frame.Monitor.BoundsPx;
         var hwnd = new WindowInteropHelper(this).Handle;
+        _onScreen = true;
         NativeMethods.SetWindowPos(
             hwnd, NativeMethods.HWND_TOPMOST,
             bounds.Left, bounds.Top, bounds.Width, bounds.Height,
