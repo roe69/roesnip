@@ -492,10 +492,12 @@ public partial class OverlayWindow : Window
             // panels; UTILITY keeps GNOME Shell from animating the open, close and fullscreen
             // resize (it animates only NORMAL/DIALOG). Both before the first map. Keyboard focus
             // still lands on the overlay (OverlayController activates it).
+#if LINUX_BACKEND
             if (TryGetPlatformHandle() is { } handle)
             {
                 RoeSnip.Platform.Linux.X11WindowType.Set(handle.Handle, "_NET_WM_WINDOW_TYPE_UTILITY");
             }
+#endif
             WindowState = WindowState.FullScreen;
         }
 
