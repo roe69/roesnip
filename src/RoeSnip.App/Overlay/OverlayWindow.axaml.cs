@@ -398,41 +398,57 @@ public partial class OverlayWindow : Window
             // application is safe (this app never re-captures the screen while an overlay window
             // is up) and for the ROESNIP_DIAG_NOEXCLUDE=1 escape hatch.
             AppShell.WindowCaptureExclusion.Apply(this);
-
-            double actual = RenderScaling;
-            if (actual > 0 && (Math.Abs(actual - _scaleX) > 1e-9 || Math.Abs(actual - _scaleY) > 1e-9))
-            {
-                // O2 audit fix: adopting the new scale WITHOUT re-deriving the DIP size breaks
-                // both invariants at once. TryPlaceOnScreen set Width/Height = physical bounds /
-                // the ASSUMED Screen.Scaling; if RenderScaling turns out different, the window's
-                // actual on-screen PHYSICAL size (DIPs * RenderScaling) no longer equals the
-                // monitor's physical bounds — the overlay would under/over-cover the monitor, and
-                // every DIP<->px conversion done since Show() (selection math, magnifier sampling)
-                // would already have used the wrong scale for whatever the user did before Opened
-                // fired. Fix coherently: recompute DIP ClientSize from the ORIGINAL physical
-                // bounds and the RUNTIME scale (never from the current, already-wrong DIP size),
-                // THEN update _scaleX/_scaleY so everything after this point uses one consistent
-                // scale. This still resizes the window in place after it's already shown — a
-                // documented lesser evil versus the mixed-DPI Avalonia resize bugs (#13917/#17834)
-                // the "never reposition/resize post-Show" discipline exists to avoid; it only
-                // fires on this rare mismatch path, never on the common one.
-                var boundsPx = _frame.Monitor.BoundsPx;
-                FileLog.Write(
-                    $"RoeSnip: overlay for monitor {_frame.Monitor.Index} opened with RenderScaling {actual} " +
-                    $"but Screen.Scaling was {_scaleX}; resizing to {boundsPx.Width}x{boundsPx.Height}px " +
-                    $"({boundsPx.Width / actual:0.##}x{boundsPx.Height / actual:0.##} DIP) to keep monitor " +
-                    "coverage and 1:1 preview scaling correct for the runtime scale.");
-
-                _scaleX = _scaleY = actual;
-                Width = boundsPx.Width / actual;
-                Height = boundsPx.Height / actual;
-
-                PropagateDeviceScale();
-                UpdateDimGeometry();
-                UpdateToolbarPlacement();
-            }
-            SyncChromeSizes();
+            AdoptRenderScaling("opened with");
         };
+
+        // Mixed-DPI: the platform can move the window to another scale after Opened (Windows sends
+        // WM_DPICHANGED when the HWND's creation monitor has another DPI; X11/macOS per-monitor
+        // scaling). Re-derive the DIP size and factors the same way, or the preview shows zoomed
+        // in or shrunk into a corner.
+        ScalingChanged += (_, _) =>
+        {
+            if (IsVisible && _frame is not null)
+            {
+                AdoptRenderScaling("changed to");
+            }
+        };
+    }
+
+    private void AdoptRenderScaling(string when)
+    {
+        double actual = RenderScaling;
+        if (actual > 0 && (Math.Abs(actual - _scaleX) > 1e-9 || Math.Abs(actual - _scaleY) > 1e-9))
+        {
+            // O2 audit fix: adopting the new scale WITHOUT re-deriving the DIP size breaks
+            // both invariants at once. TryPlaceOnScreen set Width/Height = physical bounds /
+            // the ASSUMED Screen.Scaling; if RenderScaling turns out different, the window's
+            // actual on-screen PHYSICAL size (DIPs * RenderScaling) no longer equals the
+            // monitor's physical bounds - the overlay would under/over-cover the monitor, and
+            // every DIP<->px conversion done since Show() (selection math, magnifier sampling)
+            // would already have used the wrong scale for whatever the user did before Opened
+            // fired. Fix coherently: recompute DIP ClientSize from the ORIGINAL physical
+            // bounds and the RUNTIME scale (never from the current, already-wrong DIP size),
+            // THEN update _scaleX/_scaleY so everything after this point uses one consistent
+            // scale. This still resizes the window in place after it's already shown - a
+            // documented lesser evil versus the mixed-DPI Avalonia resize bugs (#13917/#17834)
+            // the "never reposition/resize post-Show" discipline exists to avoid; it only
+            // fires on this rare mismatch path, never on the common one.
+            var boundsPx = _frame.Monitor.BoundsPx;
+            FileLog.Write(
+                $"RoeSnip: overlay for monitor {_frame.Monitor.Index} {when} RenderScaling {actual} " +
+                $"but Screen.Scaling was {_scaleX}; resizing to {boundsPx.Width}x{boundsPx.Height}px " +
+                $"({boundsPx.Width / actual:0.##}x{boundsPx.Height / actual:0.##} DIP) to keep monitor " +
+                "coverage and 1:1 preview scaling correct for the runtime scale.");
+
+            _scaleX = _scaleY = actual;
+            Width = boundsPx.Width / actual;
+            Height = boundsPx.Height / actual;
+
+            PropagateDeviceScale();
+            UpdateDimGeometry();
+            UpdateToolbarPlacement();
+        }
+        SyncChromeSizes();
     }
 
     /// <summary>Correlates this window's CapturedFrame to the Avalonia Screen with the exact same

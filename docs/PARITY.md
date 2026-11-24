@@ -1993,3 +1993,12 @@ because a correct implementation needs live hardware this repo cannot exercise.
   once (click opens that release's notes), instead of only ever saying an update is available.
   Keyed off the update health marker (`UpdateManager.FirstLaunchAfterUpdate`, AttemptCount 1).
   WPF: TrayApp balloon. Avalonia: TrayApp ShowToast.
+- [ ] 34-mixed-dpi-overlay (code landed, mixed-DPI rig check outstanding; issue #1): a parked
+  window keeps the DPI of the monitor it was created on, and its move onto a monitor with
+  another scale got WM_DPICHANGED's ratio-scaled rect (preview zoomed in, or shrunk into a
+  corner). WPF: `Overlay/DpiRectPin.cs` rewrites that rect to the intended bounds (overlay and
+  flash windows), each window is moved onto its monitor while still hidden so it takes that DPI
+  before the first layout, and OverlayWindow.OnDpiChanged refreshes the scale and DeviceScale*.
+  Avalonia: FlashWindow pins the rect through Win32Properties.AddWndProcHookCallback; the
+  overlay re-derives its DIP size and scale on ScalingChanged (every OS). Log:
+  `overlay window|flash dimmer DPI now N; kept WxH at X,Y`, `overlay for monitor N changed to RenderScaling S`.

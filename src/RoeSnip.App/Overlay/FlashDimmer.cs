@@ -624,7 +624,33 @@ internal static class FlashDimmer
             Height = bounds.Height / scale;
 
             KeyDown += OnKeyDown;
+            if (OperatingSystem.IsWindows())
+            {
+                Win32Properties.AddWndProcHookCallback(this, PinDpiChangedRect);
+            }
         }
+
+        private volatile bool _intendOnScreen;
+
+        /// <summary>Mixed-DPI: a parked window keeps the DPI of the monitor it was created on, so the
+        /// move onto a monitor with another scale sends WM_DPICHANGED with a rect Windows scaled by
+        /// the DPI ratio, and Avalonia applies it (the dim would cover too much or too little).
+        /// Rewrite that rect to the bounds this window is being moved to, before Avalonia reads it.</summary>
+        private IntPtr PinDpiChangedRect(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const uint WmDpiChanged = 0x02E0;
+            if (msg == WmDpiChanged && lParam != IntPtr.Zero)
+            {
+                var b = Monitor.BoundsPx;
+                int x = _intendOnScreen ? b.Left : OffScreenX;
+                Marshal.StructureToPtr(new NativeRect { Left = x, Top = b.Top, Right = x + b.Width, Bottom = b.Top + b.Height }, lParam, false);
+                FileLog.Write($"RoeSnip: flash dimmer DPI now {(int)wParam & 0xFFFF}; kept {b.Width}x{b.Height} at {x},{b.Top}");
+            }
+            return IntPtr.Zero;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeRect { public int Left, Top, Right, Bottom; }
 
         private static void OnKeyDown(object? sender, KeyEventArgs e)
         {
@@ -708,6 +734,7 @@ internal static class FlashDimmer
             }
             var b = Monitor.BoundsPx;
             int x = onScreen ? b.Left : OffScreenX;
+            _intendOnScreen = onScreen;
             NativeMethods.SetWindowPos(
                 _hwnd, NativeMethods.HwndTopmost, x, b.Top, b.Width, b.Height, NativeMethods.SwpNoActivate);
             if (onScreen)
@@ -735,6 +762,7 @@ internal static class FlashDimmer
                 return;
             }
             var b = Monitor.BoundsPx;
+            _intendOnScreen = false;
             NativeMethods.SetWindowPos(
                 hwnd, NativeMethods.HwndTopmost, OffScreenX, b.Top, b.Width, b.Height,
                 NativeMethods.SwpNoActivate | NativeMethods.SwpAsyncWindowPos);
