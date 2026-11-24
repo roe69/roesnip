@@ -515,6 +515,14 @@ public static class UpdateManager
         Restored,
     }
 
+    /// <summary>True for the first launch of a build a self-update just installed (set by
+    /// <see cref="CheckUpdateHealthAtStartup"/>): TrayApp says "updated to X" once.</summary>
+    public static bool FirstLaunchAfterUpdate { get; private set; }
+
+    /// <summary>The GitHub release page (its notes) for <paramref name="version"/>.</summary>
+    public static string ReleasePageUrl(string version) =>
+        $"https://github.com/{GitHubOwner}/{GitHubRepo}/releases/tag/v{version}";
+
     /// <summary>Call first thing in TrayApp.Start. Counts this launch against a pending-verify
     /// marker (written by <see cref="ApplyUpdateAsync"/> right before it relaunched) and restores
     /// ".old" once the threshold of launches that never reached the health milestone is hit.</summary>
@@ -540,6 +548,7 @@ public static class UpdateManager
         {
             return HealthCheckAction.ProceedImmediateCleanup;
         }
+        FirstLaunchAfterUpdate = state.AttemptCount == 1;
 
         if (state.AttemptCount >= UpdateHealthMarker.RollbackAttemptThreshold &&
             InstallSwap.Exists(StaleExePath) &&

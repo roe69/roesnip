@@ -1989,3 +1989,7 @@ because a correct implementation needs live hardware this repo cannot exercise.
   GetCursorPos, macOS NSEvent, X11 XQueryPointer, Wayland the screencast cursor metadata (no
   probe); Wayland's placement source order is now `cursor (screencast)`, last-known, probe,
   XWayland. Log on close: `toast followed the pointer (N moves, frozen when approached|never approached, source)`.
+- [x] 33-updated-notice: the first launch of a self-installed update says "RoeSnip updated to X"
+  once (click opens that release's notes), instead of only ever saying an update is available.
+  Keyed off the update health marker (`UpdateManager.FirstLaunchAfterUpdate`, AttemptCount 1).
+  WPF: TrayApp balloon. Avalonia: TrayApp ShowToast.

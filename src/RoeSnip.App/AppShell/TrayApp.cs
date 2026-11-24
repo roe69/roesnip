@@ -261,6 +261,18 @@ public sealed class TrayApp : ITrayNotifier
                 // The health milestone (hardening item 7): this launch is a post-update
                 // verification run.
                 _ = RunHealthMilestoneAsync();
+                if (UpdateManager.FirstLaunchAfterUpdate)
+                {
+                    // Updates install on their own (UpdateCheckFrequency); say so once, after the fact.
+                    string version = UpdateManager.CurrentVersionText;
+                    DispatcherTimer.RunOnce(
+                        () => ShowToast(
+                            $"RoeSnip updated to {version} - click for what's new",
+                            isError: false,
+                            durationMs: 8000,
+                            onClick: () => OpenUrl(UpdateManager.ReleasePageUrl(version))),
+                        TimeSpan.FromSeconds(2));
+                }
             }
             if (UpdateManager.IsInstalled)
             {
