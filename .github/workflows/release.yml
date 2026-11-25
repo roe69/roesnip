@@ -576,6 +576,13 @@ jobs:
           pattern: xplat-*
           path: dist
 
+      - name: No Windows binaries from the cross-platform builds
+        # Only the signed-win artifact may carry exes; anything else would ship unsigned.
+        run: |
+          if find dist -iname '*.exe*' -o -iname '*.dll' | grep -q .; then
+            echo "::error::cross-platform artifacts contain Windows binaries"; exit 1
+          fi
+
       - name: Download signed Windows exes
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
