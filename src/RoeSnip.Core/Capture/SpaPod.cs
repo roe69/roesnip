@@ -18,7 +18,7 @@ public static class SpaPod
     public const uint KeyBuffersBuffers = 1, KeyBuffersBlocks = 2, KeyBuffersDataType = 6;
     public const uint ChoiceFlags = 4;
     public const uint PropMandatory = 8, PropDontFixate = 16;
-    public const uint DataDmaBuf = 3;
+    public const uint DataMemPtr = 1, DataMemFd = 2, DataDmaBuf = 3;
     public const uint VideoRgbaF16 = 78, TransferSmpte2084 = 14, PrimariesBt2020 = 7;
     public const uint KeyMetaType = 1, KeyMetaSize = 2;
     public const uint MediaTypeVideo = 2, MediaSubtypeRaw = 1;
@@ -51,10 +51,47 @@ public static class SpaPod
         return w.EndObject();
     }
 
+    /// <summary>EnumFormat for the 8-bit snapshot consumer: BGRx or BGRA (mutter's native layouts), any
+    /// size, no modifier, so the node answers with memfd/SHM buffers.</summary>
+    public static byte[] SdrEnumFormat()
+    {
+        var w = new Writer();
+        w.BeginObject(ObjectFormat, ParamEnumFormat);
+        w.Prop(KeyMediaType); w.Id(MediaTypeVideo);
+        w.Prop(KeyMediaSubtype); w.Id(MediaSubtypeRaw);
+        w.Prop(KeyVideoFormat);
+        w.Choice(ChoiceEnum, TypeId, 4, new uint[] { VideoBGRx, VideoBGRx, VideoBGRA });
+        w.Prop(KeyVideoSize);
+        w.Choice(ChoiceRange, TypeRectangle, 8, new uint[] { 1920, 1080, 1, 1, 16384, 16384 });
+        w.Prop(KeyVideoFramerate);
+        w.Choice(ChoiceRange, TypeFraction, 8, new uint[] { 0, 1, 0, 1, 1000, 1 });
+        return w.EndObject();
+    }
+
+    /// <summary>ParamBuffers asking for memfd or memptr buffers (one block).</summary>
+    public static byte[] ShmBuffersParam()
+    {
+        var w = new Writer();
+        w.BeginObject(ObjectParamBuffers, ParamBuffers);
+        w.Prop(KeyBuffersBuffers);
+        w.Choice(ChoiceRange, TypeInt, 4, new uint[] { 4, 2, 8 });
+        w.Prop(KeyBuffersBlocks); w.Int(1);
+        w.Prop(KeyBuffersDataType);
+        w.Choice(ChoiceFlags, TypeInt, 4, new uint[] { (1u << (int)DataMemPtr) | (1u << (int)DataMemFd) });
+        return w.EndObject();
+    }
+
     /// <summary>EnumFormat for GNOME 50's HDR stream: RGBA_F16, PQ (SMPTE 2084) BT.2020, DMA-BUF only
     /// (a mandatory, not-yet-fixated modifier list; mutter fixates it and answers with a Format). The
     /// memfd path of HDR formats paints 8-bit garbage, so no modifier-less variant is offered.</summary>
-    public static byte[] HdrEnumFormat(IReadOnlyList<ulong> modifiers)
+    public static byte[] HdrEnumFormat(IReadOnlyList<ulong> modifiers) => DmaBufEnumFormat(modifiers, true);
+
+    /// <summary>EnumFormat for an 8-bit BGRx DMA-BUF consumer (mandatory modifier list, no colorimetry).
+    /// Mutter records a DMA-BUF stream inside the paint it queues on wake; a memfd stream waits for a
+    /// later idle callback and gets no frame at all while the monitor shows an unchanged scanout.</summary>
+    public static byte[] SdrDmaBufEnumFormat(IReadOnlyList<ulong> modifiers) => DmaBufEnumFormat(modifiers, false);
+
+    private static byte[] DmaBufEnumFormat(IReadOnlyList<ulong> modifiers, bool hdr)
     {
         var words = new List<uint>();
         void Long(ulong v) { words.Add((uint)v); words.Add((uint)(v >> 32)); }
@@ -64,15 +101,18 @@ public static class SpaPod
         w.BeginObject(ObjectFormat, ParamEnumFormat);
         w.Prop(KeyMediaType); w.Id(MediaTypeVideo);
         w.Prop(KeyMediaSubtype); w.Id(MediaSubtypeRaw);
-        w.Prop(KeyVideoFormat); w.Id(VideoRgbaF16);
+        w.Prop(KeyVideoFormat); w.Id(hdr ? VideoRgbaF16 : VideoBGRx);
         w.Prop(KeyVideoModifier, PropMandatory | PropDontFixate);
         w.Choice(ChoiceEnum, TypeLong, 8, words.ToArray());
         w.Prop(KeyVideoSize);
         w.Choice(ChoiceRange, TypeRectangle, 8, new uint[] { 1920, 1080, 1, 1, 16384, 16384 });
         w.Prop(KeyVideoFramerate);
         w.Choice(ChoiceRange, TypeFraction, 8, new uint[] { 0, 1, 0, 1, 1000, 1 });
-        w.Prop(KeyVideoTransfer); w.Id(TransferSmpte2084);
-        w.Prop(KeyVideoPrimaries); w.Id(PrimariesBt2020);
+        if (hdr)
+        {
+            w.Prop(KeyVideoTransfer); w.Id(TransferSmpte2084);
+            w.Prop(KeyVideoPrimaries); w.Id(PrimariesBt2020);
+        }
         return w.EndObject();
     }
 

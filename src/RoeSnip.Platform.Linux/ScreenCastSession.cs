@@ -440,6 +440,7 @@ internal sealed class ScreenCastSession
             {
                 await StartHdrReaderAsync(live, portal, sessionPath).ConfigureAwait(false);
                 live.ProbeHdrNodes();
+                await StartSdrReaderAsync(live, portal, sessionPath).ConfigureAwait(false);
                 foreach (var g in geometries) live.GetStream(g.NodeId);
                 foreach (var g in geometries) live.GetStream(g.NodeId)?.WaitForFirstSample(TimeSpan.FromSeconds(1));
             }
@@ -508,26 +509,52 @@ internal sealed class ScreenCastSession
     /// pipeline; one log line says why.</summary>
     private static async Task StartHdrReaderAsync(Live live, IPortalScreenCast portal, ObjectPath sessionPath)
     {
-        if (!HdrDisplayProbe.ShouldTry(out string note))
-        {
-            FileLog.Write($"RoeSnip: HDR screencast capture off ({note})");
-            return;
-        }
+        bool hdrWanted = HdrDisplayProbe.ShouldTry(out string note);
+        if (!hdrWanted) FileLog.Write($"RoeSnip: HDR screencast capture off ({note})");
+        bool noEightBit = Environment.GetEnvironmentVariable("ROESNIP_NO_DMABUF8") == "1"
+            || Environment.GetEnvironmentVariable("ROESNIP_GST_CAPTURE") == "1";
+        if (!hdrWanted && noEightBit) return;
         CloseSafeHandle? hdrFd = null;
         try
         {
             hdrFd = await portal.OpenPipeWireRemoteAsync(sessionPath, new Dictionary<string, object>()).ConfigureAwait(false);
             using (hdrFd)
             {
-                live.Hdr = PipeWireHdrReader.TryStart(hdrFd.DangerousGetHandle().ToInt32(), out string why);
-                if (live.Hdr is null) FileLog.Write($"RoeSnip: HDR screencast capture unavailable ({why}); frames stay 8-bit");
-                else FileLog.Write($"RoeSnip: HDR screencast capture enabled ({note})");
+                live.Hdr = PipeWireHdrReader.TryStart(hdrFd.DangerousGetHandle().ToInt32(), hdrWanted, noEightBit, out string why);
+                if (live.Hdr is null) FileLog.Write($"RoeSnip: DMA-BUF screencast capture unavailable ({why}); frames use memfd buffers");
+                else if (hdrWanted) FileLog.Write($"RoeSnip: HDR screencast capture enabled ({note})");
             }
         }
         catch (Exception ex)
         {
             hdrFd?.Dispose();
             FileLog.Write($"RoeSnip: HDR screencast capture unavailable ({ex.GetType().Name}: {ex.Message}); frames stay 8-bit");
+        }
+    }
+
+    /// <summary>Creates the 8-bit reader on its own remote of this session (no second dialog). Any
+    /// failure leaves the SDR nodes on the GStreamer pipeline.</summary>
+    private static async Task StartSdrReaderAsync(Live live, IPortalScreenCast portal, ObjectPath sessionPath)
+    {
+        if (Environment.GetEnvironmentVariable("ROESNIP_GST_CAPTURE") == "1")
+        {
+            FileLog.Write("RoeSnip: 8-bit screencast reader off (ROESNIP_GST_CAPTURE=1)");
+            return;
+        }
+        CloseSafeHandle? sdrFd = null;
+        try
+        {
+            sdrFd = await portal.OpenPipeWireRemoteAsync(sessionPath, new Dictionary<string, object>()).ConfigureAwait(false);
+            using (sdrFd)
+            {
+                live.Sdr = PipeWireSdrReader.TryStart(sdrFd.DangerousGetHandle().ToInt32(), out string why);
+                if (live.Sdr is null) FileLog.Write($"RoeSnip: 8-bit screencast reader unavailable ({why}); using the GStreamer pipeline");
+            }
+        }
+        catch (Exception ex)
+        {
+            sdrFd?.Dispose();
+            FileLog.Write($"RoeSnip: 8-bit screencast reader unavailable ({ex.GetType().Name}: {ex.Message}); using the GStreamer pipeline");
         }
     }
 
@@ -581,6 +608,7 @@ internal sealed class ScreenCastSession
         private readonly int _rawFd;
         private readonly Dictionary<uint, IScreenCastStream> _streams = new();
         private readonly HashSet<uint> _sdrNodes = new();   // nodes that did not offer HDR frames
+        private readonly HashSet<uint> _dma8Failed = new(); // nodes that gave no 8-bit DMA-BUF stream
         private static readonly TimeSpan HdrProbeWait = TimeSpan.FromMilliseconds(1500);
         private readonly object _gate = new();
         private volatile string? _deadReason;
@@ -597,6 +625,9 @@ internal sealed class ScreenCastSession
 
         /// <summary>The half-float DMA-BUF consumer of the HDR nodes; null when none can be used.</summary>
         public volatile PipeWireHdrReader? Hdr;
+
+        /// <summary>The 8-bit consumer (libpipewire, memfd) of the SDR nodes; null falls back to the GStreamer pipeline.</summary>
+        public volatile PipeWireSdrReader? Sdr;
         public bool IsDead => _deadReason is not null;
         public event Action<Live, string>? Died;
 
@@ -626,6 +657,18 @@ internal sealed class ScreenCastSession
                 if (wasIdle) baseline = Apply(nodeId, true);
                 ArmIdleTimer();
                 return baseline;
+            }
+        }
+
+        /// <summary>Stops and starts every stream of an awake node again, so the compositor re-enables it and
+        /// records a new first frame (toggling only the video stream leaves the node enabled: no new frame
+        /// until the screen next changes). Returns the video stream's sequence from before.</summary>
+        public long Reactivate(uint nodeId)
+        {
+            lock (NodeLock(nodeId))
+            {
+                Apply(nodeId, false);
+                return Apply(nodeId, true);
             }
         }
 
@@ -682,6 +725,7 @@ internal sealed class ScreenCastSession
             IScreenCastStream? stream;
             lock (_gate) _streams.TryGetValue(nodeId, out stream);
             long before = stream?.Sequence ?? 0;
+            // Video first: mutter records its first frame as the node starts, and an inactive link misses it.
             try { stream?.SetActive(active); }
             catch (Exception ex) { FileLog.Write($"RoeSnip: screencast node {nodeId} set_active({active}) failed: {ex.Message}"); }
             try { Cursor?.SetActive(nodeId, active); }
@@ -793,11 +837,13 @@ internal sealed class ScreenCastSession
                     string why = existing.DeadReason ?? "stream died";
                     _streams.Remove(nodeId);
                     existing.Dispose();
-                    if (existing is HdrScreenCastStream)
+                    if (existing is HdrScreenCastStream dead)
                     {
-                        // An HDR stream that dies (import failures) costs only its HDR: the node goes back to 8-bit.
-                        FileLog.Write($"RoeSnip: HDR stream node {nodeId} unusable ({why}); using the 8-bit stream");
-                        _sdrNodes.Add(nodeId);
+                        // A DMA-BUF stream that dies (import failures) costs only its tier: HDR falls back to
+                        // 8-bit DMA-BUF, that to the memfd stream.
+                        FileLog.Write($"RoeSnip: {(dead.Is8Bit ? "8-bit DMA-BUF" : "HDR")} stream node {nodeId} unusable ({why}); using a simpler stream");
+                        if (dead.Is8Bit) _dma8Failed.Add(nodeId);
+                        else _sdrNodes.Add(nodeId);
                     }
                     else
                     {
@@ -806,7 +852,7 @@ internal sealed class ScreenCastSession
                     }
                 }
                 var geometry = Geometries.FirstOrDefault(g => g.NodeId == nodeId);
-                if (Hdr is { } hdr && !_sdrNodes.Contains(nodeId))
+                if (Hdr is { SupportsHdr: true } hdr && !_sdrNodes.Contains(nodeId))
                 {
                     var hdrStream = hdr.AddNode(geometry, HdrProbeWait, out string hdrWhy);
                     if (hdrStream is not null)
@@ -816,6 +862,29 @@ internal sealed class ScreenCastSession
                     }
                     _sdrNodes.Add(nodeId);
                     FileLog.Write($"RoeSnip: screencast node {nodeId} stays 8-bit ({hdrWhy})");
+                }
+                // 8-bit DMA-BUF first: mutter records those inside the paint it queues on wake (a frame in
+                // milliseconds on every monitor); a memfd stream gets none while the scanout is unchanged.
+                if (Hdr is { Supports8Bit: true } hdr8 && !_dma8Failed.Contains(nodeId))
+                {
+                    var dma8 = hdr8.AddNode(geometry, HdrProbeWait, out string dma8Why, eightBit: true);
+                    if (dma8 is not null)
+                    {
+                        _streams[nodeId] = dma8;
+                        return dma8;
+                    }
+                    _dma8Failed.Add(nodeId);
+                    FileLog.Write($"RoeSnip: screencast node {nodeId} has no 8-bit DMA-BUF stream ({dma8Why}); using memfd buffers");
+                }
+                if (Sdr is { } sdr)
+                {
+                    var shm = sdr.AddNode(geometry, HdrProbeWait, out string sdrWhy);
+                    if (shm is not null)
+                    {
+                        _streams[nodeId] = shm;
+                        return shm;
+                    }
+                    FileLog.Write($"RoeSnip: 8-bit stream node {nodeId} unavailable ({sdrWhy}); using the GStreamer pipeline");
                 }
                 try
                 {
@@ -846,7 +915,7 @@ internal sealed class ScreenCastSession
         public void ProbeHdrNodes()
         {
             var hdr = Hdr;
-            if (hdr is null) return;
+            if (hdr is not { SupportsHdr: true }) return;
             Parallel.ForEach(Geometries, g =>
             {
                 var s = hdr.AddNode(g, HdrProbeWait, out string why);
@@ -870,7 +939,7 @@ internal sealed class ScreenCastSession
         {
             lock (_gate)
             {
-                if (_streams.TryGetValue(nodeId, out var s) && s is HdrScreenCastStream)
+                if (_streams.TryGetValue(nodeId, out var s) && s is HdrScreenCastStream { Is8Bit: false })
                 {
                     _streams.Remove(nodeId);
                     s.Dispose();
@@ -895,6 +964,9 @@ internal sealed class ScreenCastSession
             var hdr = Hdr;
             Hdr = null;
             try { hdr?.Dispose(); } catch { }
+            var sdr = Sdr;
+            Sdr = null;
+            try { sdr?.Dispose(); } catch { }
             _shared.Lost -= OnConnectionLost;
             try { ClosedWatch?.Dispose(); } catch { }
             try

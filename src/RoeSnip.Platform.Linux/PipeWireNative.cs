@@ -2,6 +2,30 @@ using System.Runtime.InteropServices;
 
 namespace RoeSnip.Platform.Linux;
 
+/// <summary>Frame timestamps: mutter stamps each buffer's header with CLOCK_MONOTONIC nanoseconds
+/// (Stopwatch ticks on Linux), so a consumer can tell a frame queued before a wake from one drawn after.</summary>
+internal static unsafe class SpaFrameClock
+{
+    public static long NowNs() => (long)(System.Diagnostics.Stopwatch.GetTimestamp() * (1e9 / System.Diagnostics.Stopwatch.Frequency));
+
+    /// <summary>spa_buffer {n_metas, n_datas, spa_meta* metas, ...}; spa_meta {type, size, data*};
+    /// spa_meta_header {flags, offset, i64 pts, ...}. 0 when the buffer carries no header.</summary>
+    public static long HeaderPts(IntPtr spaBuffer)
+    {
+        uint count = *(uint*)spaBuffer;
+        byte* metas = *(byte**)((byte*)spaBuffer + 8);
+        if (metas == null) return 0;
+        for (uint i = 0; i < count; i++)
+        {
+            byte* m = metas + i * 16;
+            if (*(uint*)m != 1 /* SPA_META_Header */ || *(uint*)(m + 4) < 16) continue;
+            byte* h = *(byte**)(m + 8);
+            return h == null ? 0 : *(long*)(h + 8);
+        }
+        return 0;
+    }
+}
+
 /// <summary>The libpipewire-0.3 entry points the cursor reader and the HDR reader P/Invoke (the
 /// spa_pod builders are header-only inline C, so pods are built by hand in Core/Capture/SpaPod.cs).</summary>
 internal static unsafe class PipeWireNative

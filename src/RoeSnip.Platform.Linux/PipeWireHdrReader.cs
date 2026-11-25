@@ -27,21 +27,30 @@ internal sealed unsafe class PipeWireHdrReader : IDisposable
     private readonly IntPtr _core;
     private readonly DmaBufGl _gl;
     private readonly IReadOnlyList<ulong> _modifiers;
+    private readonly IReadOnlyList<ulong> _modifiers8;
     private readonly List<HdrScreenCastStream> _nodes = new();
     private int _disposed;
 
-    private PipeWireHdrReader(IntPtr loop, IntPtr context, IntPtr core, DmaBufGl gl, IReadOnlyList<ulong> modifiers)
+    private PipeWireHdrReader(IntPtr loop, IntPtr context, IntPtr core, DmaBufGl gl,
+        IReadOnlyList<ulong> modifiers, IReadOnlyList<ulong> modifiers8)
     {
         _loop = loop;
         _context = context;
         _core = core;
         _gl = gl;
         _modifiers = modifiers;
+        _modifiers8 = modifiers8;
     }
+
+    /// <summary>EGL imports half-float DMA-BUFs (an HDR monitor's stream).</summary>
+    public bool SupportsHdr => _modifiers.Count > 0;
+
+    /// <summary>EGL imports 8-bit XRGB DMA-BUFs: SDR monitors take this instead of a memfd stream.</summary>
+    public bool Supports8Bit => _modifiers8.Count > 0;
 
     /// <summary>Opens the consumer on a dup of <paramref name="portalFd"/>. Null with
     /// <paramref name="why"/> when EGL cannot import half-float DMA-BUFs or libpipewire is missing.</summary>
-    public static PipeWireHdrReader? TryStart(int portalFd, out string why)
+    public static PipeWireHdrReader? TryStart(int portalFd, bool hdrWanted, bool noEightBit, out string why)
     {
         why = "";
         if (!NativeLibrary.TryLoad(Lib, out _))
@@ -55,13 +64,17 @@ internal sealed unsafe class PipeWireHdrReader : IDisposable
             why = "EGL: " + glWhy;
             return null;
         }
-        IReadOnlyList<ulong> modifiers;
-        try { modifiers = gl.ModifiersFor(DmaBufGl.FourccAbgr16161616F); }
-        catch (Exception ex) { modifiers = Array.Empty<ulong>(); glWhy = ex.Message; }
-        if (modifiers.Count == 0)
+        IReadOnlyList<ulong> modifiers = Array.Empty<ulong>(), modifiers8 = Array.Empty<ulong>();
+        try
+        {
+            if (hdrWanted) modifiers = gl.ModifiersFor(DmaBufGl.FourccAbgr16161616F);
+            if (!noEightBit) modifiers8 = gl.ModifiersFor(DmaBufGl.FourccXrgb8888);
+        }
+        catch (Exception ex) { glWhy = ex.Message; }
+        if (modifiers.Count == 0 && modifiers8.Count == 0)
         {
             gl.Dispose();
-            why = "EGL imports no DMA-BUF modifier for half-float RGBA" + (glWhy.Length > 0 ? " (" + glWhy + ")" : "");
+            why = "EGL imports no DMA-BUF modifier for half-float or 8-bit RGB" + (glWhy.Length > 0 ? " (" + glWhy + ")" : "");
             return null;
         }
 
@@ -94,20 +107,20 @@ internal sealed unsafe class PipeWireHdrReader : IDisposable
         pw_thread_loop_lock(loop);
         IntPtr core = pw_context_connect_fd(context, fd, IntPtr.Zero, 0); // owns fd from here on
         pw_thread_loop_unlock(loop);
-        var reader = new PipeWireHdrReader(loop, context, core, gl, modifiers);
+        var reader = new PipeWireHdrReader(loop, context, core, gl, modifiers, modifiers8);
         if (core == IntPtr.Zero)
         {
             why = "pw_context_connect_fd failed";
             reader.Dispose();
             return null;
         }
-        FileLog.Write($"RoeSnip: HDR screencast reader ready (EGL {gl.DisplayKind}, {modifiers.Count} F16 DMA-BUF modifiers)");
+        FileLog.Write($"RoeSnip: DMA-BUF screencast reader ready (EGL {gl.DisplayKind}, {modifiers.Count} F16 and {modifiers8.Count} 8-bit modifiers)");
         return reader;
     }
 
     /// <summary>Connects an F16 consumer to the node and waits for the negotiation. Null with
     /// <paramref name="why"/> when the node does not offer HDR frames (the usual SDR answer).</summary>
-    public HdrScreenCastStream? AddNode(ScreenCastStreamGeometry geometry, TimeSpan wait, out string why)
+    public HdrScreenCastStream? AddNode(ScreenCastStreamGeometry geometry, TimeSpan wait, out string why, bool eightBit = false)
     {
         why = "";
         if (Volatile.Read(ref _disposed) != 0)
@@ -115,12 +128,12 @@ internal sealed unsafe class PipeWireHdrReader : IDisposable
             why = "reader closed";
             return null;
         }
-        var node = new HdrScreenCastStream(this, geometry);
+        var node = new HdrScreenCastStream(this, geometry, eightBit);
         pw_thread_loop_lock(_loop);
         _nodes.Add(node);
-        string? error = node.Connect(_core, _modifiers);
+        string? error = node.Connect(_core, eightBit ? _modifiers8 : _modifiers);
         pw_thread_loop_unlock(_loop);
-        if (error is null && !node.Negotiated.Wait(wait)) error = "no HDR format within " + (int)wait.TotalMilliseconds + " ms";
+        if (error is null && !node.Negotiated.Wait(wait)) error = (eightBit ? "no 8-bit DMA-BUF format within " : "no HDR format within ") + (int)wait.TotalMilliseconds + " ms";
         error ??= node.Error;
         if (error is not null)
         {
@@ -196,6 +209,7 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
     private int _firstImportLogged;
     private int _freed;
     private byte[]? _toneBuffer;
+    private long _minPtsNs; // frames stamped before the last wake are dropped
 
     public ScreenCastStreamGeometry Geometry { get; }
     public ManualResetEventSlim Negotiated { get; } = new(false);
@@ -207,10 +221,14 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
     /// <summary>The stream's buffer size once negotiated.</summary>
     public (int Width, int Height) BufferSize => (_format.Width, _format.Height);
 
-    internal HdrScreenCastStream(PipeWireHdrReader owner, ScreenCastStreamGeometry geometry)
+    /// <summary>An SDR monitor's stream (BGRx DMA-BUF) rather than an HDR one (RGBA_F16): same machinery.</summary>
+    public bool Is8Bit { get; }
+
+    internal HdrScreenCastStream(PipeWireHdrReader owner, ScreenCastStreamGeometry geometry, bool eightBit = false)
     {
         _owner = owner;
         Geometry = geometry;
+        Is8Bit = eightBit;
         _hook = Marshal.AllocHGlobal(64);
         new Span<byte>((void*)_hook, 64).Clear();
         _events = Marshal.AllocHGlobal(96);
@@ -238,7 +256,7 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
         if (_stream == IntPtr.Zero) return "pw_stream_new failed";
         _self = GCHandle.Alloc(this);
         pw_stream_add_listener(_stream, _hook, _events, GCHandle.ToIntPtr(_self));
-        byte[] format = SpaPod.HdrEnumFormat(modifiers);
+        byte[] format = Is8Bit ? SpaPod.SdrDmaBufEnumFormat(modifiers) : SpaPod.HdrEnumFormat(modifiers);
         fixed (byte* f = format)
         {
             IntPtr* list = stackalloc IntPtr[1];
@@ -317,9 +335,12 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
             FileLog.Write($"RoeSnip: HDR stream node {n.Geometry.NodeId} Format {f.Format} {f.Width}x{f.Height} " +
                 $"modifier {(f.HasModifier ? "0x" + f.Modifier.ToString("X") + (f.ModifierIsChoice ? " (choice)" : "") : "none")} " +
                 $"primaries {f.Primaries} transfer {f.Transfer}");
-            if (f.Format != SpaPod.VideoRgbaF16 || f.Width <= 0 || f.Height <= 0
-                || (f.Primaries != 0 && f.Primaries != SpaPod.PrimariesBt2020)
-                || (f.Transfer != 0 && f.Transfer != SpaPod.TransferSmpte2084))
+            bool formatOk = n.Is8Bit
+                ? f.Format == SpaPod.VideoBGRx && f.Width > 0 && f.Height > 0
+                : f.Format == SpaPod.VideoRgbaF16 && f.Width > 0 && f.Height > 0
+                    && (f.Primaries == 0 || f.Primaries == SpaPod.PrimariesBt2020)
+                    && (f.Transfer == 0 || f.Transfer == SpaPod.TransferSmpte2084);
+            if (!formatOk)
             {
                 n.Error = $"unexpected format {f.Format} {f.Width}x{f.Height} primaries {f.Primaries} transfer {f.Transfer}";
                 n.Negotiated.Set();
@@ -327,7 +348,8 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
             }
             if (!f.HasModifier)
             {
-                n.Error = "the node offered half-float frames without DMA-BUF (memfd paints 8-bit garbage)";
+                n.Error = n.Is8Bit ? "the node offered 8-bit frames without DMA-BUF"
+                    : "the node offered half-float frames without DMA-BUF (memfd paints 8-bit garbage)";
                 n.Negotiated.Set();
                 return;
             }
@@ -339,7 +361,7 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
                 if (n._target is null || n._target.Width != f.Width || n._target.Height != f.Height)
                 {
                     if (n._target is not null) n._owner.Gl.DestroyTarget(n._target);
-                    n._target = n._owner.Gl.CreateTarget(f.Width, f.Height);
+                    n._target = n._owner.Gl.CreateTarget(f.Width, f.Height, n.Is8Bit);
                 }
                 n._format = f;
                 n._formatOk = true;
@@ -359,7 +381,9 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
                 list[2] = (IntPtr)cp;
                 pw_stream_update_params(n._stream, list, 3);
             }
-            FileLog.Write($"RoeSnip: HDR stream node {n.Geometry.NodeId} negotiated RGBA_F16 {f.Width}x{f.Height}, PQ BT.2020, modifier 0x{f.Modifier:X}");
+            FileLog.Write(n.Is8Bit
+                ? $"RoeSnip: 8-bit DMA-BUF stream node {n.Geometry.NodeId} negotiated BGRx {f.Width}x{f.Height}, modifier 0x{f.Modifier:X}"
+                : $"RoeSnip: HDR stream node {n.Geometry.NodeId} negotiated RGBA_F16 {f.Width}x{f.Height}, PQ BT.2020, modifier 0x{f.Modifier:X}");
             n.Negotiated.Set();
         }
         catch (Exception ex)
@@ -401,6 +425,14 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
         int offset = (int)*(uint*)chunk;
         int stride = *(int*)(chunk + 8);
         if (fd < 0) return;
+        long ptsNs = SpaFrameClock.HeaderPts(spaBuffer);
+        long minPts = Volatile.Read(ref _minPtsNs);
+        if (ptsNs > 0 && ptsNs < minPts)
+        {
+            // A buffer mutter queued before the stream idled, delivered at the wake: not the screen as it is now.
+            FileLog.Write($"RoeSnip: stream node {Geometry.NodeId} dropped a frame from {(minPts - ptsNs) / 1_000_000} ms before the wake");
+            return;
+        }
 
         DmaBufGl.Target? target;
         ulong modifier;
@@ -411,7 +443,8 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
         }
         if (target is null) return;
         var watch = Stopwatch.StartNew();
-        string? error = _owner.Gl.CopyFrame(target, fd, offset, stride, modifier);
+        string? error = _owner.Gl.CopyFrame(target, fd, offset, stride, modifier,
+            Is8Bit ? DmaBufGl.FourccXrgb8888 : DmaBufGl.FourccAbgr16161616F);
         if (error is not null)
         {
             if (++_importFailures >= ImportFailuresBeforeDead)
@@ -446,6 +479,7 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
 
     internal void SetActiveLocked(bool active)
     {
+        if (active) Volatile.Write(ref _minPtsNs, SpaFrameClock.NowNs());
         if (_stream != IntPtr.Zero) pw_stream_set_active(_stream, active);
     }
 
@@ -508,6 +542,7 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
         sizeNote = null;
         sequence = Sequence;
         if (sequence == 0 || outWidth <= 0 || outHeight <= 0) return false;
+        if (Is8Bit) return TryCopy8(srcLeft, srcTop, outWidth, outHeight, monitorWidth, monitorHeight, dest, out sizeNote);
         var (bw, bh) = BufferSize;
         var monitor = new MonitorInfo(0, "hdr", "hdr", new RectPhysical(0, 0, monitorWidth, monitorHeight),
             96, 96, 1.0, true, PqBt2020.ReferenceWhiteNits, 1000.0, false);
@@ -551,6 +586,52 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
         }
         return true;
     }
+
+    /// <summary>8-bit stream: reads the block back as R,G,B,A bytes and writes it as BGRA with alpha 255
+    /// (nearest-sampling the whole frame when the buffer is not the monitor's size).</summary>
+    private bool TryCopy8(int srcLeft, int srcTop, int outWidth, int outHeight,
+        int monitorWidth, int monitorHeight, byte[] dest, out string? sizeNote)
+    {
+        sizeNote = null;
+        lock (_gate)
+        {
+            if (_target is null) return false;
+            int bw = _target.Width, bh = _target.Height;
+            bool same = bw == monitorWidth && bh == monitorHeight;
+            int left = same ? Math.Clamp(srcLeft, 0, Math.Max(0, bw - outWidth)) : 0;
+            int top = same ? Math.Clamp(srcTop, 0, Math.Max(0, bh - outHeight)) : 0;
+            int w = same ? Math.Min(outWidth, bw - left) : bw;
+            int h = same ? Math.Min(outHeight, bh - top) : bh;
+            if (_rawBuffer is null || _rawBuffer.Length != w * h * 4) _rawBuffer = new byte[w * h * 4];
+            if (_owner.Gl.ReadBytes(_target, left, top, w, h, _rawBuffer) is not null) return false;
+            var src = MemoryMarshal.Cast<byte, uint>(_rawBuffer);
+            var dst = MemoryMarshal.Cast<byte, uint>(dest);
+            static uint Bgra(uint v) => (v & 0xFF00FF00u) | ((v & 0xFFu) << 16) | ((v >> 16) & 0xFFu) | 0xFF000000u;
+            if (same)
+            {
+                for (int y = 0; y < h; y++)
+                {
+                    for (int x = 0; x < w; x++) dst[y * outWidth + x] = Bgra(src[y * w + x]);
+                }
+            }
+            else
+            {
+                sizeNote = $"stream buffer {bw}x{bh} != monitor {monitorWidth}x{monitorHeight}, nearest-sampling";
+                double sx = (double)bw / monitorWidth, sy = (double)bh / monitorHeight;
+                for (int y = 0; y < outHeight; y++)
+                {
+                    int fy = Math.Min(bh - 1, (int)((srcTop + y) * sy));
+                    for (int x = 0; x < outWidth; x++)
+                    {
+                        dst[y * outWidth + x] = Bgra(src[fy * bw + Math.Min(bw - 1, (int)((srcLeft + x) * sx))]);
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private byte[]? _rawBuffer;
 
     public void Dispose() => _owner.RemoveNode(this);
 }

@@ -153,6 +153,32 @@ public class HdrScreenCastTests
     }
 
     [Fact]
+    public void SdrDmaBufEnumFormatReadsBackAsBgrxWithoutColorimetry()
+    {
+        byte[] pod = SpaPod.SdrDmaBufEnumFormat(new ulong[] { 0x0300000000606010UL, 0x00FFFFFFFFFFFFFFUL });
+        Assert.True(SpaPod.TryReadVideoFormat(pod, out var f));
+        Assert.Equal(SpaPod.VideoBGRx, f.Format);
+        Assert.Equal(0u, f.Transfer);
+        Assert.Equal(0u, f.Primaries);
+        Assert.True(f.HasModifier);
+        Assert.True(f.ModifierIsChoice);
+        Assert.Equal(0, pod.Length % 8);
+    }
+
+    [Fact]
+    public void SdrEnumFormatHasNoModifierSoNodesAnswerWithMemfd()
+    {
+        byte[] pod = SpaPod.SdrEnumFormat();
+        Assert.True(SpaPod.TryReadVideoFormat(pod, out var f));
+        Assert.Equal(SpaPod.VideoBGRx, f.Format);
+        Assert.False(f.HasModifier);
+        Assert.Equal(0, pod.Length % 8);
+        byte[] buffers = SpaPod.ShmBuffersParam();
+        Assert.Equal(buffers.Length - 8, (int)BitConverter.ToUInt32(buffers, 0));
+        Assert.Equal(0, buffers.Length % 8);
+    }
+
+    [Fact]
     public void DmaBufBuffersParamIsAnAlignedObject()
     {
         byte[] pod = SpaPod.DmaBufBuffersParam();
