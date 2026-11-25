@@ -93,8 +93,8 @@ instead of clipped. What you see on screen is what you get in the file.
 
 | | Windows 10 2004+ / 11 | Linux (X11, Wayland) | macOS |
 |---|---|---|---|
-| HDR-correct capture | Yes | No, captures are normal (SDR) | Asks macOS for an HDR screenshot on macOS 15 or newer with Apple silicon; SDR otherwise |
-| Keep the untouched HDR original (.jxr) | Yes | No | No |
+| HDR-correct capture | Yes | Yes on GNOME 50 or newer with HDR turned on for the monitor; normal (SDR) otherwise | Asks macOS for an HDR screenshot on macOS 15 or newer with Apple silicon; SDR otherwise |
+| Keep the untouched HDR original (.jxr) | Yes | Yes, for HDR captures | Yes, for HDR screenshots |
 | Annotate, colour picker, MP4 / GIF recording | Yes | Yes | Yes |
 
 ## Updates
@@ -168,8 +168,9 @@ It covers the same workflow (hotkey, drag a region, annotate, copy, save,
 upload) and adds correct HDR handling on Windows plus MP4 and GIF recording.
 
 ### Does it work on Linux and macOS?
-Yes. HDR tone-mapping is Windows-only so far: Linux captures are SDR, and macOS
-uses the HDR screenshot option only on macOS 15 or newer with Apple silicon.
+Yes. On Linux, HDR captures work on GNOME 50 or newer when HDR is turned on for
+that monitor; other setups capture normal (SDR) pictures. macOS uses the HDR
+screenshot option only on macOS 15 or newer with Apple silicon.
 
 ### Is it free?
 Yes. MIT licensed and open source.
