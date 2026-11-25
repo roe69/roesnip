@@ -10,20 +10,20 @@ namespace RoeSnip.Overlay;
 /// first-rendered OverlayWindow per monitor, ready for OverlaySession.RunAsync to claim instead of
 /// paying the ~80-103 ms construction/Show/first-render cost on the hot path. Mirrors FlashDimmer's
 /// own "compare the current set against the requested set, rebuild wholesale on any mismatch"
-/// design (see FlashDimmer.EnsureCreated/Matches) almost exactly — the one deliberate difference is
+/// design (see FlashDimmer.EnsureCreated/Matches) almost exactly - the one deliberate difference is
 /// that a pool window is SINGLE-USE (see OverlayWindow.IsPooled's doc comment): <see cref="TryTake"/>
 /// removes it from the pool permanently, so "a session just consumed some of the pool" naturally
-/// shows up as a set-size mismatch the next time <see cref="EnsureBuilt"/> runs — which is exactly
+/// shows up as a set-size mismatch the next time <see cref="EnsureBuilt"/> runs - which is exactly
 /// when a fresh pool needs building anyway. No separate "invalidate" path is needed for that case.
 ///
-/// Lifecycle: built during TrayApp's startup warmup (right after the flash windows — see
+/// Lifecycle: built during TrayApp's startup warmup (right after the flash windows - see
 /// OverlayController.PrewarmOverlayPool), rebuilt on SystemEvents.DisplaySettingsChanged (same
 /// hook TrayApp already uses for the flash windows), and re-provisioned off the hot path after every
 /// session via <see cref="ScheduleReprovision"/> (OverlayController.OverlaySession.Finish), which
 /// defers the actual rebuild to DispatcherPriority.ContextIdle so it never contends with the session
-/// that just finished — or, if it's still mid-rebuild when the NEXT trigger lands, that session
+/// that just finished - or, if it's still mid-rebuild when the NEXT trigger lands, that session
 /// simply falls back to constructing whichever monitor's window on demand (see OverlaySession.
-/// RunAsync) — correctness first, the fallback is merely slower. UI thread only throughout.</summary>
+/// RunAsync) - correctness first, the fallback is merely slower. UI thread only throughout.</summary>
 internal static class OverlayWindowPool
 {
     private static readonly List<OverlayWindow> s_parked = new();
@@ -39,15 +39,15 @@ internal static class OverlayWindowPool
     // ContextIdle-deferred reprovision is still pending must not stack a second one.
     private static bool s_reprovisionScheduled;
 
-    /// <summary>Current pool size — purely for OverlaySession's "overlay pool: hit|miss (N pooled)"
+    /// <summary>Current pool size - purely for OverlaySession's "overlay pool: hit|miss (N pooled)"
     /// diagnostic line (D7).</summary>
     public static int Count => s_parked.Count;
 
     /// <summary>Pre-builds (or wholesale rebuilds, on any mismatch against the requested monitor
-    /// set — see the class doc for why a partially-consumed pool also counts as a mismatch) one
+    /// set - see the class doc for why a partially-consumed pool also counts as a mismatch) one
     /// parked OverlayWindow per monitor: constructed via OverlayWindow's MonitorInfo-only
     /// constructor, Show()n (which drives OnSourceInitialized: parks it off-screen, computes its
-    /// DPI scale, applies the capture-exclusion + Alt+Tab-hiding styles — see that method), and
+    /// DPI scale, applies the capture-exclusion + Alt+Tab-hiding styles - see that method), and
     /// flushed through one real render pass so its first-paint cost is already paid. A single
     /// monitor's build failing is logged and simply leaves the pool short one window for that
     /// monitor (TryTake naturally reports a miss for it; OverlaySession falls back to on-demand
@@ -61,7 +61,7 @@ internal static class OverlayWindowPool
         }
         if (s_ensuringBuilt)
         {
-            // Bail rather than race the in-flight call — see s_ensuringBuilt's doc comment. Like
+            // Bail rather than race the in-flight call - see s_ensuringBuilt's doc comment. Like
             // FlashDimmer's own PrewarmFlash, this is a pure perceived-latency optimization: the
             // caller that lost the race simply gets no pool this time, and the next real session
             // falls back to on-demand construction for whatever wasn't ready.
@@ -99,9 +99,9 @@ internal static class OverlayWindowPool
     }
 
     /// <summary>Claims (and removes) the parked window pre-built for this exact monitor
-    /// (DeviceName + BoundsPx) — or null on a pool miss (rapid re-trigger before re-provisioning
+    /// (DeviceName + BoundsPx) - or null on a pool miss (rapid re-trigger before re-provisioning
     /// finished, a display change, warmup not yet complete, or that monitor's build having failed).
-    /// The caller falls back to constructing that monitor's window on demand — see
+    /// The caller falls back to constructing that monitor's window on demand - see
     /// OverlayController.OverlaySession.RunAsync.</summary>
     public static OverlayWindow? TryTake(MonitorInfo monitor)
     {
@@ -118,7 +118,7 @@ internal static class OverlayWindowPool
         return null;
     }
 
-    /// <summary>Defers a fresh EnsureBuilt to DispatcherPriority.ContextIdle (D4) — called from
+    /// <summary>Defers a fresh EnsureBuilt to DispatcherPriority.ContextIdle (D4) - called from
     /// OverlaySession.Finish() so re-provisioning a pool for the NEXT trigger never lands on the hot
     /// path of the session that's finishing right now, only once the UI thread genuinely has nothing
     /// better to do. Coalesced via s_reprovisionScheduled so back-to-back sessions (G3) don't stack
@@ -145,10 +145,10 @@ internal static class OverlayWindowPool
                     // pool still gets rebuilt once the live session actually finishes. The flash/gate
                     // checks (post-sleep stall fix) extend the same reasoning to a capture flow whose
                     // capture is in flight on the thread pool: the dispatcher goes idle during that
-                    // wait now, so this ContextIdle item CAN dequeue mid-flow — rebuilding then would
+                    // wait now, so this ContextIdle item CAN dequeue mid-flow - rebuilding then would
                     // steal the hot path between flash-show and overlay-show.
                     // (Recording exemption: a recording holds the transferred gate for minutes but
-                    // never uses the overlay hot path — rebuilding during one is long-standing
+                    // never uses the overlay hot path - rebuilding during one is long-standing
                     // behavior, and re-scheduling against it would spin at ContextIdle for the
                     // whole take.)
                     if (OverlayController.IsSessionActive || FlashDimmer.AnyVisible
@@ -168,8 +168,8 @@ internal static class OverlayWindowPool
         catch
         {
             // Review fix: BeginInvoke can throw synchronously (e.g. the Dispatcher has begun
-            // shutting down). If it does, the queued callback above — the only place that resets
-            // s_reprovisionScheduled — never runs, which would otherwise wedge this flag at true
+            // shutting down). If it does, the queued callback above - the only place that resets
+            // s_reprovisionScheduled - never runs, which would otherwise wedge this flag at true
             // forever and permanently disable pool re-provisioning for the rest of the process's
             // life. Reset it here before rethrowing so the caller's own non-fatal catch/log doesn't
             // leave the coalescing flag stuck.
@@ -178,9 +178,9 @@ internal static class OverlayWindowPool
         }
     }
 
-    /// <summary>Order-independent set comparison against DeviceName+BoundsPx — same rationale as
+    /// <summary>Order-independent set comparison against DeviceName+BoundsPx - same rationale as
     /// FlashDimmer.Matches (see its doc comment): a monitor set in any order is a match, so only a
-    /// genuine change (a real monitor add/remove/move, OR a session having taken some windows out —
+    /// genuine change (a real monitor add/remove/move, OR a session having taken some windows out -
     /// see the class doc) triggers a rebuild.</summary>
     private static bool Matches(IReadOnlyList<MonitorInfo> monitors)
     {
@@ -214,7 +214,7 @@ internal static class OverlayWindowPool
         {
             try
             {
-                window.Close(); // OverlayWindow.OnClosed disposes its own placeholder frame — see that method
+                window.Close(); // OverlayWindow.OnClosed disposes its own placeholder frame - see that method
             }
             catch (Exception ex)
             {

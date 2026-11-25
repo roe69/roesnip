@@ -5,19 +5,19 @@ namespace RoeSnip.Core.Color;
 /// <summary>Pure string-formatting / color-space conversions for the eyedropper's format rows
 /// (HEX/RGB/HSL/NITS) and its lightness-shades strip. No UI-framework dependency, so it's
 /// trivially unit-testable. Ported verbatim from the frozen WPF app's own
-/// src/RoeSnip/Overlay/ColorFormatting.cs (item 22) — the WPF app keeps its own independent copy
+/// src/RoeSnip/Overlay/ColorFormatting.cs (item 22) - the WPF app keeps its own independent copy
 /// (same "move logic into Core, leave the frozen app's copy alone" pattern every prior porting
 /// item has used), only RoeSnip.App's eyedropper/magnifier consume this one.</summary>
 public static class ColorFormatting
 {
-    /// <summary>Lowercase, no leading '#' — matches the eyedropper's HEX row exactly (e.g.
+    /// <summary>Lowercase, no leading '#' - matches the eyedropper's HEX row exactly (e.g.
     /// "0d1117"). This is a display format, distinct from the "#RRGGBB" storage format used by
     /// settings persistence (RecentPickedColors/CustomColors) and the rest of the app's existing
-    /// clipboard-copy convention — see HexWithHash.</summary>
+    /// clipboard-copy convention - see HexWithHash.</summary>
     public static string Hex(byte r, byte g, byte b) =>
         string.Create(CultureInfo.InvariantCulture, $"{r:x2}{g:x2}{b:x2}");
 
-    /// <summary>Uppercase "#RRGGBB" — the format the rest of the app already uses for clipboard
+    /// <summary>Uppercase "#RRGGBB" - the format the rest of the app already uses for clipboard
     /// copies and the one used for settings storage (RecentPickedColors/CustomColors), so it
     /// round-trips cleanly through a "#RRGGBB" color parser on either platform.</summary>
     public static string HexWithHash(byte r, byte g, byte b) =>
@@ -142,7 +142,7 @@ public static class ColorFormatting
         return (h, s, l);
     }
 
-    /// <summary>Inverse of <see cref="RgbToHsl"/> — used to generate the lightness-shades strip
+    /// <summary>Inverse of <see cref="RgbToHsl"/> - used to generate the lightness-shades strip
     /// (same hue/saturation, varying lightness) without round-tripping through a string.</summary>
     public static (byte R, byte G, byte B) HslToRgb(double h, double s, double l)
     {
@@ -190,7 +190,7 @@ public static class ColorFormatting
     }
 
     /// <summary>Natural-color (NCol) hue notation: the 60-degree hue sextant's letter (R, Y, G,
-    /// C, B, M) followed by the 0-99 position within it — e.g. hue 38 => "R64".</summary>
+    /// C, B, M) followed by the 0-99 position within it - e.g. hue 38 => "R64".</summary>
     public static string NaturalHue(byte r8, byte g8, byte b8)
     {
         var (h, _, _) = RgbToHsv(r8, g8, b8);
@@ -233,7 +233,7 @@ public static class ColorFormatting
             t > 216.0 / 24389.0 ? Math.Cbrt(t) : (24389.0 / 27.0 * t + 16.0) / 116.0;
     }
 
-    /// <summary>sRGB -> Oklab (Björn Ottosson's reference constants). L in [0,1].</summary>
+    /// <summary>sRGB -> Oklab (Bjorn Ottosson's reference constants). L in [0,1].</summary>
     public static (double L, double A, double B) RgbToOklab(byte r8, byte g8, byte b8)
     {
         double r = SrgbToLinear(r8), g = SrgbToLinear(g8), b = SrgbToLinear(b8);

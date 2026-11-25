@@ -3,7 +3,7 @@ using RoeSnip.Core.Settings;
 namespace RoeSnip.Core.Color;
 
 /// <summary>The built-in color-format catalog (PowerToys Color Picker's set plus RoeSnip's Nits)
-/// and the settings-migration seam for <see cref="RoeSnipSettings.ColorFormats"/> — the exact
+/// and the settings-migration seam for <see cref="RoeSnipSettings.ColorFormats"/> - the exact
 /// EffectivePalette/PaletteColors migration pattern used elsewhere in this settings shape: an
 /// empty stored list means "not migrated yet" and is seeded from <see cref="BuiltIns"/> with the
 /// legacy ColorFormatShow* bools applied; a non-empty list is the user's ordered, edited truth and
@@ -39,7 +39,7 @@ public static class ColorFormatCatalog
     /// <summary>The formats to display, in display order. Non-empty stored list = the user's
     /// truth, returned as-is. Empty = seed every built-in, enabling the ones the legacy
     /// ColorFormatShow* bools had on (HEX/RGB/HSL/Nits defaulted true there, so a fresh install
-    /// gets exactly those four — compact out of the box).</summary>
+    /// gets exactly those four - compact out of the box).</summary>
     public static List<ColorFormatEntry> EffectiveFormats(RoeSnipSettings settings)
     {
         if (settings.ColorFormats.Count > 0)

@@ -8,8 +8,8 @@ using RoeSnip.Capture;
 namespace RoeSnip.Overlay;
 
 // RoeSnip.csproj enables both UseWPF and UseWindowsForms, so System.Windows.Forms/System.Drawing
-// are in scope alongside System.Windows/System.Windows.Media — alias the colliding names to WPF's.
-// (Declared after the namespace line — see AnnotationLayer.cs for why: RoeSnip.Color, a sibling
+// are in scope alongside System.Windows/System.Windows.Media - alias the colliding names to WPF's.
+// (Declared after the namespace line - see AnnotationLayer.cs for why: RoeSnip.Color, a sibling
 // WP-A namespace, would otherwise shadow an outer-scope alias for "Color".)
 using Point = System.Windows.Point;
 using Color = System.Windows.Media.Color;
@@ -17,7 +17,7 @@ using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
 using Pen = System.Windows.Media.Pen;
 using FontFamily = System.Windows.Media.FontFamily;
-// Not a WinForms/System.Drawing collision — FrameworkElement itself declares an instance
+// Not a WinForms/System.Drawing collision - FrameworkElement itself declares an instance
 // FlowDirection property, which shadows the enum type name "FlowDirection" inside any method of a
 // class deriving from it (SelectionAdorner here). Alias to a distinct name to avoid CS0176.
 using FlowDir = System.Windows.FlowDirection;
@@ -38,14 +38,14 @@ public enum SelectionHandle
 /// OverlayWindow can decide what a mouse-down means. All geometry is tracked in physical pixels and
 /// scaled down to DIPs only at render/hit-test time via <see cref="DeviceScaleX"/>/
 /// <see cref="DeviceScaleY"/> (kept in sync by the owning window from
-/// CompositionTarget.TransformToDevice) — the mixed-DPI contract requires physical pixels
+/// CompositionTarget.TransformToDevice) - the mixed-DPI contract requires physical pixels
 /// everywhere except this view-layer conversion.</summary>
 public sealed class SelectionAdorner : FrameworkElement
 {
     private const double HandleHitPaddingPx = 7.0;
 
     // Two-tone border: a dark under-stroke gives contrast on light content, light dashes ride on
-    // top — a neutral, non-garish alternative to the old solid cyan line (user feedback). Frozen
+    // top - a neutral, non-garish alternative to the old solid cyan line (user feedback). Frozen
     // so WPF can share them across renders. Widths are in DIPs (this is view-layer chrome).
     // Internal (not private): Magnifier reuses these exact frozen instances to draw the loupe's
     // selection-border preview, so the preview is unambiguously "this is the crop edge" rather than
@@ -85,21 +85,21 @@ public sealed class SelectionAdorner : FrameworkElement
     /// THIS monitor's own screen boundary (see SpanningSelectionMath.Distribute's doc comment for
     /// exactly how these are computed). Gates both hit-testing (<see cref="HitTestHandle"/> never
     /// returns a corner/side handle on a non-real edge) and rendering (a clipped edge's corner
-    /// bracket is never drawn — there is nothing there to grab, so drawing the "resizable" affordance
+    /// bracket is never drawn - there is nothing there to grab, so drawing the "resizable" affordance
     /// would be a false promise). Defaults to <see cref="SelectionEdges.All"/>, which is every
-    /// ordinary (non-spanning) selection's answer on every window — this only ever varies while
+    /// ordinary (non-spanning) selection's answer on every window - this only ever varies while
     /// spanning, and can now differ between the primary and secondary windows of the SAME spanning
     /// selection (each has its own real/clipped edges).</summary>
     public SelectionEdges RealEdges { get; set; } = SelectionEdges.All;
 
     /// <summary>Cross-monitor selection (multimon-selection): true on a SECONDARY window's own
-    /// adorner while the current selection spans multiple monitors — that window only ever shows its
+    /// adorner while the current selection spans multiple monitors - that window only ever shows its
     /// own local INTERSECTION with the true selection, so a "W x H" badge here would show that
     /// slice's own size rather than the true selection's (only the PRIMARY window's adorner gets
     /// <see cref="OverrideSizeLabel"/> set, showing the true composite size instead). The dashed
     /// border AND any real-edge corner brackets still render on a secondary window (gated by
-    /// <see cref="RealEdges"/> like every other window) — resize handles work from secondary windows
-    /// too as of the resize-after-place feature; only the badge (and the toolbar — see
+    /// <see cref="RealEdges"/> like every other window) - resize handles work from secondary windows
+    /// too as of the resize-after-place feature; only the badge (and the toolbar - see
     /// OverlayWindow.UpdateToolbarPlacement) stay primary-only.</summary>
     public bool SuppressBadge { get; set; }
 
@@ -138,7 +138,7 @@ public sealed class SelectionAdorner : FrameworkElement
         // its edge(s) are genuine edges of the true selection, not just where THIS monitor's own
         // screen boundary cut it off (RealEdges.All for every ordinary, non-spanning selection, so
         // this is a no-op there). A near-miss on a non-real corner still falls through to the side
-        // checks below it — e.g. a real Top edge with a clipped Right edge still offers "Top" even
+        // checks below it - e.g. a real Top edge with a clipped Right edge still offers "Top" even
         // though "TopRight" is refused.
         bool leftReal = (RealEdges & SelectionEdges.Left) != 0;
         bool topReal = (RealEdges & SelectionEdges.Top) != 0;
@@ -189,7 +189,7 @@ public sealed class SelectionAdorner : FrameworkElement
 
         if (SuppressBadge)
         {
-            return; // secondary window of a spanning selection — no "W x H" badge, see the doc comment
+            return; // secondary window of a spanning selection - no "W x H" badge, see the doc comment
         }
 
         string label = OverrideSizeLabel ?? string.Create(CultureInfo.InvariantCulture, $"{r.Width} x {r.Height}");
@@ -209,10 +209,10 @@ public sealed class SelectionAdorner : FrameworkElement
         dc.DrawText(formatted, new Point(badgeRect.Left + badgePad, badgeRect.Top + badgePad));
     }
 
-    /// <summary>Solid white L-brackets at the four corners (dark under-stroke for contrast) — the
+    /// <summary>Solid white L-brackets at the four corners (dark under-stroke for contrast) - the
     /// affordance that signals "resizable", replacing the old white square dots. The arms shrink
     /// for tiny selections so they never overrun a small rect. Cross-monitor selection: a corner's
-    /// bracket is only drawn when BOTH of its edges are real (<paramref name="realEdges"/>) — a
+    /// bracket is only drawn when BOTH of its edges are real (<paramref name="realEdges"/>) - a
     /// corner sitting on a monitor-boundary clip has no handle to advertise (see RealEdges' own
     /// doc comment), so drawing the bracket there would be a false "grab here" promise. The dashed
     /// border itself (drawn by the caller before this) still marks that edge either way.</summary>

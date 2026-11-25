@@ -2,7 +2,7 @@ namespace RoeSnip.Core.Capture;
 
 /// <summary>Selects the one <see cref="ICaptureBackend"/> that applies to the OS actually running,
 /// regardless of how many platform assemblies happen to be LOADED (docs/architecture.md: the
-/// design-time-build note — a no-RID build references all three Platform.* projects, but exactly one
+/// design-time-build note - a no-RID build references all three Platform.* projects, but exactly one
 /// candidate ever reports <c>isSupported() == true</c> at runtime). Each Platform.* project registers
 /// itself via a <c>[ModuleInitializer]</c>-attributed method in its own file, mirroring Phase 1's
 /// AppComposition hook pattern - Core/App never references a concrete Platform.* type
@@ -28,7 +28,7 @@ public static class CaptureBackendRegistry
 
     /// <summary>Returns the first registered candidate whose IsSupported() is true. Throws
     /// PlatformNotSupportedException if none match (e.g. Core.Tests running with zero Platform.*
-    /// assemblies loaded and no fake registered — tests should register a fake backend directly
+    /// assemblies loaded and no fake registered - tests should register a fake backend directly
     /// instead of going through this registry at all).</summary>
     public static ICaptureBackend CreateForCurrentPlatform()
     {

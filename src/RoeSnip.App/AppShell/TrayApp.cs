@@ -31,14 +31,14 @@ namespace RoeSnip.App.AppShell;
 /// <see cref="SingleInstance"/>), the Windows PrintScreen consent flow, and the
 /// <see cref="ITrayNotifier"/> notifications the capture flow surfaces back through this class.
 /// The tray icon is STRICTLY optional (docs/architecture.md): a failure to create it is caught and
-/// logged, and startup (hotkey, pipe listener) proceeds — the app stays fully operable via the
+/// logged, and startup (hotkey, pipe listener) proceeds - the app stays fully operable via the
 /// CLI verbs alone.</summary>
 public sealed class TrayApp : ITrayNotifier
 {
     private const string PrintScreenRegistryKeyPath = @"Control Panel\Keyboard";
     private const string PrintScreenValueName = "PrintScreenKeyForSnippingEnabled";
 
-    // Item 16 design tokens for the toast window built below — literal Color fields rather than an
+    // Item 16 design tokens for the toast window built below - literal Color fields rather than an
     // App.axaml resource lookup, since ShowToast constructs its whole visual tree in code (same
     // convention WPF's own Recording/RecordingChrome.cs uses for its in-code DangerFill/DangerSolid
     // constants). Values mirror App.axaml's RlBgElevatedBrush/RlTextPrimaryBrush/RlPrimaryGoldBrush/
@@ -76,8 +76,8 @@ public sealed class TrayApp : ITrayNotifier
     // applies here.
     private PowerModeChangedEventHandler? _powerModeChangedHandler;
     // Dedup for OnSystemResumed: it can now fire from TWO sources for one wake (the
-    // PowerRegisterSuspendResumeNotification callback — see Platform.Windows
-    // SuspendResumeNotifications — and the SystemEvents belt). Environment.TickCount64 of the
+    // PowerRegisterSuspendResumeNotification callback - see Platform.Windows
+    // SuspendResumeNotifications - and the SystemEvents belt). Environment.TickCount64 of the
     // last handled resume; 0 = never. Ported from the WPF app's identical field.
     private long _lastResumeHandledTick;
 #endif
@@ -100,7 +100,7 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Runs the tray app (the no-args launch path). A plain launch while another instance
     /// is already running REPLACES that instance with this one (item 13a, WPF TrayApp.cs:46-133
-    /// semantics) — it asks the old one to exit, waits for it to release the single-instance lock
+    /// semantics) - it asks the old one to exit, waits for it to release the single-instance lock
     /// (force-terminating it as a last resort, see SingleInstance.KillOtherInstances), then takes
     /// over. That way "just run the exe" always means "run the latest build", never "poke whatever
     /// is already running".</summary>
@@ -109,7 +109,7 @@ public sealed class TrayApp : ITrayNotifier
         if (Array.IndexOf(args, "--self-update-now") >= 0)
         {
             // One-shot "force update now": check GitHub and, if there is a newer release, download
-            // + swap it and let the new build take over via replace-on-run, then exit — no tray
+            // + swap it and let the new build take over via replace-on-run, then exit - no tray
             // icon, no single-instance mutex (so it never fights the running instance the new
             // build replaces). See RunSelfUpdateNow. Environment.Exit so no stray foreground
             // thread can keep this one-shot alive.
@@ -136,7 +136,7 @@ public sealed class TrayApp : ITrayNotifier
         {
             if (initialAction != InstanceSignal.None)
             {
-                // An explicit CLI verb — just ask the resident instance to do that thing; this
+                // An explicit CLI verb - just ask the resident instance to do that thing; this
                 // process exits immediately, no takeover.
                 SingleInstance.SignalExistingInstance(initialAction);
                 return 0;
@@ -153,7 +153,7 @@ public sealed class TrayApp : ITrayNotifier
         s_initialAction = initialAction;
         // Dev-gated automation channel (AppShell/AutomationServer.cs): read from the REAL process
         // args (not whatever CliOptions parsed args into) so ROESNIP_AUTOMATION=1 or a literal
-        // `--automation` argument gates it the same way regardless of which entry point led here —
+        // `--automation` argument gates it the same way regardless of which entry point led here -
         // a bare `RoeSnip.exe --automation` launch (args = ["--automation"]) and `RoeSnip capture`/
         // `RoeSnip settings` with the env var set both need this to agree.
         s_automationEnabled = AutomationServer.IsRequested(Environment.GetCommandLineArgs());
@@ -204,7 +204,7 @@ public sealed class TrayApp : ITrayNotifier
 
         _settings = AppComposition.LoadSettingsOrDefault();
 
-        // Tray icon first, then pipe listener, then the (potentially modal) consent flow — the
+        // Tray icon first, then pipe listener, then the (potentially modal) consent flow - the
         // same ordering rationale as the WPF app: an unanswered first-launch dialog must not leave
         // the app invisible and unsignallable.
         CreateTrayIconDefensively();
@@ -232,8 +232,8 @@ public sealed class TrayApp : ITrayNotifier
         }
 
         // Self-update (item 13b, periodic in this later pass): best-effort cleanup of any leftover
-        // .old/.new from a prior install/update swap, then — only when this IS the installed copy
-        // — a background loop that checks GitHub for a newer release and, if found, downloads and
+        // .old/.new from a prior install/update swap, then - only when this IS the installed copy
+        // - a background loop that checks GitHub for a newer release and, if found, downloads and
         // applies it automatically (see CheckForUpdatesAndAutoApplyAsync for the idle-wait guard on
         // the relaunch that follows), then repeats on a user-configurable cadence for as long as
         // this process lives (a tray resident runs for weeks, so a startup-only check almost never
@@ -500,7 +500,7 @@ public sealed class TrayApp : ITrayNotifier
                     OpenSettings();
                     break;
                 case InstanceSignal.Exit:
-                    // Replace-on-run (item 13a): a plain launch elsewhere is taking over from us —
+                    // Replace-on-run (item 13a): a plain launch elsewhere is taking over from us -
                     // exit cleanly so it can acquire the single-instance mutex.
                     ExitApplication();
                     break;
@@ -531,25 +531,25 @@ public sealed class TrayApp : ITrayNotifier
         }
 
         // Honest trigger-based latency instrumentation (item 18, ported from the WPF reference):
-        // stamp the moment the ACTUAL trigger happened — before the flash, before capture, before
-        // anything else — so every downstream latency log measures what the user really
+        // stamp the moment the ACTUAL trigger happened - before the flash, before capture, before
+        // anything else - so every downstream latency log measures what the user really
         // experienced, not from whenever the flash happened to start (or didn't, if it's
         // disabled/unavailable/fails). Must be the first statement in this method.
         Overlay.OverlayController.MarkTriggerTimestamp();
 
-        // Instant-response flash (item 18, Windows only — see Overlay/FlashDimmer.cs): dim every
+        // Instant-response flash (item 18, Windows only - see Overlay/FlashDimmer.cs): dim every
         // monitor within milliseconds of the trigger, BEFORE RunCaptureFlowAsync starts the
-        // pool-side capture (the dispatcher pump stays live during it — post-sleep stall fix; the
+        // pool-side capture (the dispatcher pump stays live during it - post-sleep stall fix; the
         // flash covers the capture latency visually). TryShowFlash itself no-ops (returns false) on
-        // non-Windows and when ROESNIP_NO_FLASH=1 is set, so this is unconditionally safe to call —
+        // non-Windows and when ROESNIP_NO_FLASH=1 is set, so this is unconditionally safe to call -
         // those cases simply fall straight through to the direct capture-then-show path, which is
         // also the PERMANENT behavior on Linux/macOS. The ReleaseFlash in ObserveCaptureTask's
         // finally is the backstop that guarantees the flash never outlives the flow on any exit path
         // (capture failed on every monitor, CaptureGate busy, an unexpected exception). The flash no
-        // longer touches OS foreground at all (capture-fidelity fix, 2026-08-02 — see
+        // longer touches OS foreground at all (capture-fidelity fix, 2026-08-02 - see
         // FlashDimmer.ShowAllCore's own comment at the removal site). This closes the ACTIVATION-
         // triggered dismissal path only (a tooltip/hover-popup that self-dismisses on
-        // WM_ACTIVATE/WM_ACTIVATEAPP now survives); it does not guarantee every tooltip survives —
+        // WM_ACTIVATE/WM_ACTIVATEAPP now survives); it does not guarantee every tooltip survives -
         // any topmost window placed over an already-hovering tooltip can still make that tooltip's
         // own hover-tracking self-dismiss via WM_MOUSELEAVE with no dependency on foreground at all.
         // See docs/architecture.md "Capture".
@@ -566,7 +566,7 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            // The flash is a pure perceived-latency optimization — its failure must never block the
+            // The flash is a pure perceived-latency optimization - its failure must never block the
             // actual capture.
             FileLog.Write($"RoeSnip: flash dimmer failed (non-fatal): {ex.Message}");
         }
@@ -625,7 +625,7 @@ public sealed class TrayApp : ITrayNotifier
             resumeGlobalHotkey: () => _hotkeyManager?.Register(_settings),
             // Item 15's "Restart elevated now": mirrors the WPF app's RestartElevatedNow exiting
             // its WinForms message loop so the elevated task can take over the single-instance
-            // lock — this app's equivalent full teardown is ExitApplication (same path the tray
+            // lock - this app's equivalent full teardown is ExitApplication (same path the tray
             // menu's Exit item and a replace-on-run signal already use).
             exitApplication: ExitApplication);
         window.Icon = AppIcon;
@@ -685,7 +685,7 @@ public sealed class TrayApp : ITrayNotifier
             // Same resolved path as startup: if the saved hotkey is bare PrintScreen, run it
             // through the consent resolution before re-arming. PrintScreenPromptAnswered will
             // already be true after the first-ever resolution, so this cannot re-trigger the
-            // prompt then — it only fires the one-time dialog in the edge case where the user
+            // prompt then - it only fires the one-time dialog in the edge case where the user
             // just switched to bare PrtScr for the first time.
             if (OperatingSystem.IsWindows())
             {
@@ -732,7 +732,7 @@ public sealed class TrayApp : ITrayNotifier
 
     // ---------------- Cold-start warmup (items 17 + 18) ----------------
 
-    /// <summary>The monitor list the instant-response flash uses (item 18) — TriggerCapture must
+    /// <summary>The monitor list the instant-response flash uses (item 18) - TriggerCapture must
     /// not pay a fresh DXGI/portal/RandR enumeration on the hot path. Seeded by warmup, refreshed in
     /// the background after every capture flow; a stale list costs at worst one flash on outdated
     /// bounds (the real overlay always re-enumerates via CaptureService, and FlashDimmer's own
@@ -741,20 +741,20 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Pre-pays the heavy first-capture costs off the UI thread, ported from the WPF app's
     /// TrayApp.StartWarmup/RunWarmup (TrayApp.cs:872-1145), now including its flash-dimmer step
-    /// (item 18 — see Overlay/FlashDimmer.cs's own doc comment for the Windows-only park-don't-hide
+    /// (item 18 - see Overlay/FlashDimmer.cs's own doc comment for the Windows-only park-don't-hide
     /// mechanics this pre-creates). What runs here: monitor enumeration (seeds
     /// <see cref="s_cachedMonitors"/>), pre-creation of the per-monitor flash dimmer windows
-    /// (marshalled to the UI thread — they are Avalonia windows), JIT of the tone-map/PNG-encode
+    /// (marshalled to the UI thread - they are Avalonia windows), JIT of the tone-map/PNG-encode
     /// path, construction of the real OverlayWindow type (XAML-load + layout JIT), and one REAL
     /// throwaway capture per monitor through the exact CaptureService path a hotkey press takes
     /// (pre-provisioning WgcCapturer's cached device on Windows via
     /// <see cref="RoeSnip.Platform.Windows.WgcCapturer.Prewarm"/>). That throwaway capture may
-    /// briefly show the OS capture border on WGC-fallback monitors — accepted at tray startup, same
+    /// briefly show the OS capture border on WGC-fallback monitors - accepted at tray startup, same
     /// as the WPF reference (no session is left running, so no border persists). Fully try/caught
-    /// and never fatal — a warmup failure just means the first real hotkey press is as slow as it
+    /// and never fatal - a warmup failure just means the first real hotkey press is as slow as it
     /// always was, not a crash.
     ///
-    /// No parked overlay WINDOW pool yet (only the flash dimmer's own tiny parked windows) — see
+    /// No parked overlay WINDOW pool yet (only the flash dimmer's own tiny parked windows) - see
     /// docs/parity.md item 18's own note: the WPF reference's OverlayWindowPool (pre-built,
     /// pre-rendered, single-use overlay windows) is explicitly optional follow-up work per that
     /// item's own instructions ("if the pool destabilizes anything, land the flash dimmer alone
@@ -772,11 +772,11 @@ public sealed class TrayApp : ITrayNotifier
 
 #if WINDOWS
         // Sleep/resume invalidation (post-sleep stall fix, ported from the WPF app): nothing else
-        // in the process knows the machine slept — the WGC keepalive only catches
+        // in the process knows the machine slept - the WGC keepalive only catches
         // DeviceRemovedReason (a resume-stale capture stack usually reports healthy), so the first
         // post-wake hotkey used to pay the whole staleness discovery (frame-wait timeouts,
         // re-provisions, ghost-display enumeration) on the hot path. Handler stays tiny:
-        // SystemEvents delivers on its own broadcast thread. Windows only — no other platform has
+        // SystemEvents delivers on its own broadcast thread. Windows only - no other platform has
         // a power-event seam here (see docs/parity.md); the net8.0 TFM compiles without the
         // Microsoft.Win32.SystemEvents package entirely.
         _powerModeChangedHandler = (_, e) =>
@@ -791,7 +791,7 @@ public sealed class TrayApp : ITrayNotifier
         // SystemEvents alone is NOT a working resume signal on this class of machine: it never
         // maps PBT_APMRESUMEAUTOMATIC (the broadcast modern wakes actually deliver), and a
         // 2026-07-23 log audit of the WPF daily driver found 10 wakes with ZERO
-        // PowerModeChanged(Resume) deliveries — the re-warm below had never run once. The
+        // PowerModeChanged(Resume) deliveries - the re-warm below had never run once. The
         // callback-based power registration hears every wake; the SystemEvents subscription above
         // stays as a belt, deduped inside OnSystemResumed. Ported from the WPF app.
         RoeSnip.Platform.Windows.SuspendResumeNotifications.Register(OnSystemResumed);
@@ -810,17 +810,17 @@ public sealed class TrayApp : ITrayNotifier
 #if WINDOWS
     /// <summary>Resume-from-sleep recovery (see the PowerModeChanged subscription in StartWarmup).
     /// Everything here is proactive re-warming so the FIRST post-wake hotkey is as fast as any
-    /// other: note the resume for CaptureCache's DD-memo grace window immediately, then — after a
+    /// other: note the resume for CaptureCache's DD-memo grace window immediately, then - after a
     /// short settle delay so the display topology and driver have finished waking (resume fires
-    /// before DP links retrain; enumerating instantly sees ghost displays like "WinDisc") — drop
+    /// before DP links retrain; enumerating instantly sees ghost displays like "WinDisc") - drop
     /// every cached WGC device/item/framepool and re-provision fresh ones per current monitor,
     /// and refresh the monitor cache + flash windows against the settled topology. All on a
     /// background thread; the per-monitor re-prewarm takes the same slot gates a real capture
-    /// takes, so it can never corrupt a capture the user managed to start first — worst case that
+    /// takes, so it can never corrupt a capture the user managed to start first - worst case that
     /// capture pays the old-style staleness discovery and this pass then cleans up after it.</summary>
     private void OnSystemResumed(string source)
     {
-        // One wake can now signal twice (power callback + SystemEvents belt) — handle the first,
+        // One wake can now signal twice (power callback + SystemEvents belt) - handle the first,
         // skip the echo. Exchange-then-compare is race-safe: of two concurrent callers exactly one
         // observes the stale tick.
         long now = Environment.TickCount64;
@@ -855,7 +855,7 @@ public sealed class TrayApp : ITrayNotifier
             // every wake), so the pass above can miss monitors that were not attached yet at
             // settle+3s. The WPF app covers this with its DisplaySettingsChanged subscription; this
             // app has none (docs/parity.md), so a single delayed re-provision pass is its
-            // substitute — a no-op for slots the first pass already provisioned.
+            // substitute - a no-op for slots the first pass already provisioned.
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(12));
@@ -932,7 +932,7 @@ public sealed class TrayApp : ITrayNotifier
     /// parallelism). Parallel matters here: post-wake the Windows capture broker can be sick in a
     /// way that makes item creation block on COM server activation for up to its full 120 s
     /// timeout (observed live 2026-07-22 on the WPF daily driver: CO_E_SERVER_EXEC_FAILURE
-    /// surfacing exactly 120 s after the call) — sequential prewarm would serialize that worst
+    /// surfacing exactly 120 s after the call) - sequential prewarm would serialize that worst
     /// case per monitor. Ported from the WPF app's identical helper.</summary>
     private static void ReprovisionWgcSlots(System.Collections.Generic.IReadOnlyList<MonitorInfo> monitors)
     {
@@ -958,7 +958,7 @@ public sealed class TrayApp : ITrayNotifier
         try
         {
             // Ordering mirrors the WPF reference's own RunWarmup: the flash windows ARE the instant
-            // (few-ms) response — every other step is slower and only matters once the flash is
+            // (few-ms) response - every other step is slower and only matters once the flash is
             // already up, so it comes right after monitor enumeration seeds s_cachedMonitors (which
             // the flash needs before it can position itself).
             var monitors = WarmupCaptureBackendInit();
@@ -970,7 +970,7 @@ public sealed class TrayApp : ITrayNotifier
             stopwatch.Stop();
             FileLog.Write($"RoeSnip: warmup completed in {stopwatch.ElapsedMilliseconds} ms");
 
-            // Warmup itself is a full-scale burst (throwaway full-res captures + tonemaps) — sweep
+            // Warmup itself is a full-scale burst (throwaway full-res captures + tonemaps) - sweep
             // its garbage so the app starts its resident life at the small footprint, not at the
             // warmup high-water mark. Schedule() is safe to call from this background thread (see
             // its own doc comment) and defers the actual collect to ApplicationIdle, so it can
@@ -980,13 +980,13 @@ public sealed class TrayApp : ITrayNotifier
         catch (Exception ex)
         {
             // Never let a warmup failure be visible as anything other than "the first real capture
-            // is exactly as cold as before" — this is a pure optimization, not a requirement.
+            // is exactly as cold as before" - this is a pure optimization, not a requirement.
             FileLog.Write($"RoeSnip: warmup failed (non-fatal): {ex.Message}");
         }
         finally
         {
             // Unblock any RunCaptureFlowAsync call currently polling WarmupPending, on every
-            // possible exit from this method — success, an exception caught above, or a benign
+            // possible exit from this method - success, an exception caught above, or a benign
             // zero-monitors early return inside one of the Warmup* steps. A stuck WarmupPending=true
             // would otherwise make every hotkey press wait out the full 5-second poll deadline for
             // nothing.
@@ -995,7 +995,7 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>Pre-creates the monitor enumeration a real capture pays on its first call (DXGI
-    /// factory/adapter/output walk on Windows; portal/RandR queries elsewhere) — otherwise-shared
+    /// factory/adapter/output walk on Windows; portal/RandR queries elsewhere) - otherwise-shared
     /// setup cost that a hotkey press would pay for the first time.</summary>
     private static IReadOnlyList<MonitorInfo> WarmupCaptureBackendInit()
         => new CaptureService().EnumerateMonitors();
@@ -1023,9 +1023,9 @@ public sealed class TrayApp : ITrayNotifier
     /// <summary>Item 18: background monitor re-enumeration for <see cref="s_cachedMonitors"/>,
     /// called after every capture flow (ObserveCaptureTask's finally) and by the post-resume
     /// re-warm (OnSystemResumed, with <paramref name="prewarmFlash"/> so the parked flash windows
-    /// are rebuilt against the settled topology too — PrewarmFlash itself refuses to touch windows
+    /// are rebuilt against the settled topology too - PrewarmFlash itself refuses to touch windows
     /// while a flash/session is live). No display-change hook yet (unlike the WPF reference's
-    /// SystemEvents.DisplaySettingsChanged subscription) — a monitor set change is instead picked
+    /// SystemEvents.DisplaySettingsChanged subscription) - a monitor set change is instead picked
     /// up lazily by the next trigger's own TryShowFlash/FlashDimmer.ShowAll call, whose cold-build
     /// path (FlashDimmer.EnsureCreated's own set-comparison) already handles a stale cached list
     /// correctly, just without the pre-warm before that one trigger. Acceptable: docking/resolution
@@ -1040,7 +1040,7 @@ public sealed class TrayApp : ITrayNotifier
                 Volatile.Write(ref s_cachedMonitors, monitors);
                 if (prewarmFlash && monitors.Count > 0)
                 {
-                    // Marshalled to the UI thread like WarmupFlashWindows — flash windows are
+                    // Marshalled to the UI thread like WarmupFlashWindows - flash windows are
                     // Avalonia windows.
                     Dispatcher.UIThread.Post(() => Overlay.OverlayController.PrewarmFlash(monitors));
                 }
@@ -1054,7 +1054,7 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Exercises the exact code path a real capture's tone-map/encode stretch runs
     /// (SdrImage.FromCapturedFrame -> ToneMapper.MapToSdr -> PngWriter.Encode) against a small
-    /// synthetic frame with a fake MonitorInfo — no real capture session, so nothing ever
+    /// synthetic frame with a fake MonitorInfo - no real capture session, so nothing ever
     /// flashes.</summary>
     private static void WarmupToneMapAndEncode()
     {
@@ -1066,7 +1066,7 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>Builds the small synthetic Fp16 scRGB frame shared by
-    /// <see cref="WarmupToneMapAndEncode"/> and <see cref="WarmupOverlayWindowType"/> — a fake
+    /// <see cref="WarmupToneMapAndEncode"/> and <see cref="WarmupOverlayWindowType"/> - a fake
     /// MonitorInfo plus <paramref name="size"/>x<paramref name="size"/> pixel data alternating a
     /// plain-SDR value and an HDR-highlight value per column, so ToneMapper's pass-through AND
     /// shoulder/dither branches both actually execute (a uniform frame would only ever hit
@@ -1082,8 +1082,8 @@ public sealed class TrayApp : ITrayNotifier
 
         Span<byte> dim = stackalloc byte[2];
         Span<byte> bright = stackalloc byte[2];
-        BitConverter.TryWriteBytes(dim, (Half)0.5f);    // plain SDR gray — exercises the pass-through branch
-        BitConverter.TryWriteBytes(bright, (Half)2.5f); // 200 nits — exercises the shoulder/dither branch
+        BitConverter.TryWriteBytes(dim, (Half)0.5f);    // plain SDR gray - exercises the pass-through branch
+        BitConverter.TryWriteBytes(bright, (Half)2.5f); // 200 nits - exercises the shoulder/dither branch
 
         var pixels = new byte[size * size * 8]; // Fp16ScRgb: 8 bytes/pixel (4 x Half)
         for (int y = 0; y < size; y++)
@@ -1113,7 +1113,7 @@ public sealed class TrayApp : ITrayNotifier
     /// window: with no HWND ever mapped visible, Measure+Arrange alone is enough to force the
     /// visual tree to build and lay out for real, which is where the load/JIT cost actually lands.
     /// Fire-and-forget from the warmup thread (Dispatcher.UIThread.Post), same as every other
-    /// Warmup* step's own non-fatal try/catch — a failure here costs nothing but the optimization.</summary>
+    /// Warmup* step's own non-fatal try/catch - a failure here costs nothing but the optimization.</summary>
     private void WarmupOverlayWindowType()
     {
         Dispatcher.UIThread.Post(() =>
@@ -1131,7 +1131,7 @@ public sealed class TrayApp : ITrayNotifier
                     static _ => { }, static _ => { }, static _ => { });
                 window.Measure(new Size(size, size));
                 window.Arrange(new Rect(0, 0, size, size));
-                window.Close(); // never Show()n — see method doc.
+                window.Close(); // never Show()n - see method doc.
             }
             catch (Exception ex)
             {
@@ -1149,7 +1149,7 @@ public sealed class TrayApp : ITrayNotifier
     /// first-ever DD-to-WGC fallback (or first WGC monitor) doesn't pay that cost on a hotkey
     /// press. Holds the process-wide CaptureGate: a concurrent real capture could otherwise race
     /// this one and spuriously poison shared capture-backend state. (A trigger inside this
-    /// sub-second window waits it out — see CaptureGate.HeldByWarmup/RunCaptureFlowAsync.)</summary>
+    /// sub-second window waits it out - see CaptureGate.HeldByWarmup/RunCaptureFlowAsync.)</summary>
     private static void WarmupCaptureSessions(IReadOnlyList<MonitorInfo> monitors)
     {
         if (monitors.Count == 0)
@@ -1191,7 +1191,7 @@ public sealed class TrayApp : ITrayNotifier
 
 #if WINDOWS
             // Monitors whose capture above went through (borderless) Desktop Duplication never
-            // touched WGC — pre-provision WgcCapturer's cached item/device for them too (cheap,
+            // touched WGC - pre-provision WgcCapturer's cached item/device for them too (cheap,
             // and sessionless, so no border), covering the cost of a first-ever DD->WGC fallback.
             foreach (var monitor in monitors)
             {
@@ -1226,7 +1226,7 @@ public sealed class TrayApp : ITrayNotifier
     /// <summary>Backs the hidden --self-update-now flag: synchronously checks GitHub for a newer
     /// release and, if there is one, downloads + swaps it (UpdateManager.ApplyUpdateAsync, which
     /// then launches the new build so replace-on-run hands off to it) before returning. No tray
-    /// icon and no single-instance mutex are ever created here — this process's only job is to
+    /// icon and no single-instance mutex are ever created here - this process's only job is to
     /// perform the swap and exit, leaving the freshly-launched new build as the running instance.
     /// Only for copies that self-update (Windows, a Linux AppImage, a macOS .app bundle). Returns 0
     /// on "updated"/"already current"/"not applicable here", 1 if the check/download/swap errored,
@@ -1279,7 +1279,7 @@ public sealed class TrayApp : ITrayNotifier
         {
             if (!UpdateManager.IsInstalled)
             {
-                // Only the installed copy should force-update itself — see UpdateManager.IsInstalled's
+                // Only the installed copy should force-update itself - see UpdateManager.IsInstalled's
                 // own doc comment for why a portable/dev copy has nothing sensible to swap itself for.
                 Console.Out.WriteLine($"RoeSnip: --self-update-now applies only to the installed copy ({UpdateManager.InstalledExePath}).");
                 return 0;
@@ -1351,9 +1351,9 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>The periodic update loop (self-updating copies; only started when
-    /// <see cref="UpdateManager.IsInstalled"/> is true — see the Start() call site's comment).
+    /// <see cref="UpdateManager.IsInstalled"/> is true - see the Start() call site's comment).
     /// Scheduling itself (iteration-zero startup check, 1-minute settings-poll wake, wall-clock
-    /// elapsed, jitter, StartupOnly handling) is <see cref="UpdatePolling.RunPeriodicAsync"/> — see
+    /// elapsed, jitter, StartupOnly handling) is <see cref="UpdatePolling.RunPeriodicAsync"/> - see
     /// its doc comment for the full semantics, which are unchanged here. This method supplies only
     /// the two things that differ per app/platform: where the frequency setting lives
     /// (<c>_settings.UpdateCheckFrequency</c>, re-read fresh on every call so SettingsWindow's
@@ -1363,9 +1363,9 @@ public sealed class TrayApp : ITrayNotifier
         UpdatePolling.RunPeriodicAsync(() => _settings.UpdateCheckFrequency, CheckForUpdatesAndAutoApplyAsync);
 
     /// <summary>One check-and-apply cycle. Says nothing when there is nothing to
-    /// offer (no update, no network, private-repo 404, a 304/rate-limit backoff —
+    /// offer (no update, no network, private-repo 404, a 304/rate-limit backoff -
     /// CheckForUpdateAsync already swallows all of that and returns null). When a newer release
-    /// does exist, applies it automatically — no click required — but the beforeLaunch delegate
+    /// does exist, applies it automatically - no click required - but the beforeLaunch delegate
     /// passed to ApplyUpdateAsync holds the actual relaunch (and the replace-on-run kill that
     /// follows it) until <see cref="WaitForIdleAsync"/> reports idle, so an update landing mid-snip
     /// can never yank the app out from under the user. Falls back to the click-to-update toast if
@@ -1373,7 +1373,7 @@ public sealed class TrayApp : ITrayNotifier
     /// (<see cref="_updateToastShownForVersion"/>) so a persistently failing download retried every
     /// periodic tick does not turn into hourly toast spam; the retries themselves keep happening
     /// regardless, only the notification is latched. Called both as the loop's iteration zero
-    /// (RunUpdateLoopAsync) and, on every subsequent tick, as the actual periodic recheck — never
+    /// (RunUpdateLoopAsync) and, on every subsequent tick, as the actual periodic recheck - never
     /// blocks its caller beyond its own await chain.</summary>
     private async Task CheckForUpdatesAndAutoApplyAsync()
     {
@@ -1430,7 +1430,7 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>The "Check for updates" context-menu item: unlike the silent
-    /// startup check, this always reports back via a toast/dialog rather than staying silent — a
+    /// startup check, this always reports back via a toast/dialog rather than staying silent - a
     /// deliberate, occasional, user-initiated click should always get a visible answer (up to
     /// date / update offered / check failed).</summary>
     private async Task CheckForUpdatesFromMenuAsync()
@@ -1482,7 +1482,7 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>Must already be on the UI thread. Asks Yes/No (Avalonia has no blocking
-    /// MessageBox — see ShowYesNoDialogAsync) and applies immediately on Yes.</summary>
+    /// MessageBox - see ShowYesNoDialogAsync) and applies immediately on Yes.</summary>
     private async Task OfferUpdateAsync(UpdateManager.UpdateInfo update)
     {
         bool? answer = await ShowYesNoDialogAsync(
@@ -1511,7 +1511,7 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>Runs off the UI thread (download + file swap); on success the new build takes over
-    /// via replace-on-run, so this instance simply gets told to exit shortly afterwards — nothing
+    /// via replace-on-run, so this instance simply gets told to exit shortly afterwards - nothing
     /// further to do here. On failure, surfaces it as an error toast instead of letting it vanish
     /// into an unobserved task.</summary>
     private async Task ApplyUpdateFromToastAsync(UpdateManager.UpdateInfo info)
@@ -1585,7 +1585,7 @@ public sealed class TrayApp : ITrayNotifier
     /// truly happens once ever; dismissing the dialog without answering leaves settings untouched
     /// (asked again next launch). Any registry or dialog failure logs and returns the settings
     /// unchanged (fail open on the UX) without marking the prompt as answered.
-    /// The WPF MessageBox became a small Avalonia Yes/No dialog — Avalonia has no built-in
+    /// The WPF MessageBox became a small Avalonia Yes/No dialog - Avalonia has no built-in
     /// MessageBox; behavior is otherwise identical.</summary>
     [SupportedOSPlatform("windows")]
     private async Task<RoeSnipSettings> ResolvePrintScreenConsentAsync(RoeSnipSettings settings)
@@ -1604,7 +1604,7 @@ public sealed class TrayApp : ITrayNotifier
                 {
                     int i => i == 0,
                     string s when int.TryParse(s, out int parsed) => parsed == 0,
-                    // Missing key/value (or unparseable) — Win11 default is "intercept ON", so
+                    // Missing key/value (or unparseable) - Win11 default is "intercept ON", so
                     // this must NOT be treated as "no conflict".
                     _ => false,
                 };
@@ -1631,7 +1631,7 @@ public sealed class TrayApp : ITrayNotifier
 
             if (answer is null)
             {
-                // Dialog dismissed without an answer — don't persist anything; ask again next time.
+                // Dialog dismissed without an answer - don't persist anything; ask again next time.
                 return settings;
             }
 
@@ -1776,7 +1776,7 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Minimal ownerless Yes/No dialog (Avalonia has no MessageBox). Returns true for
     /// Yes, false for No, null if closed without answering. Internal (not private) so SettingsWindow
-    /// can reuse it for item 15's "elevated startup enabled — restart now?" prompt, matching the WPF
+    /// can reuse it for item 15's "elevated startup enabled - restart now?" prompt, matching the WPF
     /// app's own SettingsWindow using the same System.Windows.MessageBox.Show it already used
     /// everywhere else, rather than inventing a second dialog implementation.</summary>
     internal static Task<bool?> ShowYesNoDialogAsync(string title, string message)
@@ -2029,13 +2029,13 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
-    // ---------------- ITrayNotifier (toast windows — Avalonia TrayIcon has no balloons) ----------------
+    // ---------------- ITrayNotifier (toast windows - Avalonia TrayIcon has no balloons) ----------------
 
     /// <inheritdoc/>
     public void ShowSavedBalloon(string filePath)
     {
         Dispatcher.UIThread.Post(() => ShowToast(
-            $"Saved {Path.GetFileName(filePath)} — click to open folder",
+            $"Saved {Path.GetFileName(filePath)} - click to open folder",
             isError: false,
             durationMs: 4000,
             onClick: () => OpenContainingFolder(filePath)));
@@ -2175,7 +2175,7 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
-    // ---------------- Tray icon (programmatic — no asset files needed) ----------------
+    // ---------------- Tray icon (programmatic - no asset files needed) ----------------
 
     private void CreateTrayIconDefensively()
     {
@@ -2205,10 +2205,10 @@ public sealed class TrayApp : ITrayNotifier
                 if (!UpdateManager.InstallExists)
                 {
                     // Only offered until an install actually exists on disk (evaluated once, here,
-                    // at menu-build time — same as the WPF reference). Gating on InstallExists
+                    // at menu-build time - same as the WPF reference). Gating on InstallExists
                     // (not IsInstalled) means a rebuilt dev copy / fresh download / replace-on-run
                     // takeover of an already-installed app does NOT re-offer "Install". A named
-                    // handler (not an inline lambda) — see RunPendingUpdateFileCleanup's comment
+                    // handler (not an inline lambda) - see RunPendingUpdateFileCleanup's comment
                     // for why the platform-compat analyzer needs this shape here.
                     var installItem = new NativeMenuItem("Install RoeSnip");
                     installItem.Click += OnInstallRoeSnipClicked;
@@ -2273,7 +2273,7 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Draws the same stylized camera glyph as the WPF app's tray icon (accent-blue body,
     /// flash bump, dark lens) into a 32x32 BGRA raster, PNG-encodes it via Core's PngWriter, and
-    /// wraps it as a WindowIcon — no image assets, no System.Drawing dependency. The fallback path
+    /// wraps it as a WindowIcon - no image assets, no System.Drawing dependency. The fallback path
     /// for <see cref="AppIcon"/> above.</summary>
     private static WindowIcon CreateTrayIconImage()
     {
@@ -2330,7 +2330,7 @@ public sealed class TrayApp : ITrayNotifier
 
 file static class ModuleInit
 {
-#pragma warning disable CA2255 // App assembly, not a general-purpose library — the Phase 1 pattern.
+#pragma warning disable CA2255 // App assembly, not a general-purpose library - the Phase 1 pattern.
     [System.Runtime.CompilerServices.ModuleInitializer]
 #pragma warning restore CA2255
     internal static void Init()

@@ -14,7 +14,7 @@ namespace RoeSnip.Platform.Windows;
 /// IDXGIOutput6.GetDesc1(), QueryDisplayConfig/DisplayConfigGetDeviceInfo SDR white level) with only
 /// the output shape changed: the portable Core MonitorInfo, with
 /// <c>BackendKey = "0x" + hMonitor.ToString("X")</c> and <c>Scale = dpiX / 96.0</c>. Never throws
-/// for a single bad monitor entry — logs to stderr and omits it. Returns empty list only if
+/// for a single bad monitor entry - logs to stderr and omits it. Returns empty list only if
 /// enumeration itself fails entirely.</summary>
 public static class MonitorEnumerator
 {

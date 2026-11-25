@@ -58,13 +58,13 @@ namespace RoeSnip.Platform.Windows;
 /// choice.</summary>
 public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
 {
-    private readonly WgcCapturer.MonitorResources _resources; // via WgcCapturer.CreateResources — never the s_slots cache
+    private readonly WgcCapturer.MonitorResources _resources; // via WgcCapturer.CreateResources - never the s_slots cache
     private readonly MonitorInfo _monitor;
-    // Fixed for the whole take — see RegionRecorder's own doc comment on the WPF side for why only
+    // Fixed for the whole take - see RegionRecorder's own doc comment on the WPF side for why only
     // position (not size) can move mid-take.
     private readonly int _regionWidth;
     private readonly int _regionHeight;
-    private long _originPacked; // (left << 32) | (uint)top — Volatile-accessed, see SetOrigin
+    private long _originPacked; // (left << 32) | (uint)top - Volatile-accessed, see SetOrigin
     private readonly object _gpuLock = new(); // serializes THIS recorder's own ImmediateContext use only
     private readonly Channel<RegionCaptureFrame> _queue;
 
@@ -77,11 +77,11 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
     private Format? _stagingFormat; // set once, when the ring textures are first created
     private int _ringWriteIndex;    // next slot CopySubresourceRegion writes into
     private long _copyCount;        // total copies issued this session; copy #0 has no prior slot to read
-    private long _nextDueTimestamp; // Stopwatch ticks — schedule-based throttle, see OnFrameArrived
+    private long _nextDueTimestamp; // Stopwatch ticks - schedule-based throttle, see OnFrameArrived
     private int _disposed;
 
     /// <summary>Set/cleared by RecordingController on the UI thread. While true, OnFrameArrived
-    /// drops every incoming frame before any GPU readback — no CopySubresourceRegion/Map/memcpy
+    /// drops every incoming frame before any GPU readback - no CopySubresourceRegion/Map/memcpy
     /// work, and nothing enters <see cref="Frames"/> during a pause.</summary>
     public bool Paused { get; set; }
 
@@ -109,7 +109,7 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
 
     public ChannelReader<RegionCaptureFrame> Frames => _queue.Reader;
 
-    /// <summary>LOCK-FREE on purpose — see the WPF reference's own doc comment: this runs on the UI
+    /// <summary>LOCK-FREE on purpose - see the WPF reference's own doc comment: this runs on the UI
     /// thread inside a drag's pointer-move, and taking <see cref="_gpuLock"/> here would park the UI
     /// thread behind a whole in-flight CopySubresourceRegion+Map+copy readback. A single packed
     /// volatile write can't tear and needs no lock. Clamped to the monitor so the
@@ -122,7 +122,7 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
     }
 
     /// <summary>Starts the persistent capture session. Unlike WgcCapturer.CaptureCore's session,
-    /// this one is NEVER disposed until <see cref="Stop"/> — that permanence is exactly what
+    /// this one is NEVER disposed until <see cref="Stop"/> - that permanence is exactly what
     /// recording needs.</summary>
     public void Start()
     {
@@ -135,14 +135,14 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
         _session = _framePool.CreateCaptureSession(_resources.Item);
         _session.IsCursorCaptureEnabled = true; // the recording should show the cursor
         try { _session.IsBorderRequired = false; }
-        catch { /* property may not exist on older Windows builds, or capability denied — accepted, same as WgcCapturer. */ }
+        catch { /* property may not exist on older Windows builds, or capability denied - accepted, same as WgcCapturer. */ }
         _framePool.FrameArrived += OnFrameArrived;
         _session.StartCapture();
     }
 
     // WGC callback thread. Everything from the disposed-check through TryGetNextFrame and the GPU
     // work is inside _gpuLock, and Stop() takes that SAME lock before it disposes _session/
-    // _framePool — that is what actually prevents the race: a Volatile.Read(_disposed) check alone
+    // _framePool - that is what actually prevents the race: a Volatile.Read(_disposed) check alone
     // only protects callbacks that hadn't started yet, not one already past that check and
     // mid-flight when Stop() runs on another thread. Throttling is still checked first inside the
     // lock, before any GPU work, so a high-refresh monitor delivering far more FrameArrived
@@ -159,7 +159,7 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
 
             if (Paused)
             {
-                return; // paused take — no GPU readback, no frame enters the queue
+                return; // paused take - no GPU readback, no frame enters the queue
             }
 
             using var frame = sender.TryGetNextFrame();
@@ -168,7 +168,7 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
                 return;
             }
 
-            // Schedule-based throttle, NOT a since-last-forward gate — see RecordingSchedule's own
+            // Schedule-based throttle, NOT a since-last-forward gate - see RecordingSchedule's own
             // doc comment (this class inlines the same math rather than holding a RecordingSchedule
             // instance, since the throttle state must live inside THIS lock alongside the ring
             // bookkeeping it gates).
@@ -176,7 +176,7 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
             long due = _nextDueTimestamp;
             if (now < due)
             {
-                return; // throttled — frame.Dispose() via the using above, no GPU work done
+                return; // throttled - frame.Dispose() via the using above, no GPU work done
             }
             _nextDueTimestamp = Math.Max(due + _minIntervalTicks, now - _minIntervalTicks);
 
@@ -201,7 +201,7 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
                     originLeft, originTop, 0,
                     originLeft + _regionWidth, originTop + _regionHeight, 1);
 
-                // Issue THIS frame's copy into the NEXT ring slot — GPU-async, no Map here. The slot
+                // Issue THIS frame's copy into the NEXT ring slot - GPU-async, no Map here. The slot
                 // actually read back below (if any) is the PREVIOUS one: it was copied a whole
                 // callback ago, giving the GPU roughly a monitor frame's worth of wall-clock time to
                 // finish that earlier copy, so its Map call doesn't block.
@@ -213,7 +213,7 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
 
                 if (thisCopyIndex == 0)
                 {
-                    return; // very first copy this session — no older slot to read back yet
+                    return; // very first copy this session - no older slot to read back yet
                 }
 
                 int readSlot = (writeSlot + StagingRingSize - 1) % StagingRingSize;
@@ -230,9 +230,9 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
     }
 
     // Called from OnFrameArrived (WGC callback thread) and from Stop()'s drain (whichever thread
-    // calls Stop) — both callers hold _gpuLock, so this needs no locking of its own. Maps
+    // calls Stop) - both callers hold _gpuLock, so this needs no locking of its own. Maps
     // _stagingRing[slot], copies it into a fresh buffer, and enqueues it with that slot's own
-    // remembered CAPTURE timestamp (not "now" — the copy that filled this slot happened up to one
+    // remembered CAPTURE timestamp (not "now" - the copy that filled this slot happened up to one
     // callback ago).
     private void ReadRingSlot(int slot, Format format, ID3D11DeviceContext context)
     {
@@ -255,7 +255,7 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
                 frameFormat, w, h, stride, pixels, _monitor, sdrWhiteInBufferUnits: _monitor.SdrWhiteNits / 80.0);
             if (!_queue.Writer.TryWrite(new RegionCaptureFrame(cropped, _stagingTimestamps[slot])))
             {
-                cropped.Dispose(); // writer already completed (Stop() raced us) — drop it
+                cropped.Dispose(); // writer already completed (Stop() raced us) - drop it
             }
         }
         finally
@@ -299,7 +299,7 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
         lock (_gpuLock)
         {
             // Ring drain: OnFrameArrived deliberately never reads back the slot it JUST copied
-            // into — that slot is only read on the NEXT callback. With no next callback coming, the
+            // into - that slot is only read on the NEXT callback. With no next callback coming, the
             // single most recent copy would otherwise be silently discarded, dropping the take's
             // very last frame. Read it here instead, under the same _gpuLock, before the session/
             // pool/textures are torn down below.
@@ -332,7 +332,7 @@ public sealed class WindowsRegionCaptureSource : IRegionCaptureSource
     public void Dispose()
     {
         Stop();
-        _resources.Dispose(); // the recorder's OWN device/item — never touches WgcCapturer's cache
+        _resources.Dispose(); // the recorder's OWN device/item - never touches WgcCapturer's cache
     }
 }
 

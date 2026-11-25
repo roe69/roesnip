@@ -6,9 +6,9 @@ namespace RoeSnip.Overlay;
 /// <summary>Pure parsing/clamping/formatting behind the toolbar's numeric size ComboBox (UX round
 /// 5, item 2), which replaced the fixed small/medium/big stroke dots: one editable box that shows
 /// "Npx" (stroke width, drawing tools) or "Npt" (font size, Text tool). This class is also now the
-/// single home of the size clamp ranges — the same 1–32 px stroke and 6–96 pt font limits the
+/// single home of the size clamp ranges - the same 1-32 px stroke and 6-96 pt font limits the
 /// scroll-wheel resize in OverlayWindow has always enforced (those literals moved here; the ranges
-/// themselves are unchanged and stay authoritative for typed values too). No WPF dependency —
+/// themselves are unchanged and stay authoritative for typed values too). No WPF dependency -
 /// unit-testable in isolation, matching the rest of Overlay/*'s pure-helper convention.</summary>
 public static class SizeInput
 {
@@ -21,7 +21,7 @@ public static class SizeInput
     /// authoritative 32 px clamp (48/64 would only ever snap back down to 32).</summary>
     public static readonly double[] StrokePresetsPx = { 1, 2, 3, 4, 6, 8, 12, 16, 24, 32 };
 
-    /// <summary>Dropdown presets for font size (all within the 6–96 pt clamp).</summary>
+    /// <summary>Dropdown presets for font size (all within the 6-96 pt clamp).</summary>
     public static readonly double[] FontPresetsPt = { 8, 10, 12, 14, 18, 24, 36, 48, 72 };
 
     public static double ClampStroke(double value) => Math.Clamp(value, MinStrokePx, MaxStrokePx);

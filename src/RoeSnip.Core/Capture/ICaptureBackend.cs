@@ -2,7 +2,7 @@ namespace RoeSnip.Core.Capture;
 
 /// <summary>The per-OS entry point: monitor enumeration + capture-all for one platform. This is the
 /// NEW abstraction (docs/architecture.md: "ICaptureBackend (new: monitor enumeration +
-/// capture-all)") — it replaces the WPF app's static <c>MonitorEnumerator</c> class (monitor
+/// capture-all)") - it replaces the WPF app's static <c>MonitorEnumerator</c> class (monitor
 /// enumeration is now backend-specific: DXGI+DisplayConfig on Windows, CGDirectDisplayID/scksnap on
 /// macOS, RandR/portal on Linux) and generalizes <c>CaptureService</c> from "always DD-then-WGC" to
 /// "whatever this OS's backend does."</summary>
@@ -18,7 +18,7 @@ public interface ICaptureBackend
     bool SupportsHdrExport { get; }
 
     /// <summary>Enumerates all active monitors for this session. Never throws for a single bad
-    /// monitor entry — logs to stderr and omits it. Empty list only if enumeration itself fails
+    /// monitor entry - logs to stderr and omits it. Empty list only if enumeration itself fails
     /// entirely.</summary>
     IReadOnlyList<MonitorInfo> EnumerateMonitors();
 

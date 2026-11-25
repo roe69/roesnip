@@ -11,7 +11,7 @@ using RoeSnip.Core.Diagnostics;
 namespace RoeSnip.Overlay;
 
 // RoeSnip.csproj enables both UseWPF and UseWindowsForms, so System.Windows.Forms/System.Drawing
-// are in scope alongside System.Windows/System.Windows.Media/.Controls/.Input — alias the colliding
+// are in scope alongside System.Windows/System.Windows.Media/.Controls/.Input - alias the colliding
 // names to WPF's, matching the convention already used throughout Overlay/* (see AnnotationLayer.cs).
 using Point = System.Windows.Point;
 using Color = System.Windows.Media.Color;
@@ -27,12 +27,12 @@ using Orientation = System.Windows.Controls.Orientation;
 using HorizontalAlignment = System.Windows.HorizontalAlignment;
 
 /// <summary>Small standalone always-on-top eyedropper window (modeled on PowerToys Color Picker),
-/// singleton per app (owned/recreated on demand by OverlayController — see OnColorPicked there).
+/// singleton per app (owned/recreated on demand by OverlayController - see OnColorPicked there).
 /// Opened by a plain click on the overlay (OverlayWindow.TriggerColorPick), which cancels the snip
 /// and hands this window a <see cref="PickedColorInfo"/> snapshot via <see cref="ApplyPick"/>.
 ///
 /// "Pick" re-launches the capture overlay in a lightweight pick-only mode (OverlaySession's
-/// pickOnlyMode — suppresses selection/toolbar, shows just crosshair+magnifier) so the next click
+/// pickOnlyMode - suppresses selection/toolbar, shows just crosshair+magnifier) so the next click
 /// picks a new color into this same window in place. Recent picks (newest first, capped at 8) and
 /// which format rows are visible are persisted to RoeSnipSettings (additive fields) so they survive
 /// across window instances/app restarts.</summary>
@@ -46,7 +46,7 @@ public partial class ColorPickerWindow : Window
     private RoeSnipSettings _settings;
 
     /// <summary>Working copy of the ordered format list (see RoeSnipSettings.ColorFormats /
-    /// ColorFormatCatalog.EffectiveFormats) — every popover mutation edits this list, persists it,
+    /// ColorFormatCatalog.EffectiveFormats) - every popover mutation edits this list, persists it,
     /// and re-renders both the rows and the popover itself.</summary>
     private List<ColorFormatEntry> _formats;
 
@@ -61,13 +61,13 @@ public partial class ColorPickerWindow : Window
         _formats = ColorFormatCatalog.EffectiveFormats(_settings);
 
         // Exclude this window from screen capture (same fix as FlashDimmer): a "Pick" re-capture
-        // freezes the screen WITH this window still up — without the affinity it photobombs the
+        // freezes the screen WITH this window still up - without the affinity it photobombs the
         // frozen frame and the user can't pick colors from pixels underneath it.
         SourceInitialized += (_, _) =>
         {
             if (Environment.GetEnvironmentVariable("ROESNIP_DIAG_NOEXCLUDE") == "1")
             {
-                return; // same diagnostic escape hatch as FlashDimmer/OverlayWindow — lets the
+                return; // same diagnostic escape hatch as FlashDimmer/OverlayWindow - lets the
                         // external screenshot harness see this window
             }
             var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
@@ -102,7 +102,7 @@ public partial class ColorPickerWindow : Window
         BuildFormatsPopup();
         RefreshRecentColorsPanel();
 
-        // Sensible pre-pick default so the window never shows a blank swatch/rows — in practice
+        // Sensible pre-pick default so the window never shows a blank swatch/rows - in practice
         // OverlayController always calls ApplyPick before the first Show().
         _r = _g = _b = 0x80;
         _nits = null;
@@ -110,8 +110,8 @@ public partial class ColorPickerWindow : Window
     }
 
     /// <summary>Applies a new pick (from the overlay's eyedropper click or a pick-mode re-pick),
-    /// updates the recent-colors list (persisted), and — only the first time this instance becomes
-    /// visible — positions the window near the click. Subsequent re-picks update content in place
+    /// updates the recent-colors list (persisted), and - only the first time this instance becomes
+    /// visible - positions the window near the click. Subsequent re-picks update content in place
     /// without moving the window, per spec ("re-picks update it in place").</summary>
     internal void ApplyPick(PickedColorInfo info)
     {
@@ -134,7 +134,7 @@ public partial class ColorPickerWindow : Window
         }
     }
 
-    /// <summary>Approximate placement "near" the click, per spec — not the pixel-exact physical
+    /// <summary>Approximate placement "near" the click, per spec - not the pixel-exact physical
     /// positioning OverlayWindow uses for its fullscreen monitor windows (that precision isn't
     /// needed for a small utility popup). Converts the absolute physical-pixel click point to DIPs
     /// using the source monitor's DPI so it lands close to the right spot even on a differently
@@ -159,7 +159,7 @@ public partial class ColorPickerWindow : Window
         catch (InvalidOperationException)
         {
             // DragMove throws if the mouse button was already released by the time it's called
-            // (e.g. a very fast click) — nothing to do, the window just doesn't move.
+            // (e.g. a very fast click) - nothing to do, the window just doesn't move.
         }
     }
 
@@ -220,7 +220,7 @@ public partial class ColorPickerWindow : Window
                 continue;
             }
             // %Nt renders an em dash when _nits is null (a shade / a reloaded recent color has no
-            // live capture sample) — handled inside the template engine.
+            // live capture sample) - handled inside the template engine.
             AddFormatRow(entry.Name, ColorFormatTemplate.Format(entry.Format, _r, _g, _b, _nits));
         }
     }
@@ -278,7 +278,7 @@ public partial class ColorPickerWindow : Window
         }
         catch (System.Runtime.InteropServices.COMException)
         {
-            // Clipboard transiently locked by another process — a copy button is a convenience,
+            // Clipboard transiently locked by another process - a copy button is a convenience,
             // not worth an error dialog.
             return;
         }
@@ -321,7 +321,7 @@ public partial class ColorPickerWindow : Window
             swatch.MouseLeftButtonUp += (_, _) =>
             {
                 _r = r; _g = g; _b = b;
-                _nits = null; // reloaded from history — no live nits sample available for it
+                _nits = null; // reloaded from history - no live nits sample available for it
                 RefreshDisplay();
             };
             RecentColorsPanel.Children.Add(swatch);
@@ -386,7 +386,7 @@ public partial class ColorPickerWindow : Window
             var loupeBox = new CheckBox
             {
                 IsChecked = entry.InLoupe,
-                IsEnabled = entry.Enabled, // the loupe shows the enabled subset — a disabled format never renders there
+                IsEnabled = entry.Enabled, // the loupe shows the enabled subset - a disabled format never renders there
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),
@@ -398,13 +398,13 @@ public partial class ColorPickerWindow : Window
             Grid.SetColumn(loupeBox, 1);
             row.Children.Add(loupeBox);
 
-            var up = PopupIconButton("▴", "Move up", enabled: index > 0);
+            var up = PopupIconButton(((char)0x25B4).ToString(), "Move up", enabled: index > 0);
             up.Click += (_, _) => MutateFormats(() =>
                 (_formats[index - 1], _formats[index]) = (_formats[index], _formats[index - 1]));
             Grid.SetColumn(up, 2);
             row.Children.Add(up);
 
-            var down = PopupIconButton("▾", "Move down", enabled: index < _formats.Count - 1);
+            var down = PopupIconButton(((char)0x25BE).ToString(), "Move down", enabled: index < _formats.Count - 1);
             down.Click += (_, _) => MutateFormats(() =>
                 (_formats[index + 1], _formats[index]) = (_formats[index], _formats[index + 1]));
             Grid.SetColumn(down, 3);
@@ -412,7 +412,7 @@ public partial class ColorPickerWindow : Window
 
             if (entry.IsCustom)
             {
-                var edit = PopupIconButton("✎", "Edit this custom format", enabled: true);
+                var edit = PopupIconButton(((char)0x270E).ToString(), "Edit this custom format", enabled: true);
                 edit.Click += (_, _) =>
                 {
                     var dialog = new CustomFormatDialog(this, entry.Name, entry.Format, _r, _g, _b, _nits);
@@ -428,7 +428,7 @@ public partial class ColorPickerWindow : Window
                 Grid.SetColumn(edit, 4);
                 row.Children.Add(edit);
 
-                var delete = PopupIconButton("✕", "Delete this custom format", enabled: true);
+                var delete = PopupIconButton(((char)0x2715).ToString(), "Delete this custom format", enabled: true);
                 delete.Click += (_, _) => MutateFormats(() => _formats.RemoveAt(index));
                 Grid.SetColumn(delete, 5);
                 row.Children.Add(delete);
@@ -506,7 +506,7 @@ public partial class ColorPickerWindow : Window
     };
 
     /// <summary>Single mutation seam for the format list: apply, persist (the stored list becomes
-    /// the user's truth from the first edit on — see ColorFormatCatalog.EffectiveFormats), and
+    /// the user's truth from the first edit on - see ColorFormatCatalog.EffectiveFormats), and
     /// re-render the rows AND the popover (indices/enabled states baked into the closures above
     /// go stale after any mutation, so the popover is always rebuilt wholesale).</summary>
     private void MutateFormats(Action mutation)

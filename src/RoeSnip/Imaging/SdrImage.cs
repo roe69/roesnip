@@ -6,7 +6,7 @@ using RoeSnip.Capture;
 namespace RoeSnip.Imaging;
 
 /// <summary>BGRA8, straight alpha (255 = opaque), tightly packed rows (Stride == Width * 4),
-/// top-down. This is the one and only "what you see is what you get" image type — the overlay
+/// top-down. This is the one and only "what you see is what you get" image type - the overlay
 /// preview, the clipboard payload, and the saved PNG are all built from this type.</summary>
 public sealed class SdrImage
 {
@@ -30,14 +30,14 @@ public sealed class SdrImage
     }
 
     /// <summary>The single entry point every call site (CLI, overlay preview, exports) must use
-    /// to turn a CapturedFrame into an SdrImage — this is what encodes the format branch from
+    /// to turn a CapturedFrame into an SdrImage - this is what encodes the format branch from
     /// docs/architecture.md ("BGRA8-source frames bypass the tone-mapper entirely"), so no call site needs
     /// to know or duplicate that branch.</summary>
     public static SdrImage FromCapturedFrame(CapturedFrame frame, Color.ToneMapOptions opts) =>
         FromCapturedFrame(frame, opts, reuseOutput: null);
 
     /// <summary>Same, but writes into <paramref name="reuseOutput"/> (must be exactly
-    /// width*4*height) instead of allocating — for recording-cadence callers where a fresh
+    /// width*4*height) instead of allocating - for recording-cadence callers where a fresh
     /// canvas-sized (LOH-sized) array per frame is real Gen2 pressure.</summary>
     public static SdrImage FromCapturedFrame(CapturedFrame frame, Color.ToneMapOptions opts, byte[]? reuseOutput) =>
         frame.Format == FrameFormat.Fp16ScRgb

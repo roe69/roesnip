@@ -9,9 +9,9 @@ namespace RoeSnip.Overlay;
 
 // RoeSnip.csproj enables both UseWPF and UseWindowsForms (WPF overlay UI + WinForms NotifyIcon),
 // which puts System.Windows.Forms and System.Drawing in scope everywhere alongside System.Windows
-// / System.Windows.Media — several common type names collide. Alias to the WPF ones explicitly.
-// (These must be declared *after* the namespace line: RoeSnip.Color — WP-A's own sibling
-// namespace — would otherwise win simple-name lookup for "Color" before an outer-scope alias is
+// / System.Windows.Media - several common type names collide. Alias to the WPF ones explicitly.
+// (These must be declared *after* the namespace line: RoeSnip.Color - WP-A's own sibling
+// namespace - would otherwise win simple-name lookup for "Color" before an outer-scope alias is
 // even considered, since C# resolves inner-namespace members before outer-scope usings.)
 using Point = System.Windows.Point;
 using Color = System.Windows.Media.Color;
@@ -20,7 +20,7 @@ using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
 using FontFamily = System.Windows.Media.FontFamily;
 using Size = System.Windows.Size;
-// Not a WinForms/System.Drawing collision — FrameworkElement itself declares an instance
+// Not a WinForms/System.Drawing collision - FrameworkElement itself declares an instance
 // FlowDirection property, which shadows the enum type name "FlowDirection" inside any method of a
 // class deriving from it (AnnotationLayer here). Alias to a distinct name to avoid CS0176.
 using FlowDir = System.Windows.FlowDirection;
@@ -46,7 +46,7 @@ public enum AnnotationTool
 }
 
 /// <summary>One committed (or in-progress) annotation shape. All points are physical pixels,
-/// monitor-local — the same coordinate space as the CapturedFrame/SdrImage for that monitor.
+/// monitor-local - the same coordinate space as the CapturedFrame/SdrImage for that monitor.
 /// Never DIPs; DIP conversion happens only where AnnotationLayer renders to screen.</summary>
 public sealed class AnnotationShape
 {
@@ -56,19 +56,19 @@ public sealed class AnnotationShape
 
     // Deliberately "set" rather than "init": Feature B's select/move/resize (drag-resize a placed
     // Pixelate) and wheel font-resize (a selected Text annotation) mutate this and PointsPx IN
-    // PLACE on the live shape while a gesture is in progress — AnnotationLayer snapshots a deep
+    // PLACE on the live shape while a gesture is in progress - AnnotationLayer snapshots a deep
     // Clone() before the gesture starts and diffs against it at gesture-end to build the one
     // Replace history action the gesture produces (see AnnotationLayer.CommitPendingDrag).
     public double StrokeWidthPx { get; set; } = 3.0;
     public string Text { get; set; } = string.Empty;
 
-    // Text-only styling (item 4) — unused by every other tool. StrokeWidthPx doubles as the text's
+    // Text-only styling (item 4) - unused by every other tool. StrokeWidthPx doubles as the text's
     // font size (matching the pre-existing convention CommitText already used).
     public string TextFontFamily { get; init; } = "Segoe UI";
     public bool TextBold { get; init; }
     public bool TextItalic { get; init; }
 
-    /// <summary>Deep clone — PointsPx is a mutable List, so a shallow copy would alias the same list
+    /// <summary>Deep clone - PointsPx is a mutable List, so a shallow copy would alias the same list
     /// between the clone and the original. Feature C's "snapshot before a drag, diff after" undo
     /// model only works if a later in-place mutation of the live shape can't also silently mutate
     /// the snapshot taken before it started.</summary>
@@ -90,20 +90,20 @@ public sealed class AnnotationShape
 /// kept in sync by the owning OverlayWindow from CompositionTarget.TransformToDevice), and
 /// separately offers <see cref="RenderForExport"/> for 1:1 physical-pixel rasterization at export
 /// time. Maintains a linear undo/redo action history (Feature C, <see cref="AnnotationHistory{T}"/>)
-/// — Ctrl+Z pops the most recently performed action (Add/Remove/Replace) and applies its inverse;
+/// - Ctrl+Z pops the most recently performed action (Add/Remove/Replace) and applies its inverse;
 /// Ctrl+Y/Ctrl+Shift+Z re-applies it; a fresh action clears the redo branch.
 ///
 /// Feature B (Select tool: editable Pixelate/Text) also lives here: <see cref="SelectedShape"/> plus
 /// the hit-test/drag/replace surface OverlayWindow drives from its mouse/keyboard handlers. All
 /// selection/handle/drag chrome is drawn in a screen-only pass at the end of <see cref="OnRender"/>
-/// — never in <see cref="RenderForExport"/>, so it can never leak into an exported/burned-in image.</summary>
+/// - never in <see cref="RenderForExport"/>, so it can never leak into an exported/burned-in image.</summary>
 public sealed class AnnotationLayer : FrameworkElement
 {
     private readonly AnnotationHistory<AnnotationShape> _history = new();
     private AnnotationShape? _inProgress;
 
     /// <summary>The pre-gesture deep clone for whatever move/resize/wheel-font-resize gesture is
-    /// currently open on <see cref="SelectedShape"/> — null when no gesture is open. Set by
+    /// currently open on <see cref="SelectedShape"/> - null when no gesture is open. Set by
     /// <see cref="BeginDragSelected"/>, consumed (diffed against the now-mutated live shape and
     /// turned into one Replace action, or discarded if nothing actually changed) by
     /// <see cref="CommitPendingDrag"/>.</summary>
@@ -116,7 +116,7 @@ public sealed class AnnotationLayer : FrameworkElement
     public double DeviceScaleX { get; set; } = 1.0;
     public double DeviceScaleY { get; set; } = 1.0;
 
-    /// <summary>The monitor's frozen tone-mapped preview at 1:1 physical pixels — the pixels the
+    /// <summary>The monitor's frozen tone-mapped preview at 1:1 physical pixels - the pixels the
     /// Pixelate tool mosaics. Set once by OverlayWindow (OnSourceInitialized); Pixelate degrades
     /// to drawing nothing if it was never provided.</summary>
     public BitmapSource? PreviewSource { get; set; }
@@ -127,17 +127,17 @@ public sealed class AnnotationLayer : FrameworkElement
     public bool CanRedo => _history.CanRedo;
 
     /// <summary>The editable annotation (Pixelate/Text/Rectangle/Ellipse) currently selected via
-    /// the Select tool (Feature B) — null when nothing is selected. Change it only through
+    /// the Select tool (Feature B) - null when nothing is selected. Change it only through
     /// <see cref="Select"/>/<see cref="Deselect"/>.</summary>
     public AnnotationShape? SelectedShape { get; private set; }
 
     /// <summary>Set by OverlayWindow while a placed text annotation's inline re-edit TextBox floats
-    /// over it (item 4) — the editor already shows the (possibly modified) live text, so this
+    /// over it (item 4) - the editor already shows the (possibly modified) live text, so this
     /// shape's normal render is skipped for the duration or the user would see doubled text.</summary>
     public AnnotationShape? SuppressedFromRender { get; set; }
 
     /// <summary>Raised whenever the undo/redo history changes shape (shape committed, undone,
-    /// redone, or everything cleared) — OverlayWindow relays CanUndo/CanRedo to the toolbar so
+    /// redone, or everything cleared) - OverlayWindow relays CanUndo/CanRedo to the toolbar so
     /// the Undo/Redo buttons gray out exactly when they would be no-ops.</summary>
     public event Action? HistoryChanged;
 
@@ -183,7 +183,7 @@ public sealed class AnnotationLayer : FrameworkElement
     }
 
     /// <summary>Commits the in-progress drag shape. Returns the committed shape (null for a
-    /// degenerate/no-op gesture) so OverlayWindow can auto-select a just-placed Pixelate — its
+    /// degenerate/no-op gesture) so OverlayWindow can auto-select a just-placed Pixelate - its
     /// selection chrome appearing immediately is what tells the user the shape is grabbable.</summary>
     public AnnotationShape? EndShape()
     {
@@ -236,7 +236,7 @@ public sealed class AnnotationLayer : FrameworkElement
     /// (a real WPF TextBox, for native IME support) rather than the Begin/Update/EndShape drag
     /// pipeline, since text entry isn't a drag gesture. fontFamily/bold/italic (item 4) default to
     /// the pre-existing plain style so any other caller keeps working unchanged. This always ADDS a
-    /// new shape — re-editing an existing text annotation (item 4) goes through
+    /// new shape - re-editing an existing text annotation (item 4) goes through
     /// <see cref="ReplaceShape"/> instead, driven by OverlayWindow's text-editor machinery. Returns
     /// the committed shape (null for the degenerate empty-text no-op) mirroring <see cref="EndShape"/>'s
     /// contract, so OverlayWindow can auto-select a just-typed text exactly like every other
@@ -270,7 +270,7 @@ public sealed class AnnotationLayer : FrameworkElement
     public void Undo()
     {
         // Spec (Feature B/C): undo/redo of a Replace that targets the selected shape must leave the
-        // selection in a sane state — simplest is to always deselect first. This also flushes any
+        // selection in a sane state - simplest is to always deselect first. This also flushes any
         // pending-but-uncommitted gesture (e.g. mid wheel font-resize) into its own Replace action
         // first, so a single Ctrl+Z fully reverts the whole gesture rather than needing one press per
         // wheel notch.
@@ -301,14 +301,14 @@ public sealed class AnnotationLayer : FrameworkElement
         _history.Clear();
         _inProgress = null;
         SelectedShape = null;
-        _dragSnapshotBefore = null; // discarded, not committed — the whole history is being wiped anyway
+        _dragSnapshotBefore = null; // discarded, not committed - the whole history is being wiped anyway
         HistoryChanged?.Invoke();
         InvalidateVisual();
     }
 
     // ---------- Select tool: editable annotations (Feature B) ----------
 
-    /// <summary>Which shape kinds are selectable/editable via the Select tool — centralized here so
+    /// <summary>Which shape kinds are selectable/editable via the Select tool - centralized here so
     /// extending the set later is a one-line change instead of scattered Tool == checks throughout
     /// this file and OverlayWindow.</summary>
     private static bool IsEditable(AnnotationTool tool) =>
@@ -316,7 +316,7 @@ public sealed class AnnotationLayer : FrameworkElement
              or AnnotationTool.Rectangle or AnnotationTool.Ellipse
              or AnnotationTool.Line or AnnotationTool.Arrow;
 
-    /// <summary>The editable kinds whose geometry IS a two-corner rect — these get the 8 resize
+    /// <summary>The editable kinds whose geometry IS a two-corner rect - these get the 8 resize
     /// handles and the generic rect-resize drag (Text is border-only chrome: its size is
     /// font-driven, not handle-draggable; Line/Arrow are movable-only: their geometry is a
     /// segment, and rect handles would distort rather than resize it).</summary>
@@ -325,14 +325,14 @@ public sealed class AnnotationLayer : FrameworkElement
 
     /// <summary>The shape kinds that get auto-selected the moment they're placed/committed (so
     /// their chrome/handles appear immediately). Clicking an already-placed shape now edits it
-    /// under EVERY tool (editsExistingShape dropped its original same-kind gate — a placed object
+    /// under EVERY tool (editsExistingShape dropped its original same-kind gate - a placed object
     /// must always be grabbable no matter which tool is active; tool-scoping only clears STALE
     /// selections on a tool switch), so this predicate's remaining job is the placement
     /// auto-select: Freehand/Highlight stay out because they aren't editable shapes at all.</summary>
     internal static bool IsClickEditableTool(AnnotationTool tool) =>
         IsRectResizable(tool) || tool is AnnotationTool.Line or AnnotationTool.Arrow or AnnotationTool.Text;
 
-    /// <summary>The shape's screen/export bounds, used for hit-testing and selection chrome —
+    /// <summary>The shape's screen/export bounds, used for hit-testing and selection chrome -
     /// the rect-resizable kinds are just their two corner points; Text is measured the same way
     /// <see cref="Draw"/> lays it out (via FormattedText), since PointsPx only stores its origin.</summary>
     private static Rect? EditableBounds(AnnotationShape shape) => shape.Tool switch
@@ -347,22 +347,22 @@ public sealed class AnnotationLayer : FrameworkElement
     };
 
     /// <summary>Body hit-test tolerance around an outline shape's stroke, over and above half the
-    /// stroke width — generous enough to grab a hairline rectangle without hunting for the exact
+    /// stroke width - generous enough to grab a hairline rectangle without hunting for the exact
     /// pixel, tight enough that the interior stays free for other clicks.</summary>
     private const double OutlineHitPaddingPx = 5.0;
 
     /// <summary>Per-kind body hit rule. Pixelate/Text are FILLED areas, so anywhere inside their
-    /// bounds counts. Rectangle/Ellipse are OUTLINES: only a click near the stroke itself counts —
+    /// bounds counts. Rectangle/Ellipse are OUTLINES: only a click near the stroke itself counts -
     /// bounds-contains would make a box drawn around content swallow every interior click (you
     /// could no longer draw a second overlapping shape starting inside it, and the Select tool
     /// would grab the frame when aiming at what it frames). <paramref name="interiorGrab"/>
-    /// (Shift/Ctrl held — OverlayWindow's modifier-grab) deliberately relaxes exactly that: the
+    /// (Shift/Ctrl held - OverlayWindow's modifier-grab) deliberately relaxes exactly that: the
     /// user is explicitly asking to grab, so the outline kinds hit on their whole interior too
-    /// (segments keep the distance test — a diagonal line's bounding box is mostly empty space
+    /// (segments keep the distance test - a diagonal line's bounding box is mostly empty space
     /// even for a deliberate grab).</summary>
     private static bool HitsShapeBody(AnnotationShape shape, Rect bounds, Point pt, bool interiorGrab)
     {
-        // Line/Arrow: a segment, so "body" is proximity to the segment itself — the bounding box
+        // Line/Arrow: a segment, so "body" is proximity to the segment itself - the bounding box
         // of a diagonal line is mostly empty space and must not swallow clicks. The arrow head is
         // wider than the shaft, but the padding already covers grabbing it comfortably.
         if (shape.Tool is AnnotationTool.Line or AnnotationTool.Arrow)
@@ -388,7 +388,7 @@ public sealed class AnnotationLayer : FrameworkElement
             double innerW = bounds.Width - 2 * t, innerH = bounds.Height - 2 * t;
             if (innerW <= 0 || innerH <= 0)
             {
-                return true; // stroke rings overlap — the whole (small) shape is grabbable
+                return true; // stroke rings overlap - the whole (small) shape is grabbable
             }
             return !new Rect(bounds.X + t, bounds.Y + t, innerW, innerH).Contains(pt);
         }
@@ -413,7 +413,7 @@ public sealed class AnnotationLayer : FrameworkElement
         double lengthSq = ab.LengthSquared;
         if (lengthSq < 1e-9)
         {
-            return (pt - a).Length; // degenerate segment — distance to the single point
+            return (pt - a).Length; // degenerate segment - distance to the single point
         }
         double u = Math.Clamp(((pt - a) * ab) / lengthSq, 0.0, 1.0);
         return (pt - (a + ab * u)).Length;
@@ -426,7 +426,7 @@ public sealed class AnnotationLayer : FrameworkElement
     }
 
     /// <summary>Topmost (most recently drawn) editable shape whose bounds contain a physical-pixel
-    /// point — the Select tool's click/hover hit test (OverlayWindow's item 7/8 priority chains).
+    /// point - the Select tool's click/hover hit test (OverlayWindow's item 7/8 priority chains).
     /// Never changes the selection itself; callers decide what a hit means.
     /// <paramref name="interiorGrab"/> = the Shift/Ctrl modifier-grab: outline interiors count as
     /// hits too (see <see cref="HitsShapeBody"/>). <paramref name="restrictToTool"/>, when non-null,
@@ -448,10 +448,10 @@ public sealed class AnnotationLayer : FrameworkElement
         return null;
     }
 
-    /// <summary>Hit-tests the CURRENTLY SELECTED shape's own resize handles — every rect-resizable
+    /// <summary>Hit-tests the CURRENTLY SELECTED shape's own resize handles - every rect-resizable
     /// kind has them (Text is border-only chrome per item 2); mirrors SelectionAdorner.HitTestHandle's
     /// 8-position corner/edge algorithm exactly, just against this shape's own bounds instead of the
-    /// crop selection's. Deliberately never returns Body — a body hit is "start a move", which
+    /// crop selection's. Deliberately never returns Body - a body hit is "start a move", which
     /// OverlayWindow's click priority routes through <see cref="HitTestEditable"/> instead.</summary>
     public SelectionHandle HitTestSelectedHandle(Point physicalPt)
     {
@@ -483,10 +483,10 @@ public sealed class AnnotationLayer : FrameworkElement
     }
 
     /// <summary>Hit-tests the CURRENTLY SELECTED shape's two ENDPOINT handles (item 2 of the second
-    /// editing round) — Line/Arrow's analogue of <see cref="HitTestSelectedHandle"/>'s rect corners:
+    /// editing round) - Line/Arrow's analogue of <see cref="HitTestSelectedHandle"/>'s rect corners:
     /// dragging an endpoint IS how these segment shapes "resize" (there's no rect to grow/shrink).
-    /// Same hit tolerance as the rect handles. Returns -1 (no hit), 0 (P0 — the start point), or 1
-    /// (P1 — the end point / arrowhead).</summary>
+    /// Same hit tolerance as the rect handles. Returns -1 (no hit), 0 (P0 - the start point), or 1
+    /// (P1 - the end point / arrowhead).</summary>
     public int HitTestSelectedEndpoint(Point physicalPt)
     {
         if (SelectedShape is not { } shape
@@ -526,7 +526,7 @@ public sealed class AnnotationLayer : FrameworkElement
     public void Deselect() => Select(null);
 
     /// <summary>Opens a move/resize/wheel-font-resize gesture on the current selection by snapshotting
-    /// it — idempotent within one gesture (repeated wheel notches must keep the ORIGINAL pre-gesture
+    /// it - idempotent within one gesture (repeated wheel notches must keep the ORIGINAL pre-gesture
     /// snapshot as the undo baseline, not the last notch's), so this is a no-op if a gesture is
     /// already open.</summary>
     public void BeginDragSelected()
@@ -562,12 +562,12 @@ public sealed class AnnotationLayer : FrameworkElement
         int index = _history.IndexOf(shape);
         if (index < 0)
         {
-            return; // the shape vanished from under the gesture somehow — nothing sane to record
+            return; // the shape vanished from under the gesture somehow - nothing sane to record
         }
 
         var after = shape.Clone();
         _history.Replace(index, before, after);
-        SelectedShape = after; // the list slot now holds 'after' — keep the selection pointing at it
+        SelectedShape = after; // the list slot now holds 'after' - keep the selection pointing at it
         HistoryChanged?.Invoke();
         InvalidateVisual();
     }
@@ -591,9 +591,9 @@ public sealed class AnnotationLayer : FrameworkElement
 
     /// <summary>Live-mutates the selected shape's points during a move drag (item 3): shifts every
     /// point of the immutable pre-drag snapshot by the delta measured from the drag anchor (not
-    /// accumulated per-tick deltas — mirrors OverlayWindow's own crop-Move pattern, so mouse jitter
-    /// can never accumulate rounding error), then clamps the whole shape's bounds — not each point
-    /// independently — inside [0, frameSizePx] so a move can reposition but never resize it.</summary>
+    /// accumulated per-tick deltas - mirrors OverlayWindow's own crop-Move pattern, so mouse jitter
+    /// can never accumulate rounding error), then clamps the whole shape's bounds - not each point
+    /// independently - inside [0, frameSizePx] so a move can reposition but never resize it.</summary>
     public void TranslateSelected(Vector deltaFromAnchor, Size frameSizePx)
     {
         if (SelectedShape is not { } shape || _dragSnapshotBefore is not { } before)
@@ -632,7 +632,7 @@ public sealed class AnnotationLayer : FrameworkElement
     }
 
     /// <summary>Live-sets the selected rect-resizable shape's corner points during a resize drag
-    /// (item 3) — a dumb setter; OverlayWindow computes the new corners by reusing its OWN
+    /// (item 3) - a dumb setter; OverlayWindow computes the new corners by reusing its OWN
     /// ApplyResize/ClampToFrame (the exact same math the crop selection's own resize uses) and
     /// hands the already-clamped result down, per the design brief's explicit reuse instruction.</summary>
     public void SetSelectedRect(Point p0, Point p1)
@@ -648,7 +648,7 @@ public sealed class AnnotationLayer : FrameworkElement
     }
 
     /// <summary>Live-sets ONE endpoint of the selected Line/Arrow during an endpoint-drag resize
-    /// (item 2) — the other endpoint stays fixed, exactly like dragging a single rect handle only
+    /// (item 2) - the other endpoint stays fixed, exactly like dragging a single rect handle only
     /// moves that corner. A dumb setter, same contract as <see cref="SetSelectedRect"/>: OverlayWindow
     /// clamps the point to the frame before handing it down.</summary>
     public void SetSelectedEndpoint(int index, Point physicalPt)
@@ -665,7 +665,7 @@ public sealed class AnnotationLayer : FrameworkElement
     }
 
     /// <summary>Live-sets the selected Rectangle/Ellipse/Line/Arrow's stroke width during a wheel
-    /// gesture — the stroked shapes' analogue of the Pixelate block-size / Text font-size wheels,
+    /// gesture - the stroked shapes' analogue of the Pixelate block-size / Text font-size wheels,
     /// same BeginDragSelected/CommitPendingDrag lifecycle so the whole gesture undoes as one
     /// Replace.</summary>
     public void SetSelectedStrokeWidth(double strokeWidthPx)
@@ -679,7 +679,7 @@ public sealed class AnnotationLayer : FrameworkElement
         InvalidateVisual();
     }
 
-    /// <summary>Live-sets the selected Pixelate's block size during a wheel gesture — the mosaic
+    /// <summary>Live-sets the selected Pixelate's block size during a wheel gesture - the mosaic
     /// coarseness knob (StrokeWidthPx doubles as the block size, see DrawPixelate). Same
     /// BeginDragSelected/CommitPendingDrag lifecycle as the text wheel-resize, so the whole wheel
     /// gesture undoes as one Replace.</summary>
@@ -726,7 +726,7 @@ public sealed class AnnotationLayer : FrameworkElement
     }
 
     /// <summary>Text re-edit commit (item 4): swaps the original shape for a freshly built
-    /// replacement as one Replace action, rather than an Add — undoing it restores the ORIGINAL
+    /// replacement as one Replace action, rather than an Add - undoing it restores the ORIGINAL
     /// text, not an empty canvas. Keeps the replacement selected (the just-edited text stays
     /// "picked", ready for another move/re-edit).</summary>
     public void ReplaceShape(AnnotationShape original, AnnotationShape replacement)
@@ -734,15 +734,15 @@ public sealed class AnnotationLayer : FrameworkElement
         int index = _history.IndexOf(original);
         if (index < 0)
         {
-            return; // the shape vanished from under the edit somehow — safest to no-op
+            return; // the shape vanished from under the edit somehow - safest to no-op
         }
         // Resolve the index BEFORE flushing: CommitPendingDrag() can itself replace `original`'s
         // list slot (a wheel gesture left dangling on this exact shape by a double-click re-edit
-        // that began without going through Select()'s normal flush — see the same-shape reference
+        // that began without going through Select()'s normal flush - see the same-shape reference
         // fast path below) with a fresh clone, which would make a post-flush IndexOf(original) miss
         // and silently drop this whole edit. The slot's POSITION is stable across a Replace (only
-        // Add/Remove shift indices), so re-reading whatever now actually sits at that index — rather
-        // than trusting the possibly-stale `original` reference — keeps this correct either way and
+        // Add/Remove shift indices), so re-reading whatever now actually sits at that index - rather
+        // than trusting the possibly-stale `original` reference - keeps this correct either way and
         // never loses the caller's `replacement`.
         CommitPendingDrag();
         var current = index < _history.Shapes.Count ? _history.Shapes[index] : original;
@@ -798,7 +798,7 @@ public sealed class AnnotationLayer : FrameworkElement
 
     // ---------- Screen-only chrome: Feature A's live-drag pixelate outline + Feature B's selection
     // chrome. Deliberately kept OUT of Draw/RenderForExport so nothing drawn here can ever leak into
-    // an exported/burned-in image. Flat dashed line + flat filled squares — no gradients/glows. ----
+    // an exported/burned-in image. Flat dashed line + flat filled squares - no gradients/glows. ----
 
     private Pen BuildChromePen()
     {
@@ -841,16 +841,16 @@ public sealed class AnnotationLayer : FrameworkElement
         else if (shape.Tool is AnnotationTool.Line or AnnotationTool.Arrow && shape.PointsPx.Count >= 2)
         {
             // Item 2 (second editing round): Line/Arrow have no rect to resize, so each ENDPOINT
-            // gets its own handle instead — dragging one repositions that endpoint, the other stays
+            // gets its own handle instead - dragging one repositions that endpoint, the other stays
             // fixed. The dashed bounds box (drawn above, unconditionally) stays as the selection
             // outline even though it's not itself draggable for these two kinds.
             DrawHandleSquare(dc, shape.PointsPx[0], shape.StrokeColor);
             DrawHandleSquare(dc, shape.PointsPx[1], shape.StrokeColor);
         }
-        // Text (item 2): border only — its size is font-size-driven, not handle-draggable.
+        // Text (item 2): border only - its size is font-size-driven, not handle-draggable.
     }
 
-    /// <summary>8 flat square handles at the corners + edge midpoints — the same positions
+    /// <summary>8 flat square handles at the corners + edge midpoints - the same positions
     /// SelectionAdorner's crop handles hit-test, rendered as plain filled squares (no glow/gradient)
     /// per the design brief's "square resize handles" wording (distinct from the crop's own
     /// L-bracket style, which stays untouched).</summary>
@@ -870,7 +870,7 @@ public sealed class AnnotationLayer : FrameworkElement
 
     /// <summary>One flat filled square handle (item 3, contrast fix): plain gold handles were
     /// invisible against gold/amber/orange shapes, so the fill is now the shape's own StrokeColor
-    /// inverted — and, for colors whose inverse is barely different (near-mid-gray tones roughly
+    /// inverted - and, for colors whose inverse is barely different (near-mid-gray tones roughly
     /// invert to themselves), a plain black-or-white fallback chosen by the shape color's own
     /// luminance (see <see cref="HandleFillColor"/>). The border is always the OPPOSITE pole of the
     /// fill (black border on a light fill, white on a dark one) so the handle reads against any
@@ -887,7 +887,7 @@ public sealed class AnnotationLayer : FrameworkElement
 
     /// <summary>The handle fill color for a shape with the given StrokeColor (item 3): the plain RGB
     /// inverse, unless that inverse is too close in luminance to the original (the near-mid-gray
-    /// case — e.g. StrokeColor ~128,128,128 inverts to ~127,127,127, which is indistinguishable),
+    /// case - e.g. StrokeColor ~128,128,128 inverts to ~127,127,127, which is indistinguishable),
     /// in which case fall back to plain black or white chosen by the ORIGINAL color's luminance so
     /// the handle is guaranteed visible against the shape it's attached to.</summary>
     private static Color HandleFillColor(Color strokeColor)
@@ -909,7 +909,7 @@ public sealed class AnnotationLayer : FrameworkElement
     private static Color HandleBorderColor(Color fill) =>
         RelativeLuminance(fill) < 0.5 ? Colors.White : Colors.Black;
 
-    /// <summary>WCAG relative luminance (sRGB) — a standard, cheap "how light does this read"
+    /// <summary>WCAG relative luminance (sRGB) - a standard, cheap "how light does this read"
     /// metric; more than precise enough for a coarse contrast gate like this one.</summary>
     private static double RelativeLuminance(Color c)
     {
@@ -922,9 +922,9 @@ public sealed class AnnotationLayer : FrameworkElement
     }
 
     /// <summary>Rasterizes all committed shapes at 1:1 physical-pixel scale (no DIP scaling),
-    /// translated so that <paramref name="originPx"/> maps to (0,0) — used by OverlayController
+    /// translated so that <paramref name="originPx"/> maps to (0,0) - used by OverlayController
     /// when burning annotations into the exported crop. The in-progress (uncommitted) shape and all
-    /// Feature A/B screen-only chrome are intentionally excluded — export only ever runs after
+    /// Feature A/B screen-only chrome are intentionally excluded - export only ever runs after
     /// EndShape/CommitText/ReplaceShape, with nothing selected or mid-drag at that point.</summary>
     public void RenderForExport(DrawingContext dc, Point originPx)
     {
@@ -1008,7 +1008,7 @@ public sealed class AnnotationLayer : FrameworkElement
                         // the nominal stroke width (a highlighter's whole point is a broad band),
                         // with flat caps so overlapping strokes read as one swipe rather than dots.
                         var ink = shape.StrokeColor;
-                        ink.A = 0x5A; // ~35% — text under it must stay legible
+                        ink.A = 0x5A; // ~35% - text under it must stay legible
                         pen = new Pen(new SolidColorBrush(ink), Math.Max(6.0, shape.StrokeWidthPx * 3.0))
                         {
                             StartLineCap = PenLineCap.Flat,
@@ -1061,7 +1061,7 @@ public sealed class AnnotationLayer : FrameworkElement
 
     /// <summary>Shared FormattedText construction for both actually drawing a Text annotation
     /// (<see cref="Draw"/>) and merely measuring its bounds (<see cref="MeasureTextBounds"/>, for
-    /// Feature B's hit-testing/selection chrome) — one place defining "how a text shape lays out".</summary>
+    /// Feature B's hit-testing/selection chrome) - one place defining "how a text shape lays out".</summary>
     private static FormattedText BuildTextFormattedText(AnnotationShape shape, Brush foreground)
     {
         var typeface = new Typeface(
@@ -1081,9 +1081,9 @@ public sealed class AnnotationLayer : FrameworkElement
 
     /// <summary>Mosaics the preview pixels under the shape's rect: crop the region out of
     /// <see cref="PreviewSource"/>, shrink it by the block size, and draw it back scaled up with
-    /// NearestNeighbor (via a DrawingGroup — DrawingContext has no per-draw scaling-mode knob).
+    /// NearestNeighbor (via a DrawingGroup - DrawingContext has no per-draw scaling-mode knob).
     /// Because the source is the frozen preview, this works identically on screen (OnRender, DIP
-    /// transform already pushed) and at export (RenderForExport, 1:1) — both draw the same blocks
+    /// transform already pushed) and at export (RenderForExport, 1:1) - both draw the same blocks
     /// at the same physical rect. StrokeWidthPx is the block size (min 3 px so it always censors).</summary>
     private void DrawPixelate(DrawingContext dc, AnnotationShape shape, Vector translate)
     {

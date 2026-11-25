@@ -12,7 +12,7 @@ namespace RoeSnip.App;
 /// (the dialog around <c>HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled</c>,
 /// docs/architecture.md) lives in <see cref="TrayApp.ResolvePrintScreenConsent"/>, which owns the settings
 /// and can persist the user's answer. The settings handed to <see cref="Register"/> are expected
-/// to already be consent-resolved — keeping the (modal) prompt out of this class means merely
+/// to already be consent-resolved - keeping the (modal) prompt out of this class means merely
 /// registering a hotkey can never block the tray app's startup.</summary>
 public sealed class HotkeyManager : IDisposable
 {
@@ -34,13 +34,13 @@ public sealed class HotkeyManager : IDisposable
     /// RegisterHotKey; it does NOT mean some other mechanism (a global keyboard hook, Snipping
     /// Tool's own PrtScr interception, a game running in exclusive fullscreen, etc.) won't still
     /// steal the keystroke before Windows ever routes it here. The only real verification is a
-    /// human pressing the key and observing the overlay appear — this class has no way to detect
+    /// human pressing the key and observing the overlay appear - this class has no way to detect
     /// that itself and does not attempt to fake one.</summary>
     public bool IsRegistered => _registered;
 
     /// <summary>(Re)registers the hotkey from the given (already consent-resolved) settings,
     /// unregistering any previous registration first. Called once at startup and again by TrayApp
-    /// after SettingsWindow saves a hotkey change — in both cases the caller has run
+    /// after SettingsWindow saves a hotkey change - in both cases the caller has run
     /// TrayApp.ResolvePrintScreenConsent over the settings first.</summary>
     public void Register(RoeSnipSettings settings)
     {

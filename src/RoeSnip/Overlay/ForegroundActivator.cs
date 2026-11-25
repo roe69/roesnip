@@ -6,22 +6,22 @@ using RoeSnip.Core.Diagnostics;
 namespace RoeSnip.Overlay;
 
 /// <summary>The escalating three-tier foreground/focus-stealing ladder (item 3a of UX round 3),
-/// used both when a text annotation edit is about to accept input and at overlay session start —
+/// used both when a text annotation edit is about to accept input and at overlay session start -
 /// Activate() alone is not proof of real OS foreground delivery for a background tray process (see
 /// OverlayInputInterop.cs's SessionKeyboardHook doc comment for the underlying Win32 restriction),
 /// and typing specifically needs *real* keyboard/text-services focus in a way the session's
 /// low-level keyboard hook deliberately does not fake.
 ///
-/// Tier 1 — a plain SetForegroundWindow call (after WPF's own Activate()).
-/// Tier 2 — AttachThreadInput to whichever thread currently owns the foreground window (this lifts
+/// Tier 1 - a plain SetForegroundWindow call (after WPF's own Activate()).
+/// Tier 2 - AttachThreadInput to whichever thread currently owns the foreground window (this lifts
 /// the usual SetForegroundWindow restriction between threads that share an input queue), then
 /// BringWindowToTop + SetForegroundWindow + SetFocus, then detach.
-/// Tier 3 — the documented SendInput Alt-tap "unlock": injecting a synthetic VK_MENU down/up resets
+/// Tier 3 - the documented SendInput Alt-tap "unlock": injecting a synthetic VK_MENU down/up resets
 /// the foreground-lock timeout that otherwise makes SetForegroundWindow silently fail for a process
 /// that didn't originate the input that's supposed to grant it focus, then a second
 /// SetForegroundWindow attempt.
 ///
-/// Every tier is best-effort — a failure anywhere never throws — and whichever tier actually won
+/// Every tier is best-effort - a failure anywhere never throws - and whichever tier actually won
 /// (or that all three failed) is logged to stderr so interactive verification can see exactly what
 /// happened, alongside the real foreground-window ownership before/after the whole ladder ran.</summary>
 internal static class ForegroundActivator

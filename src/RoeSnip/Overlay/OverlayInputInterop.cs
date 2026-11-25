@@ -7,7 +7,7 @@ using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Overlay;
 
-// Not in Interop/NativeMethods.cs — added locally in this file per the existing convention
+// Not in Interop/NativeMethods.cs - added locally in this file per the existing convention
 // (Imaging/ClipboardService.cs's own P/Invoke block documents the same allowance): these
 // declarations are used only by the overlay session's keyboard-reliability layers below and have
 // no reason to be visible to the rest of the app.
@@ -106,7 +106,7 @@ internal static class OverlayInputInterop
     internal const uint INPUT_KEYBOARD = 1;
     internal const uint KEYEVENTF_KEYUP = 0x0002;
 
-    /// <summary>Injects a synthetic Alt down+up — the documented workaround for Windows' foreground-
+    /// <summary>Injects a synthetic Alt down+up - the documented workaround for Windows' foreground-
     /// lock timeout: SendInput is treated as "real" input for the purposes of resetting that timeout
     /// (unlike calling SetForegroundWindow directly, which is exactly the operation the timeout
     /// restricts), so a SetForegroundWindow attempt immediately afterward is far more likely to
@@ -132,9 +132,9 @@ internal static class OverlayInputInterop
     internal static extern IntPtr GetKeyboardLayout(uint idThread);
 }
 
-/// <summary>Session-scoped low-level keyboard hook (WH_KEYBOARD_LL) — the fix for "Esc doesn't
+/// <summary>Session-scoped low-level keyboard hook (WH_KEYBOARD_LL) - the fix for "Esc doesn't
 /// cancel". Root cause (confirmed): OverlayController.RunAsync's Activate() is not proof of actual
-/// foreground delivery — a background tray process cannot reliably steal foreground focus
+/// foreground delivery - a background tray process cannot reliably steal foreground focus
 /// (SetForegroundWindow restrictions), so the hotkey's foreground grant can be stale by the time
 /// the overlay appears, and the second-instance pipe trigger never had a foreground grant at all.
 /// When that happens keyboard focus stays in whatever app the user was in, and Esc/Enter/Ctrl+C/
@@ -150,26 +150,26 @@ internal static class OverlayInputInterop
 ///
 /// EXCEPTION (per spec): while a text annotation edit is active AND the overlay window genuinely
 /// holds OS foreground/focus (via ForegroundActivator's activation ladder), only Esc is intercepted
-/// here — the rest (typing, Enter-to-commit, Ctrl+C-to-copy-text) must reach the real focused
+/// here - the rest (typing, Enter-to-commit, Ctrl+C-to-copy-text) must reach the real focused
 /// control (the in-progress TextBox) through the normal WPF input pipeline, not through this hook.
 /// If the window does NOT hold real foreground/focus while text-editing (every ForegroundActivator
-/// tier failed), this hook instead routes every relevant keydown to TextEditKeyForwarder — the
+/// tier failed), this hook instead routes every relevant keydown to TextEditKeyForwarder - the
 /// guaranteed fallback tier (item 3b, UX round 3) that applies the keystroke directly against the
 /// TextBox, since nothing typed could otherwise ever reach it.
 ///
 /// SECOND EXCEPTION (UX round 5, item 2): while any OTHER text input in the overlay window (today:
-/// the toolbar size ComboBox's editable TextBox — see OverlayWindow.IsTextInputFocused) holds WPF
-/// keyboard focus and the window is genuinely OS-foreground, this hook intercepts NOTHING — all
+/// the toolbar size ComboBox's editable TextBox - see OverlayWindow.IsTextInputFocused) holds WPF
+/// keyboard focus and the window is genuinely OS-foreground, this hook intercepts NOTHING - all
 /// keys, Enter included, flow through the normal pipeline so typing a size can never trigger a
 /// session command. See the inline comment at that branch for why no forwarder tier is needed.
 ///
 /// Lifecycle: installed once when the owning OverlaySession is constructed ("the session opens"),
-/// disposed exactly once from OverlaySession.Finish() — the single terminal point every session exit
+/// disposed exactly once from OverlaySession.Finish() - the single terminal point every session exit
 /// path (Cancel, CancelStage-to-empty, Confirm/Copy/Save/SaveHdr, an exception during Show(), or an
 /// externally-closed window such as Alt+F4) funnels through, wrapped in try/finally there so the
 /// hook is removed unconditionally. Dispose() itself is idempotent (Interlocked-guarded) as a second
 /// safety net. The hook delegate is kept alive in <see cref="_proc"/> for the hook's entire lifetime
-/// — a hook whose delegate gets garbage-collected while still installed is a classic crash.</summary>
+/// - a hook whose delegate gets garbage-collected while still installed is a classic crash.</summary>
 internal sealed class SessionKeyboardHook : IDisposable
 {
     private readonly Func<OverlayWindow?> _getActiveWindow;
@@ -201,7 +201,7 @@ internal sealed class SessionKeyboardHook : IDisposable
         }
         catch (Exception ex)
         {
-            // Never let hook installation itself take down the overlay session — this is a
+            // Never let hook installation itself take down the overlay session - this is a
             // reliability layer on top of normal WPF key handling, not a hard requirement.
             FileLog.Write($"RoeSnip: failed to install the session keyboard hook: {ex.Message}");
             _hookHandle = IntPtr.Zero;
@@ -238,7 +238,7 @@ internal sealed class SessionKeyboardHook : IDisposable
                     // Guaranteed fallback tier (item 3b, UX round 3): the overlay does not currently
                     // hold real OS foreground/focus (every ForegroundActivator tier failed), so
                     // nothing typed would ever reach the in-progress TextBox through the normal WPF
-                    // input pipeline — forward it directly instead of letting it leak through to
+                    // input pipeline - forward it directly instead of letting it leak through to
                     // whatever background app actually has focus. Swallowed unconditionally, even
                     // for keys TextEditKeyForwarder doesn't itself act on, since the alternative is
                     // leaking a keystroke the user believes is going into RoeSnip.
@@ -249,11 +249,11 @@ internal sealed class SessionKeyboardHook : IDisposable
                 }
 
                 // Generalized text-input guard (UX round 5, item 2): the toolbar's size ComboBox
-                // has an editable TextBox — the one non-annotation text input in the overlay.
+                // has an editable TextBox - the one non-annotation text input in the overlay.
                 // While it genuinely holds WPF keyboard focus AND the window is really OS-
                 // foreground (same double condition as the annotation-editor branch above, for the
                 // same reason: only then can the normal focus-dependent WPF pipeline be trusted),
-                // EVERY key passes through untouched — crucially including Enter, which the
+                // EVERY key passes through untouched - crucially including Enter, which the
                 // ComboBox handles itself (commit the typed size, hand focus back to the window)
                 // and which must NOT be swallowed here as confirm-the-snip mid-typing. Unlike the
                 // annotation editor there is no forwarder fallback tier: without real focus the
@@ -267,7 +267,7 @@ internal sealed class SessionKeyboardHook : IDisposable
                 }
 
                 // Feature B items 5/6: Delete/Back/Esc-deselect must work through this hook too, the
-                // same as every other session key — but Delete/Back are only "ours" while there's
+                // same as every other session key - but Delete/Back are only "ours" while there's
                 // actually a selected annotation to delete (HasSelectedAnnotation); otherwise they
                 // must pass through untouched to whatever app genuinely has focus, exactly like any
                 // other non-session keystroke a background tray process shouldn't be eating.
@@ -283,7 +283,7 @@ internal sealed class SessionKeyboardHook : IDisposable
                     || activeWindow?.IsOverlayShortcut(key, modifiers) == true;
 
                 // While typing (and the window does hold real focus, per the branch above), only Esc
-                // is ours to steal — everything else must reach the real focused TextBox through the
+                // is ours to steal - everything else must reach the real focused TextBox through the
                 // normal (focus-dependent) WPF pipeline.
                 if (isSessionKey && (!textEditing || key == Key.Escape))
                 {
@@ -291,19 +291,19 @@ internal sealed class SessionKeyboardHook : IDisposable
                     {
                         // Marshal to the UI thread's dispatcher queue rather than calling straight
                         // through: we're on the hook's call stack here (synchronous, system-wide),
-                        // and ProcessKeyCommand can close windows (Cancel) — doing that reentrantly
+                        // and ProcessKeyCommand can close windows (Cancel) - doing that reentrantly
                         // from inside the hook callback itself would be fragile. BeginInvoke defers
                         // it to run right after this hook returns.
                         activeWindow.Dispatcher.BeginInvoke(new Action(
                             () => activeWindow.ProcessKeyCommand(key, modifiers)));
                     }
-                    return (IntPtr)1; // swallow — never let it leak through to the background app
+                    return (IntPtr)1; // swallow - never let it leak through to the background app
                 }
             }
             catch (Exception ex)
             {
                 // A malformed hook struct or KeyInterop failure must never crash the hook chain
-                // (which would break keyboard input system-wide) — fall through to CallNextHookEx.
+                // (which would break keyboard input system-wide) - fall through to CallNextHookEx.
                 FileLog.Write($"RoeSnip: session keyboard hook callback error: {ex.Message}");
             }
         }
@@ -321,7 +321,7 @@ internal sealed class SessionKeyboardHook : IDisposable
     {
         if (System.Threading.Interlocked.Exchange(ref _disposed, 1) != 0)
         {
-            return; // already unhooked — Dispose is safe to call more than once
+            return; // already unhooked - Dispose is safe to call more than once
         }
 
         if (_hookHandle != IntPtr.Zero)
@@ -336,13 +336,13 @@ internal sealed class SessionKeyboardHook : IDisposable
 /// hook alive from a successful TryShowFlash until either the flow ends (ReleaseFlash) or the real
 /// OverlaySession takes over with its full SessionKeyboardHook. Before this, cancelling during the
 /// flash phase depended on the flash window actually winning the best-effort SetForegroundWindow
-/// negotiation — under foreground-lock restrictions it often didn't, leaving Esc dead exactly while
+/// negotiation - under foreground-lock restrictions it often didn't, leaving Esc dead exactly while
 /// the screen sat dimmed waiting on a slow (post-resume) capture. Only Esc keydowns are acted on
-/// and swallowed; every other key passes through untouched via CallNextHookEx — this phase has no
+/// and swallowed; every other key passes through untouched via CallNextHookEx - this phase has no
 /// text editing or session commands to worry about. Same lifecycle rules as SessionKeyboardHook:
 /// install failure is non-fatal (logged; the focus-dependent flash KeyDown handler remains as the
 /// fallback), the delegate is rooted for the hook's lifetime, Dispose is idempotent. UI (hook-
-/// installing) thread only — with the capture now off the UI thread, that thread pumps during the
+/// installing) thread only - with the capture now off the UI thread, that thread pumps during the
 /// flash phase, so callbacks are actually delivered (a LL hook on a non-pumping thread is silently
 /// skipped by Windows).</summary>
 internal sealed class FlashEscapeHook : IDisposable
@@ -392,7 +392,7 @@ internal sealed class FlashEscapeHook : IDisposable
                 if (data.vkCode == VkEscape)
                 {
                     _onEscape();
-                    return (IntPtr)1; // swallow — the cancel must not also leak into the app underneath
+                    return (IntPtr)1; // swallow - the cancel must not also leak into the app underneath
                 }
             }
             catch (Exception ex)

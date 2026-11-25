@@ -12,13 +12,13 @@ namespace RoeSnip.App.Overlay;
 
 /// <summary>Per-OS clipboard adapters in one file with runtime OS branches:
 ///   - Windows: the exact P/Invoke PNG+CF_DIBV5 transaction ported from the frozen WPF app's
-///     src/RoeSnip/Imaging/ClipboardService.cs — both "paste as PNG" and "paste as bitmap"
+///     src/RoeSnip/Imaging/ClipboardService.cs - both "paste as PNG" and "paste as bitmap"
 ///     consumers work from one copy. The DllImport declarations compile on every host OS; only
 ///     the calls are gated behind OperatingSystem.IsWindows().
 ///   - macOS: NSPasteboard PNG via Objective-C-runtime P/Invoke (objc_msgSend), per the plan's
 ///     preferred approach; falls back to Avalonia's own clipboard if the objc path throws.
-///     NOT runtime-verifiable on this machine — see the WP-X3 report.
-///   - Linux (and any other case): Avalonia's IClipboard with an "image/png" data object —
+///     NOT runtime-verifiable on this machine - see the WP-X3 report.
+///   - Linux (and any other case): Avalonia's IClipboard with an "image/png" data object -
 ///     Avalonia 12 fixed X11 INCR transfers, so full-size screenshots are expected to work.</summary>
 public static class ClipboardService
 {
@@ -82,7 +82,7 @@ public static class ClipboardService
     }
 
     /// <summary>Copies plain text (the color inspector / magnifier hex readout). Returns whether
-    /// the copy succeeded — a transiently locked clipboard reports false, never throws.</summary>
+    /// the copy succeeded - a transiently locked clipboard reports false, never throws.</summary>
     public static async Task<bool> TryCopyTextAsync(Visual owner, string text)
     {
         if (OperatingSystem.IsWindows())
@@ -156,7 +156,7 @@ public static class ClipboardService
 
         // Avalonia 12's DataTransfer API (IDataObject/DataObject are inert since 12). The raw
         // platform format identifier is a mime type everywhere except macOS, which uses UTIs
-        // (per DataFormat.CreateBytesPlatformFormat's own contract) — macOS only reaches this
+        // (per DataFormat.CreateBytesPlatformFormat's own contract) - macOS only reaches this
         // path as the objc-P/Invoke fallback.
         string identifier = OperatingSystem.IsMacOS() ? "public.png" : "image/png";
         var dataTransfer = new DataTransfer();
@@ -208,7 +208,7 @@ public static class ClipboardService
         public uint bV5AlphaMask;
         public uint bV5CSType;
         // CIEXYZTRIPLE bV5Endpoints: 3 x CIEXYZ, each 3 x FXPT2DOT30(=int) = 36 bytes. Unused when
-        // bV5CSType == LCS_sRGB (consumers ignore these per the sRGB profile) — zero-filled.
+        // bV5CSType == LCS_sRGB (consumers ignore these per the sRGB profile) - zero-filled.
         public int bV5Endpoint0X, bV5Endpoint0Y, bV5Endpoint0Z;
         public int bV5Endpoint1X, bV5Endpoint1Y, bV5Endpoint1Z;
         public int bV5Endpoint2X, bV5Endpoint2Y, bV5Endpoint2Z;
@@ -272,8 +272,8 @@ public static class ClipboardService
     }
 
     // O6 audit fix: WPF's own System.Windows.Clipboard.SetText retries OpenClipboard internally
-    // (another process — including this app's own magnifier/color-inspector on a rapid second
-    // click — can transiently hold the clipboard open); the raw P/Invoke path here had no such
+    // (another process - including this app's own magnifier/color-inspector on a rapid second
+    // click - can transiently hold the clipboard open); the raw P/Invoke path here had no such
     // resilience and failed outright on the first contended attempt.
     private const int OpenClipboardRetryCount = 10;
     private const int OpenClipboardRetryDelayMs = 100;
@@ -319,7 +319,7 @@ public static class ClipboardService
         }
         catch (Exception)
         {
-            // Clipboard transiently locked by another process — the caller surfaces the failure;
+            // Clipboard transiently locked by another process - the caller surfaces the failure;
             // text copy is a convenience, never worth crashing the overlay over.
             return false;
         }
@@ -350,7 +350,7 @@ public static class ClipboardService
         }
 
         // On success, ownership of hGlobal transfers to the system (SetClipboardData's documented
-        // contract) — we must NOT free it in that case, only on failure.
+        // contract) - we must NOT free it in that case, only on failure.
         if (SetClipboardData(format, hGlobal) == IntPtr.Zero)
         {
             GlobalFree(hGlobal);

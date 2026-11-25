@@ -9,7 +9,7 @@ namespace RoeSnip.App;
 /// <summary>JSON persistence for <see cref="RoeSnipSettings"/> at
 /// <c>%APPDATA%\RoeSnip\settings.json</c>. Fail-closed per docs/architecture.md: any problem reading the file
 /// (missing, empty, unreadable, malformed JSON) returns <see cref="RoeSnipSettings.Default"/>
-/// WITHOUT writing to or otherwise touching the file — a corrupt file on disk is left exactly as
+/// WITHOUT writing to or otherwise touching the file - a corrupt file on disk is left exactly as
 /// it was found so a user/support session can inspect it later. <see cref="Save"/> writes
 /// atomically (temp file in the same directory, then <see cref="File.Replace(string, string, string?)"/>
 /// / <see cref="File.Move(string, string, bool)"/>) so a crash mid-write can never leave a
@@ -46,7 +46,7 @@ public static class SettingsStore
     public static RoeSnipSettings Load() => Load(SettingsFilePath);
 
     /// <summary>Overload used by tests to point at an isolated temp path instead of the real
-    /// %APPDATA% — unit tests must never touch the user's real settings file. Public (rather than
+    /// %APPDATA% - unit tests must never touch the user's real settings file. Public (rather than
     /// internal) so the test project doesn't need an InternalsVisibleTo edit to a WP-A-owned file.</summary>
     public static RoeSnipSettings Load(string path)
     {

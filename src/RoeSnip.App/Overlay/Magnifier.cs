@@ -16,11 +16,11 @@ using ColorFormatTemplate = RoeSnip.Core.Color.ColorFormatTemplate;
 namespace RoeSnip.App.Overlay;
 
 /// <summary>Zoom loupe near the cursor with a nits readout (sampled from the raw CapturedFrame via
-/// <see cref="CapturedFrame.ReadPixelNits"/>) — RoeSnip's signature feature: it can reveal an HDR
-/// highlight even when the hex value reads as plain white — plus the ordered, user-managed
+/// <see cref="CapturedFrame.ReadPixelNits"/>) - RoeSnip's signature feature: it can reveal an HDR
+/// highlight even when the hex value reads as plain white - plus the ordered, user-managed
 /// <see cref="Formats"/> value lines (item 22, finishing this class's own item-06 deferral: it
 /// used to render a hard-coded hex/RGB/nits triplet instead of the real ColorFormats list). Click
-/// anywhere on the loupe widget to copy the current hex string to the clipboard as plain text —
+/// anywhere on the loupe widget to copy the current hex string to the clipboard as plain text -
 /// the SAME gesture WPF's Magnifier uses (its OnMouseLeftButtonDown). Ported from the frozen WPF
 /// app's src/RoeSnip/Overlay/Magnifier.cs.</summary>
 public sealed class Magnifier : Control
@@ -37,7 +37,7 @@ public sealed class Magnifier : Control
     private int _sampleRadius = MaxSampleRadius;
 
     /// <summary>How many source pixels the loupe shows: a (2r+1)x(2r+1) block around the cursor,
-    /// rendered inside the FIXED-size loupe (the widget never changes size — the per-pixel swatch
+    /// rendered inside the FIXED-size loupe (the widget never changes size - the per-pixel swatch
     /// size scales instead, so a smaller radius means fewer, bigger pixels: zoomed in).
     /// Wheel-adjustable per session (OverlayWindow's wheel handler); every session opens at
     /// <see cref="MaxSampleRadius"/> (widest, normal pointer speed).</summary>
@@ -56,7 +56,7 @@ public sealed class Magnifier : Control
     }
 
     /// <summary>When false the loupe shows ONLY the zoomed pixel grid, with no hex/RGB/nits lines
-    /// below it — used by the Pixelate tool, which wants the same precise-placement loupe as the
+    /// below it - used by the Pixelate tool, which wants the same precise-placement loupe as the
     /// initial selection but no color readout (there is no color being picked). The widget then
     /// hugs just the grid.</summary>
     public bool ShowColorReadout { get; set; } = true;
@@ -69,14 +69,14 @@ public sealed class Magnifier : Control
     public double DeviceScaleX { get; set; } = 1.0;
     public double DeviceScaleY { get; set; } = 1.0;
 
-    /// <summary>Which value lines the loupe shows below the pixel grid — the same ordered
+    /// <summary>Which value lines the loupe shows below the pixel grid - the same ordered
     /// ColorFormats list the eyedropper's gear popover manages, so configuring the formats once
     /// configures both readouts. Set once from OverlayWindow's constructor (mirrors WPF's own
     /// MagnifierControl.Formats = settings); the widget sizes itself to exactly the enabled lines.</summary>
     public RoeSnipSettings Formats { get; set; } = RoeSnipSettings.Default;
 
     // The enabled+in-loupe subset of Formats' color-format list, derived lazily and cached by
-    // settings reference — Render runs per pointer move, so it must not re-run the catalog merge
+    // settings reference - Render runs per pointer move, so it must not re-run the catalog merge
     // every time.
     private RoeSnipSettings? _activeFormatsSource;
     private List<ColorFormatEntry> _activeFormats = new();
@@ -97,20 +97,20 @@ public sealed class Magnifier : Control
 
     public string CurrentHex { get; private set; } = string.Empty;
 
-    /// <summary>Live selection rect (physical pixels), fed from OverlayWindow.SetSelection —
+    /// <summary>Live selection rect (physical pixels), fed from OverlayWindow.SetSelection -
     /// mirrors exactly what SelectionAdorner.SelectionPx receives (same call site, single source of
     /// truth), so the loupe's border preview always agrees with the real on-screen crop edge.
     /// Capture-fidelity spec item 3. Null (or <see cref="ShowSelectionPreview"/> false) draws
     /// nothing extra.</summary>
     public RectPhysical? SelectionPx { get; set; }
 
-    /// <summary>Gates whether <see cref="SelectionPx"/> is actually drawn inside the loupe — true
+    /// <summary>Gates whether <see cref="SelectionPx"/> is actually drawn inside the loupe - true
     /// only during a LIVE NewSelection drag (see OverlayWindow's pointer-moved handler, which sets
     /// this AFTER its drag-mode switch settles for the frame, not folded into the earlier
-    /// <see cref="Update"/> call — doing it there would read one frame stale). False during the
+    /// <see cref="Update"/> call - doing it there would read one frame stale). False during the
     /// pending-click phase (SelectionPx may still hold an unrelated previous selection), during
     /// Resize/Move of an existing selection, and while placing the Pixelate tool's region (that
-    /// state's SelectionPx is the confirmed crop rect, not the region being placed) — see
+    /// state's SelectionPx is the confirmed crop rect, not the region being placed) - see
     /// docs/architecture.md "Overlay" for the full gating rationale.</summary>
     public bool ShowSelectionPreview { get; set; }
 
@@ -123,7 +123,7 @@ public sealed class Magnifier : Control
     /// <summary>Updates the sample point. <paramref name="cursorDip"/> is the mouse position in
     /// this window's DIPs (used only to position the loupe widget on screen);
     /// <paramref name="cursorPx"/> is the same point already converted to physical pixels (used
-    /// for the actual sampling, per the mixed-DPI contract — DIPs never cross into sampling math).</summary>
+    /// for the actual sampling, per the mixed-DPI contract - DIPs never cross into sampling math).</summary>
     public void Update(SdrImage preview, CapturedFrame frame, Point cursorDip, Point cursorPx)
     {
         _preview = preview;
@@ -161,12 +161,12 @@ public sealed class Magnifier : Control
             Math.Clamp(cy, 0, frame.Height - 1));
         CurrentHex = string.Create(CultureInfo.InvariantCulture, $"#{r:X2}{g:X2}{b:X2}");
 
-        // Fixed-footprint loupe: the pixel grid never resizes with zoom — the per-pixel swatch size
+        // Fixed-footprint loupe: the pixel grid never resizes with zoom - the per-pixel swatch size
         // is derived from how many pixels have to fit, so wheel-zooming only changes magnification.
         double loupeSize = LoupeDip;
         double swatchDip = LoupeDip / (_sampleRadius * 2 + 1);
 
-        // Value lines below the pixel grid — the loupe-enabled subset of the same ordered,
+        // Value lines below the pixel grid - the loupe-enabled subset of the same ordered,
         // user-managed format list the eyedropper shows (see ActiveFormats), each expanded by
         // ColorFormatTemplate. ONE consistent style for every line (same face, size, and color);
         // the single deliberate exception is a STATE signal, not a styling one: a nits-bearing
@@ -266,14 +266,14 @@ public sealed class Magnifier : Control
     /// pixels relative to the sampled center (<paramref name="centerX"/>/<paramref name="centerY"/>),
     /// then scaled by <paramref name="swatchDip"/> and placed at <paramref name="loupeLeft"/>/
     /// <paramref name="loupeTop"/>. Pulled out as a pure static function (no <c>this</c>, no Avalonia
-    /// rendering) so the mapping arithmetic is unit-testable without a live Control/DrawingContext —
+    /// rendering) so the mapping arithmetic is unit-testable without a live Control/DrawingContext -
     /// mirrors the WPF app's identically-named, identically-shaped helper
     /// (src/RoeSnip/Overlay/Magnifier.cs). <paramref name="selection"/> is normalized first since
     /// <c>RectPhysical.Right</c>/<c>Bottom</c> are one-past-last-pixel boundaries (see
     /// <see cref="RectPhysical"/>'s own doc comment) and this formula relies on Left &lt;= Right,
     /// Top &lt;= Bottom to produce a non-inverted <see cref="Rect"/>. Callers are expected to clip
     /// the result to the loupe's own square themselves (see the <c>PushClip</c> call in
-    /// <see cref="Render"/>) — off-loupe edges are not bounds-checked here.</summary>
+    /// <see cref="Render"/>) - off-loupe edges are not bounds-checked here.</summary>
     public static Rect MapSelectionToLoupeRect(
         RectPhysical selection, int centerX, int centerY, int sampleRadius,
         double loupeLeft, double loupeTop, double swatchDip)
@@ -286,11 +286,11 @@ public sealed class Magnifier : Control
         return new Rect(new Point(left, top), new Point(right, bottom));
     }
 
-    /// <summary>Click anywhere on the loupe copies the current hex to the clipboard — mirrors WPF's
+    /// <summary>Click anywhere on the loupe copies the current hex to the clipboard - mirrors WPF's
     /// Magnifier.OnMouseLeftButtonDown exactly, including its reachability: OverlayWindow's own
     /// tunnel-routed pointer-pressed handler (AddHandler(..., RoutingStrategies.Tunnel), same as
     /// WPF's Preview* events) marks most clicks Handled before they ever reach this control's own
-    /// bubble-phase handler, same as WPF — this exists for the cases that DON'T get pre-handled
+    /// bubble-phase handler, same as WPF - this exists for the cases that DON'T get pre-handled
     /// (and for a future standalone eyedropper window, item 22, that has no such outer handler).</summary>
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
@@ -316,7 +316,7 @@ public sealed class Magnifier : Control
         }
         catch (Exception)
         {
-            // Click-to-copy is a convenience, not part of the critical Copy/Save path — swallow and
+            // Click-to-copy is a convenience, not part of the critical Copy/Save path - swallow and
             // let the user retry (same tolerance as ShowColorInfo's own copy attempt).
         }
     }

@@ -10,13 +10,13 @@
              roeshare's NEUTRAL palette (E:\GitHub\RoeLite\roeshare\public\css\tokens.css): a cool
              near-black foundation with hairline WHITE-ALPHA glass borders and ONE hot accent, the
              brand ORANGE, reserved for primary actions / the active item / focus. The old warm
-             cream/gold interpretation is gone — gold is now only a rare accent elsewhere in the
+             cream/gold interpretation is gone - gold is now only a rare accent elsewhere in the
              product, not this toolbar's primary. Every color used below routes through one of these
              so the toolbar reads as the same product as the site instead of a generic dark-mode dev
              tool. Alpha-tinted colors are pre-multiplied hex (#AARRGGBB) since WPF brushes don't take
              a separate opacity channel the way CSS rgba() does. -->
         <SolidColorBrush x:Key="RlTextPrimaryBrush" Color="#EDEDF0"/>
-        <!-- rl-text: neutral off-white body/icon color, ~16:1 on black — never pure white. -->
+        <!-- rl-text: neutral off-white body/icon color, ~16:1 on black - never pure white. -->
         <SolidColorBrush x:Key="RlTextMutedBrush" Color="#A2A2AB"/>
         <!-- rl-text-muted -->
         <SolidColorBrush x:Key="RlTextDimBrush" Color="#71717B"/>
@@ -37,7 +37,7 @@
         <SolidColorBrush x:Key="RlBorderBrush" Color="#12FFFFFF"/>
         <!-- rl-border, rgba(255,255,255,.07): the workhorse hairline for inputs/menus -->
         <SolidColorBrush x:Key="RlBorderStrongBrush" Color="#24FFFFFF"/>
-        <!-- rl-border-strong, rgba(255,255,255,.14): emphasized edges — the floating panel's own
+        <!-- rl-border-strong, rgba(255,255,255,.14): emphasized edges - the floating panel's own
              border and the toolbar's internal group dividers, both of which need to read clearly
              against arbitrary screenshot content rather than a consistent page background. -->
         <SolidColorBrush x:Key="RlSecondaryBorderBrush" Color="#2EFFFFFF"/>
@@ -47,7 +47,7 @@
         <SolidColorBrush x:Key="RlGhostPressedBrush" Color="#1AFFFFFF"/>
         <!-- rgba(255,255,255,.10): v_ghost pressed fill / v_secondary hover fill / dropdown row hover -->
         <SolidColorBrush x:Key="RlActiveTintBrush" Color="#1FFF6B35"/>
-        <!-- rgba(primary,.12): the flat background tint half of the site's active-item recipe —
+        <!-- rgba(primary,.12): the flat background tint half of the site's active-item recipe -
              roeshare's active nav item/primary button use the one hot orange accent, so the active
              tool here gets an orange tint rather than a neutral one. -->
         <SolidColorBrush x:Key="RlSelectedItemBrush" Color="#33FF6B35"/>
@@ -66,7 +66,7 @@
 
         <!-- All icons are inline vector Path geometries (no image assets). Uniform stretch into a
              14x14 box; round caps/joins for a clean hand-drawn-free look. Stroke is the roelite-net
-             cream body-text color rather than the old flat white — every icon stays this one color
+             cream body-text color rather than the old flat white - every icon stays this one color
              regardless of button state (ghost fills/tints do the state signaling instead), except
              the two buttons whose rest/hover fill is itself bright gold (Copy, Save), which override
              Stroke locally to the site's on-primary/accent text color for contrast. -->
@@ -134,8 +134,8 @@
         </Style>
 
         <!-- Primary action per roelite-net's v_primary recipe: solid orange fill, dark-on-primary
-             text, a solid primary-dark edge. Flat color swaps only on hover/press — no gradient, no
-             glow — per the product's hard rule against colored glow/drop-shadow chrome. Used for
+             text, a solid primary-dark edge. Flat color swaps only on hover/press - no gradient, no
+             glow - per the product's hard rule against colored glow/drop-shadow chrome. Used for
              Copy, the most common terminal action (the site's button hierarchy reserves
              solid-primary for exactly that: the one action most users take). -->
         <Style x:Key="ActionButtonStyle" TargetType="Button">
@@ -165,7 +165,7 @@
                                 <Setter TargetName="Bg" Property="Background" Value="{StaticResource RlGoldBorderSolidBrush}"/>
                             </Trigger>
                             <!-- Disabled = clearly inert (undo with nothing to undo, redo with
-                                 nothing undone) but still occupying its spot — no layout shifts. -->
+                                 nothing undone) but still occupying its spot - no layout shifts. -->
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.5"/>
                                 <Setter Property="Cursor" Value="Arrow"/>
@@ -178,7 +178,7 @@
 
         <!-- Secondary action per roelite-net's v_secondary recipe: translucent orange fill + orange
              text/icon, warming up further on hover. One weight quieter than ActionButtonStyle's
-             solid-primary look — used for Save, which the site's button hierarchy would treat as the
+             solid-primary look - used for Save, which the site's button hierarchy would treat as the
              secondary of the pair (Copy being the more common single action). -->
         <Style x:Key="SecondaryActionButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="34"/>
@@ -215,8 +215,8 @@
             </Setter>
         </Style>
 
-        <!-- Undo/Redo (and any future secondary action): the same v_ghost look as the tool buttons —
-             transparent at rest, a flat gold tint on hover/press — but a plain Button, sharing
+        <!-- Undo/Redo (and any future secondary action): the same v_ghost look as the tool buttons -
+             transparent at rest, a flat gold tint on hover/press - but a plain Button, sharing
              ActionButtonStyle's disabled-opacity trigger (icon-button disabled opacity is 0.4 per the
              site's IconButton spec, one notch lighter than a full Button's 0.5, since these are the
              icon-only analogue). -->
@@ -248,7 +248,7 @@
         </Style>
 
         <!-- The Cancel X: quiet until hovered, then unmistakably red (the admonition-danger literal,
-             not the softer rl-danger token — see RlDangerHoverBrush). Always fully closes the
+             not the softer rl-danger token - see RlDangerHoverBrush). Always fully closes the
              overlay (never the staged Esc behavior). -->
         <Style x:Key="CancelButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="34"/>
@@ -310,7 +310,7 @@
         <!-- Dark right-click menu chrome shared by the palette swatches ("Replace... / Remove")
              and the Save button ("Save HDR"). Retemplated for the same reason as DarkComboBoxStyle:
              the default menu chrome draws system-themed (light) regardless of Background setters.
-             Cursor=Arrow explicitly — menus live in their own Popup visual tree, so they don't
+             Cursor=Arrow explicitly - menus live in their own Popup visual tree, so they don't
              inherit the toolbar's own Arrow (item 1, UX round 5). -->
         <Style x:Key="DarkContextMenuStyle" TargetType="ContextMenu">
             <Setter Property="Background" Value="{StaticResource RlBgSecondaryBrush}"/>
@@ -358,7 +358,7 @@
              reference it: a StaticResource forward-reference inside a compiled ResourceDictionary
              hands ItemContainerStyle a deferred reference instead of a Style, which detonates as
              an InvalidCastException (process-killing XamlParseException) the first time the
-             control is hovered — this exact bug crashed the tray in round 5 verification. -->
+             control is hovered - this exact bug crashed the tray in round 5 verification. -->
         <Style x:Key="DarkComboBoxItemStyle" TargetType="ComboBoxItem">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{StaticResource RlTextPrimaryBrush}"/>
@@ -384,11 +384,11 @@
             </Setter>
         </Style>
 
-        <!-- The numeric size input (item 2, UX round 5 — replaced the fixed small/medium/big stroke
+        <!-- The numeric size input (item 2, UX round 5 - replaced the fixed small/medium/big stroke
              dots): an EDITABLE dark ComboBox, so unlike DarkComboBoxStyle it must template in the
              PART_EditableTextBox WPF's ComboBox looks up by name to enable typing. The TextBox is
              the one deliberately focusable control on the whole toolbar (typing needs real keyboard
-             focus) — the session keyboard hook knows to stand down while it holds focus via
+             focus) - the session keyboard hook knows to stand down while it holds focus via
              OverlayWindow.IsTextInputFocused (see OverlayInputInterop.cs). -->
         <Style x:Key="DarkEditableComboBoxStyle" TargetType="ComboBox">
             <Setter Property="Background" Value="{StaticResource RlBgElevatedBrush}"/>
@@ -451,7 +451,7 @@
 
         <!-- Font-family dropdown item template: a fixed-size, standard-UI-font label on the left
              (always legible regardless of which family it names) plus a small "AaBb" sample
-             rendered in that item's own family on the right — used for both the closed selection
+             rendered in that item's own family on the right - used for both the closed selection
              box and the open dropdown's rows (WPF applies ItemTemplate to both by default). -->
         <DataTemplate x:Key="FontFamilyItemTemplate">
             <Grid Margin="1,2">
@@ -467,7 +467,7 @@
         </DataTemplate>
 
         <!-- Fully retemplated (not just a palette tweak) so both the closed chrome AND the dropdown
-             Popup are explicitly dark — the default ComboBox template otherwise draws its Popup with
+             Popup are explicitly dark - the default ComboBox template otherwise draws its Popup with
              a system-themed (typically light) brush regardless of the Background/Foreground setters
              above it, which is exactly why the plain-property version of this style read as
              illegible on the dark overlay. -->
@@ -628,10 +628,10 @@
     </UserControl.Resources>
 
     <!-- Double-stacked layout: row 1 is everything that CONFIGURES a drawing (tool, size, text
-         style), row 2 is the palette plus the session actions (undo / copy / save / cancel) —
+         style), row 2 is the palette plus the session actions (undo / copy / save / cancel) -
          keeps the toolbar roughly half as wide so it fits beside smaller selections.
          Panel surface follows the roelite-net Modal glass-card recipe (neutral near-black rgba fill +
-         single hairline white-alpha border, 12px "popover" radius) — see RlPanelBackgroundBrush for
+         single hairline white-alpha border, 12px "popover" radius) - see RlPanelBackgroundBrush for
          why the opacity is pushed well past the site's own 50% glass. -->
     <!-- Cursor=SizeAll on the panel surface itself is the drag-to-move affordance: an empty spot on
          the chrome (background, dividers, row spacing) shows the move cursor and can be grabbed to
@@ -692,7 +692,7 @@
 
             <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
-            <!-- Numeric size input (item 2, UX round 5 — replaced the small/medium/big stroke dots):
+            <!-- Numeric size input (item 2, UX round 5 - replaced the small/medium/big stroke dots):
                  shows "Npx" (stroke width) for the drawing tools and "Npt" (font size) while the
                  Text tool is active; dropdown offers preset jumps, typed values are clamped by
                  SizeInput. Enter commits and returns focus to the overlay window. -->
@@ -729,10 +729,10 @@
             <!-- Row 2 is now a Grid (Auto | * | Auto) instead of one left-aligned row, so it can hold
                  two visually distinct sections that both keep their natural width regardless of how
                  wide row 1 ends up: the editable palette stays pinned bottom-left, and the terminal
-                 actions stay pinned bottom-right — hugging the panel's actual edge (via the star
+                 actions stay pinned bottom-right - hugging the panel's actual edge (via the star
                  column absorbing the slack) rather than just trailing after the palette. The
                  separation between them is a plain hairline divider immediately ahead of the action
-                 group (roelite-net's structural-not-glow separator convention), not a boxed-in band —
+                 group (roelite-net's structural-not-glow separator convention), not a boxed-in band -
                  the panel itself is already the one contained surface. -->
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -741,7 +741,7 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- BOTTOM-LEFT: the fixed-size palette — every swatch is built in code from the
+                <!-- BOTTOM-LEFT: the fixed-size palette - every swatch is built in code from the
                      persisted RoeSnipSettings.PaletteColors list and carries a right-click
                      "Replace..." menu (the only palette edit: the row's slot count never changes,
                      so there is no add or remove). -->
@@ -755,12 +755,12 @@
                     <Border Width="1" Margin="8,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
                     <!-- Record: left-click opens the format menu (unlike Save's right-click-only HDR
-                         menu — Record has no single default format to pick for a plain click). The
-                         menu now offers ONLY the format choice (feature 10 redesign) — picking one
+                         menu - Record has no single default format to pick for a plain click). The
+                         menu now offers ONLY the format choice (feature 10 redesign) - picking one
                          no longer starts capturing immediately, it opens RecordingChrome's Setup
                          panel (Start/Stop, the MP4-only audio toggles, Restart, Save/Cancel) next to
                          the recorded region; see Recording/RecordingController.cs. -->
-                    <!-- Margin tightened to 1,2 (was the style's default 2,2,2,2 — feature 9): the
+                    <!-- Margin tightened to 1,2 (was the style's default 2,2,2,2 - feature 9): the
                          palette/action row's natural width must not exceed the tool row's width, or
                          the tool row (a plain StackPanel that doesn't stretch to fill) ends up
                          visibly narrower than the action row and the two rows read as different
@@ -771,7 +771,7 @@
                         <Button.ContextMenu>
                             <!-- Placement/PlacementTarget set in the code-behind constructor (a
                                  ContextMenu isn't part of the Button's visual tree, so a XAML-time
-                                 RelativeSource binding can't reach it) — see ToolbarControl(). -->
+                                 RelativeSource binding can't reach it) - see ToolbarControl(). -->
                             <ContextMenu x:Name="RecordContextMenu" Style="{StaticResource DarkContextMenuStyle}">
                                 <MenuItem x:Name="RecordMp4MenuItem" AutomationProperties.AutomationId="RecordMp4MenuItem" Header="Record MP4" Style="{StaticResource DarkMenuItemStyle}" Click="OnRecordMp4Click"/>
                                 <MenuItem x:Name="RecordGifMenuItem" AutomationProperties.AutomationId="RecordGifMenuItem" Header="Record GIF" Style="{StaticResource DarkMenuItemStyle}" Click="OnRecordGifClick"/>
@@ -796,7 +796,7 @@
                          specific configured provider instead. Both start disabled - the owning
                          window enables them via SetShareProviders once at least one provider is
                          configured (see that method's own doc comment for why this control never
-                         enables itself). Margin tightened to 1,2 on the group — see RecordButton's
+                         enables itself). Margin tightened to 1,2 on the group - see RecordButton's
                          comment (feature 9). -->
                     <StackPanel x:Name="ShareGroupPanel" Orientation="Horizontal" Margin="1,2">
                         <Button x:Name="ShareButton" Style="{StaticResource QuietActionButtonStyle}"
@@ -843,7 +843,7 @@
                     </Button>
                     <Button x:Name="CopyButton" Style="{StaticResource ActionButtonStyle}"
                             ToolTip="Copy (Ctrl+C)" Click="OnCopyClick">
-                        <!-- Two overlapping squares. Stroke overridden to the on-primary dark ink —
+                        <!-- Two overlapping squares. Stroke overridden to the on-primary dark ink -
                              this button's fill is bright gold, so the shared cream IconStyle default
                              would read poorly here. -->
                         <Path Style="{StaticResource IconStyle}" Stroke="{StaticResource RlTextOnPrimaryBrush}"
@@ -859,7 +859,7 @@
 
             <!-- Text-style row (item 4; moved out of row 1): only ever visible while the Text tool
                  is active. A separate BOTTOM row (leading hairline INSIDE, so it collapses with the
-                 panel) — the panel grows downward instead of stretching row 1 sideways, keeping the
+                 panel) - the panel grows downward instead of stretching row 1 sideways, keeping the
                  two permanent rows' layout stable no matter which tool is active. The font list is
                  every installed system family (see ToolbarControl.xaml.cs FontFamilyChoices); the
                  font size itself lives in SizeComboBox (pt mode for the Text tool). -->

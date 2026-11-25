@@ -5,7 +5,7 @@
         Width="480" SizeToContent="Height" CanResize="False"
         WindowStartupLocation="CenterScreen">
   <!-- Settings redesign pass (docs/parity.md item 23), 1:1 with the WPF app's SettingsWindow.xaml
-       layout (§2.1 of the settings spec): a two-row Grid - scrollable content, then a pinned
+       layout (sec 2.1 of the settings spec): a two-row Grid - scrollable content, then a pinned
        footer - replacing the old single unconstrained StackPanel, with the fields regrouped into
        Capture/Behavior/Startup/Updates/Sharing cards and a collapsed-by-default Advanced
        disclosure. Every x:Name below is unchanged from before this pass. Background/Foreground/

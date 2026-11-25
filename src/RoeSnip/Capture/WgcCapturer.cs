@@ -20,14 +20,14 @@ namespace RoeSnip.Capture;
 /// (unpackaged apps lack the graphicsCaptureWithoutBorder capability) - accepted per docs/architecture.md,
 /// since Desktop Duplication (the primary path) is borderless.
 ///
-/// Pre-provisioning (r5-latency): the expensive parts of a WGC capture — creating the D3D11
-/// device + its WinRT wrapper, and resolving the monitor's GraphicsCaptureItem — are cached
+/// Pre-provisioning (r5-latency): the expensive parts of a WGC capture - creating the D3D11
+/// device + its WinRT wrapper, and resolving the monitor's GraphicsCaptureItem - are cached
 /// per monitor (keyed by GDI device name) and reused across captures. Those two ARE reusable:
 /// a GraphicsCaptureItem only describes WHAT to capture and stays valid until the display
 /// configuration changes, and a D3D11 device is process-lifetime reusable. The
-/// GraphicsCaptureSession and Direct3D11CaptureFramePool are deliberately NOT reused — a session
+/// GraphicsCaptureSession and Direct3D11CaptureFramePool are deliberately NOT reused - a session
 /// that stays alive keeps the capture (and its yellow border) running permanently, which is
-/// forbidden — so they are created and disposed inside every capture. Invalidation: a changed
+/// forbidden - so they are created and disposed inside every capture. Invalidation: a changed
 /// HMONITOR or item size for the same device name recreates the resources up front, and ANY
 /// capture failure disposes them; if the failed attempt was using cached resources it is retried
 /// once against freshly provisioned ones, so a stale item after a monitor-set/mode change costs
@@ -47,7 +47,7 @@ public sealed class WgcCapturer : IScreenCapturer
         public MonitorResources? Resources;
 
         // r5-latency round 2 (D5): the MonitorInfo last used to (re)provision Resources for this
-        // slot — written every time Resources is assigned in Capture/Prewarm. The background
+        // slot - written every time Resources is assigned in Capture/Prewarm. The background
         // keepalive timer (KeepaliveTick below) needs a MonitorInfo to re-provision a dead device
         // proactively; without remembering it here, the timer could only ever null out a dead
         // slot's Resources and wait for the next real capture to supply one, defeating the point of
@@ -56,7 +56,7 @@ public sealed class WgcCapturer : IScreenCapturer
     }
 
     // internal (not private): Recording/RegionRecorder.cs calls CreateResources directly to get its
-    // own dedicated device/item, deliberately bypassing the s_slots cache below — see that class's
+    // own dedicated device/item, deliberately bypassing the s_slots cache below - see that class's
     // doc comment for why a recording must never share the cached per-monitor slot the background
     // keepalive timer polls. This is a pure accessibility change; CreateResources itself is a pure
     // factory with no cache interaction (only Capture/Prewarm/KeepaliveTick touch s_slots), so
@@ -70,15 +70,15 @@ public sealed class WgcCapturer : IScreenCapturer
         public required nint HMonitor { get; init; }
 
         // r5-latency round 2 (D5 follow-up): the size Item was created for, cached at provisioning
-        // time from the SAME MonitorInfo.BoundsPx CreateResources used to build it — NOT read back
+        // time from the SAME MonitorInfo.BoundsPx CreateResources used to build it - NOT read back
         // via Item.Size. IsReusable used to compare against a live Item.Size read, which turned out
         // to be a genuine WinRT/COM round-trip into the capture stack (not merely a field read) and
         // was still measured costing tens of ms on a trigger after an idle gap on the DD-broken
-        // monitor — the exact GPU-wake-adjacent cost D5 set out to remove from the hot path in the
+        // monitor - the exact GPU-wake-adjacent cost D5 set out to remove from the hot path in the
         // first place, just hiding behind a different property than DeviceRemovedReason. Comparing
         // against these cached ints instead makes IsReusable a pure in-memory check with no live
         // interop call anywhere in it. CaptureCore's own resources.Item.Size read (framepool
-        // creation) is unaffected — that one is on the real capture-session path, where a live query
+        // creation) is unaffected - that one is on the real capture-session path, where a live query
         // is expected and necessary.
         public required int Width { get; init; }
         public required int Height { get; init; }
@@ -110,13 +110,13 @@ public sealed class WgcCapturer : IScreenCapturer
     // deadline-abandoned capture gets a FRESH slot instead of stacking forever on the wedged one.
     private const int SlotGateTimeoutMs = 6_000;
 
-    /// <summary>Enters the monitor's slot Gate with a bound (wedge fix — see SlotGateTimeoutMs).
+    /// <summary>Enters the monitor's slot Gate with a bound (wedge fix - see SlotGateTimeoutMs).
     /// If the wait times out, the current slot's holder is wedged in a driver call: the slot is
     /// ORPHANED (conditionally removed from s_slots, so only this exact instance is dropped) and a
-    /// fresh slot is created and entered — retries then actually retry with fresh resources instead
+    /// fresh slot is created and entered - retries then actually retry with fresh resources instead
     /// of blocking a thread per attempt behind a gate that will never open. The orphaned slot's
     /// resources are deliberately left to its wedged holder (its own catch disposes them if the
-    /// driver call ever returns; if not, they leak once — strictly better than a permanent stall).
+    /// driver call ever returns; if not, they leak once - strictly better than a permanent stall).
     /// Caller MUST Monitor.Exit the returned slot's Gate in a finally.</summary>
     private static MonitorSlot AcquireSlotGate(string deviceName)
     {
@@ -134,7 +134,7 @@ public sealed class WgcCapturer : IScreenCapturer
         var fresh = s_slots.GetOrAdd(deviceName, _ => new MonitorSlot());
         if (!Monitor.TryEnter(fresh.Gate, SlotGateTimeoutMs))
         {
-            // Only possible if the replacement wedged just as fast — give up on this capture; the
+            // Only possible if the replacement wedged just as fast - give up on this capture; the
             // omit-the-monitor contract (CaptureService) handles it.
             throw new CaptureException($"WGC capture stack is wedged for monitor {deviceName}.");
         }
@@ -145,10 +145,10 @@ public sealed class WgcCapturer : IScreenCapturer
     {
         // Latency instrumentation (r5-latency): splits the device-liveness recheck (IsReusable) from
         // the actual capture session. This used to include a DeviceRemovedReason TDR query that a
-        // trigger-1-coldness investigation measured costing ~30-90 ms — after an idle gap, not just
-        // on the very first call — on an otherwise fully warmed-up cached device; that check has
+        // trigger-1-coldness investigation measured costing ~30-90 ms - after an idle gap, not just
+        // on the very first call - on an otherwise fully warmed-up cached device; that check has
         // since moved off this hot path entirely onto a background keepalive timer (r5-latency round
-        // 2, D5 — see KeepaliveTick below and IsReusable's own doc comment), so deviceCheckMs below
+        // 2, D5 - see KeepaliveTick below and IsReusable's own doc comment), so deviceCheckMs below
         // should now read ~0 ms on every capture. The split itself is kept as the observability hook
         // for verifying that.
         var deviceCheckWatch = System.Diagnostics.Stopwatch.StartNew();
@@ -224,7 +224,7 @@ public sealed class WgcCapturer : IScreenCapturer
 
     /// <summary>Startup-warmup hook (TrayApp): provisions the cached item/device for the monitor
     /// so the first hotkey press skips that cost. With <paramref name="throwawayFrame"/> it also
-    /// performs one full single-frame capture and discards it — that pays the session handshake
+    /// performs one full single-frame capture and discards it - that pays the session handshake
     /// (and briefly shows the OS capture border, accepted at tray startup per the r5-latency
     /// brief; the session is disposed immediately, so no border persists).</summary>
     public static void Prewarm(MonitorInfo monitor, bool throwawayFrame, bool forceReprovision = false)
@@ -252,14 +252,14 @@ public sealed class WgcCapturer : IScreenCapturer
     }
 
     /// <summary>Idle-memory hook (IdleMemoryTrimmer): asks the driver to release the internal
-    /// allocations it has cached against each permanently-warm per-monitor device —
+    /// allocations it has cached against each permanently-warm per-monitor device -
     /// IDXGIDevice3::Trim, the API Windows documents for exactly this "app went idle, give the
     /// driver scratch memory back, keep the device" situation (measured here: the driver retains
     /// on the order of 150-200 MB of process-private allocations after capture sessions). The
     /// device object itself stays cached and warm, so the r5-latency pre-provisioning design is
     /// untouched; the next capture after a trim just lets the driver re-grow its scratch buffers,
     /// a cost that lands on the same first-capture-after-idle path that already pays the GPU wake.
-    /// Never blocks: a slot whose Gate is held (capture/keepalive in flight) is skipped — the app
+    /// Never blocks: a slot whose Gate is held (capture/keepalive in flight) is skipped - the app
     /// isn't idle for that monitor anyway, and the next trim catches it.</summary>
     public static void TrimCachedDeviceMemory()
     {
@@ -293,13 +293,13 @@ public sealed class WgcCapturer : IScreenCapturer
     /// <summary>Sleep/resume hook (TrayApp.OnSystemResumed): drops every cached per-monitor
     /// device/item/framepool outright. After a suspend cycle the cached stack is routinely stale
     /// (DWM restarts, DP links retrain, the GraphicsCaptureItem's monitor association can be dead)
-    /// in ways DeviceRemovedReason does NOT report — the first post-wake capture then discovered
+    /// in ways DeviceRemovedReason does NOT report - the first post-wake capture then discovered
     /// the staleness on the hot path by burning its 1200 ms frame wait, re-provisioning, and often
-    /// burning a second wait. Invalidating at the RESUME EVENT (and re-prewarming right after — see
+    /// burning a second wait. Invalidating at the RESUME EVENT (and re-prewarming right after - see
     /// the caller) moves that discovery to the moment the machine wakes, while the user is still
     /// looking at the lock screen. Takes each slot's Gate for real (never a TryEnter-skip): a
     /// capture somehow mid-flight must finish before its resources are yanked. Background thread
-    /// only — never call on the UI thread, the Gate waits are unbounded by design.</summary>
+    /// only - never call on the UI thread, the Gate waits are unbounded by design.</summary>
     public static void InvalidateAll()
     {
         foreach (var entry in s_slots)
@@ -319,7 +319,7 @@ public sealed class WgcCapturer : IScreenCapturer
             }
             else
             {
-                // The holder is wedged (post-resume, exactly when wedges happen) — orphan the slot
+                // The holder is wedged (post-resume, exactly when wedges happen) - orphan the slot
                 // rather than blocking the whole re-warm behind it; see AcquireSlotGate's doc for
                 // the orphaning contract.
                 FileLog.Write(
@@ -334,14 +334,14 @@ public sealed class WgcCapturer : IScreenCapturer
     /// <summary>Background WGC device-health keepalive (r5-latency round 2, D5). A driver
     /// timeout/reset (TDR) leaves a cached ID3D11Device object alive as a .NET reference but
     /// internally dead; this used to be discovered synchronously on the capture hot path (the
-    /// DeviceRemovedReason check IsReusable used to make — see its doc comment), costing a measured
+    /// DeviceRemovedReason check IsReusable used to make - see its doc comment), costing a measured
     /// ~30-90 ms on the first capture after an idle gap. Moving that check here, onto a periodic
     /// background timer, means a dead device is found and proactively re-provisioned while the app
-    /// is merely sitting in the tray, so the very next real capture never pays for the discovery —
+    /// is merely sitting in the tray, so the very next real capture never pays for the discovery -
     /// only a genuinely-just-died device (dead within the last KeepaliveIntervalMs) can still reach
     /// the hot path, where the existing cached-resources retry-once path in Capture already handles
     /// it exactly like any other capture failure. Started once, runs for the process's whole
-    /// lifetime — this is a static cache with no shutdown hook, so a simple always-running
+    /// lifetime - this is a static cache with no shutdown hook, so a simple always-running
     /// System.Threading.Timer (thread-pool backed, no dispatcher/UI-thread dependency) is
     /// sufficient; see the class doc for the general "static, process-lifetime cache" pattern this
     /// already follows.</summary>
@@ -351,7 +351,7 @@ public sealed class WgcCapturer : IScreenCapturer
         new(KeepaliveTick, null, KeepaliveIntervalMs, KeepaliveIntervalMs);
 
     // Guards against overlapping ticks (e.g. a slow device re-provision still running when the next
-    // 10-second tick fires) — never lets two ticks touch the same slot's Gate concurrently, and
+    // 10-second tick fires) - never lets two ticks touch the same slot's Gate concurrently, and
     // never lets the timer itself pile up work.
     private static int s_keepaliveRunning;
 
@@ -359,7 +359,7 @@ public sealed class WgcCapturer : IScreenCapturer
     {
         if (System.Threading.Interlocked.CompareExchange(ref s_keepaliveRunning, 1, 0) != 0)
         {
-            return; // a previous tick is still running — skip this one rather than overlap it
+            return; // a previous tick is still running - skip this one rather than overlap it
         }
         try
         {
@@ -367,8 +367,8 @@ public sealed class WgcCapturer : IScreenCapturer
             {
                 // Same Gate a real capture (or Prewarm) holds for its whole duration (class doc).
                 // TryEnter-skip, never a blocking lock (wedge fix): a capture wedged in a driver
-                // call holds its Gate indefinitely, and a blocking wait here — with
-                // s_keepaliveRunning latched — would permanently disable the keepalive for EVERY
+                // call holds its Gate indefinitely, and a blocking wait here - with
+                // s_keepaliveRunning latched - would permanently disable the keepalive for EVERY
                 // monitor. A slot that is mid-capture needs no health check this tick anyway.
                 if (!Monitor.TryEnter(slot.Gate))
                 {
@@ -379,7 +379,7 @@ public sealed class WgcCapturer : IScreenCapturer
                     var resources = slot.Resources;
                     if (resources is null)
                     {
-                        continue; // nothing provisioned for this monitor yet — nothing to keep alive
+                        continue; // nothing provisioned for this monitor yet - nothing to keep alive
                     }
 
                     bool alive;
@@ -433,20 +433,20 @@ public sealed class WgcCapturer : IScreenCapturer
         && resources.Width == monitor.BoundsPx.Width
         && resources.Height == monitor.BoundsPx.Height;
         // NVIDIA/TDR health check (originally r5-latency S8; moved off this hot path by r5-latency
-        // round 2's D5): a driver timeout/reset (TDR — e.g. a GPU driver crash, hang, or a
+        // round 2's D5): a driver timeout/reset (TDR - e.g. a GPU driver crash, hang, or a
         // long-running compute workload elsewhere on the machine) leaves a cached ID3D11Device
-        // object alive as a .NET reference but internally dead — every real call on it fails. This
+        // object alive as a .NET reference but internally dead - every real call on it fails. This
         // method used to also check resources.D3dDevice.DeviceRemovedReason.Success right here,
         // which caught that case up front but was measured costing ~30-90 ms on the first capture
-        // after an idle gap — a real cost paid on the hot path for a rare failure mode. That check
+        // after an idle gap - a real cost paid on the hot path for a rare failure mode. That check
         // now runs in the background instead (see KeepaliveTick above), so this method TRUSTS the
         // cached resources unconditionally once the cheap identity/size checks above pass. A device
         // that died more recently than the keepalive's last tick still fails fast inside CaptureCore
         // (framepool creation throws against a removed device), which Capture's existing
         // cached-resources retry-once path already recovers from exactly like any other capture
-        // failure — so correctness is unchanged, only WHERE the common case's health check runs.
+        // failure - so correctness is unchanged, only WHERE the common case's health check runs.
 
-    // internal (not private): see the MonitorResources accessibility note above — RegionRecorder
+    // internal (not private): see the MonitorResources accessibility note above - RegionRecorder
     // calls this directly for a private, never-cached device/item pair.
     internal static MonitorResources CreateResources(MonitorInfo monitor)
     {
@@ -472,7 +472,7 @@ public sealed class WgcCapturer : IScreenCapturer
             // does below, so the resulting object is a proper CsWinRT-projected IDirect3DDevice.
             // FromAbi AddRefs internally (verified empirically: refcount 1 -> 3) and does NOT
             // consume the caller's reference, so we must Release the raw pointer we own after
-            // wrapping — otherwise the device leaks once per (re)provisioning.
+            // wrapping - otherwise the device leaks once per (re)provisioning.
             CreateDirect3D11DeviceFromDXGIDeviceNative(dxgiDevice.NativePointer, out IntPtr winrtDevicePtr);
             try
             {
@@ -506,14 +506,14 @@ public sealed class WgcCapturer : IScreenCapturer
     }
 
     /// <summary>Bound on the FrameArrived wait (r5-latency, S8). A healthy WGC session delivers its
-    /// first frame within a frame or two — well under 100 ms — even capturing a completely static
+    /// first frame within a frame or two - well under 100 ms - even capturing a completely static
     /// screen; a wait this long stalling means the session is stale or wedged (e.g. a TDR'd device
     /// IsReusable's health check above didn't catch, or a monitor that just went to sleep), not that
     /// a real frame is merely "running a little late". Failing fast here lets Capture's own
     /// cached-resources retry (one re-provision + retry) or CaptureService's per-monitor
     /// omit-the-monitor contract take over, instead of hanging the hotkey. The old TimeSpan.FromSeconds(5)
-    /// meant the worst case — a cached-resources attempt that times out, then its retry against
-    /// freshly provisioned resources ALSO timing out — was up to 2x5s = ~10s frozen on the hotkey
+    /// meant the worst case - a cached-resources attempt that times out, then its retry against
+    /// freshly provisioned resources ALSO timing out - was up to 2x5s = ~10s frozen on the hotkey
     /// path.</summary>
     private const int FrameWaitMs = 1200;
 
@@ -530,7 +530,7 @@ public sealed class WgcCapturer : IScreenCapturer
         var stage = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            // WGC doesn't expose a "delivered format" the way Desktop Duplication does — request
+            // WGC doesn't expose a "delivered format" the way Desktop Duplication does - request
             // FP16 for advanced-color displays, BGRA8 otherwise (docs/architecture.md's one legitimate use of
             // AdvancedColorActive for branching).
             DirectXPixelFormat pixelFormat = monitor.AdvancedColorActive
@@ -546,7 +546,7 @@ public sealed class WgcCapturer : IScreenCapturer
             // missing from my screenshot" report is this, not a bug.
             session.IsCursorCaptureEnabled = false;
             try { session.IsBorderRequired = false; }
-            catch { /* property may not exist on older Windows builds, or capability denied — accepted. */ }
+            catch { /* property may not exist on older Windows builds, or capability denied - accepted. */ }
 
             using var frameReady = new ManualResetEventSlim(false);
             Direct3D11CaptureFrame? capturedFrame = null;
@@ -641,20 +641,20 @@ public sealed class WgcCapturer : IScreenCapturer
         {
             // Session/pool are strictly per-capture (see class doc: keeping a session alive would
             // keep the yellow border up permanently). The cached item/device are NOT disposed here
-            // — their lifecycle is owned by the MonitorSlot in Capture/Prewarm.
+            // - their lifecycle is owned by the MonitorSlot in Capture/Prewarm.
             session?.Dispose();
             framePool?.Dispose();
         }
     }
 
     // internal (not private): RegionRecorder's own FrameArrived handler needs this same
-    // CsWinRT-interop-to-classic-COM bridge for its own captured frames — deliberately widened
+    // CsWinRT-interop-to-classic-COM bridge for its own captured frames - deliberately widened
     // rather than duplicated (unlike the ~15-line accessibility candidates elsewhere in this file,
     // this one has a subtle ownership contract in its doc comment below that's easy to get wrong a
     // second time).
     internal static ID3D11Texture2D GetTextureForSurface(IDirect3DSurface surface)
     {
-        // surface is a CsWinRT-projected object, not a classic COM RCW — a direct cast to our
+        // surface is a CsWinRT-projected object, not a classic COM RCW - a direct cast to our
         // ComImport interface fails ("Invalid cast from WinRT.IInspectable"). Query the interface
         // through CsWinRT's own IWinRTObject/IObjectReference machinery instead, then hand the
         // resulting raw pointer to classic COM interop for the actual GetInterface call.
@@ -664,7 +664,7 @@ public sealed class WgcCapturer : IScreenCapturer
             accessRef.ThisPtr, typeof(IDirect3DDxgiInterfaceAccess));
 
         // GetInterface returns an AddRef'd pointer that we own. SharpGen's ComObject(IntPtr)
-        // constructor ATTACHES to the pointer (no AddRef of its own) and releases it on Dispose —
+        // constructor ATTACHES to the pointer (no AddRef of its own) and releases it on Dispose -
         // so ownership transfers to the wrapper here and there must be no Marshal.Release of our
         // own (an extra Release over-frees a texture the WinRT surface still references, which
         // crashes later in WinRT.IObjectReference.Finalize once the GC runs).
@@ -675,7 +675,7 @@ public sealed class WgcCapturer : IScreenCapturer
     private static GraphicsCaptureItem CreateItemForMonitor(nint hmonitor)
     {
         // .NET Core's P/Invoke marshaler does not support UnmanagedType.HString directly (that
-        // relies on the old .NET Framework WinRT-metadata interop path) — build the HSTRING by
+        // relies on the old .NET Framework WinRT-metadata interop path) - build the HSTRING by
         // hand via WindowsCreateString/WindowsDeleteString instead, which is what CsWinRT itself
         // does internally.
         const string className = "Windows.Graphics.Capture.GraphicsCaptureItem";
@@ -689,7 +689,7 @@ public sealed class WgcCapturer : IScreenCapturer
                 var interop = (NativeMethods.IGraphicsCaptureItemInterop)Marshal.GetTypedObjectForIUnknown(
                     factoryPtr, typeof(NativeMethods.IGraphicsCaptureItemInterop));
                 Guid itemIid = ResolveGraphicsCaptureItemIid();
-                // FromAbi AddRefs internally and does NOT consume this reference — Release the
+                // FromAbi AddRefs internally and does NOT consume this reference - Release the
                 // pointer we own after wrapping (same semantics as the device wrap above).
                 IntPtr itemPtr = interop.CreateForMonitor(hmonitor, ref itemIid);
                 try

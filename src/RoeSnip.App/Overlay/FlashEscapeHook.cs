@@ -8,15 +8,15 @@ namespace RoeSnip.App.Overlay;
 /// FlashEscapeHook): a minimal Esc-ONLY WH_KEYBOARD_LL hook alive from a successful TryShowFlash
 /// until either the flow ends (ReleaseFlash), the flash phase is cancelled (OnFlashEscape), or the
 /// real OverlaySession takes over (its windows then own the keyboard via their ordinary Avalonia
-/// KeyDown handlers — this port has no session-wide LL hook the way the WPF app does, so the
+/// KeyDown handlers - this port has no session-wide LL hook the way the WPF app does, so the
 /// hand-off is simply disposing this one). Before this, cancelling during the flash phase depended
-/// on the flash window actually winning the best-effort SetForegroundWindow negotiation — under
+/// on the flash window actually winning the best-effort SetForegroundWindow negotiation - under
 /// foreground-lock restrictions it often didn't, leaving Esc dead exactly while the screen sat
 /// dimmed waiting on a slow (post-resume) capture. Only Esc keydowns are acted on and swallowed;
-/// every other key passes through untouched via CallNextHookEx — this phase has no text editing or
+/// every other key passes through untouched via CallNextHookEx - this phase has no text editing or
 /// session commands to worry about. Install failure is non-fatal (logged; the focus-dependent
 /// FlashWindow KeyDown handler remains as the fallback), the delegate is rooted for the hook's
-/// lifetime, Dispose is idempotent. UI (hook-installing) thread only — with the capture now off
+/// lifetime, Dispose is idempotent. UI (hook-installing) thread only - with the capture now off
 /// the UI thread, that thread pumps during the flash phase, so callbacks are actually delivered
 /// (a LL hook on a non-pumping thread is silently skipped by Windows). Windows-only by
 /// construction: only ever created inside OverlayController.TryShowFlash's own
@@ -75,7 +75,7 @@ internal sealed class FlashEscapeHook : IDisposable
                 if (data.vkCode == VkEscape)
                 {
                     _onEscape();
-                    return (IntPtr)1; // swallow — the cancel must not also leak into the app underneath
+                    return (IntPtr)1; // swallow - the cancel must not also leak into the app underneath
                 }
             }
             catch (Exception ex)

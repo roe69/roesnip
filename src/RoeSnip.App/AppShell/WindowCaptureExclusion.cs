@@ -7,9 +7,9 @@ namespace RoeSnip.App.AppShell;
 
 /// <summary>Windows-only capture-exclusion seam: applies WDA_EXCLUDEFROMCAPTURE to a window's
 /// HWND so it stays visible to the user but invisible to WGC/DD/print-screen capture paths
-/// (Win10 2004+). Ported from four WPF call sites that each did this inline — src/RoeSnip/
+/// (Win10 2004+). Ported from four WPF call sites that each did this inline - src/RoeSnip/
 /// Overlay/OverlayWindow.xaml.cs:536-555 (every overlay window, belt-and-braces for pooled
-/// windows plus a genuine need for on-demand ones), FlashDimmer.cs:489-499 (the flash windows —
+/// windows plus a genuine need for on-demand ones), FlashDimmer.cs:489-499 (the flash windows -
 /// CRITICAL there, since the flash is shown BEFORE the capture runs and would otherwise bake its
 /// own dim into every screenshot), ColorPickerWindow.xaml.cs:65-79 (a "Pick" re-capture freezes
 /// the screen with this window still up), and AutomationServer.cs:697-745 (the clear/restore
@@ -20,7 +20,7 @@ namespace RoeSnip.App.AppShell;
 /// Same invariant as the WPF app's OverlayWindow comment: this app never captures the screen
 /// while any of its own windows are on it (the capture flow always runs to completion strictly
 /// BEFORE a window is ever constructed or shown), so applying the exclusion permanently for a
-/// window's whole lifetime is simpler and just as safe as toggling it on/off per capture — there
+/// window's whole lifetime is simpler and just as safe as toggling it on/off per capture - there
 /// is no path where clearing it would matter for THAT window's own correctness. The one case
 /// that legitimately needs the flag off temporarily is the automation screenshot command's
 /// `includeExcluded` flag (item 03), which is why <see cref="ClearOnOwnWindows"/> and
@@ -28,7 +28,7 @@ namespace RoeSnip.App.AppShell;
 /// the windows THIS process itself excluded, without guessing or forcing every window.
 ///
 /// Non-Windows: a documented no-op. X11/Wayland compositors expose no per-window
-/// capture-exclusion API, and Avalonia does not surface NSWindow.sharingType on macOS — recorded
+/// capture-exclusion API, and Avalonia does not surface NSWindow.sharingType on macOS - recorded
 /// as an accepted limitation in docs/parity.md. Overlay (and later flash/recording-chrome/
 /// color-picker) windows may appear in re-captures on those platforms.</summary>
 public static class WindowCaptureExclusion
@@ -46,13 +46,13 @@ public static class WindowCaptureExclusion
 
     // Every HWND this helper has successfully excluded, tracked so ClearOnOwnWindows/Restore can
     // toggle exactly the windows THIS process itself excluded (never a window's own concern to
-    // track — a single process-wide set mirrors the WPF AutomationServer's approach of enumerating
+    // track - a single process-wide set mirrors the WPF AutomationServer's approach of enumerating
     // Application.Current.Windows, but without needing an Avalonia equivalent of that enumeration).
     private static readonly HashSet<IntPtr> AppliedHandles = new();
     private static readonly object Gate = new();
 
     /// <summary>Applies WDA_EXCLUDEFROMCAPTURE to <paramref name="window"/>'s native handle. Call
-    /// this once the window's platform handle exists — for a normal Window that's the Opened
+    /// this once the window's platform handle exists - for a normal Window that's the Opened
     /// event (TryGetPlatformHandle() returns null before the HWND is created). No-ops on
     /// non-Windows, and honors ROESNIP_DIAG_NOEXCLUDE=1 exactly like all four WPF call sites, so
     /// the external luma-sampler / screenshot harnesses that rely on that escape hatch keep
@@ -72,7 +72,7 @@ public static class WindowCaptureExclusion
     {
         if (Environment.GetEnvironmentVariable("ROESNIP_DIAG_NOEXCLUDE") == "1")
         {
-            return; // diagnostic escape hatch — lets an external screenshot harness see this window
+            return; // diagnostic escape hatch - lets an external screenshot harness see this window
         }
 
         var handle = window.TryGetPlatformHandle();
@@ -106,7 +106,7 @@ public static class WindowCaptureExclusion
 
     /// <summary>Clears WDA_EXCLUDEFROMCAPTURE on every HWND this process has currently excluded
     /// and returns the ones actually cleared, so <see cref="Restore"/> can put the flag back on
-    /// exactly those — not force it onto handles that were never excluded (WPF's
+    /// exactly those - not force it onto handles that were never excluded (WPF's
     /// AutomationServer.ClearCaptureExclusionOnOwnWindows/RestoreCaptureExclusion pair). Returns
     /// an empty list on non-Windows.</summary>
     public static List<IntPtr> ClearOnOwnWindows()

@@ -3,7 +3,7 @@ namespace RoeSnip.Color;
 public static class Dither
 {
     // 4x4 Bayer matrix (values 0-15), normalized to [-0.5, +0.5) then scaled to a
-    // ±0.5/255 (in [0,1]-normalized-linear-encoded-byte space) offset.
+    // +/-0.5/255 (in [0,1]-normalized-linear-encoded-byte space) offset.
     private static readonly int[,] Bayer4x4 =
     {
         {  0,  8,  2, 10 },

@@ -4,7 +4,7 @@ namespace RoeSnip.App.Overlay;
 /// the frozen WPF app's src/RoeSnip/Overlay/SwatchPalette.cs (UX round 5, item 3): the whole
 /// palette is one persisted, user-editable list (RoeSnipSettings.PaletteColors, "#RRGGBB" strings
 /// in display order). Every mutation returns a new list (RoeSnipSettings is an immutable record);
-/// no Avalonia dependency — unit-testable in isolation.</summary>
+/// no Avalonia dependency - unit-testable in isolation.</summary>
 public static class SwatchPalette
 {
     /// <summary>Migration cap: a legacy seed (defaults plus old CustomColors migrants) never
@@ -41,11 +41,11 @@ public static class SwatchPalette
         DefaultNames.TryGetValue(hex, out var name) ? name : hex;
 
     /// <summary>One-time migration: an empty <paramref name="paletteColors"/> means the settings
-    /// file predates the editable palette — seed from the built-in defaults plus any legacy
+    /// file predates the editable palette - seed from the built-in defaults plus any legacy
     /// CustomColors ("+"-swatch colors, stored newest-first; appended here oldest-last so the
     /// visual order matches what the old two-row toolbar showed), deduplicated and capped at
     /// <see cref="MaxColors"/>. A non-empty palette is returned as-is (already migrated). The
-    /// legacy CustomColors field itself is preserved for downgrade compat — read, never displayed
+    /// legacy CustomColors field itself is preserved for downgrade compat - read, never displayed
     /// separately again.</summary>
     public static List<string> EffectivePalette(IReadOnlyList<string> paletteColors, IReadOnlyList<string> legacyCustomColors)
     {

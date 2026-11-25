@@ -11,7 +11,7 @@ using RoeSnip.Core.Settings;
 
 namespace RoeSnip.App;
 
-/// <summary>Data-only result of one overlay session — identical fields to the WPF app's
+/// <summary>Data-only result of one overlay session - identical fields to the WPF app's
 /// OverlayResult. The overlay package produces this;
 /// it performs Copy (clipboard) and Save (PNG dialog + file write) itself before returning. Only
 /// the cross-cutting bits (HDR export, "saved" balloon) are threaded back through AppComposition.</summary>
@@ -19,27 +19,27 @@ public sealed record OverlayResult(
     MonitorInfo Monitor,
     RectPhysical SelectionPx,      // selection rect, relative to Monitor.BoundsPx origin
     SdrImage RenderedImage,         // tone-mapped crop with annotations burned in
-    CapturedFrame SourceFrame,       // original (uncropped) frame for this monitor — for HDR export
+    CapturedFrame SourceFrame,       // original (uncropped) frame for this monitor - for HDR export
     bool CopyPerformed,              // true if Overlay already wrote the image to the clipboard
     string? SavedPngPath,            // non-null if the user used Save and it succeeded
     bool SaveHdrRequested,           // true if the user clicked "Save HDR" (independent of settings.AutoSaveHdrCopy)
     // Cross-monitor selection (item 09): non-null when RenderedImage is a byte composite stitched
     // from multiple monitors' own already-tone-mapped crops (OverlaySession.RenderSpanningSelection),
     // in which case Monitor/SelectionPx/SourceFrame above describe only the PRIMARY monitor
-    // (whichever held the drag-end cursor) — they exist purely to satisfy this record's non-nullable
+    // (whichever held the drag-end cursor) - they exist purely to satisfy this record's non-nullable
     // shape and must not be used for anything beyond that when this is set. Virtual-desktop physical
     // pixels. Mirrors the WPF app's OverlayResult.SpanningVirtualSelectionPx.
     RectPhysical? SpanningVirtualSelectionPx = null,
     // Cross-monitor selection HDR save: every contributing monitor's own raw-frame crop geometry
-    // (RoeSnip.Core.Capture.SpanningFrameCrop — a Core type, not an App one, so both this project
+    // (RoeSnip.Core.Capture.SpanningFrameCrop - a Core type, not an App one, so both this project
     // and Platform.Windows's JxrWriter.WriteSpanning can reference it without Platform.Windows
-    // taking a dependency on App), non-null exactly when SpanningVirtualSelectionPx is — populated
+    // taking a dependency on App), non-null exactly when SpanningVirtualSelectionPx is - populated
     // unconditionally on a spanning result (not just when SaveHdrRequested is true), mirroring how
     // SourceFrame/SelectionPx above are always populated regardless of what the user clicked, so
     // settings.AutoSaveHdrCopy works the same way for a spanning result as for a plain one.
     IReadOnlyList<SpanningFrameCrop>? SpanningFrameCrops = null,
     // Item 21: the toolbar's Record MP4/GIF menu closes the overlay exactly like Copy/Save/SaveHdr
-    // (same OverlayResult, same Finish() path — see OverlayController.OverlaySession.Record's own
+    // (same OverlayResult, same Finish() path - see OverlayController.OverlaySession.Record's own
     // doc comment) but carries no clipboard/PNG/HDR I/O of its own; RunCaptureFlowAsync hands off to
     // AppComposition.StartRecording instead of the ordinary post-overlay follow-ups below. Mirrors
     // the WPF app's own OverlayResult.RecordingRequested.
@@ -64,16 +64,16 @@ public interface ITrayNotifier
 }
 
 /// <summary>CliMode gains two new verbs beyond the WPF app's CliOptions:
-/// TriggerCapture ("RoeSnip capture" — signal a running instance to run the interactive overlay
+/// TriggerCapture ("RoeSnip capture" - signal a running instance to run the interactive overlay
 /// flow, or become the resident instance and do so if none is running) and TriggerSettings
-/// ("RoeSnip settings" — open the settings window in the running/new instance). Diag/Capture
+/// ("RoeSnip settings" - open the settings window in the running/new instance). Diag/Capture
 /// (headless, dash-prefixed) are UNCHANGED from the WPF app.</summary>
 public enum CliMode { None, Diag, Capture, TriggerCapture, TriggerSettings }
 
 public sealed record CliOptions(CliMode Mode, int? Monitor, string? Out, bool Jxr)
 {
     // Grammar: --diag | --capture [--monitor N] [--out path] [--jxr] | capture | settings
-    // "capture"/"settings" are bare positional verbs (no leading --) — distinct from the headless
+    // "capture"/"settings" are bare positional verbs (no leading --) - distinct from the headless
     // "--capture" flag. Unknown/malformed args => Mode=None, Program.Main prints usage, exit 1.
     public static CliOptions Parse(string[] args)
     {
@@ -155,7 +155,7 @@ public sealed record CliOptions(CliMode Mode, int? Monitor, string? Out, bool Jx
 /// The overlay package registers <see cref="RunOverlay"/> from Overlay/OverlayController.cs
 /// via [ModuleInitializer]; the Windows HDR-export hook is wired by
 /// <see cref="Program.RegisterPlatformHooks"/> (Platform.Windows cannot itself reference this
-/// assembly — the plan's "set by JxrWriter" note is realized as App-side wiring on the windows
+/// assembly - the plan's "set by JxrWriter" note is realized as App-side wiring on the windows
 /// TFM). Settings are loaded via <see cref="SettingsStore"/> directly (the plan-sanctioned
 /// simplification of the LoadSettings hook); the hook property is kept for structural parity.</summary>
 public static class AppComposition
@@ -178,12 +178,12 @@ public static class AppComposition
         ITrayNotifier?,
         Task<OverlayResult?>>? RunOverlay { get; set; }
 
-    // Wired by Program.RegisterPlatformHooks on Windows builds — null on non-Windows builds/RIDs,
+    // Wired by Program.RegisterPlatformHooks on Windows builds - null on non-Windows builds/RIDs,
     // exactly like the WPF app's WriteJxr being null before WP-C landed.
     public static Action<string, CapturedFrame, RectPhysical>? WriteHdrExport { get; set; }
 
     // Cross-monitor selection (item 09) HDR save: the spanning twin of WriteHdrExport, wired
-    // alongside it by Program.RegisterPlatformHooks — null on non-Windows builds/RIDs (spanning HDR
+    // alongside it by Program.RegisterPlatformHooks - null on non-Windows builds/RIDs (spanning HDR
     // save stays reported-unsupported there, same as the single-monitor path). Mirrors the WPF app's
     // AppComposition.WriteJxrSpanning; see RoeSnip.Platform.Windows.JxrWriter.WriteSpanning's own
     // doc comment for why stitching raw scRGB crops from different monitors is well-defined.
@@ -197,7 +197,7 @@ public static class AppComposition
 
     // Set by AppShell/ElevationManager.cs (item 15) via [ModuleInitializer]. Hidden CLI verbs used
     // only for the UAC round-trip when SettingsWindow's "Run as administrator" checkbox is toggled
-    // from a non-elevated process — see Program.Main. Both require the process to already be
+    // from a non-elevated process - see Program.Main. Both require the process to already be
     // elevated (Verb=runas got it there) and print a result instead of showing any UI. Mirrors the
     // WPF app's own AppComposition.RunEnableElevatedStartupCli/RunDisableElevatedStartupCli.
     public static Func<int>? RunEnableElevatedStartupCli { get; set; }
@@ -207,7 +207,7 @@ public static class AppComposition
     public static Func<string[], int>? RunTrayApp { get; set; }
 
     // Set by AppShell/TrayApp.cs alongside RunTrayApp: runs the resident tray app and performs
-    // an initial action (capture/settings) once startup completes — the "become the resident
+    // an initial action (capture/settings) once startup completes - the "become the resident
     // instance" half of the bare CLI verbs.
     internal static Func<AppShell.InstanceSignal, int>? RunResidentWithInitialAction { get; set; }
 
@@ -248,7 +248,7 @@ public static class AppComposition
         {
             // Defensive (P4 audit fix): EnumerateMonitors's contract never throws, but macOS's
             // MacCaptureBackend.CaptureAll deliberately deviates for TCC denial (see the catch in
-            // RunCaptureCli below) — guard --diag the same way rather than assuming enumeration
+            // RunCaptureCli below) - guard --diag the same way rather than assuming enumeration
             // can never surface it.
             monitors = captureService.EnumerateMonitors();
         }
@@ -277,7 +277,7 @@ public static class AppComposition
         return 0;
     }
 
-    /// <summary>Implements the headless --capture verb — same shape as the WPF app's
+    /// <summary>Implements the headless --capture verb - same shape as the WPF app's
     /// RunCaptureCli, with the HDR branch now gated on the backend's SupportsHdrExport capability
     /// flag in addition to the WriteHdrExport hook being present.</summary>
     public static int RunCaptureCli(CliOptions cli)
@@ -303,7 +303,7 @@ public static class AppComposition
         catch (RoeSnip.Platform.MacOS.ScreenRecordingPermissionDeniedException ex)
         {
             // MacCaptureBackend.CaptureAll deliberately propagates this instead of omitting every
-            // monitor (§2.3's usual "log + omit" contract) because a TCC denial is a first-class,
+            // monitor (sec 2.3's usual "log + omit" contract) because a TCC denial is a first-class,
             // UI-surfaced error per docs/architecture.md - without this catch it reached here as an
             // unhandled exception and crashed the CLI with a raw exception dump instead of the
             // designed grant-Screen-Recording message (P4 audit fix).
@@ -382,11 +382,11 @@ public static class AppComposition
         return anyWriteFailed ? 1 : 0;
     }
 
-    // Hidden flags (deliberately undocumented — not in CliOptions/PrintUsage): --automation
+    // Hidden flags (deliberately undocumented - not in CliOptions/PrintUsage): --automation
     // gates the dev-only automation pipe (AppShell/AutomationServer.cs). --self-update-now (item
-    // 13b) forces a synchronous check-and-apply against the installed copy and exits — mirrors
+    // 13b) forces a synchronous check-and-apply against the installed copy and exits - mirrors
     // the WPF app's TrayApp.Run, which never routes either flag through its own "unknown argument"
-    // rejection — allowlisted here so a resident launched with one isn't rejected as a bad CLI arg
+    // rejection - allowlisted here so a resident launched with one isn't rejected as a bad CLI arg
     // before AppShell/TrayApp.cs ever gets a chance to check for it.
     private static readonly string[] HiddenFlags = { "--automation", "--self-update-now" };
 
@@ -413,12 +413,12 @@ public static class AppComposition
 
     /// <summary>Implements the bare "capture" verb: signal an already-running instance over
     /// AppShell/SingleInstance.cs (the resident instance does the work and this process exits 0),
-    /// or — if none is running — become the resident instance, complete normal tray startup, and
+    /// or - if none is running - become the resident instance, complete normal tray startup, and
     /// then immediately trigger the capture flow (the process
     /// stays resident afterwards; it does NOT exit after one shot).</summary>
     public static int RunTriggerCapture() => RunTrigger(AppShell.InstanceSignal.TriggerCapture);
 
-    /// <summary>Implements the bare "settings" verb — same signal-or-become-resident semantics as
+    /// <summary>Implements the bare "settings" verb - same signal-or-become-resident semantics as
     /// <see cref="RunTriggerCapture"/>, opening the settings window instead.</summary>
     public static int RunTriggerSettings() => RunTrigger(AppShell.InstanceSignal.TriggerSettings);
 
@@ -436,14 +436,14 @@ public static class AppComposition
     // Reentrancy guard (audit finding B, ported from the WPF app): TriggerCapture can be invoked
     // from the hotkey, the tray menu, icon click, and the second-instance pipe. All funnel into
     // this one method, which now shares AppShell.CaptureGate (item 17) rather than owning a private
-    // Interlocked flag — the same gate the startup warmup thread holds for its own throwaway
+    // Interlocked flag - the same gate the startup warmup thread holds for its own throwaway
     // capture, so a trigger landing mid-warmup waits it out instead of racing it (see the
     // WarmupPending/HeldByWarmup handling in RunCaptureFlowAsync below). While a capture is in
     // progress, a new trigger is ignored (logged to stderr) rather than stacking a second overlay
     // set on top of the first (which would screenshot the first overlay's own UI).
 
     /// <summary>True while <see cref="RunCaptureFlowAsync"/> is actively running (from trigger to
-    /// overlay close/export) — the self-updater's beforeLaunch idle gate
+    /// overlay close/export) - the self-updater's beforeLaunch idle gate
     /// (AppShell/UpdateManager.cs, item 13b) polls this so a silent auto-update can never yank the
     /// app out from under a live capture. Once a Recording subsystem lands (item 20) that gate
     /// must also poll its own "active" flag, mirroring the WPF reference's
@@ -453,12 +453,12 @@ public static class AppComposition
     /// <summary>Upper bound on how long a trigger waits for CaptureAll before abandoning it (see
     /// the deadline block inside RunCaptureFlowAsync). Chosen well above the worst LEGITIMATE case
     /// (every capture-internal timeout on every monitor, serialized on a cold threadpool, is still
-    /// single-digit seconds) so it only ever fires on a genuinely wedged driver call — which has no
+    /// single-digit seconds) so it only ever fires on a genuinely wedged driver call - which has no
     /// native timeout of its own and would otherwise hold the flash dim and CaptureGate forever.
     /// Ported from the WPF app's identical AppComposition.CaptureDeadline.</summary>
     internal static readonly TimeSpan CaptureDeadline = TimeSpan.FromSeconds(15);
 
-    // Rate limit for the "capture already in progress" balloon (UI thread only — every caller of
+    // Rate limit for the "capture already in progress" balloon (UI thread only - every caller of
     // RunCaptureFlowAsync starts it on the Avalonia UI thread, and the awaits before the drop
     // branch resume on that same captured context).
     private static long s_lastBusyNoticeTick;
@@ -466,7 +466,7 @@ public static class AppComposition
     // Diagnosability (2026-08 idle-latency investigation, ported from the WPF app's identical
     // field): Environment.TickCount64 timestamp of the last trigger that actually won CaptureGate
     // (0 = none yet this process). See RoeSnip.Core.Diagnostics.IdleGapLog's doc comment for why
-    // this exists and why the gap is logged. TickCount64 (not DateTime/UtcNow) deliberately —
+    // this exists and why the gap is logged. TickCount64 (not DateTime/UtcNow) deliberately -
     // monotonic and immune to wall-clock jumps a system RTC can exhibit around sleep/resume
     // (observed once in the WPF app's field log).
     private static long s_lastTriggerStartTicks;
@@ -485,10 +485,10 @@ public static class AppComposition
 
         // Cold-start CaptureGate race fix (item 17, ported from the WPF app's Program.cs:526-542):
         // if the startup warmup thread is still running its Warmup* steps but hasn't reached
-        // WarmupCaptureSessions' TryEnter yet, the gate itself is still free — a trigger landing in
+        // WarmupCaptureSessions' TryEnter yet, the gate itself is still free - a trigger landing in
         // exactly that window would WIN CaptureGate against the warmup and then pay first-time
         // capture-backend init itself instead of riding the warmup's own init. Waiting here is
-        // strictly better: a wedged/slow warmup still can't brick the hotkey — the poll gives up
+        // strictly better: a wedged/slow warmup still can't brick the hotkey - the poll gives up
         // after 5 seconds and proceeds regardless.
         if (AppShell.CaptureGate.WarmupPending)
         {
@@ -510,7 +510,7 @@ public static class AppComposition
         if (!entered && AppShell.CaptureGate.HeldByWarmup)
         {
             // The gate is held by the sub-second startup warmup capture, not a real session. A
-            // trigger landing in that window is a deliberate user action — wait the warmup out
+            // trigger landing in that window is a deliberate user action - wait the warmup out
             // (bounded) instead of silently dropping it, which would make an early trigger right
             // after launch do nothing at all.
             var wait = System.Diagnostics.Stopwatch.StartNew();
@@ -524,8 +524,8 @@ public static class AppComposition
         {
             FileLog.Write("RoeSnip: capture already in progress; ignoring trigger.");
             // Diagnosability (post-sleep stall fix, ported from the WPF app): a silently swallowed
-            // trigger reads as "the hotkey does nothing" — say why, rate-limited so hotkey
-            // auto-repeat can't spam balloons. (A trigger during a RECORDING never reaches here —
+            // trigger reads as "the hotkey does nothing" - say why, rate-limited so hotkey
+            // auto-repeat can't spam balloons. (A trigger during a RECORDING never reaches here -
             // TrayApp.TriggerCapture routes that to stop-and-save before this method is called.)
             long now = Environment.TickCount64;
             if (now - s_lastBusyNoticeTick >= 5_000)
@@ -540,7 +540,7 @@ public static class AppComposition
         {
             // Idle-gap diagnosability (see s_lastTriggerStartTicks doc comment): -1 means this is
             // the first trigger to win the gate since the process started, otherwise the ms since
-            // the previous trigger started — logged alongside this trigger's own timings below.
+            // the previous trigger started - logged alongside this trigger's own timings below.
             long nowTicks = Environment.TickCount64;
             long idleMs = s_lastTriggerStartTicks == 0 ? -1 : nowTicks - s_lastTriggerStartTicks;
             s_lastTriggerStartTicks = nowTicks;
@@ -553,7 +553,7 @@ public static class AppComposition
             // Off the UI thread (post-sleep stall fix, ported from the WPF app): this used to run
             // CaptureAll() inline on the Avalonia UI thread, so a slow capture (stale post-resume
             // D3D/WGC state can burn multiple 1200 ms frame-wait timeouts per monitor; a wedged
-            // driver call has no timeout at all) froze the whole dispatcher — flash stuck on screen
+            // driver call has no timeout at all) froze the whole dispatcher - flash stuck on screen
             // with every hide path queued behind the block, Esc undeliverable, tray menu stuck
             // open. The capture stack is thread-agnostic (warmup has always run this exact
             // CaptureAll on its own background thread), so hop it to the pool and keep the UI
@@ -563,8 +563,8 @@ public static class AppComposition
 
             // Deadline, not a cancel (native driver calls aren't cancellable): a capture still
             // running after this long is wedged (post-resume worst case of every real timeout in
-            // the stack is well under it). Give the user their screen back — the flash hides via
-            // ObserveCaptureTask's ReleaseFlash the moment this method returns — and let the
+            // the stack is well under it). Give the user their screen back - the flash hides via
+            // ObserveCaptureTask's ReleaseFlash the moment this method returns - and let the
             // abandoned task's continuation below dispose whatever frames eventually arrive. The
             // gate is released by the finally on this same early return; the abandoned task never
             // touches the gate, so a later trigger can't have its gate freed out from under it.
@@ -602,7 +602,7 @@ public static class AppComposition
             }
 
             // Frames must stay alive (undisposed) through the HDR-export branch below, which reads
-            // result.SourceFrame — only dispose them once every post-overlay action (HDR export,
+            // result.SourceFrame - only dispose them once every post-overlay action (HDR export,
             // "saved" balloon) has completed, on every path (cancel, exception).
             try
             {
@@ -610,7 +610,7 @@ public static class AppComposition
                     Knee: settings.ToneMapKneeOverride ?? 0.90,
                     PeakOverride: settings.ToneMapPeakOverride);
 
-                // Tone-map the per-monitor previews in parallel — each frame is independent, and
+                // Tone-map the per-monitor previews in parallel - each frame is independent, and
                 // even though ToneMapper already parallelizes over rows internally, overlapping
                 // the frames still shaves the per-frame scan/setup serialization on a
                 // multi-monitor machine. Fixed slots keep preview order == frame order. Same
@@ -670,7 +670,7 @@ public static class AppComposition
                 {
                     // Cross-monitor selection (item 09) HDR save: stitching raw scRGB crops from
                     // multiple monitors IS well-defined (see JxrWriter.WriteSpanning's own doc
-                    // comment) — the "no defined operation" reasoning that used to gate this only
+                    // comment) - the "no defined operation" reasoning that used to gate this only
                     // ever applied to combining already-TONE-MAPPED crops, an unrelated code path
                     // (RenderSpanningSelection, used for Copy/Save-PNG) that this never touches.
                     if (result.SaveHdrRequested || settings.AutoSaveHdrCopy)
@@ -750,7 +750,7 @@ public static class AppComposition
                 // allocation burst (per-monitor FP16 frame buffers + SDR previews). Schedule() itself
                 // defers the actual collect to ApplicationIdle via Dispatcher.UIThread.Post, which is
                 // safe to call from any thread (this finally can run on a background/threadpool
-                // continuation, not necessarily the UI thread) — see IdleMemoryTrimmer's own doc
+                // continuation, not necessarily the UI thread) - see IdleMemoryTrimmer's own doc
                 // comment for the full rationale.
                 IdleMemoryTrimmer.Schedule();
             }
@@ -758,7 +758,7 @@ public static class AppComposition
     }
 
     /// <summary>Turns CaptureService.LastCaptureFailureMessages (populated by FallbackCaptureBackend
-    /// — see its doc comment) into toast text when every monitor failed. Falls back to the old
+    /// - see its doc comment) into toast text when every monitor failed. Falls back to the old
     /// generic string when nothing was collected (macOS's MacCaptureBackend, or a genuinely empty
     /// monitor list). Truncated to fit the toast's 3-line wrap (ShowToast, TrayApp.cs).</summary>
     private static string BuildCaptureFailedMessage(CaptureService captureService)
@@ -825,11 +825,11 @@ public static class AppComposition
     }
 
 #if MACOS_BACKEND
-    /// <summary>Friendly, UI-surfaced (well, stderr-surfaced — the CLI has no UI) message for a
+    /// <summary>Friendly, UI-surfaced (well, stderr-surfaced - the CLI has no UI) message for a
     /// macOS TCC Screen Recording denial, plus the distinct exit code the helper contract uses for
-    /// it (P4 audit fix — ScksnapHelperClient.TccDeniedExitCode, kept as one source of truth rather
+    /// it (P4 audit fix - ScksnapHelperClient.TccDeniedExitCode, kept as one source of truth rather
     /// than a duplicated magic number). Only compiled when RoeSnip.Platform.MacOS is actually
-    /// referenced (no-RID design-time builds and osx-targeted publishes — see the MACOS_BACKEND
+    /// referenced (no-RID design-time builds and osx-targeted publishes - see the MACOS_BACKEND
     /// constant in RoeSnip.App.csproj): a real win-x64/linux-x64 RID publish never links that
     /// project in, so this exception type can never be thrown there either.</summary>
     private static int ReportScreenRecordingPermissionDenied(
@@ -843,7 +843,7 @@ public static class AppComposition
     }
 #endif
 
-    // Pure CLI help text, not a diagnostic — only ever printed to a terminal the user is actively
+    // Pure CLI help text, not a diagnostic - only ever printed to a terminal the user is actively
     // looking at, so it stays plain Console.Error (no point cluttering roesnip.log with it).
     internal static void PrintUsage()
     {
@@ -855,7 +855,7 @@ public static class AppComposition
         Console.Error.WriteLine("    --jxr          Also save the untouched HDR original as .jxr (Windows only).");
         Console.Error.WriteLine("  capture          Trigger the interactive capture flow in the running instance");
         Console.Error.WriteLine("                   (or start a resident instance and capture). On Wayland this is");
-        Console.Error.WriteLine("                   the primary activation path — global hotkeys aren't available,");
+        Console.Error.WriteLine("                   the primary activation path - global hotkeys aren't available,");
         Console.Error.WriteLine("                   so bind a desktop-environment keyboard shortcut to it.");
         Console.Error.WriteLine("  settings         Open the settings window in the running/new instance.");
         Console.Error.WriteLine("  (no arguments)   Launch the tray app.");
@@ -873,7 +873,7 @@ public static class Program
 
         // Field-visible diagnostics (filelog-sink): as early as possible, before anything else in
         // this method could log. ConfigPaths.ConfigDirectory is the settings/config directory
-        // (Settings/ConfigPaths.cs), never the install dir — the install dir gets replaced
+        // (Settings/ConfigPaths.cs), never the install dir - the install dir gets replaced
         // wholesale by the self-updater.
         FileLog.Initialize(ConfigPaths.ConfigDirectory);
 
@@ -882,17 +882,17 @@ public static class Program
         // anything else in Main could fault, so no crash path in this process can die silently.
         RegisterUnhandledExceptionHandlers();
 
-        // `--auto` (dev-gated automation client — AppShell/AutomationServer.cs): handled here,
+        // `--auto` (dev-gated automation client - AppShell/AutomationServer.cs): handled here,
         // before ANY of the single-instance machinery below (CliOptions.Parse/AppComposition.
         // RunTray/RunTriggerCapture etc.), so a client invocation can never trigger the "normal
-        // launch replaces/signals the running instance" takeover a bare `RoeSnip.exe` does — it
+        // launch replaces/signals the running instance" takeover a bare `RoeSnip.exe` does - it
         // only ever talks to the automation pipe of whatever instance is already running. Mirrors
         // the WPF app's Program.cs:849-862.
         if (args.Length > 0 && args[0] == "--auto")
         {
             if (args.Length != 2)
             {
-                // Pure CLI usage text, not a diagnostic — see PrintUsage's own doc comment.
+                // Pure CLI usage text, not a diagnostic - see PrintUsage's own doc comment.
                 Console.Error.WriteLine(
                     "Usage: RoeSnip --auto '<json>'   (or --auto <command> for a zero-arg command, e.g. --auto state)");
                 return 1;
@@ -900,7 +900,7 @@ public static class Program
             return AppShell.AutomationClient.Run(args[1]);
         }
 
-        // Hidden verbs (deliberately undocumented — not in CliOptions/PrintUsage): the target of
+        // Hidden verbs (deliberately undocumented - not in CliOptions/PrintUsage): the target of
         // the single UAC round-trip SettingsWindow performs when the "Run as administrator"
         // checkbox is toggled from a non-elevated process (item 15). Never invoked unattended.
         // Handled here, before any single-instance machinery, mirroring the WPF app's Program.cs
@@ -915,7 +915,7 @@ public static class Program
         }
 
         // Platform assemblies self-register their ICaptureBackend via [ModuleInitializer], which
-        // only runs when the assembly is LOADED — and .NET loads assemblies lazily on first type
+        // only runs when the assembly is LOADED - and .NET loads assemblies lazily on first type
         // reference. Force-load every referenced Platform.* assembly up front so
         // CaptureBackendRegistry selection sees all candidates (ModuleInitializer
         // ordering across assemblies is unspecified, so it is resolved deterministically here).
@@ -959,7 +959,7 @@ public static class Program
             try
             {
                 var asm = System.Reflection.Assembly.Load(name);
-                // Assembly.Load alone does NOT run [ModuleInitializer] — initializers fire on
+                // Assembly.Load alone does NOT run [ModuleInitializer] - initializers fire on
                 // first code access, which never happens for backends reached only through
                 // CaptureBackendRegistry. Run the module constructor explicitly. (Windows worked
                 // without this only because RegisterPlatformHooks touches a Platform.Windows type.)
@@ -968,7 +968,7 @@ public static class Program
             }
             catch
             {
-                // Not part of this TFM/RID's build — expected (§1.7's conditional references).
+                // Not part of this TFM/RID's build - expected (sec 1.7's conditional references).
             }
         }
     }
@@ -981,7 +981,7 @@ public static class Program
         // vice versa), so the App wires the hook on the windows TFM instead. Compiled only when
         // Platform.Windows is referenced (windows TFM, win/empty RID).
         AppComposition.WriteHdrExport = RoeSnip.Platform.Windows.JxrWriter.Write;
-        // Cross-monitor selection (item 09) HDR save — see WriteHdrExportSpanning's own doc comment.
+        // Cross-monitor selection (item 09) HDR save - see WriteHdrExportSpanning's own doc comment.
         AppComposition.WriteHdrExportSpanning = RoeSnip.Platform.Windows.JxrWriter.WriteSpanning;
 #else
         // Linux and macOS write the same 128bppRGBAFloat scRGB .jxr through the bundled JxrEncApp;
@@ -1022,13 +1022,13 @@ public static class Program
     /// <summary>Wires the two process-wide exception funnels an Avalonia app needs so no crash path
     /// can escape both FileLog and CrashMarker (unhandled-exception-handlers hardening item, ported
     /// from the WPF app's own Program.cs). Avalonia has no separate dispatcher exception event the
-    /// way WinForms' Application.ThreadException is — UI-thread (Dispatcher) exceptions that aren't
+    /// way WinForms' Application.ThreadException is - UI-thread (Dispatcher) exceptions that aren't
     /// caught locally surface through AppDomain.UnhandledException just like any other thread's, so
     /// a single handler there covers both.
     ///
     /// - AppDomain.CurrentDomain.UnhandledException covers every thread, including the Avalonia
     ///   Dispatcher/UI thread. The CLR terminates the process right after this handler returns
-    ///   (IsTerminating is always true for this event on .NET 8) — nothing more to do than log.
+    ///   (IsTerminating is always true for this event on .NET 8) - nothing more to do than log.
     /// - TaskScheduler.UnobservedTaskException does NOT crash the process on .NET 8 (unlike .NET
     ///   Framework's default); a faulted Task nobody awaited would otherwise vanish without a trace
     ///   the next time it's finalized. Log only.</summary>

@@ -4,9 +4,9 @@ using System.IO;
 namespace RoeSnip.Core.Diagnostics;
 
 /// <summary>Field-visible diagnostics sink. Both apps are WinExe (or WinExe-on-Windows for the
-/// Avalonia app — see RoeSnip.App.csproj's own OutputType override comment), so every
+/// Avalonia app - see RoeSnip.App.csproj's own OutputType override comment), so every
 /// Console.Error.WriteLine diagnostic in the codebase is discarded on every real launch path (Run
-/// key, Start Menu, tray double-click, hotkey) — there is no attached console to receive it and no
+/// key, Start Menu, tray double-click, hotkey) - there is no attached console to receive it and no
 /// log file exists on disk. This class is the fix: <see cref="Write"/> is a drop-in replacement for
 /// Console.Error.WriteLine that ALSO appends the line to a rotating log file, so a support session
 /// can ask a user for one file instead of "please run it from a terminal and paste what you see".
@@ -32,7 +32,7 @@ public static class FileLog
     private static readonly object Lock = new();
 
     // Null until Initialize succeeds; Write() falls back to console-only output while null (covers
-    // both "never initialized" — e.g. a unit test exercising Core code directly — and "Initialize
+    // both "never initialized" - e.g. a unit test exercising Core code directly - and "Initialize
     // itself failed", e.g. an unwritable config directory).
     private static string? _filePath;
 
@@ -67,16 +67,16 @@ public static class FileLog
     }
 
     /// <summary>Appends a UTC-timestamped line to the log file (if initialized) and echoes
-    /// <paramref name="message"/> to Console.Error unchanged — the same single call every former
+    /// <paramref name="message"/> to Console.Error unchanged - the same single call every former
     /// Console.Error.WriteLine("RoeSnip: ...") site now makes, preserving the existing dev/terminal
     /// experience while also making the line durable on a field machine.
     ///
     /// Also re-checks rotation every <see cref="RotateCheckInterval"/> calls (never on every single
-    /// call — a FileInfo stat on every capture-hot-path log line would be needless overhead for a
+    /// call - a FileInfo stat on every capture-hot-path log line would be needless overhead for a
     /// cap that only needs to be approximately enforced). Without this, <see cref="Initialize"/>'s
     /// own rotation only ever ran once per process launch, so a tray resident's normal multi-week
     /// uptime could grow the log well past <see cref="MaxBytes"/> before the next relaunch ever
-    /// looked at it again — this keeps the "capped at roughly 2x MaxBytes" contract true within a
+    /// looked at it again - this keeps the "capped at roughly 2x MaxBytes" contract true within a
     /// single long-lived session too, not just across launches.</summary>
     public static void Write(string message)
     {
@@ -86,7 +86,7 @@ public static class FileLog
         }
         catch
         {
-            // No attached/writable console (the common WinExe case) — nothing more to do here,
+            // No attached/writable console (the common WinExe case) - nothing more to do here,
             // the file append below is the whole point in that case anyway.
         }
 
@@ -111,14 +111,14 @@ public static class FileLog
             catch
             {
                 // Locked file (another process, e.g. a support session tailing it, or a rare
-                // concurrent-rotation edge), disk full, permissions revoked mid-run, etc. — a
+                // concurrent-rotation edge), disk full, permissions revoked mid-run, etc. - a
                 // dropped log line is always the right tradeoff over crashing the caller.
             }
         }
     }
 
     /// <summary>Moves an oversized log file to "roesnip.log.1" (overwriting any previous one), so
-    /// the field footprint of this sink is capped at roughly 2x <see cref="MaxBytes"/> — one active
+    /// the field footprint of this sink is capped at roughly 2x <see cref="MaxBytes"/> - one active
     /// file plus at most one rotated-out predecessor. Called only from <see cref="Initialize"/>
     /// (i.e. once per process launch), not on every write, since a tray resident's log grows slowly
     /// enough that per-write size checks would be pure overhead for no real benefit.</summary>
@@ -141,7 +141,7 @@ public static class FileLog
     }
 
     /// <summary>Test-only reset back to the "never initialized" state. Internal (not conditionally
-    /// compiled) so release builds still contain it — a static sink's file path would otherwise
+    /// compiled) so release builds still contain it - a static sink's file path would otherwise
     /// leak across FileLogTests methods, which all share this one process-wide static.</summary>
     internal static void ResetForTests()
     {

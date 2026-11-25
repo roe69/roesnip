@@ -12,7 +12,7 @@ namespace RoeSnip.App.Overlay;
 /// ("1920 x 1080"); also answers hit-tests so OverlayWindow can decide what a mouse-down means.
 /// All geometry is tracked in physical pixels and scaled down to DIPs only at render/hit-test
 /// time via <see cref="DeviceScaleX"/>/<see cref="DeviceScaleY"/> (kept in sync by the owning
-/// window from the correlated Screen's Scaling) — the mixed-DPI contract requires physical pixels
+/// window from the correlated Screen's Scaling) - the mixed-DPI contract requires physical pixels
 /// everywhere except this view-layer conversion. Ported from the frozen WPF app's
 /// src/RoeSnip/Overlay/SelectionAdorner.cs.</summary>
 public sealed class SelectionAdorner : Control
@@ -44,18 +44,18 @@ public sealed class SelectionAdorner : Control
     /// THIS monitor's own screen boundary (see RoeSnip.Core.Overlay.SpanningSelectionMath.Distribute's
     /// doc comment for exactly how these are computed). Gates both hit-testing (<see
     /// cref="HitTestHandle"/> never returns a corner/side handle on a non-real edge) and rendering (a
-    /// clipped edge's handle is never drawn — there is nothing there to grab). Defaults to
+    /// clipped edge's handle is never drawn - there is nothing there to grab). Defaults to
     /// <see cref="SelectionEdges.All"/>, which is every ordinary (non-spanning) selection's answer on
-    /// every window — this only ever varies while spanning, and can differ between the primary and
+    /// every window - this only ever varies while spanning, and can differ between the primary and
     /// secondary windows of the SAME spanning selection (each has its own real/clipped edges).</summary>
     public SelectionEdges RealEdges { get; set; } = SelectionEdges.All;
 
     /// <summary>Cross-monitor selection: true on a SECONDARY window's own adorner while the current
-    /// selection spans multiple monitors — that window only ever shows its own local INTERSECTION
+    /// selection spans multiple monitors - that window only ever shows its own local INTERSECTION
     /// with the true selection, so a "W x H" badge here would show that slice's own size rather than
     /// the true selection's (only the PRIMARY window's adorner gets <see cref="OverrideSizeLabel"/>
     /// set, showing the true composite size instead). The border and any real-edge handles still
-    /// render on a secondary window (gated by <see cref="RealEdges"/> like every other window) —
+    /// render on a secondary window (gated by <see cref="RealEdges"/> like every other window) -
     /// resize handles work from secondary windows too; only the badge (and the toolbar) stay
     /// primary-only.</summary>
     public bool SuppressBadge { get; set; }
@@ -142,7 +142,7 @@ public sealed class SelectionAdorner : Control
 
         if (SuppressBadge)
         {
-            return; // secondary window of a spanning selection — no "W x H" badge, see the doc comment
+            return; // secondary window of a spanning selection - no "W x H" badge, see the doc comment
         }
 
         string label = OverrideSizeLabel ?? string.Create(CultureInfo.InvariantCulture, $"{r.Width} x {r.Height}");

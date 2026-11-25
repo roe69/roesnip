@@ -3,14 +3,14 @@ using RoeSnip.Core.Capture;
 namespace RoeSnip.Core.Overlay;
 
 /// <summary>Pure helpers backing the Windows flash-dimmer's monitor set/ordering decisions
-/// (RoeSnip.App/Overlay/FlashDimmer.cs, item 18) — pulled into Core so they're unit-testable
+/// (RoeSnip.App/Overlay/FlashDimmer.cs, item 18) - pulled into Core so they're unit-testable
 /// without a live window/display, following the rule that portable logic lives in Core.
 /// Ported from the WPF app's src/RoeSnip/Overlay/FlashDimmer.cs (Matches/OrderCursorMonitorFirst,
 /// both private instance-state methods there); this port keeps the exact same semantics as free
 /// functions over MonitorInfo plus an explicit cursor position.</summary>
 public static class MonitorPresentationOrder
 {
-    /// <summary>Order-independent set compare by (DeviceName, BoundsPx) — see the WPF app's
+    /// <summary>Order-independent set compare by (DeviceName, BoundsPx) - see the WPF app's
     /// FlashDimmer.Matches doc comment for why a positional compare would be wrong here: it would
     /// force a needless close+rebuild (~100 ms/monitor) whenever a caller's own enumeration order
     /// differs from whatever order the last build happened to store, and could tear down windows
@@ -43,7 +43,7 @@ public static class MonitorPresentationOrder
     }
 
     /// <summary>Reorders <paramref name="monitors"/> so the one containing
-    /// (<paramref name="cursorX"/>, <paramref name="cursorY"/>) comes first — the monitor the user
+    /// (<paramref name="cursorX"/>, <paramref name="cursorY"/>) comes first - the monitor the user
     /// is actually looking at should dim/build earliest. Falls back to the given order when fewer
     /// than 2 monitors are given or the cursor isn't over any of them (or is already over the first
     /// one). Ported verbatim (semantics-for-semantics) from the WPF app's

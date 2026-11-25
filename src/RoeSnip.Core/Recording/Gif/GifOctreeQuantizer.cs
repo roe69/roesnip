@@ -7,28 +7,28 @@ namespace RoeSnip.Core.Recording.Gif;
 /// quantizer, with one deliberate deviation from the textbook version: when the tree must shed
 /// leaves to fit under <c>maxColors</c>, the node chosen to collapse at the deepest reducible
 /// level is the one whose children are perceptually CLOSEST together (least redmean-weighted
-/// error introduced), not simply the oldest one — see <see cref="PopCheapestReducible"/>. This
+/// error introduced), not simply the oldest one - see <see cref="PopCheapestReducible"/>. This
 /// keeps quantization error low without needing a second (slower) pass over the pixels.
 ///
 /// Node storage is a fixed-capacity arena (parallel arrays, no per-node heap object, no children
-/// array-of-arrays) that <see cref="BuildPalette"/> resets and reuses on every call — this runs
+/// array-of-arrays) that <see cref="BuildPalette"/> resets and reuses on every call - this runs
 /// once per emitted GIF frame at recording cadence, so a fresh allocation per build would be
 /// exactly the per-frame LOH/Gen2 pressure this codebase has already paid to eliminate elsewhere
 /// (see GifEncoder's old EncodeAndWrite doc comment). <see cref="NodeCapacity"/> is sized generously
 /// for real desktop content (a changed region's distinct-color count is bounded well under it in
 /// practice); the rare pathological case (e.g. synthetic full-frame noise) degrades gracefully by
-/// forcing early leaves instead of growing the arena — see <see cref="Insert"/>.
+/// forcing early leaves instead of growing the arena - see <see cref="Insert"/>.
 ///
 /// Insertion order is whatever order the caller supplies pixels in, and every reduction decision
 /// is a deterministic function of the tree built so far (no randomness, no dictionary iteration
-/// order) — identical input therefore always yields a byte-identical palette, which is what lets
+/// order) - identical input therefore always yields a byte-identical palette, which is what lets
 /// the palette-reuse fast path (<see cref="MaxErrorAgainst"/>) and any golden-output tests compare
 /// exact bytes.</summary>
 public sealed class GifOctreeQuantizer
 {
-    // 8 levels: bit 7 (MSB) of each of R/G/B down to bit 0 — full 24-bit precision at the leaves.
+    // 8 levels: bit 7 (MSB) of each of R/G/B down to bit 0 - full 24-bit precision at the leaves.
     private const int MaxDepth = 8;
-    // "A few thousand nodes" per the design spec — real screenshot content (UI chrome, text,
+    // "A few thousand nodes" per the design spec - real screenshot content (UI chrome, text,
     // cursors) has nowhere near this many distinct colors in a typical changed region; a
     // synthetic worst case just triggers the graceful degradation in Insert instead of growing.
     private const int NodeCapacity = 4096;
@@ -45,7 +45,7 @@ public sealed class GifOctreeQuantizer
     private readonly bool[] _isLeaf = new bool[NodeCapacity];
     private readonly int[] _childIndex = new int[NodeCapacity * 8];
 
-    // reducible[L] holds every node at level L that currently has at least one child — i.e. every
+    // reducible[L] holds every node at level L that currently has at least one child - i.e. every
     // candidate MergeChildren can collapse back into a leaf. A node is pushed here exactly once,
     // the moment it gets its first child (see Insert), and popped exactly once when it is chosen
     // for reduction (see PopCheapestReducible). Sized once, Cleared (not reallocated) by Reset.
@@ -64,11 +64,11 @@ public sealed class GifOctreeQuantizer
         }
     }
 
-    /// <summary>Quantizes <paramref name="paintedPixelsBgra"/> (a dense span of B,G,R,A quads —
+    /// <summary>Quantizes <paramref name="paintedPixelsBgra"/> (a dense span of B,G,R,A quads -
     /// alpha is ignored, callers pass only the pixels that are actually being painted this frame,
     /// never the whole canvas) down to at most <paramref name="maxColors"/> colors, writing the
     /// result into <paramref name="paletteBgrOut"/> (caller-owned, at least
-    /// <paramref name="maxColors"/> * 3 bytes — an output parameter rather than a return value
+    /// <paramref name="maxColors"/> * 3 bytes - an output parameter rather than a return value
     /// specifically so callers can reuse one fixed-size buffer across frames instead of allocating
     /// a fresh palette array every time) as B,G,R triples in a fixed, deterministic order. Returns
     /// the number of distinct colors actually produced (0 for an empty input, otherwise between 1
@@ -105,15 +105,15 @@ public sealed class GifOctreeQuantizer
     /// <summary>Reuse-check helper: the worst-case (max over all pixels) per-channel (Chebyshev)
     /// error against whichever palette entry each pixel would ACTUALLY be quantized to. "Actually
     /// be quantized to" means nearest by the same redmean distance <see cref="GifNearestColorLut"/>
-    /// resolves lookups with, NOT the palette entry that happens to be Chebyshev-nearest — picking
+    /// resolves lookups with, NOT the palette entry that happens to be Chebyshev-nearest - picking
     /// the selection candidate by Chebyshev here would let this method approve a reuse where the
     /// pixel's real per-channel error, once <see cref="GifNearestColorLut.Lookup"/> actually
     /// resolves it, quietly exceeds the very threshold this check exists to enforce (two
     /// close-but-different palette entries can rank in the opposite order under the two metrics).
-    /// The error itself is still measured Chebyshev/max-channel once the entry is chosen — that
+    /// The error itself is still measured Chebyshev/max-channel once the entry is chosen - that
     /// mirrors the plain per-channel tolerance the diff/dither logic uses elsewhere, so "palette
     /// still fits" means the same thing as "pixel still fits". Brute-forces the (<=255-entry)
-    /// palette per pixel — this runs once per candidate frame, not per pixel of a hot inner loop, so
+    /// palette per pixel - this runs once per candidate frame, not per pixel of a hot inner loop, so
     /// that's cheap enough. <paramref name="earlyExitAbove"/> lets a caller that only cares "is this
     /// <= threshold?" bail out the moment the running worst case clears it, without scanning the
     /// rest of the frame; pass 256 (the default) to force a full, exact scan.</summary>
@@ -202,7 +202,7 @@ public sealed class GifOctreeQuantizer
     /// the pixel's color into whichever node it landed on.
     ///
     /// Pool-exhaustion fallback: if the arena is full and a needed child cannot be allocated, the
-    /// current node is force-converted into a leaf right there instead of growing further — every
+    /// current node is force-converted into a leaf right there instead of growing further - every
     /// future pixel that would have passed through it now stops one level early and blends into
     /// its bucket. This trades a little palette precision for never crashing or reallocating; it
     /// only engages on inputs pathological enough to exhaust <see cref="NodeCapacity"/> in the
@@ -257,8 +257,8 @@ public sealed class GifOctreeQuantizer
         _sumR[node] += r;
     }
 
-    /// <summary>Collapses nodes one at a time — always at the deepest level that still has any
-    /// reducible node, so every child being merged is guaranteed to already be a leaf — until the
+    /// <summary>Collapses nodes one at a time - always at the deepest level that still has any
+    /// reducible node, so every child being merged is guaranteed to already be a leaf - until the
     /// leaf count fits under <paramref name="maxColors"/>.</summary>
     private void ReduceUntil(int maxColors)
     {
@@ -284,7 +284,7 @@ public sealed class GifOctreeQuantizer
     }
 
     /// <summary>Picks, among all reducible nodes at <paramref name="level"/>, the one whose
-    /// children are cheapest to merge — total pixel-weighted redmean-squared distance from each
+    /// children are cheapest to merge - total pixel-weighted redmean-squared distance from each
     /// child's average color to what the merged node's average color would become. Merging the
     /// cheapest node first means every collapse the tree is forced to make loses the least
     /// perceptual information available at that depth.</summary>
@@ -411,7 +411,7 @@ public sealed class GifOctreeQuantizer
 
 /// <summary>Shared color-distance math for both palette building (<see cref="GifOctreeQuantizer"/>'s
 /// merge-cost decisions) and nearest-color lookup (<see cref="GifNearestColorLut"/>'s cache-miss
-/// fills) — one formula, so a palette built to minimize this distance is the same distance used to
+/// fills) - one formula, so a palette built to minimize this distance is the same distance used to
 /// map pixels onto it. Redmean weights the R/B channels by how bright red the pair of colors being
 /// compared is (a cheap approximation of human luminance sensitivity that doesn't need a full color
 /// space conversion); squared throughout because every call site only ever compares or sums

@@ -11,7 +11,7 @@ namespace RoeSnip.Recording;
 /// <summary>Encodes BGRA8 <see cref="SdrImage"/> frames to H.264/MP4 via Media Foundation's
 /// IMFSinkWriter - the exact API surface (verified by reflecting the real
 /// Vortice.MediaFoundation 3.8.3 DLL, not assumed). Encoder-thread-only (RecordingSession's
-/// dedicated thread) — never the WGC callback thread, never the UI thread.
+/// dedicated thread) - never the WGC callback thread, never the UI thread.
 ///
 /// Public (not internal), same reasoning as Overlay/SizeInput.cs and Overlay/ToolCursorCache.cs:
 /// <see cref="ComputeBitrate"/> is pure logic worth unit-testing directly, and this app's
@@ -21,7 +21,7 @@ public sealed class Mp4Encoder : IDisposable
     private static bool s_mfStarted;
     private static readonly object s_mfGate = new();
 
-    /// <summary>Called once, lazily, on the first-ever recording. Never calls MFShutdown — this is
+    /// <summary>Called once, lazily, on the first-ever recording. Never calls MFShutdown - this is
     /// a resident tray process; the startup cost is paid once and never unwound, matching how this
     /// app already treats other process-lifetime resources (e.g. WgcCapturer's s_slots cache).</summary>
     public static void EnsureStarted()
@@ -36,7 +36,7 @@ public sealed class Mp4Encoder : IDisposable
             {
                 return;
             }
-            // MFStartup returns a raw Result (not auto-throwing) — verified via reflection;
+            // MFStartup returns a raw Result (not auto-throwing) - verified via reflection;
             // CheckError() is SharpGen's idiomatic throw-on-failure call.
             MediaFactory.MFStartup(useLightVersion: false).CheckError();
             s_mfStarted = true;
@@ -47,23 +47,23 @@ public sealed class Mp4Encoder : IDisposable
     /// thumb), clamped to a sane [2, 16] Mbps band so a tiny selection doesn't starve the encoder
     /// and a huge one doesn't produce an unreasonably large file. Recording-core-extraction
     /// workstream: the actual math now lives in the portable <see cref="Mp4BitrateEstimator"/>
-    /// (RoeSnip.Core.Recording — no IMFSinkWriter dependency, so RoeSnip.App/Avalonia can compute
+    /// (RoeSnip.Core.Recording - no IMFSinkWriter dependency, so RoeSnip.App/Avalonia can compute
     /// the same estimate without this Windows-only encoder), this is a straight passthrough kept
     /// here so every existing call site (Mp4EncoderTests, RecordingController, RecordingChrome)
     /// keeps working unchanged. This is the parameterless-preset overload: its behavior is pinned
     /// forever by <see cref="ComputeBitrate(int,int,int,GifSizePreset)"/>'s Quality case, which
-    /// must return exactly this value — see that overload's own doc comment.</summary>
+    /// must return exactly this value - see that overload's own doc comment.</summary>
     public static long ComputeBitrate(int width, int height, int fps) =>
         Mp4BitrateEstimator.ComputeBitrate(width, height, fps);
 
-    /// <summary>Recording-size-tiers overload — see <see cref="Mp4BitrateEstimator.ComputeBitrate(int,int,int,GifSizePreset)"/>
+    /// <summary>Recording-size-tiers overload - see <see cref="Mp4BitrateEstimator.ComputeBitrate(int,int,int,GifSizePreset)"/>
     /// for the full tier-factor/clamp-band reasoning; this is a straight passthrough.</summary>
     public static long ComputeBitrate(int width, int height, int fps, GifSizePreset preset) =>
         Mp4BitrateEstimator.ComputeBitrate(width, height, fps, preset);
 
     /// <summary>The one PCM format every audio path speaks (AudioCaptureEngine converts both
     /// WASAPI sources to it via AUTOCONVERTPCM, this class encodes it to AAC): 48 kHz, stereo,
-    /// 16-bit — 4 bytes per sample block.</summary>
+    /// 16-bit - 4 bytes per sample block.</summary>
     public const int AudioSampleRate = 48_000;
     public const int AudioChannels = 2;
     public const int AudioBitsPerSample = 16;
@@ -93,7 +93,7 @@ public sealed class Mp4Encoder : IDisposable
     }
 
     /// <summary><paramref name="preset"/> is additive (defaults to Quality, today's only behavior
-    /// before the recording-size-tiers workstream) — every existing call site that doesn't pass it
+    /// before the recording-size-tiers workstream) - every existing call site that doesn't pass it
     /// compiles unchanged and gets byte-identical bitrate output, since Quality delegates to the
     /// original three-argument <see cref="ComputeBitrate(int,int,int)"/>.</summary>
     public static Mp4Encoder Create(
@@ -113,24 +113,24 @@ public sealed class Mp4Encoder : IDisposable
 
         using var inputType = MediaFactory.MFCreateMediaType();
         inputType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video).CheckError();
-        // MFVideoFormat_RGB32 = 32bpp BGRX in memory — SAME byte layout as SdrImage.Pixels
+        // MFVideoFormat_RGB32 = 32bpp BGRX in memory - SAME byte layout as SdrImage.Pixels
         // (B,G,R,A/X), no channel-swap needed on write.
         inputType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.Rgb32).CheckError();
         MediaFactory.MFSetAttributeSize(inputType, MediaTypeAttributeKeys.FrameSize, (uint)width, (uint)height).CheckError();
         MediaFactory.MFSetAttributeRatio(inputType, MediaTypeAttributeKeys.FrameRate, (uint)fps, 1).CheckError();
         inputType.Set(MediaTypeAttributeKeys.InterlaceMode, (uint)VideoInterlaceMode.Progressive).CheckError();
-        // CRITICAL, easy to get backwards: MF_MT_DEFAULT_STRIDE's SIGN encodes row order —
+        // CRITICAL, easy to get backwards: MF_MT_DEFAULT_STRIDE's SIGN encodes row order -
         // POSITIVE means top-down, NEGATIVE means bottom-up (the DIB-native default for RGB
         // formats). SdrImage rows are top-down (see that class's own doc comment), so this must
         // be +stride. This shipped as -stride once, which declared the buffer bottom-up and made
-        // every .mp4 play upside down — it encodes/plays/seeks fine otherwise, so the bug is
+        // every .mp4 play upside down - it encodes/plays/seeks fine otherwise, so the bug is
         // invisible until someone looks at a frame; Mp4EncoderTests' decode-back orientation test
         // exists so it can never silently regress again.
         int stride = width * 4;
         inputType.Set(MediaTypeAttributeKeys.DefaultStride, (uint)stride).CheckError();
 
         using var attrs = MediaFactory.MFCreateAttributes(2);
-        // Frames already arrive throttled by our own capture cadence (RegionRecorder) — don't let
+        // Frames already arrive throttled by our own capture cadence (RegionRecorder) - don't let
         // MF pace-block WriteSample a second time on top of that.
         attrs.Set(SinkWriterAttributeKeys.DisableThrottling, true).CheckError();
         attrs.Set(SinkWriterAttributeKeys.LowLatency, true).CheckError();
@@ -140,7 +140,7 @@ public sealed class Mp4Encoder : IDisposable
         writer.SetInputMediaType(streamIndex, inputType, null);
 
         // The AAC audio track, when any capture source is enabled. Both streams MUST be added and
-        // typed before the single shared BeginWriting call — MF rejects AddStream afterwards.
+        // typed before the single shared BeginWriting call - MF rejects AddStream afterwards.
         int audioStreamIndex = -1;
         if (withAudio)
         {
@@ -153,7 +153,7 @@ public sealed class Mp4Encoder : IDisposable
             audioOutputType.Set(MediaTypeAttributeKeys.AudioAvgBytesPerSecond, (uint)AudioAacBytesPerSecond).CheckError();
             audioStreamIndex = writer.AddStream(audioOutputType);
 
-            // PCM input type built straight from a WaveFormat — MFCreateAudioMediaType fills in
+            // PCM input type built straight from a WaveFormat - MFCreateAudioMediaType fills in
             // every audio attribute (rate/channels/bits/block-align/avg-bytes) from the struct.
             var pcmFormat = new WaveFormat(AudioSampleRate, AudioBitsPerSample, AudioChannels);
             using var audioInputType = MediaFactory.MFCreateAudioMediaType(ref pcmFormat);
@@ -166,8 +166,8 @@ public sealed class Mp4Encoder : IDisposable
     }
 
     /// <summary>Encoder thread only. SdrImage.Pixels is guaranteed tightly packed
-    /// (Stride == Width * 4 — SdrImage's own doc comment), which is exactly the buffer MF's RGB32
-    /// subtype expects — no repacking or row reversal needed: the input type's positive
+    /// (Stride == Width * 4 - SdrImage's own doc comment), which is exactly the buffer MF's RGB32
+    /// subtype expects - no repacking or row reversal needed: the input type's positive
     /// DefaultStride declares the buffer top-down, matching SdrImage's layout verbatim.</summary>
     public void WriteFrame(SdrImage bgra8, long timestamp100ns)
     {
@@ -187,7 +187,7 @@ public sealed class Mp4Encoder : IDisposable
         sample.AddBuffer(buffer);
         sample.SampleTime = timestamp100ns;
         sample.SampleDuration = _frameDuration100ns;
-        _writer.WriteSample(_streamIndex, sample); // void-returning — SharpGen auto-throws on HRESULT failure
+        _writer.WriteSample(_streamIndex, sample); // void-returning - SharpGen auto-throws on HRESULT failure
     }
 
     /// <summary>Encoder thread only, same single-thread discipline as <see cref="WriteFrame"/>.

@@ -12,22 +12,22 @@ namespace RoeSnip.Core.Recording.Gif;
 /// baseline must hold SOURCE values, not quantized ones).
 ///
 /// Every output buffer (<paramref name="indexScratch"/> and the baseline itself) is caller-owned
-/// and reused frame to frame — this runs at recording cadence, so nothing here allocates.
+/// and reused frame to frame - this runs at recording cadence, so nothing here allocates.
 ///
 /// LOSSY RUN-EXTENSION (quality/fps expansion workstream, <paramref name="lossyRunThresholdSq"/>
-/// on the tiers that enable it — see <see cref="RoeSnip.Core.Recording.Gif.GifEncoderOptions.LossyRunThresholdSq"/>'s
+/// on the tiers that enable it - see <see cref="RoeSnip.Core.Recording.Gif.GifEncoderOptions.LossyRunThresholdSq"/>'s
 /// own doc comment): a gifsicle-style lever, applied per row, left to right. Every row tracks the
-/// most recently PAINTED pixel's palette index (never the transparent index — a pixel classified
+/// most recently PAINTED pixel's palette index (never the transparent index - a pixel classified
 /// transparent by the tolerance test above leaves that tracker untouched, so a lossy candidate can
 /// still look back across a transparent gap to the last real paint). When a candidate pixel would
 /// otherwise need a fresh LUT lookup, if the tracked index is a real palette entry and this pixel's
 /// SOURCE color is within <paramref name="lossyRunThresholdSq"/> (redmean-squared) of THAT entry's
 /// actual palette color, the pixel reuses the tracked index outright instead of resolving its own
-/// nearest color — no dither, no new LUT bucket fill. This is what turns a near-solid run (a UI
+/// nearest color - no dither, no new LUT bucket fill. This is what turns a near-solid run (a UI
 /// fill, an anti-aliased glyph edge, a scroll-band background) into a genuinely long run of
 /// IDENTICAL indices for the LZW stage to compress, rather than alternating between two or three
 /// perceptually-indistinguishable-but-numerically-different palette entries. The baseline still
-/// records the pixel's own SOURCE value on a reuse (same drift rule as every other painted pixel —
+/// records the pixel's own SOURCE value on a reuse (same drift rule as every other painted pixel -
 /// see the class doc above), so the bounded-error guarantee this buys is against the SOURCE, not
 /// against whatever the run's first pixel happened to look like: every reused pixel's displayed
 /// color is within threshold of its own true value, not just close to its neighbor.</summary>
@@ -44,17 +44,17 @@ public static class GifDelta
 
     /// <summary>Processes every pixel inside <paramref name="box"/> (physical canvas coordinates)
     /// and writes its palette index into <paramref name="indexScratch"/> at the SAME canvas
-    /// position (row stride <paramref name="canvasWidth"/>) — callers slice the box back out of it
+    /// position (row stride <paramref name="canvasWidth"/>) - callers slice the box back out of it
     /// when building the LZW input, rather than this method packing a tightly-cropped buffer
     /// itself, so it never needs a box-sized scratch allocation of its own.
     ///
     /// When <paramref name="allowTransparency"/> is false (first frame / keyframe), every pixel in
-    /// the box is unconditionally painted — no tolerance test, no transparent index anywhere in the
-    /// output — matching the "keyframes are fully opaque" contract. When true, a pixel within
+    /// the box is unconditionally painted - no tolerance test, no transparent index anywhere in the
+    /// output - matching the "keyframes are fully opaque" contract. When true, a pixel within
     /// <paramref name="channelTolerance"/> (per-channel, Chebyshev) of the baseline is left
     /// untouched: its index is written as <paramref name="transparentIndex"/> and the baseline is
-    /// NOT updated for it (the whole point of the baseline holding source values — see the class
-    /// doc — is that a pixel sitting just inside tolerance has to keep comparing against the same
+    /// NOT updated for it (the whole point of the baseline holding source values - see the class
+    /// doc - is that a pixel sitting just inside tolerance has to keep comparing against the same
     /// reference next frame, not silently drift).</summary>
     public static void ClassifyAndPaint(
         ReadOnlySpan<byte> currentPixelsBgra,
@@ -74,7 +74,7 @@ public static class GifDelta
         {
             int rowOffset = y * canvasWidth * 4;
             int bayerRow = (y & 3) * 4;
-            // Per-row run tracker (see class doc comment) — reset at the start of every row since a
+            // Per-row run tracker (see class doc comment) - reset at the start of every row since a
             // run never spans a row boundary; -1 means "no real paint yet this row".
             int lastPaintedIndex = -1;
             for (int x = box.Left; x < box.Right; x++)
@@ -92,7 +92,7 @@ public static class GifDelta
                     int db = Math.Abs(b - lb), dg = Math.Abs(g - lg), dr = Math.Abs(r - lr);
                     if (db <= channelTolerance && dg <= channelTolerance && dr <= channelTolerance)
                     {
-                        // Not painted — leave lastPaintedIndex untouched (see class doc: a lossy
+                        // Not painted - leave lastPaintedIndex untouched (see class doc: a lossy
                         // candidate later in the row can still look back across this gap).
                         indexScratch[po >> 2] = (byte)transparentIndex;
                         continue;
@@ -100,9 +100,9 @@ public static class GifDelta
                 }
 
                 // Lossy run-extension fast path (disabled when lossyRunThresholdSq is 0, the default
-                // for every tier that must stay bit-exact — Max/Quality). Tried BEFORE the normal LUT
+                // for every tier that must stay bit-exact - Max/Quality). Tried BEFORE the normal LUT
                 // lookup/dither below, never across the transparent index (lastPaintedIndex is only
-                // ever a real palette entry — see the class doc for why that's true by construction).
+                // ever a real palette entry - see the class doc for why that's true by construction).
                 if (lossyRunThresholdSq > 0 && lastPaintedIndex >= 0)
                 {
                     int rpo = lastPaintedIndex * 3;
@@ -128,7 +128,7 @@ public static class GifDelta
                 if (maxChannelError > ditherErrorFloor)
                 {
                     // Ordered dither: perturb the source color by a Bayer-thresholded fraction of
-                    // its own quantization error (self-scaling — a barely-over-the-floor pixel gets
+                    // its own quantization error (self-scaling - a barely-over-the-floor pixel gets
                     // a small nudge, a badly-matched one gets a big one) and re-quantize. The same
                     // per-pixel threshold is reused across all three channels so the perturbation is
                     // correlated (avoids introducing color fringing that independent per-channel
@@ -141,7 +141,7 @@ public static class GifDelta
                 }
 
                 indexScratch[po >> 2] = (byte)finalIndex;
-                // Reached only for pixels that are actually painted this frame — either because
+                // Reached only for pixels that are actually painted this frame - either because
                 // allowTransparency is false (every pixel in the box counts as painted: first
                 // frame / keyframe) or because this one exceeded tolerance above. Either way the
                 // baseline advances to this frame's source value, never the quantized one.

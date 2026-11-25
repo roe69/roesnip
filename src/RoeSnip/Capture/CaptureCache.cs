@@ -12,10 +12,10 @@ namespace RoeSnip.Capture;
 /// process-lifetime static, so every fresh app launch re-paid the doomed DD attempt (device
 /// creation + the AcquireNextFrame retry budget, per monitor) before falling back to WGC. This
 /// cache lives in its own small JSON file at <c>%APPDATA%\RoeSnip\capture-cache.json</c>
-/// (deliberately NOT settings.json — it's derived machine state, not user preference) so the
+/// (deliberately NOT settings.json - it's derived machine state, not user preference) so the
 /// very first capture after a relaunch goes straight to WGC for known-broken monitors.
 /// Contract: loaded lazily on first query, saved on first change; a missing or corrupt file means
-/// an empty memo — reading or writing this cache must never crash or block a capture.</summary>
+/// an empty memo - reading or writing this cache must never crash or block a capture.</summary>
 public sealed class CaptureCache
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
@@ -31,7 +31,7 @@ public sealed class CaptureCache
     private readonly object _gate = new();
     private HashSet<string>? _ddBrokenDeviceNames; // null until first use (lazy load)
 
-    // Post-resume grace (sleep-stall fix): 0 = never resumed. Static, not per-instance — the
+    // Post-resume grace (sleep-stall fix): 0 = never resumed. Static, not per-instance - the
     // resume event is machine state and CaptureService creates a fresh instance per capture.
     private static long s_lastResumeTick;
     private static readonly long PostResumeGraceMs = 30_000;
@@ -40,7 +40,7 @@ public sealed class CaptureCache
     /// <see cref="MarkDesktopDuplicationBroken"/> is a no-op: the wake transition produces
     /// TRANSIENT capture failures (ghost "WinDisc" displays mid-topology-settle, secure-desktop
     /// access denials, DXGI outputs that don't exist yet) that used to poison the persisted
-    /// "DD is broken here" memo FOREVER — this cache is meant to memoize the permanent
+    /// "DD is broken here" memo FOREVER - this cache is meant to memoize the permanent
     /// NVIDIA+HDR black-frame quirk, not a driver that hasn't finished waking. A capture during
     /// the window still falls back to WGC normally; it just isn't memoized.</summary>
     public static void NotePowerResume() =>
@@ -59,7 +59,7 @@ public sealed class CaptureCache
         _path = path;
     }
 
-    /// <summary>True if Desktop Duplication was previously observed broken for this monitor —
+    /// <summary>True if Desktop Duplication was previously observed broken for this monitor -
     /// callers should skip DD entirely and go straight to WGC.</summary>
     public bool IsDesktopDuplicationBroken(string deviceName)
     {
@@ -87,7 +87,7 @@ public sealed class CaptureCache
             EnsureLoaded();
             if (!_ddBrokenDeviceNames!.Add(deviceName))
             {
-                return; // already known — nothing changed, no rewrite
+                return; // already known - nothing changed, no rewrite
             }
             SaveBestEffort();
         }
@@ -131,7 +131,7 @@ public sealed class CaptureCache
         catch (Exception ex)
         {
             // Corrupt/unreadable cache = empty memo; a capture must never fail because of this
-            // file. (Broader catch than SettingsStore on purpose — this file is disposable derived
+            // file. (Broader catch than SettingsStore on purpose - this file is disposable derived
             // state, not user data.)
             FileLog.Write($"RoeSnip: capture cache unreadable/corrupt, starting empty: {ex.Message}");
         }

@@ -14,7 +14,7 @@ public interface IPortalScreenshot : IDBusObject
     Task<ObjectPath> ScreenshotAsync(string parentWindow, IDictionary<string, object> options);
 }
 
-/// <summary>Tmds.DBus proxy for <c>org.freedesktop.portal.Request</c> — the per-call request object
+/// <summary>Tmds.DBus proxy for <c>org.freedesktop.portal.Request</c> - the per-call request object
 /// whose <c>Response</c> signal carries the actual portal result (signature <c>ua{sv}</c>).</summary>
 [DBusInterface("org.freedesktop.portal.Request")]
 public interface IPortalRequest : IDBusObject
@@ -28,7 +28,7 @@ public interface IPortalRequest : IDBusObject
 /// <summary>Last-resort Linux capturer, only where the desktop cannot screencast and never on GNOME
 /// (<see cref="LinuxCapturePolicy"/>). Asks xdg-desktop-portal for a silent,
 /// non-interactive screenshot of the WHOLE virtual desktop (one PNG file URI), decodes it via
-/// SkiaSharp, and slices this monitor's rectangle out of it using the RandR-enumerated bounds —
+/// SkiaSharp, and slices this monitor's rectangle out of it using the RandR-enumerated bounds -
 /// verifying the pixel scale at runtime by comparing the PNG's dimensions to the RandR virtual
 /// desktop (HiDPI portals return physical pixels while some compositors report logical bounds).
 ///
@@ -38,7 +38,7 @@ public interface IPortalRequest : IDBusObject
 /// desktop shot is reused for a short window (1s) so one capture trigger never fires N portal
 /// requests (and N GNOME permission prompts) for N monitors.
 ///
-/// GNOME may show a one-time (new portals) or per-shot (old portals) permission dialog — documented,
+/// GNOME may show a one-time (new portals) or per-shot (old portals) permission dialog - documented,
 /// not fought; the response wait allows 60s for the user to answer it.</summary>
 public sealed class PortalScreenshotCapturer : IScreenCapturer
 {
@@ -51,7 +51,7 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
     private readonly object _gate = new();
     private Task<DesktopShot>? _shotTask;
 
-    /// <param name="enumerateMonitors">The backend's own RandR enumeration — needed here because
+    /// <param name="enumerateMonitors">The backend's own RandR enumeration - needed here because
     /// slicing requires the union of ALL monitor bounds (the virtual-desktop origin and extent),
     /// not just the one monitor being captured.</param>
     public PortalScreenshotCapturer(Func<IReadOnlyList<MonitorInfo>> enumerateMonitors)
@@ -96,7 +96,7 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
                 { IsCompleted: false } inflight => inflight, // coalesce concurrent per-monitor calls
                 { IsCompletedSuccessfully: true } fresh
                     when DateTime.UtcNow - fresh.Result.TakenUtc < ReuseWindow => fresh,
-                _ => _shotTask = StartNewShot(), // faulted or stale — take a new shot
+                _ => _shotTask = StartNewShot(), // faulted or stale - take a new shot
             };
         }
 
@@ -120,7 +120,7 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
     /// <summary>Starts a new whole-desktop shot AND schedules its own eager cleanup once the reuse
     /// window lapses (P6 leak fix). Without this, a resident tray app that captures once and then
     /// sits idle keeps a full whole-desktop <c>byte[]</c> buffer rooted via <see cref="_shotTask"/>
-    /// for however long until the NEXT capture — which may be arbitrarily far in the future, or
+    /// for however long until the NEXT capture - which may be arbitrarily far in the future, or
     /// never, for the rest of the process's life. The delayed continuation only clears the field if
     /// it still points at THIS shot (a newer shot started in the meantime must not be clobbered).</summary>
     private Task<DesktopShot> StartNewShot()
@@ -152,7 +152,7 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
         if (monitors.Count == 0)
         {
             throw new CaptureException(
-                "no monitors enumerated — cannot slice the portal's whole-desktop screenshot.");
+                "no monitors enumerated - cannot slice the portal's whole-desktop screenshot.");
         }
 
         int left = int.MaxValue, top = int.MaxValue, right = int.MinValue, bottom = int.MinValue;
@@ -214,7 +214,7 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
         }
         finally
         {
-            try { File.Delete(path); } catch { /* portal temp file — best-effort cleanup */ }
+            try { File.Delete(path); } catch { /* portal temp file - best-effort cleanup */ }
         }
 
         // Runtime pixel-scale verification: HiDPI portals return physical
@@ -226,13 +226,13 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
         FileLog.Write(
             $"RoeSnip: portal screenshot {pngWidth}x{pngHeight}; RandR virtual desktop " +
             $"{union.Width}x{union.Height} at ({union.Left},{union.Top}); pixel scale {scaleX:F3}x{scaleY:F3}" +
-            (oneToOne ? "" : " — portal/RandR unit mismatch detected, slicing with the discovered scale"));
+            (oneToOne ? "" : " - portal/RandR unit mismatch detected, slicing with the discovered scale"));
 
         return new DesktopShot(bgra, pngWidth, pngHeight, stride, union, scaleX, scaleY, DateTime.UtcNow);
     }
 
     /// <summary>The two-step portal dance: subscribe to the (predicted) request object's Response
-    /// signal FIRST, then call Screenshot — the token-derived request path avoids the classic race
+    /// signal FIRST, then call Screenshot - the token-derived request path avoids the classic race
     /// where the signal fires before the caller has subscribed. Returns the result's file URI.</summary>
     private static async Task<string> RequestScreenshotUriAsync()
     {
@@ -240,7 +240,7 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
         if (string.IsNullOrEmpty(address))
         {
             throw new CaptureException(
-                "no D-Bus session bus (DBUS_SESSION_BUS_ADDRESS unset) — xdg-desktop-portal is unavailable.");
+                "no D-Bus session bus (DBUS_SESSION_BUS_ADDRESS unset) - xdg-desktop-portal is unavailable.");
         }
 
         PortalConnection shared;
@@ -292,7 +292,7 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
 
             if (actualRequestPath.ToString() != expectedRequestPath.ToString())
             {
-                // Pre-0.9 portals ignore handle_token and mint their own request path — re-subscribe
+                // Pre-0.9 portals ignore handle_token and mint their own request path - re-subscribe
                 // on the actual path (a small signal race exists on those old portals only).
                 watcher.Dispose();
                 watcher = await connection.CreateProxy<IPortalRequest>(PortalService, actualRequestPath)

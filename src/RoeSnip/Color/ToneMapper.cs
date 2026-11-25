@@ -18,22 +18,22 @@ public readonly record struct ToneMapOptions(
 
 /// <summary>The tone-map pipeline. See docs/architecture.md "Tone-map pipeline" for the full spec; the exact
 /// Hermite shoulder formula is pinned here so the code and the tests agree on it.
-/// Only accepts Fp16ScRgb frames — Bgra8Srgb frames must go through SdrImage.FromCapturedFrame's
+/// Only accepts Fp16ScRgb frames - Bgra8Srgb frames must go through SdrImage.FromCapturedFrame's
 /// passthrough branch instead (do not call MapToSdr on a Bgra8Srgb frame; it throws).
 ///
 /// Two implementations (r5-latency):
 /// <list type="bullet">
-/// <item><see cref="MapToSdr"/> — the optimized production path. The per-FP16-bit-pattern work
-/// (half→float widening, SDR-white scaling, negative clamp, sRGB encode, quantize) is precomputed
+/// <item><see cref="MapToSdr"/> - the optimized production path. The per-FP16-bit-pattern work
+/// (half->float widening, SDR-white scaling, negative clamp, sRGB encode, quantize) is precomputed
 /// into two 65536-entry LUTs built with the EXACT same scalar expressions the reference uses, so
 /// identity is by construction for every possible input bit pattern (including NaN/Inf/denormals).
-/// The frame-max scan (pass 1) is AVX2-vectorized with an exact bit-manipulation FP16→FP32
+/// The frame-max scan (pass 1) is AVX2-vectorized with an exact bit-manipulation FP16->FP32
 /// widening (Giesen's algorithm; IEEE conversions are exact, and multiply-by-scale/max are the
 /// same single-rounding operations as the scalar code); any 4-pixel block containing a NaN falls
 /// back to the scalar per-pixel semantics so NaN propagation matches the reference exactly. Only
-/// shoulder-mapped pixels (HDR highlights above the knee — a small minority even in HDR frames)
+/// shoulder-mapped pixels (HDR highlights above the knee - a small minority even in HDR frames)
 /// run the full scalar Hermite math, verbatim.</item>
-/// <item><see cref="MapToSdrScalar"/> — the original scalar implementation, kept verbatim as the
+/// <item><see cref="MapToSdrScalar"/> - the original scalar implementation, kept verbatim as the
 /// reference. The optimized path must stay BYTE-IDENTICAL to it; ToneMapperEquivalenceTests
 /// asserts equality on randomized fixed-seed frames covering the whole-frame pass-through branch,
 /// the shoulder branch, and adversarial raw bit patterns.</item>
@@ -45,7 +45,7 @@ public static class ToneMapper
     /// <summary><paramref name="reuseOutput"/>: recording-cadence call sites (up to 50fps) pass a
     /// persistent exactly-sized buffer so the tone-map allocates nothing per frame (canvas-sized
     /// arrays are LOH-sized; per-frame LOH churn = Gen2 pauses = frozen UI hit-testing, the
-    /// f7aa9a3 lesson). Those calls also skip the per-call timing log — 50 synchronous stderr
+    /// f7aa9a3 lesson). Those calls also skip the per-call timing log - 50 synchronous stderr
     /// writes a second is its own overhead; one-shot captures (null) keep it.</summary>
     public static SdrImage MapToSdr(CapturedFrame frame, ToneMapOptions opts, byte[]? reuseOutput)
     {
@@ -64,7 +64,7 @@ public static class ToneMapper
     }
 
     /// <summary>The original scalar tone-map, kept as the byte-exact reference implementation for
-    /// the optimized path (and for the equivalence tests). Do not "optimize" this method — its
+    /// the optimized path (and for the equivalence tests). Do not "optimize" this method - its
     /// exact operations and their order define what correct output is.</summary>
     public static SdrImage MapToSdrScalar(CapturedFrame frame, ToneMapOptions opts)
     {
@@ -172,11 +172,11 @@ public static class ToneMapper
 
     /// <summary>The knee/peak sanitization + whole-frame pass-through decision, shared verbatim by
     /// the scalar reference and the optimized path so both always derive identical curve
-    /// parameters from an identical M. Defensive sanitization (never trust options — audit finding
+    /// parameters from an identical M. Defensive sanitization (never trust options - audit finding
     /// F): a knee/peak pair where PeakOverride == Knee divides by zero downstream
     /// (t = (m - knee) / (peak - knee)), producing NaN that Math.Clamp does NOT clamp, which
     /// renders HDR highlights as solid black. A Knee greater than peak silently hard-clips the
-    /// entire frame — exactly the failure mode this app exists to prevent. Both are sanitized here
+    /// entire frame - exactly the failure mode this app exists to prevent. Both are sanitized here
     /// regardless of what SettingsWindow already validates, since ToneMapOptions can also be
     /// constructed directly (tests, future callers) without going through that UI.</summary>
     private static (double Knee, double Peak, bool PassThroughWholeFrame) ComputeCurveParams(
@@ -190,7 +190,7 @@ public static class ToneMapper
             Math.Min(m0, monitor.MaxLuminanceNits / monitor.SdrWhiteNits),
             2.0, double.MaxValue);
         // A PeakOverride is only honored if it's finite AND actually above the (already-sanitized)
-        // knee — anything else (non-finite, negative, or <= knee) is "absurd" and the override is
+        // knee - anything else (non-finite, negative, or <= knee) is "absurd" and the override is
         // ignored entirely in favor of the derived peak, rather than letting a bogus value survive
         // into the Math.Max floor below.
         double peak = opts.PeakOverride is { } peakOverride && double.IsFinite(peakOverride) && peakOverride > knee
@@ -258,7 +258,7 @@ public static class ToneMapper
                 else
                 {
                     // Shoulder-mapped pixels run the reference math verbatim (the factor depends
-                    // on the per-pixel max, so it cannot be tabulated) — inputs r/g/b are exact by
+                    // on the per-pixel max, so it cannot be tabulated) - inputs r/g/b are exact by
                     // LUT construction, so outputs are byte-identical to the scalar path.
                     double mClamped = Math.Min(pixelMax, peak);
                     double t = (mClamped - knee) / (peak - knee);
@@ -291,9 +291,9 @@ public static class ToneMapper
     }
 
     /// <summary>Pass 1 (M scan) with an AVX2 fast path. Exactness argument, term by term:
-    /// <see cref="HalfToFloatExactAvx2"/> is an exact FP16→FP32 widening (the conversion is always
+    /// <see cref="HalfToFloatExactAvx2"/> is an exact FP16->FP32 widening (the conversion is always
     /// exact in IEEE754); multiply-by-scale is the identical single-rounding float multiply the
-    /// scalar code performs; max against a ≥0 accumulator subsumes the scalar's MathF.Max(0, ·)
+    /// scalar code performs; max against a >=0 accumulator subsumes the scalar's MathF.Max(0, x)
     /// negative clamp; and float max is comparison-based (no rounding), so any association order
     /// yields the same M. The two semantic divergences vector max would introduce are excluded
     /// structurally: NaN-containing blocks (vector lane-max keeps other channels of a NaN pixel
@@ -332,7 +332,7 @@ public static class ToneMapper
                             Avx.Compare(hi, hi, FloatComparisonMode.UnorderedNonSignaling));
                         if (Avx.MoveMask(unordered) != 0)
                         {
-                            // NaN present in this 4-pixel block — use the reference's exact
+                            // NaN present in this 4-pixel block - use the reference's exact
                             // per-pixel NaN semantics for it.
                             localMax = MaxScalarPixels(halves, i, i + 16, lutLinear, localMax);
                             continue;
@@ -362,8 +362,8 @@ public static class ToneMapper
         return globalMax;
     }
 
-    /// <summary>Scalar tail/fallback for pass 1 — identical semantics to the reference's inner
-    /// loop (lutLinear[h] ≡ MathF.Max(0f, (float)half * scale) by construction, same MathF.Max
+    /// <summary>Scalar tail/fallback for pass 1 - identical semantics to the reference's inner
+    /// loop (lutLinear[h] == MathF.Max(0f, (float)half * scale) by construction, same MathF.Max
     /// nesting, same NaN discard-the-pixel behavior). <paramref name="start"/>/<paramref name="end"/>
     /// are half indices and always pixel-aligned (multiples of 4).</summary>
     private static float MaxScalarPixels(ReadOnlySpan<ushort> halves, int start, int end, float[] lutLinear, float localMax)
@@ -379,10 +379,10 @@ public static class ToneMapper
         return localMax;
     }
 
-    /// <summary>Exact FP16→FP32 widening for 8 halves at once (Giesen's shift/rebias algorithm —
+    /// <summary>Exact FP16->FP32 widening for 8 halves at once (Giesen's shift/rebias algorithm -
     /// .NET 8 exposes no F16C intrinsic, so this is the AVX2 equivalent). Exact for all finite
     /// values including denormals (the renormalizing subtract is exact by Sterbenz's lemma);
-    /// Inf maps to Inf; NaN stays NaN (payload bits shift, which is irrelevant — callers never
+    /// Inf maps to Inf; NaN stays NaN (payload bits shift, which is irrelevant - callers never
     /// consume NaN lanes from this routine, see ComputeGlobalMax's fallback).</summary>
     private static Vector256<float> HalfToFloatExactAvx2(Vector128<ushort> halves)
     {
@@ -405,15 +405,15 @@ public static class ToneMapper
         return Avx2.Or(o, sign).AsSingle();
     }
 
-    // ---- Per-scale LUTs (65536 entries — one per possible FP16 bit pattern) ----
+    // ---- Per-scale LUTs (65536 entries - one per possible FP16 bit pattern) ----
 
     private sealed class ToneLut
     {
-        /// <summary>Linear[h] == MathF.Max(0f, (float)halfBits(h) * scale) — the reference's
+        /// <summary>Linear[h] == MathF.Max(0f, (float)halfBits(h) * scale) - the reference's
         /// post-scale, negative-clamped channel value.</summary>
         public readonly float[] Linear = new float[65536];
 
-        /// <summary>Encoded[h] == QuantizeRoundNearest(SrgbEncode(Clamp(Linear[h], 0, 1))) — the
+        /// <summary>Encoded[h] == QuantizeRoundNearest(SrgbEncode(Clamp(Linear[h], 0, 1))) - the
         /// reference's full pass-through-branch output byte for that channel.</summary>
         public readonly byte[] Encoded = new byte[65536];
     }

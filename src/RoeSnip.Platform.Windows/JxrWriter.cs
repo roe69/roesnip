@@ -16,12 +16,12 @@ namespace RoeSnip.Platform.Windows;
 ///
 /// Encoder choice (per the acceptance gate in docs/architecture.md, actually run - not
 /// guessed): WPF's <c>WmpBitmapEncoder</c>/<c>BitmapDecoder</c> pair was tried first and FAILS the
-/// round-trip test — WPF flattens JXR to 32bpp Pbgra32 on *both* encode and decode regardless of
+/// round-trip test - WPF flattens JXR to 32bpp Pbgra32 on *both* encode and decode regardless of
 /// the source Rgba128Float bitmap supplied to it (verified empirically: a 3.0 value came back as
 /// ~0.78, i.e. clipped to [0,1] and re-encoded). Talking to WIC directly via
 /// <c>Vortice.Direct2D1</c>'s WIC bindings (namespace <see cref="Vortice.WIC"/>) with pixel format
 /// <see cref="WicPixelFormat.Format128bppRGBAFloat"/> and container format
-/// <see cref="ContainerFormat.Wmp"/> DOES preserve the float headroom — verified with the same
+/// <see cref="ContainerFormat.Wmp"/> DOES preserve the float headroom - verified with the same
 /// 3.0-in/3.0-out probe. So this class bypasses WPF's imaging stack entirely for both write and
 /// (in the test) read.</summary>
 public static class JxrWriter
@@ -39,25 +39,25 @@ public static class JxrWriter
     }
 
     /// <summary>Cross-monitor selection (item 09) HDR save: stitches every contributing monitor's
-    /// own RAW crop (<paramref name="crops"/> — one <see cref="SpanningFrameCrop"/> per monitor the
+    /// own RAW crop (<paramref name="crops"/> - one <see cref="SpanningFrameCrop"/> per monitor the
     /// selection actually touches) into one canvas sized to <paramref name="virtualRect"/>, then
     /// writes it through the exact same WIC 128bppRGBAFloat encode path <see cref="Write"/> uses for
     /// a single monitor.
     ///
-    /// Well-defined despite different monitors' own SDR-white/peak photometrics — raw scRGB is ONE
+    /// Well-defined despite different monitors' own SDR-white/peak photometrics - raw scRGB is ONE
     /// absolute linear space (1.0 = 80 nits) for every monitor, independent of that monitor's own
     /// SDR white level or peak brightness. Per-monitor photometrics only ever enter into
     /// TONE-MAPPING (Core.Color.ToneMapper / SdrImage.FromCapturedFrame), a completely different code
-    /// path this never touches — every pixel here goes through <see cref="CapturedFrame.ReadPixelScRgb"/>,
+    /// path this never touches - every pixel here goes through <see cref="CapturedFrame.ReadPixelScRgb"/>,
     /// the SAME single well-defined per-pixel decode <see cref="BuildFloatBuffer"/> already uses for
     /// the single-monitor case (Fp16 pass-through, or Bgra8 decoded via the sRGB EOTF and rescaled by
-    /// that specific monitor's own SdrWhiteNits) — so two crops from monitors with different
+    /// that specific monitor's own SdrWhiteNits) - so two crops from monitors with different
     /// photometrics are already directly comparable in the same units (linear scRGB, 1.0 = 80 nits)
     /// by the time either one is written to the canvas; there is nothing left to reconcile between
     /// them.
     ///
     /// Gaps (no contributing monitor covers part of the rect) are left at linear (0,0,0) with alpha
-    /// 1 — black, opaque — the same documented choice as the SDR spanning composite
+    /// 1 - black, opaque - the same documented choice as the SDR spanning composite
     /// (OverlaySession.RenderSpanningSelection), just in linear scRGB instead of BGRA8. Ported from
     /// the frozen WPF app's src/RoeSnip/Imaging/JxrWriter.cs.</summary>
     public static void WriteSpanning(string path, RectPhysical virtualRect, IReadOnlyList<SpanningFrameCrop> crops)
@@ -84,7 +84,7 @@ public static class JxrWriter
         {
             throw new InvalidOperationException(
                 $"WIC JXR encoder negotiated an unexpected pixel format ({pixelFormat}) instead of " +
-                "128bppRGBAFloat — HDR headroom would be lost.");
+                "128bppRGBAFloat - HDR headroom would be lost.");
         }
 
         frameEncode.WritePixels((uint)height, stride, floatPixels);
@@ -135,11 +135,11 @@ public static class JxrWriter
     /// <summary>Cross-monitor selection (item 09) HDR save: same tightly-packed R32G32B32A32Float
     /// layout as <see cref="BuildFloatBuffer"/>, sized to the spanning selection's own virtual canvas
     /// (<paramref name="width"/> x <paramref name="height"/>) instead of one frame's crop. Every
-    /// pixel starts as opaque linear black (the documented gap fill — see
+    /// pixel starts as opaque linear black (the documented gap fill - see
     /// <see cref="WriteSpanning"/>'s own doc comment) and is then overwritten by whichever crop(s) in
     /// <paramref name="crops"/> cover it, each read through the same
     /// <see cref="CapturedFrame.ReadPixelScRgb"/> per-pixel decode <see cref="BuildFloatBuffer"/>
-    /// uses — so a pixel's monitor of origin never affects its meaning, only which raw bytes back
+    /// uses - so a pixel's monitor of origin never affects its meaning, only which raw bytes back
     /// it.</summary>
     private static byte[] BuildSpanningFloatBuffer(
         IReadOnlyList<SpanningFrameCrop> crops, int width, int height, out uint stride)
@@ -148,7 +148,7 @@ public static class JxrWriter
         stride = (uint)(width * bytesPerPixel);
         var buffer = new byte[stride * (uint)height];
 
-        // Prefill every pixel's alpha to opaque (RGB already zero-initialized = linear black) —
+        // Prefill every pixel's alpha to opaque (RGB already zero-initialized = linear black) -
         // gaps that no crop below ever touches stay exactly this: opaque black, matching the SDR
         // spanning composite's own documented gap fill.
         for (int y = 0; y < height; y++)
@@ -165,7 +165,7 @@ public static class JxrWriter
             var r = crop.LocalCropPx.Normalized();
             if (r.Left < 0 || r.Top < 0 || r.Right > crop.Frame.Width || r.Bottom > crop.Frame.Height)
             {
-                // A crop rect out of bounds for its own frame is a caller bug — OverlayController
+                // A crop rect out of bounds for its own frame is a caller bug - OverlayController
                 // derives every crop from the same intersected local selection the SDR spanning
                 // composite already validated via SdrImage.Crop's own bounds check. This is a save
                 // path (user explicitly asked to write a file), not a per-frame hot loop, so fail
@@ -179,7 +179,7 @@ public static class JxrWriter
                 int destY = crop.DestY + y;
                 if (destY < 0 || destY >= height)
                 {
-                    continue; // defensive — geometry from OverlayController should never produce this
+                    continue; // defensive - geometry from OverlayController should never produce this
                 }
                 int srcY = r.Top + y;
                 int rowOffset = destY * (int)stride;

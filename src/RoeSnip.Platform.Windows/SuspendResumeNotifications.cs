@@ -8,14 +8,14 @@ namespace RoeSnip.Platform.Windows;
 /// (PowerRegisterSuspendResumeNotification, Win8+). This exists because
 /// SystemEvents.PowerModeChanged is NOT a reliable resume signal: .NET's SystemEvents maps only
 /// PBT_APMRESUMESUSPEND/RESUMECRITICAL/RESUMESTANDBY to PowerModes.Resume and silently drops
-/// PBT_APMRESUMEAUTOMATIC — the one broadcast every wake actually delivers on modern
+/// PBT_APMRESUMEAUTOMATIC - the one broadcast every wake actually delivers on modern
 /// standby-capable machines. Measured on the dev machine (2026-07-23 log audit): 10 sleep/wake
-/// cycles, 10 DisplaySettingsChanged bursts, ZERO PowerModeChanged(Resume) deliveries — the whole
+/// cycles, 10 DisplaySettingsChanged bursts, ZERO PowerModeChanged(Resume) deliveries - the whole
 /// post-sleep capture-stack re-warm was dead code. This registration hears PBT_APMRESUMEAUTOMATIC
 /// and PBT_APMRESUMESUSPEND both; TrayApp keeps the SystemEvents subscription as a belt and
 /// dedupes the two sources.
 ///
-/// The callback arrives on a power-manager thread and must return quickly — the registered
+/// The callback arrives on a power-manager thread and must return quickly - the registered
 /// onResume delegate has to stay tiny (TrayApp.OnSystemResumed only notes the resume and
 /// schedules a background task, which qualifies).</summary>
 public static class SuspendResumeNotifications
@@ -33,7 +33,7 @@ public static class SuspendResumeNotifications
         public IntPtr Context;
     }
 
-    // The delegate must stay rooted for the registration's lifetime — the native side holds only
+    // The delegate must stay rooted for the registration's lifetime - the native side holds only
     // the raw function pointer, and a collected delegate means a callback into freed memory.
     private static DeviceNotifyCallbackRoutine? s_callback;
     private static Action<string>? s_onResume;
@@ -41,7 +41,7 @@ public static class SuspendResumeNotifications
 
     /// <summary>Registers for suspend/resume callbacks; on any resume broadcast, invokes
     /// <paramref name="onResume"/> with a short source description. Idempotent-ish: call once at
-    /// startup. Never throws — a failed registration is logged and the caller's SystemEvents belt
+    /// startup. Never throws - a failed registration is logged and the caller's SystemEvents belt
     /// still stands.</summary>
     public static void Register(Action<string> onResume)
     {

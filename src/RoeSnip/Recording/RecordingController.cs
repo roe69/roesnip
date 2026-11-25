@@ -15,41 +15,41 @@ using RoeSnip.Core.Recording.Gif;
 // Recording-core-extraction: RecordingSizeEstimator moved to RoeSnip.Core.Recording. A plain
 // `using RoeSnip.Core.Recording;` would also pull in that namespace's own MultiMonitorRecording,
 // which collides with this file's enclosing RoeSnip.Recording.MultiMonitorRecording (the WPF app's
-// own copy, kept separate — see that class's doc comment) — an alias avoids the ambiguity.
+// own copy, kept separate - see that class's doc comment) - an alias avoids the ambiguity.
 using RecordingSizeEstimator = RoeSnip.Core.Recording.RecordingSizeEstimator;
 
 namespace RoeSnip.Recording;
 
-/// <summary>Point-in-time automation snapshot of the active recording session — see
+/// <summary>Point-in-time automation snapshot of the active recording session - see
 /// RecordingSession.GetAutomationSnapshot. SelectionVirtualDesktopPx is virtual-desktop-physical
-/// pixels (the convention AutomationServer's wire protocol uses everywhere) — a straight passthrough
+/// pixels (the convention AutomationServer's wire protocol uses everywhere) - a straight passthrough
 /// of RecordingSession's own internal selection state as of the multi-monitor recording phase 1
-/// coordinate migration (PLAN-MULTIMON-RECORDING.md §4/§6); it used to require folding a single
+/// coordinate migration (PLAN-MULTIMON-RECORDING.md sec 4/sec 6); it used to require folding a single
 /// monitor's own origin in at this boundary, before that state was natively absolute.</summary>
 internal readonly record struct RecordingAutomationSnapshot(
     string Phase, RecordingFormat Format, RectPhysical SelectionVirtualDesktopPx,
     string EstimateText, GifSizePreset Preset, int Fps);
 
-/// <summary>Owns the single active recording (if any) for the whole process — mirrors
+/// <summary>Owns the single active recording (if any) for the whole process - mirrors
 /// OverlayController.IsSessionActive/s_activeSession's shape exactly. Wired into
 /// AppComposition.StartRecording from Program.cs's RunCaptureFlowAsync (see that hook's doc
 /// comment for the CaptureGate ownership-transfer contract this class must honor) and into
 /// App/TrayApp.cs's TriggerCapture (PrtScr while recording advances the setup/preview state
-/// machine instead of starting a new capture — see RecordingSession.RequestPrtScrAction).</summary>
+/// machine instead of starting a new capture - see RecordingSession.RequestPrtScrAction).</summary>
 internal static class RecordingController
 {
     private static RecordingSession? s_active; // set/cleared on the UI thread only
 
-    /// <summary>True for the WHOLE recording flow — Setup (chrome shown, nothing captured yet),
-    /// Recording, and Reviewing (stopped, take not yet saved) — not just while frames are actually
+    /// <summary>True for the WHOLE recording flow - Setup (chrome shown, nothing captured yet),
+    /// Recording, and Reviewing (stopped, take not yet saved) - not just while frames are actually
     /// being captured. TrayApp.TriggerCapture checks this BEFORE MarkTriggerTimestamp/flash/
     /// anything else, and CaptureGate is held by RecordingController across all three phases.</summary>
     public static bool IsActive => s_active is not null;
 
     /// <summary>Called via the AppComposition.StartRecording hook from RunCaptureFlowAsync, on the
-    /// UI thread (WinForms message-loop thread — same thread OverlaySession itself runs on). The
+    /// UI thread (WinForms message-loop thread - same thread OverlaySession itself runs on). The
     /// selection is rounded down to even dimensions here (H.264 4:2:0 chroma subsampling requires
-    /// it) — upstream of both encoders and RegionRecorder's own crop box, so nobody downstream ever
+    /// it) - upstream of both encoders and RegionRecorder's own crop box, so nobody downstream ever
     /// sees an odd dimension.</summary>
     internal static Task StartAsync(
         MonitorInfo monitor, RectPhysical selectionPx, RecordingFormat format,
@@ -57,7 +57,7 @@ internal static class RecordingController
     {
         if (s_active is not null)
         {
-            // Shouldn't happen — CaptureGate already prevents a second overlay/capture stack while
+            // Shouldn't happen - CaptureGate already prevents a second overlay/capture stack while
             // one is live, and a recording holds the gate for its whole lifetime (Setup through
             // Reviewing).
             throw new InvalidOperationException("A recording is already active.");
@@ -67,11 +67,11 @@ internal static class RecordingController
         var session = new RecordingSession(monitor, evenSelection, format, settings, notifier);
         try
         {
-            session.Start(); // synchronous chrome/outline setup — throws on failure, cleans up partial state itself
+            session.Start(); // synchronous chrome/outline setup - throws on failure, cleans up partial state itself
         }
         catch
         {
-            throw; // s_active was never set — RunCaptureFlowAsync's catch handles the CaptureGate non-transfer
+            throw; // s_active was never set - RunCaptureFlowAsync's catch handles the CaptureGate non-transfer
         }
 
         s_active = session;
@@ -80,7 +80,7 @@ internal static class RecordingController
 
     /// <summary>TrayApp calls this when PrtScr is pressed while a recording is active. Name kept
     /// for compatibility with TrayApp.cs's existing call site (outside this workstream); behavior
-    /// now advances the setup/preview state machine one step instead of always stop+save — see
+    /// now advances the setup/preview state machine one step instead of always stop+save - see
     /// RecordingSession.RequestPrtScrAction for the exact per-phase mapping.</summary>
     public static void RequestStopAndSave() => s_active?.RequestPrtScrAction();
 
@@ -99,17 +99,17 @@ internal static class RecordingController
     //
     // Real bug found via live automation verification (session-assignment race investigation):
     // these four used to be one-line "s_active?.Method(...) ?? "no active recording session""
-    // expressions — mirroring RequestStopAndSave's own harmless "s_active?." pattern above, which
+    // expressions - mirroring RequestStopAndSave's own harmless "s_active?." pattern above, which
     // is safe there ONLY because RequestStopAndSave's return type is void, so there is no return
     // value for "?." to forward. Every method here returns "null on success, else an error string"
     // (see e.g. RecordingSession.InvokeChromeAction's own doc comment), and "?." simply FORWARDS
-    // whatever the call returns — including a legitimate null success. "??" then can't tell "the
+    // whatever the call returns - including a legitimate null success. "??" then can't tell "the
     // receiver was null" apart from "the receiver was NOT null and its method returned null to mean
     // success": both look like a null left-hand side, so "?? "no active recording session""
     // clobbered every successful mutation into a false error. Live-verified: `chrome`/`preset`/
     // `fps`/`select` commands against an active recording session reported ok:false on every call
     // while the state they were supposed to change visibly changed anyway (confirmed via a
-    // following `state` snapshot) — the mutation always landed; only the reported result lied.
+    // following `state` snapshot) - the mutation always landed; only the reported result lied.
     // Reading s_active into a local once and branching on IT (not on the method's own return
     // value) is the fix: the fallback string is now used exactly when there is no session, never
     // as a stand-in for "the session's own answer happened to be null".
@@ -149,7 +149,7 @@ internal static class RecordingController
     }
 }
 
-/// <summary>One in-progress recording flow — a three-phase state machine (feature 10 redesign):
+/// <summary>One in-progress recording flow - a three-phase state machine (feature 10 redesign):
 ///   Setup     - RegionOutline + RecordingChrome are up, nothing is being captured. The user can
 ///               flip the MP4-only audio toggles and either Start or Cancel.
 ///   Capturing - BeginCapture() built the <see cref="RegionRecorder"/> (capture), the chosen
@@ -160,37 +160,37 @@ internal static class RecordingController
 ///               File.Move); Restart discards it and returns to Setup; Cancel discards it and
 ///               closes the whole session.
 /// <see cref="TeardownSession"/> is the single terminal path (mirrors OverlayController.
-/// OverlaySession.Finish's "single terminal point" pattern) — reached from SaveAndFinish,
+/// OverlaySession.Finish's "single terminal point" pattern) - reached from SaveAndFinish,
 /// CancelAndDiscard, or an unrecoverable failure partway through Setup/Capturing.</summary>
 internal sealed class RecordingSession
 {
     private enum Phase { Setup, Capturing, Reviewing }
 
-    // The monitor the ACTIVE RegionRecorder is currently reading from — not readonly: a cross-
-    // monitor drag handoff (HandoffToMonitor, multi-monitor recording phase 1 — see
-    // PLAN-MULTIMON-RECORDING.md §3) reassigns this when the region leaves its bounds. Every other
+    // The monitor the ACTIVE RegionRecorder is currently reading from - not readonly: a cross-
+    // monitor drag handoff (HandoffToMonitor, multi-monitor recording phase 1 - see
+    // PLAN-MULTIMON-RECORDING.md sec 3) reassigns this when the region leaves its bounds. Every other
     // consumer (tone-map recompute, RegionRecorder construction/relative-coordinate conversion)
     // always reads the CURRENT value, never caches its own copy.
     private MonitorInfo _monitor;
-    // Snapshot of every enumerated monitor, taken once in Start() — the set a handoff/BeginCapture
+    // Snapshot of every enumerated monitor, taken once in Start() - the set a handoff/BeginCapture
     // snap picks a destination from (MultiMonitorRecording.FindOwningMonitor). Deliberately NOT
     // re-enumerated live: SystemEvents.DisplaySettingsChanged already force-stops the whole take on
     // ANY topology change once Capturing (see BeginCapture's own subscription), so a stale snapshot
-    // only matters for the narrow Setup-phase window before that handler is even wired up — an
+    // only matters for the narrow Setup-phase window before that handler is even wired up - an
     // accepted phase-1 gap, not a correctness issue for the take itself.
     private IReadOnlyList<MonitorInfo> _allMonitors = Array.Empty<MonitorInfo>();
-    private RectPhysical _selectionPx; // position slides when the user drags RegionOutline; size fixed. Virtual-desktop-absolute physical pixels (multi-monitor recording phase 1, PLAN-MULTIMON-RECORDING.md §4) — NOT monitor-relative, despite the ctor parameter of the same name being monitor-relative (converted once, at the top of Start()).
+    private RectPhysical _selectionPx; // position slides when the user drags RegionOutline; size fixed. Virtual-desktop-absolute physical pixels (multi-monitor recording phase 1, PLAN-MULTIMON-RECORDING.md sec 4) - NOT monitor-relative, despite the ctor parameter of the same name being monitor-relative (converted once, at the top of Start()).
     private readonly RecordingFormat _format;
     private readonly RoeSnipSettings _settings;
     private readonly ITrayNotifier? _notifier;
 
     private RegionRecorder? _recorder;
-    // Spanning mode (multi-monitor recording phase 2, PLAN-MULTIMON-RECORDING.md §1): non-null
-    // exactly when the ACTIVE take spans 2+ monitors — mutually exclusive with _recorder above,
+    // Spanning mode (multi-monitor recording phase 2, PLAN-MULTIMON-RECORDING.md sec 1): non-null
+    // exactly when the ACTIVE take spans 2+ monitors - mutually exclusive with _recorder above,
     // never both set at once. Slots and Recorders are always the same length and index-aligned
     // (slot[i] describes recorder[i]'s own monitor/crop/canvas-destination/tone-map).
     //
-    // Bundled into ONE record published behind ONE Volatile reference — deliberately NOT two
+    // Bundled into ONE record published behind ONE Volatile reference - deliberately NOT two
     // parallel fields (Slots array, Recorders array) written/read independently. Two independent
     // Volatile.Write calls (slots then recorders) paired with EncoderLoopSpanning reading them back
     // in the OPPOSITE order (recorders then slots) let the encoder thread observe a half-published
@@ -198,15 +198,15 @@ internal sealed class RecordingSession
     // mismatch then indexes stale recorders against fresh slots (or the reverse), which can throw
     // (IndexOutOfRangeException on a shorter array, a length-mismatched SdrImage/Buffer.BlockCopy
     // throw from the resulting garbled canvas) well after the two writes/reads that actually caused
-    // it. A single reference swap has no such gap — the whole pair becomes visible atomically, so
+    // it. A single reference swap has no such gap - the whole pair becomes visible atomically, so
     // "new slots, new recorders" and "old slots, old recorders" are the only two states EncoderLoopSpanning
     // can ever observe.
     //
     // Published via Volatile.Write from the UI thread (BeginCapture/OnSpanningRegionMoved's rebuild
-    // paths) and read via Volatile.Read from EncoderLoopSpanning — same cross-thread-publish
+    // paths) and read via Volatile.Read from EncoderLoopSpanning - same cross-thread-publish
     // discipline HandoffToMonitor already established for the single-recorder case, generalized to
     // a bundled pair. A session that starts spanning STAYS in spanning mode (EncoderLoopSpanning) for
-    // its whole take, even if a drag later reduces it to one intersected monitor — see
+    // its whole take, even if a drag later reduces it to one intersected monitor - see
     // OnSpanningRegionMoved's own doc comment for why (SpanningCanvasCompositor's N==1 case is
     // exactly as cheap as the dedicated single-recorder path, so there is no reason to tear down and
     // restart the encoder thread just to hop back to EncoderLoop).
@@ -219,11 +219,11 @@ internal sealed class RecordingSession
     private AudioCaptureEngine? _audio;
     private Thread? _encoderThread;
     private System.Threading.Timer? _elapsedTimer;
-    // Spanning-mode drag-rebuild debounce (see RestartSpanningRebuildDebounce's own doc comment) —
+    // Spanning-mode drag-rebuild debounce (see RestartSpanningRebuildDebounce's own doc comment) -
     // UI thread only, created lazily on the first qualifying drag tick of a spanning take. Stopped
     // by HardStopCaptureIfNeeded when the take ends, purely so a Tick already queued at that moment
     // can't fire against a torn-down session (FireSpanningRebuildDebounce's own null-topology guard
-    // would no-op it anyway — the Stop() is belt-and-braces, not load-bearing).
+    // would no-op it anyway - the Stop() is belt-and-braces, not load-bearing).
     private DispatcherTimer? _spanningRebuildDebounce;
     private RectPhysical _pendingSpanSelection;
     private IReadOnlyList<MonitorInfo>? _pendingSpanIntersecting;
@@ -234,7 +234,7 @@ internal sealed class RecordingSession
     private int _targetFps;
     private string? _mp4TempPath;
     private string? _gifTempPath;
-    // GIF downscaled render (quality/fps expansion workstream; Compact 0.75 / Minimal 0.5 — see
+    // GIF downscaled render (quality/fps expansion workstream; Compact 0.75 / Minimal 0.5 - see
     // GifEncoderOptions.RenderScale's own doc comment): the SCALED canvas dimensions GifEncoder.Create
     // was actually opened with, and the scale that produced them. Fixed at BeginCapture, read by
     // EncoderLoop every frame; 1.0/selection-sized is every other tier's (and MP4's) unchanged
@@ -242,7 +242,7 @@ internal sealed class RecordingSession
     private int _gifCanvasWidth;
     private int _gifCanvasHeight;
     private double _gifRenderScale = 1.0;
-    private int _ended; // Interlocked guard — TeardownSession must run its body exactly once
+    private int _ended; // Interlocked guard - TeardownSession must run its body exactly once
 
     private Phase _phase = Phase.Setup;
     private bool _mic;
@@ -254,7 +254,7 @@ internal sealed class RecordingSession
     // Pause/resume of a live take (CHANGE 2): a single accumulator drives both the excluded-time
     // media clock (EncoderLoop/DrainAudio) and the pause-aware elapsed HUD. _paused/_pausedTicks are
     // read from the encoder thread (Volatile.Read for the latter) and written only from the UI
-    // thread (Pause/Resume, both only reachable from chrome button clicks) — never written from the
+    // thread (Pause/Resume, both only reachable from chrome button clicks) - never written from the
     // encoder thread, so no lock is needed for the read side.
     private volatile bool _paused;
     private long _pausedTicks; // total paused Stopwatch ticks accumulated across all pauses this take
@@ -263,7 +263,7 @@ internal sealed class RecordingSession
     private bool _saving; // reentrancy guard: the SaveFileDialog pumps messages, so a PrtScr press mid-dialog re-enters SaveAndFinish
     // Sharing/* subsystem: same reentrancy role as _saving (a hard stop must never run twice
     // concurrently against one pipeline), checked alongside it in both RequestShare and
-    // SaveAndFinish's own entry guards — see RequestShare's own doc comment for why Share needs a
+    // SaveAndFinish's own entry guards - see RequestShare's own doc comment for why Share needs a
     // SEPARATE flag rather than reusing _saving outright (their guard windows don't nest the same
     // way: Share never re-enters itself via a nested message pump the way Save's SaveFileDialog does).
     private bool _sharing;
@@ -291,7 +291,7 @@ internal sealed class RecordingSession
     {
         _monitor = monitor;
         // selectionPx arrives MONITOR-RELATIVE here (OverlayResult.SelectionPx's own documented
-        // convention — Program.cs/OverlayController are untouched by this workstream, see plan §6's
+        // convention - Program.cs/OverlayController are untouched by this workstream, see plan sec 6's
         // "recommend deriving inside StartAsync" note, reconciled: the field converts to
         // virtual-desktop-absolute at the top of Start() instead, one line, no delegate-signature
         // ripple needed). Stored as given for that one line to convert from.
@@ -305,7 +305,7 @@ internal sealed class RecordingSession
     /// whichever take eventually gets captured), shows the region outline + chrome, and wires the
     /// chrome's events. Synchronous and throws on failure (cleaning up whatever it already
     /// constructed) so RecordingController never records a partially-started session as active. No
-    /// capture pipeline exists yet — that is <see cref="BeginCapture"/>'s job, run only once the
+    /// capture pipeline exists yet - that is <see cref="BeginCapture"/>'s job, run only once the
     /// user presses Start in the chrome.</summary>
     public void Start()
     {
@@ -313,8 +313,8 @@ internal sealed class RecordingSession
         {
             _uiDispatcher = Dispatcher.CurrentDispatcher;
 
-            // Multi-monitor recording phase 1 (PLAN-MULTIMON-RECORDING.md §4): from here on,
-            // _selectionPx is virtual-desktop-absolute physical pixels, never monitor-relative — the
+            // Multi-monitor recording phase 1 (PLAN-MULTIMON-RECORDING.md sec 4): from here on,
+            // _selectionPx is virtual-desktop-absolute physical pixels, never monitor-relative - the
             // ctor's own selectionPx parameter is the one and only monitor-relative value this class
             // ever sees (OverlayResult.SelectionPx's documented convention), converted exactly once,
             // right here, before RegionOutline/RecordingChrome/anything else reads it.
@@ -324,7 +324,7 @@ internal sealed class RecordingSession
                 homeBounds.Left + _selectionPx.Right, homeBounds.Top + _selectionPx.Bottom);
 
             // Snapshot every monitor once for the whole session's handoff/clamp decisions (see the
-            // field's own doc comment). Never empty even if enumeration genuinely fails — falling
+            // field's own doc comment). Never empty even if enumeration genuinely fails - falling
             // back to just the home monitor keeps FindOwningMonitor/UnionBounds well-defined instead
             // of degrading to a magic (0,0,0,0) union.
             var enumerated = MonitorEnumerator.Enumerate();
@@ -348,7 +348,7 @@ internal sealed class RecordingSession
                 ? RecordingSizeEstimator.ClampFps(requestedFps, RecordingSizeEstimator.GifMinFps, RecordingSizeEstimator.GifMaxFps)
                 : RecordingSizeEstimator.ClampFps(requestedFps, RecordingSizeEstimator.Mp4MinFps, RecordingSizeEstimator.Mp4MaxFps);
 
-            // Fixed tone-map options, computed ONCE here from monitor metadata — never re-derived
+            // Fixed tone-map options, computed ONCE here from monitor metadata - never re-derived
             // per frame or per take (a Restart reuses these). Per-frame auto-derived peak
             // (ToneMapper's normal path also folds in the CURRENT frame's own max) would visibly
             // pump exposure on fluctuating HDR content, an auto-exposure-style flicker; pinning
@@ -357,7 +357,7 @@ internal sealed class RecordingSession
             // content. Factored into ComputeFixedToneMapOpts (multi-monitor recording phase 1) so
             // BeginCapture's Setup-drag-onto-another-monitor snap and HandoffToMonitor's live
             // cross-monitor handoff can both re-pin it against a DIFFERENT monitor later without
-            // duplicating this formula — see PLAN-MULTIMON-RECORDING.md §2 ("recomputed per monitor,
+            // duplicating this formula - see PLAN-MULTIMON-RECORDING.md sec 2 ("recomputed per monitor,
             // never blended").
             _fixedToneMapOpts = ComputeFixedToneMapOpts(_monitor);
 
@@ -369,7 +369,7 @@ internal sealed class RecordingSession
 
             // The visible "this area will be recorded" frame (both formats): dashed outline just
             // OUTSIDE the region; the inner is unpainted (true click-through) except while Shift/
-            // Ctrl is held for a region move — see RegionOutline's doc. Shown for the whole session
+            // Ctrl is held for a region move - see RegionOutline's doc. Shown for the whole session
             // (Setup through Reviewing), not just while actually capturing.
             _outline = new RegionOutline(_allMonitors, _selectionPx);
             _outline.RegionChanged += OnRegionMoved;
@@ -387,7 +387,7 @@ internal sealed class RecordingSession
             _chrome.RestartConfirmed += RestartTake;
             _chrome.SaveRequested += () => SaveAndFinish();
             // Sharing/* subsystem: RecordingChrome.ShareRequested's own doc comment documents this
-            // exact subscription as the missing wire — see RequestShare's own doc comment for the
+            // exact subscription as the missing wire - see RequestShare's own doc comment for the
             // full hard-stop/upload/re-arm design.
             _chrome.ShareRequested += RequestShare;
             _chrome.CopyRequested += RequestCopyToClipboard;
@@ -416,8 +416,8 @@ internal sealed class RecordingSession
 
     /// <summary>The fixed tone-map formula (Start()'s own original comment has the "why fixed, not
     /// per-frame" reasoning) factored out so it can be re-run against a DIFFERENT monitor's own
-    /// photometrics — multi-monitor recording phase 1's BeginCapture snap and HandoffToMonitor both
-    /// need this, and per PLAN-MULTIMON-RECORDING.md §2 it is always a fresh computation against the
+    /// photometrics - multi-monitor recording phase 1's BeginCapture snap and HandoffToMonitor both
+    /// need this, and per PLAN-MULTIMON-RECORDING.md sec 2 it is always a fresh computation against the
     /// new monitor alone, never blended with the old one (the resulting exposure "pop" across a
     /// handoff is documented as correct, not a bug).</summary>
     private RoeSnip.Color.ToneMapOptions ComputeFixedToneMapOpts(MonitorInfo monitor)
@@ -429,7 +429,7 @@ internal sealed class RecordingSession
     }
 
     /// <summary>PrtScr while a recording flow is active: advances the state machine by one logical
-    /// step rather than the old unconditional "stop and save" — Setup begins capturing (that is the
+    /// step rather than the old unconditional "stop and save" - Setup begins capturing (that is the
     /// one pending action while the setup panel is up), Capturing stops into review (matching the
     /// old PrtScr-stops-a-recording expectation), Reviewing saves and finishes (the one pending
     /// action left once a take is done). Marshals to the UI thread since TrayApp's hotkey path can
@@ -450,7 +450,7 @@ internal sealed class RecordingSession
     /// <summary>RecordingChrome's Setup-panel audio toggles changed (feature 10 redesign moved
     /// these off the toolbar's record menu). Persists immediately via SettingsStore, the same
     /// split every other settings-editing flow in the app uses (see OverlayWindow.
-    /// TrySaveLiveSettings) — best-effort; a disk hiccup here must not interrupt the recording.</summary>
+    /// TrySaveLiveSettings) - best-effort; a disk hiccup here must not interrupt the recording.</summary>
     private void SetAudioToggle(bool? mic, bool? systemAudio)
     {
         if (mic is { } m)
@@ -476,9 +476,9 @@ internal sealed class RecordingSession
     /// <summary>RecordingChrome's Setup-panel size row changed (shown for BOTH formats as of the
     /// recording-size-tiers workstream). Persists immediately, same best-effort split as
     /// <see cref="SetAudioToggle"/>, to whichever settings key matches THIS session's own format
-    /// (GifSizePreset for a GIF take, Mp4SizePreset for an MP4 take — the two stay independent, see
+    /// (GifSizePreset for a GIF take, Mp4SizePreset for an MP4 take - the two stay independent, see
     /// RoeSnipSettings.Mp4SizePreset's own doc comment) AND updates the matching field so it's
-    /// exactly what <see cref="BeginCapture"/> reads from at the NEXT Start — the row is disabled
+    /// exactly what <see cref="BeginCapture"/> reads from at the NEXT Start - the row is disabled
     /// outside Setup (see RecordingChrome.ApplyState), so there is no live take whose already-built
     /// encoder this could retroactively affect.</summary>
     private void SetSizePreset(GifSizePreset preset)
@@ -505,11 +505,11 @@ internal sealed class RecordingSession
     }
 
     /// <summary>RecordingChrome's Setup-panel FPS row changed (quality/framerate decoupling
-    /// workstream, stage 3) — mirrors <see cref="SetSizePreset"/> exactly: persists to whichever
+    /// workstream, stage 3) - mirrors <see cref="SetSizePreset"/> exactly: persists to whichever
     /// settings key matches THIS session's own format (GifFps for a GIF take, Mp4Fps for an MP4
-    /// take — see <see cref="RoeSnip.RoeSnipSettings.Mp4Fps"/>'s own doc comment for why the two
+    /// take - see <see cref="RoeSnip.RoeSnipSettings.Mp4Fps"/>'s own doc comment for why the two
     /// stay independent) and updates <see cref="_targetFps"/> so it's exactly what
-    /// <see cref="BeginCapture"/> reads from at the NEXT Start — the row is disabled outside Setup
+    /// <see cref="BeginCapture"/> reads from at the NEXT Start - the row is disabled outside Setup
     /// (see RecordingChrome.ApplyState), so there is no live take whose already-built recorder/
     /// encoder this could retroactively affect.</summary>
     private void SetFps(int fps)
@@ -532,22 +532,22 @@ internal sealed class RecordingSession
     /// <summary>The user moved or resized the recorded region (RegionOutline), OR (via
     /// SetSelectionForAutomation) an automation caller drove the same production path. UI thread.
     /// Re-anchor the HUD to the region's new spot and, if a recorder is live (Capturing OR
-    /// Reviewing — a soft-stopped take is a paused take, its recorder stays alive so Resume can
+    /// Reviewing - a soft-stopped take is a paused take, its recorder stays alive so Resume can
     /// continue it, see <see cref="Resume"/>), keep it following.
     ///
-    /// Multi-monitor recording phase 2 (PLAN-MULTIMON-RECORDING.md §1/§3) branches here on which
-    /// mode the ACTIVE take is already in — a take's mode, once chosen at BeginCapture, never
+    /// Multi-monitor recording phase 2 (PLAN-MULTIMON-RECORDING.md sec 1/sec 3) branches here on which
+    /// mode the ACTIVE take is already in - a take's mode, once chosen at BeginCapture, never
     /// changes for the rest of that take (see <see cref="_spanTopology"/>'s own doc comment for
     /// why): a SPANNING take (<see cref="_spanTopology"/> non-null) always routes through
     /// <see cref="OnSpanningRegionMoved"/>, including a drag that would momentarily reduce it to one
     /// intersected monitor. A SINGLE-monitor take keeps phase 1's exact original behavior below
-    /// unchanged — same-monitor moves slide the existing recorder's crop origin (lock-free —
+    /// unchanged - same-monitor moves slide the existing recorder's crop origin (lock-free -
     /// <see cref="RegionRecorder.SetOrigin"/>'s own doc); a region that stops being fully contained
     /// in its current monitor's bounds triggers a cross-monitor HANDOFF (snap to the destination
-    /// monitor, never a live promotion to spanning mid-take — drawing the selection spanning up
+    /// monitor, never a live promotion to spanning mid-take - drawing the selection spanning up
     /// front in Setup, so BeginCapture picks spanning mode from the start, is the supported way to
     /// get a spanning take; see <see cref="OnSpanningRegionMoved"/>'s doc for the full reasoning).
-    /// <paramref name="selectionPx"/> is virtual-desktop-absolute (§4) — the outline itself is what
+    /// <paramref name="selectionPx"/> is virtual-desktop-absolute (sec 4) - the outline itself is what
     /// already computed/clamped it; this only propagates it to the recorder(s)/chrome.</summary>
     private void OnRegionMoved(RectPhysical selectionPx)
     {
@@ -563,7 +563,7 @@ internal sealed class RecordingSession
         var recorder = _recorder;
         if (recorder is null)
         {
-            return; // Setup phase — nothing capturing yet; outline/chrome are already in sync above
+            return; // Setup phase - nothing capturing yet; outline/chrome are already in sync above
         }
 
         if (MultiMonitorRecording.Contains(_monitor.BoundsPx, selectionPx))
@@ -574,12 +574,12 @@ internal sealed class RecordingSession
         }
 
         // The region left its current monitor's bounds. Find whichever monitor now claims the
-        // majority of it — "snap, don't split" (plan §3).
+        // majority of it - "snap, don't split" (plan sec 3).
         var dest = MultiMonitorRecording.FindOwningMonitor(selectionPx, _allMonitors);
         if (dest is null || dest.DeviceName == _monitor.DeviceName)
         {
             // No OTHER monitor claims it (dragged into a dead gap between non-adjacent monitors, or
-            // it's still mostly overlapping the current one at a boundary sliver) — stay on the
+            // it's still mostly overlapping the current one at a boundary sliver) - stay on the
             // current monitor. RegionRecorder.SetOrigin's own internal clamp keeps the crop box
             // inside the captured surface regardless of how far outside its bounds selectionPx now
             // reads.
@@ -592,13 +592,13 @@ internal sealed class RecordingSession
     }
 
     /// <summary>Tears down the recorder on the monitor the region just left and builds a fresh one
-    /// on the monitor it now mostly overlaps — the phase-1 "snap, not spanning" handoff
-    /// (PLAN-MULTIMON-RECORDING.md §3). UI thread only (called from <see cref="OnRegionMoved"/>,
-    /// itself always UI-thread — RegionOutline's own WM_MOUSEMOVE handler or an automation
+    /// on the monitor it now mostly overlaps - the phase-1 "snap, not spanning" handoff
+    /// (PLAN-MULTIMON-RECORDING.md sec 3). UI thread only (called from <see cref="OnRegionMoved"/>,
+    /// itself always UI-thread - RegionOutline's own WM_MOUSEMOVE handler or an automation
     /// `select`). Synchronous, per the plan's own "measure before committing to async" note:
     /// <see cref="RegionRecorder.Start"/> does not block waiting for a first frame (see that
     /// method's own doc comment), so this is bounded by device/session construction cost, not a
-    /// capture wait — if that assumption ever stops holding on real hardware, the plan's documented
+    /// capture wait - if that assumption ever stops holding on real hardware, the plan's documented
     /// fallback is an async handoff that pauses the recorder for the duration (not implemented here;
     /// not needed per this workstream's own live-hardware verification, see the E2E notes).</summary>
     private void HandoffToMonitor(MonitorInfo destMonitor, RectPhysical desiredSelectionAbs)
@@ -610,7 +610,7 @@ internal sealed class RecordingSession
         {
             newRecorder = new RegionRecorder(destMonitor, MultiMonitorRecording.ToMonitorRelative(clamped, destMonitor), _targetFps);
             newRecorder.Faulted += OnRecorderFaulted;
-            // Carry the session's own pause state onto the new recorder BEFORE Start() — a handoff
+            // Carry the session's own pause state onto the new recorder BEFORE Start() - a handoff
             // can happen while Reviewing (the recorder stays alive, paused, so Resume can continue
             // the same take; see this method's own class-level doc note on OnRegionMoved). Without
             // this a handoff mid-pause would silently start capturing frames the paused UI promised
@@ -624,14 +624,14 @@ internal sealed class RecordingSession
             // already reflect the dragged position (OnRegionMoved's caller updated _selectionPx/
             // chrome before calling in); the recorder itself just keeps recording its OLD monitor's
             // edge, clamped sane by SetOrigin's own internal clamp, until the user drags back or the
-            // take ends. No user-visible error surfaced for this narrow failure — an accepted phase-1
+            // take ends. No user-visible error surfaced for this narrow failure - an accepted phase-1
             // gap (see the plan's own "measure before committing" flag).
             FileLog.Write($"RoeSnip: cross-monitor recording handoff to {destMonitor.DeviceName} failed, staying on {_monitor.DeviceName}: {ex.Message}");
             return;
         }
 
-        // Per-monitor fixed tone-map, recomputed fresh for the destination — NOT blended with the
-        // old monitor's (plan §2). The resulting exposure "pop" across the seam is documented as
+        // Per-monitor fixed tone-map, recomputed fresh for the destination - NOT blended with the
+        // old monitor's (plan sec 2). The resulting exposure "pop" across the seam is documented as
         // correct: it matches exactly what a fresh take started here from scratch would show.
         _fixedToneMapOpts = ComputeFixedToneMapOpts(destMonitor);
 
@@ -640,20 +640,20 @@ internal sealed class RecordingSession
         _monitor = destMonitor;
         // Published via Volatile.Write BEFORE the old recorder's Stop() below: EncoderLoop's
         // Volatile.Read(ref _recorder), on the completion of the OLD recorder's channel, is what
-        // lets it notice the swap instead of treating that completion as the end of the take — see
+        // lets it notice the swap instead of treating that completion as the end of the take - see
         // EncoderLoop's own comment for the full happens-before argument (this is the load-bearing
-        // fix PLAN-MULTIMON-RECORDING.md §3 calls out: without it the encoder thread would exit as
+        // fix PLAN-MULTIMON-RECORDING.md sec 3 calls out: without it the encoder thread would exit as
         // if the whole take had ended, mid-drag).
         Volatile.Write(ref _recorder, newRecorder);
         _selectionPx = clamped;
 
-        oldRecorder?.Stop();    // completes the OLD channel — EncoderLoop drains whatever was still
+        oldRecorder?.Stop();    // completes the OLD channel - EncoderLoop drains whatever was still
                                 // queued on it, then (per its own fix) picks up the new recorder
                                 // instead of breaking out as if Stop() had ended the take for real
         oldRecorder?.Dispose();
 
         // Re-sync the outline/chrome to the (possibly re-clamped) destination rect WITHOUT
-        // re-raising RegionChanged — this method IS a RegionChanged handler already (called from
+        // re-raising RegionChanged - this method IS a RegionChanged handler already (called from
         // OnRegionMoved); re-raising it here would recurse straight back into that same handler.
         _outline?.SyncExternalSelection(clamped);
         _chrome?.UpdateSelection(clamped);
@@ -662,13 +662,13 @@ internal sealed class RecordingSession
     }
 
     /// <summary>The spanning-mode counterpart of <see cref="OnRegionMoved"/>'s single-recorder
-    /// branch above — multi-monitor recording phase 2 (PLAN-MULTIMON-RECORDING.md §1/§3's "or
+    /// branch above - multi-monitor recording phase 2 (PLAN-MULTIMON-RECORDING.md sec 1/sec 3's "or
     /// re-derives intersections when the monitor set changes mid-drag - handle it" note). A take
     /// that entered spanning mode at BeginCapture ALWAYS stays in spanning mode for the rest of
     /// that take, even if a drag temporarily reduces it to a single intersected monitor:
     /// <see cref="SpanningCanvasCompositor"/>'s own N==1 case is exactly as cheap as the dedicated
     /// single-recorder path (see <see cref="SpanningCanvasCompositor.CompositeSlot"/>'s own doc
-    /// comment — it tone-maps straight into the canvas with no extra scratch/copy whenever a slot's
+    /// comment - it tone-maps straight into the canvas with no extra scratch/copy whenever a slot's
     /// sub-rect is the whole canvas), so there is no correctness or perf reason to ever drop back to
     /// <see cref="EncoderLoop"/> mid-take. Doing so WOULD require stopping and restarting the
     /// encoder thread itself (EncoderLoop and EncoderLoopSpanning are two different thread entry
@@ -676,7 +676,7 @@ internal sealed class RecordingSession
     /// finalize the encoder, or does an incoming thread keep feeding it?" signaling problem this
     /// workstream deliberately avoids by never needing to ask it. The one accepted consequence:
     /// starting on a single monitor and then dragging INTO a second one still uses phase 1's
-    /// existing snap-to-destination-monitor handoff above, not a live promotion to spanning —
+    /// existing snap-to-destination-monitor handoff above, not a live promotion to spanning -
     /// drawing the selection spanning up front in Setup (so BeginCapture's own topology derivation
     /// picks spanning mode from the very first frame) is the supported way to get a spanning
     /// take.</summary>
@@ -685,7 +685,7 @@ internal sealed class RecordingSession
         var intersecting = MultiMonitorRecording.IntersectingMonitors(selectionAbs, _allMonitors);
         if (intersecting.Count == 0)
         {
-            // Dragged into a dead gap between non-adjacent monitors — same "stay put" rule phase 1
+            // Dragged into a dead gap between non-adjacent monitors - same "stay put" rule phase 1
             // already has for the single-recorder case (OnRegionMoved above): every recorder keeps
             // capturing wherever its own crop last was.
             return;
@@ -697,7 +697,7 @@ internal sealed class RecordingSession
         }
 
         // A rebuild is needed (either the monitor SET changed, or sliding in place would have to
-        // resize some slot's crop — see TrySlideSpanningInPlace's own doc for why that always falls
+        // resize some slot's crop - see TrySlideSpanningInPlace's own doc for why that always falls
         // through here). Debounced, never called synchronously from this handler: see
         // RestartSpanningRebuildDebounce's own doc comment for why a rebuild is the single most
         // expensive thing this class does (fresh D3D11 device + WGC session per monitor, then a
@@ -711,21 +711,21 @@ internal sealed class RecordingSession
     /// <summary>Coalesces every <see cref="OnSpanningRegionMoved"/> rebuild request that arrives
     /// while the drag is still moving into ONE actual <see cref="RebuildSpanningRecorders"/> call,
     /// fired only once ticks stop arriving for a whole <see cref="SpanningRebuildDebounceMs"/>
-    /// window — the same debounce shape <see cref="RecordingChrome"/>'s own fps-slider persistence
+    /// window - the same debounce shape <see cref="RecordingChrome"/>'s own fps-slider persistence
     /// already uses for an analogous problem (an expensive operation, driven by a high-frequency UI
-    /// event, where only the FINAL value in a burst actually matters — see that class's own
+    /// event, where only the FINAL value in a burst actually matters - see that class's own
     /// RestartFpsDebounce doc comment). Without this, dragging a spanning selection along the axis a
     /// seam straddles rebuilds N D3D11 devices + WGC capture sessions on literally every qualifying
-    /// mouse-move tick (RegionOutline's own WM_MOUSEMOVE handler fires RegionChanged unthrottled) —
+    /// mouse-move tick (RegionOutline's own WM_MOUSEMOVE handler fires RegionChanged unthrottled) -
     /// each rebuild's Stop() of the OLD set does a GPU-synchronizing ring drain under RegionRecorder's
     /// own _gpuLock, on the UI thread, and the freshly-built recorders need TWO WGC callbacks before
-    /// their first frame (RegionRecorder.OnFrameArrived's own copy-#0 comment) — so a set that lives
+    /// their first frame (RegionRecorder.OnFrameArrived's own copy-#0 comment) - so a set that lives
     /// only a few milliseconds between rebuilds may never emit a single frame, freezing the recording
     /// for the whole drag while the UI stutters and the GPU churns capture sessions underneath it.
     ///
-    /// Between debounce ticks the OLD recorder set just keeps capturing at its last-known split — a
+    /// Between debounce ticks the OLD recorder set just keeps capturing at its last-known split - a
     /// momentary, bounded-by-the-debounce-window inaccuracy in exactly where the seam falls, never a
-    /// stall and never a dropped frame — which is a strictly better trade than briefly freezing the
+    /// stall and never a dropped frame - which is a strictly better trade than briefly freezing the
     /// whole recording on every pixel of mouse movement. The outline/chrome themselves are NOT
     /// debounced (OnRegionMoved already moved them synchronously before calling in here), so the
     /// visible selection band still tracks the cursor exactly; only the actual capture-crop split
@@ -743,11 +743,11 @@ internal sealed class RecordingSession
         _spanningRebuildDebounce.Start();
     }
 
-    /// <summary>The debounce timer's own landing point — always reads the LATEST pending selection/
+    /// <summary>The debounce timer's own landing point - always reads the LATEST pending selection/
     /// monitor set (whatever the most recent <see cref="RestartSpanningRebuildDebounce"/> call
     /// recorded), never a value captured back when the timer was first (re)started, so a whole burst
     /// of ticks collapses into exactly one rebuild against the drag's FINAL settled position. Guards
-    /// against firing after the take already ended — <see cref="HardStopCaptureIfNeeded"/> stops this
+    /// against firing after the take already ended - <see cref="HardStopCaptureIfNeeded"/> stops this
     /// same timer and nulls <see cref="_spanTopology"/> as part of tearing a spanning take down, so a
     /// Tick that was already queued when that happened lands here with nothing left to rebuild.</summary>
     private void FireSpanningRebuildDebounce()
@@ -762,11 +762,11 @@ internal sealed class RecordingSession
     }
 
     /// <summary>True when <paramref name="intersecting"/> and <paramref name="slots"/> name the
-    /// exact same monitors in the exact same order — both are independently produced by
+    /// exact same monitors in the exact same order - both are independently produced by
     /// <see cref="MultiMonitorRecording.IntersectingMonitors"/>'s own Index-sorted order (once at
     /// BeginCapture/a rebuild for <paramref name="slots"/>, fresh every drag tick for
     /// <paramref name="intersecting"/>), so a positional compare is sufficient and cheaper than a
-    /// set compare — no need to sort/hash either side again here.</summary>
+    /// set compare - no need to sort/hash either side again here.</summary>
     private static bool SameMonitorSet(IReadOnlyList<MonitorInfo> intersecting, IReadOnlyList<SpanningCanvasCompositor.MonitorSlot> slots)
     {
         if (intersecting.Count != slots.Count)
@@ -786,16 +786,16 @@ internal sealed class RecordingSession
     /// <summary>The cheap path for a spanning drag that keeps the SAME monitor set: tries to just
     /// slide every slot's own crop origin (<see cref="RegionRecorder.SetOrigin"/>, lock-free) rather
     /// than tearing anything down. Bails out (returns false, changes nothing) the instant ANY slot's
-    /// own crop SIZE would need to change — dragging a spanning selection along an axis that shifts
+    /// own crop SIZE would need to change - dragging a spanning selection along an axis that shifts
     /// how much of it falls on each side of a seam (e.g. sliding horizontally while straddling a
     /// vertical monitor boundary) changes one monitor's share and shrinks the other's, and
     /// <see cref="RegionRecorder"/>'s crop width/height is fixed for that recorder's whole lifetime
-    /// (see its own class doc) — there is no such thing as "resize this recorder's crop in place",
+    /// (see its own class doc) - there is no such thing as "resize this recorder's crop in place",
     /// only "build a new one". Falling through to <see cref="RebuildSpanningRecorders"/> for ANY
     /// size change (not just the specific slot whose size changed) is a deliberate simplification:
     /// one rebuild pass beats trying to rebuild only the affected slot(s) while lock-free-sliding the
     /// rest, for a case (spanning drags specifically along the straddled axis) that is already the
-    /// less common one — see <see cref="RestartSpanningRebuildDebounce"/>'s own doc comment for why
+    /// less common one - see <see cref="RestartSpanningRebuildDebounce"/>'s own doc comment for why
     /// falling through to a rebuild no longer means an immediate, synchronous, per-tick D3D/WGC
     /// rebuild the way it originally did: it is debounced, so the actual expensive work only ever
     /// runs once a drag settles.</summary>
@@ -811,7 +811,7 @@ internal sealed class RecordingSession
             var cropAbs = MultiMonitorRecording.Intersect(selectionAbs, monitor.BoundsPx);
             if (cropAbs.Width != oldSlots[i].MonitorRelativeCrop.Width || cropAbs.Height != oldSlots[i].MonitorRelativeCrop.Height)
             {
-                return false; // a size change anywhere in the set — full rebuild instead (see doc)
+                return false; // a size change anywhere in the set - full rebuild instead (see doc)
             }
             var monitorRelativeCrop = MultiMonitorRecording.ToMonitorRelative(cropAbs, monitor);
             var canvasSubRect = new RectPhysical(
@@ -820,7 +820,7 @@ internal sealed class RecordingSession
             newSlots[i] = oldSlots[i] with { MonitorRelativeCrop = monitorRelativeCrop, CanvasSubRect = canvasSubRect };
         }
 
-        // Geometry only ever moved, never resized (checked above) — every recorder's own crop box
+        // Geometry only ever moved, never resized (checked above) - every recorder's own crop box
         // just slides in place; SetOrigin is lock-free and UI-thread-safe by design (see its own doc
         // comment), so this whole method costs nothing more than N cheap volatile writes.
         for (int i = 0; i < oldRecorders.Length; i++)
@@ -828,7 +828,7 @@ internal sealed class RecordingSession
             oldRecorders[i].SetOrigin(newSlots[i].MonitorRelativeCrop.Left, newSlots[i].MonitorRelativeCrop.Top);
         }
 
-        // Recorders are UNCHANGED (same array reference) — only Slots differs. Publish a new bundled
+        // Recorders are UNCHANGED (same array reference) - only Slots differs. Publish a new bundled
         // pair anyway rather than mutating the old one in place, so the single-Volatile-reference
         // publish discipline (see _spanTopology's own doc comment) stays uniform for every spanning-
         // topology change, slide or rebuild alike: EncoderLoopSpanning's own topology resync (which
@@ -841,17 +841,17 @@ internal sealed class RecordingSession
 
     /// <summary>The spanning-mode generalization of <see cref="HandoffToMonitor"/>: builds a fresh
     /// <see cref="RegionRecorder"/> set for the NEW intersected-monitor geometry, publishes it, THEN
-    /// stops the old set — mirroring HandoffToMonitor's own publish-before-stop ordering so
+    /// stops the old set - mirroring HandoffToMonitor's own publish-before-stop ordering so
     /// EncoderLoopSpanning's topology resync (comparing <see cref="_spanTopology"/>'s Recorders array
     /// by reference each tick) sees a clean swap instead of ever having to distinguish "the old
     /// channels completed because of a real Stop()" from "...because of a rebuild" the way the
-    /// single-recorder EncoderLoop has to (see that method's own comment) — spanning's tick-based
+    /// single-recorder EncoderLoop has to (see that method's own comment) - spanning's tick-based
     /// drain never blocks on channel completion in the first place, so there is nothing to
     /// disambiguate. UI thread only (called from <see cref="FireSpanningRebuildDebounce"/>). On
     /// failure, leaves the OLD topology running untouched (same "a failed handoff must not kill an
     /// otherwise-healthy recording" rule <see cref="HandoffToMonitor"/>'s own doc comment states).
-    /// Unlike a single→spanning or spanning→single MODE change, this never touches
-    /// <see cref="_encoderThread"/> at all — the same thread just keeps running
+    /// Unlike a single->spanning or spanning->single MODE change, this never touches
+    /// <see cref="_encoderThread"/> at all - the same thread just keeps running
     /// <see cref="EncoderLoopSpanning"/>, reading whatever <see cref="_spanTopology"/> says on its
     /// next tick.</summary>
     private void RebuildSpanningRecorders(RectPhysical selectionAbs, IReadOnlyList<MonitorInfo> intersecting, RegionRecorder[] oldRecorders)
@@ -878,11 +878,11 @@ internal sealed class RecordingSession
         catch (Exception ex)
         {
             // Tear down whatever of the NEW set already came up (constructed and/or Start()ed)
-            // before giving up and staying on the OLD topology — StartSpanningRecorders' own catch
+            // before giving up and staying on the OLD topology - StartSpanningRecorders' own catch
             // follows the same "no half-built set left running" rule. Without this, a recorder that
             // got far enough to Start() its WGC session before a LATER sibling's construction/Start
             // threw would leak a live capture session (its own D3D11 device + WGC session, doing GPU
-            // readback at target fps) with nothing left holding a reference to Stop() it — and
+            // readback at target fps) with nothing left holding a reference to Stop() it - and
             // because a rebuild retries on every subsequent qualifying drag tick, a persistent
             // failure (monitor unplugged mid-drag, driver pressure) would leak a fresh set of these
             // on every retry.
@@ -898,7 +898,7 @@ internal sealed class RecordingSession
             return;
         }
 
-        // ONE Volatile.Write of the bundled pair — see _spanTopology's own doc comment for why this
+        // ONE Volatile.Write of the bundled pair - see _spanTopology's own doc comment for why this
         // must never be two independent writes (slots, then recorders) again.
         Volatile.Write(ref _spanTopology, new SpanningTopology(newSlots, newRecorders));
 
@@ -945,7 +945,7 @@ internal sealed class RecordingSession
     }
 
     /// <summary>UI thread only (chrome's Start button, or PrtScr in Setup). Builds the actual WGC
-    /// capture + encoder pipeline and starts it — everything the old single-shot Start() used to do
+    /// capture + encoder pipeline and starts it - everything the old single-shot Start() used to do
     /// immediately. On failure, tears the whole session down (nothing was capturing yet, so there
     /// is nothing to save).</summary>
     private void BeginCapture()
@@ -958,10 +958,10 @@ internal sealed class RecordingSession
         try
         {
             // Setup-phase resize/move can have pushed the selection onto (or across) any number of
-            // monitors — re-derive the FULL intersected set fresh right before building the capture
-            // pipeline (multi-monitor recording phase 2, PLAN-MULTIMON-RECORDING.md §1): 2+ monitors
+            // monitors - re-derive the FULL intersected set fresh right before building the capture
+            // pipeline (multi-monitor recording phase 2, PLAN-MULTIMON-RECORDING.md sec 1): 2+ monitors
             // means a genuine SPANNING take (one RegionRecorder per monitor feeding a
-            // SpanningCanvasCompositor — see StartSpanningRecorders below); exactly 1 is phase 1's
+            // SpanningCanvasCompositor - see StartSpanningRecorders below); exactly 1 is phase 1's
             // existing single-recorder path, unchanged; 0 (dragged into a dead gap between
             // non-adjacent monitors) falls back to phase 1's own "snap to nearest, never resize" rule
             // so a take can still start somewhere sane.
@@ -988,7 +988,7 @@ internal sealed class RecordingSession
                 _recorder.Faulted += OnRecorderFaulted;
             }
             // Spanning's own RegionRecorder set is built further down (StartSpanningRecorders),
-            // AFTER the encoder is created — same "encoder ready before any recorder starts
+            // AFTER the encoder is created - same "encoder ready before any recorder starts
             // producing frames" ordering the single-recorder branch already follows below.
 
             if (_format == RecordingFormat.Mp4)
@@ -1006,12 +1006,12 @@ internal sealed class RecordingSession
                 }
                 _mp4TempPath = Path.Combine(Path.GetTempPath(), $"roesnip_rec_{Guid.NewGuid():N}.mp4");
                 // The preset is whatever the Setup-phase size row last selected for MP4 (or the
-                // persisted Mp4SizePreset default, if it was never touched this session) — same
+                // persisted Mp4SizePreset default, if it was never touched this session) - same
                 // "next take" contract as the GIF branch's own preset read below.
                 _mp4Encoder = Mp4Encoder.Create(
                     _mp4TempPath, _selectionPx.Width, _selectionPx.Height, _targetFps,
                     withAudio: _audio is not null, preset: _mp4SizePreset);
-                // Whether THIS take's MP4 carries an AAC track is fixed here forever — a soft stop
+                // Whether THIS take's MP4 carries an AAC track is fixed here forever - a soft stop
                 // releases the engine for the review span, and resume-from-review consults this to
                 // know whether to bring it back.
                 _audioTrackEnabled = _audio is not null;
@@ -1020,15 +1020,15 @@ internal sealed class RecordingSession
             {
                 _gifTempPath = Path.Combine(Path.GetTempPath(), $"roesnip_rec_{Guid.NewGuid():N}.gif");
                 // The preset is whatever the Setup-phase GIF row last selected (or the persisted
-                // settings default, if it was never touched this session) — see SetGifSizePreset's
+                // settings default, if it was never touched this session) - see SetGifSizePreset's
                 // doc comment for why reading the field here is the correct "next take" contract.
                 var gifOptions = GifSizePresets.ForPreset(_gifSizePreset);
                 _gifRenderScale = gifOptions.RenderScale;
                 // Compact (0.75) and Minimal (0.5) set RenderScale < 1.0 today; every other tier keeps
-                // the encoder's canvas exactly the selection size (already even — RoundDownToEven
+                // the encoder's canvas exactly the selection size (already even - RoundDownToEven
                 // upstream). Below 1.0, floor each dimension to even AFTER scaling (scaling an even
                 // selection can still land on an odd number, e.g. 802 -> 401 at 0.5, or 402 -> 301 at
-                // 0.75) — GifEncoder.Create has no tolerance for odd dimensions any more than the
+                // 0.75) - GifEncoder.Create has no tolerance for odd dimensions any more than the
                 // unscaled path does.
                 _gifCanvasWidth = _gifRenderScale < 1.0 ? ScaledCanvasDimension(_selectionPx.Width, _gifRenderScale) : _selectionPx.Width;
                 _gifCanvasHeight = _gifRenderScale < 1.0 ? ScaledCanvasDimension(_selectionPx.Height, _gifRenderScale) : _selectionPx.Height;
@@ -1060,11 +1060,11 @@ internal sealed class RecordingSession
 
             // BelowNormal, not Normal: this thread's own queue (RegionRecorder.Frames) is bounded
             // DropOldest (see that channel's own doc comment), so falling behind under contention
-            // sheds load gracefully — a dropped stale frame, not a stall. There is no such graceful
+            // sheds load gracefully - a dropped stale frame, not a stall. There is no such graceful
             // degradation for whatever the user is doing in the FOREGROUND while a recording runs
             // (a game, a video call); giving this thread lower scheduling priority means the OS
             // favors those over the encoder on a contended CPU instead of the other way around.
-            // Which method this thread runs is fixed for the take's WHOLE lifetime — see
+            // Which method this thread runs is fixed for the take's WHOLE lifetime - see
             // _spanTopology's own doc comment for why a take never switches between these two
             // bodies mid-take (a .NET Thread can't be redirected once started).
             ThreadStart threadBody = spanning ? new ThreadStart(EncoderLoopSpanning) : new ThreadStart(EncoderLoop);
@@ -1107,17 +1107,17 @@ internal sealed class RecordingSession
             _mp4Encoder = null;
             _gifEncoder = null;
 
-            // The specific error was already surfaced above — TeardownSession's own messaging stays
+            // The specific error was already surfaced above - TeardownSession's own messaging stays
             // silent for this path.
             TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: false);
         }
     }
 
     /// <summary>Builds and starts one <see cref="RegionRecorder"/> per intersected monitor plus the
-    /// compositor slot geometry that ties them together — multi-monitor recording phase 2's spanning
-    /// capture entry point (PLAN-MULTIMON-RECORDING.md §1). UI thread only (<see cref="BeginCapture"/>).
+    /// compositor slot geometry that ties them together - multi-monitor recording phase 2's spanning
+    /// capture entry point (PLAN-MULTIMON-RECORDING.md sec 1). UI thread only (<see cref="BeginCapture"/>).
     /// On a partial failure (one monitor's RegionRecorder throws mid-construction/start), tears down
-    /// whatever DID start and rethrows — a half-spanning take (some monitors capturing, others not)
+    /// whatever DID start and rethrows - a half-spanning take (some monitors capturing, others not)
     /// is not a state this class supports; BeginCapture's own catch handles the resulting
     /// cleanup/messaging exactly like a single-recorder start failure already does.</summary>
     private void StartSpanningRecorders(IReadOnlyList<MonitorInfo> intersecting)
@@ -1150,7 +1150,7 @@ internal sealed class RecordingSession
         Volatile.Write(ref _spanTopology, new SpanningTopology(slots, recorders));
     }
 
-    /// <summary>Threadpool timer thread (never the UI thread) — ticks every ~250ms regardless of
+    /// <summary>Threadpool timer thread (never the UI thread) - ticks every ~250ms regardless of
     /// what the UI thread's message queue is doing. Computes the pause-aware media elapsed here and
     /// marshals only the resulting text update onto the UI thread. Guards against a tick landing
     /// after Stop()/teardown already disposed the timer (Timer.Dispose does not block for an
@@ -1183,7 +1183,7 @@ internal sealed class RecordingSession
         }));
     }
 
-    /// <summary>Chrome's Pause button — UI thread only. Valid only mid-take (Capturing) and not
+    /// <summary>Chrome's Pause button - UI thread only. Valid only mid-take (Capturing) and not
     /// already paused. Marks the pause start; frames stop entering the queue immediately
     /// (RegionRecorder.Paused) and DrainAudio starts dropping queued chunks on the encoder thread.</summary>
     private void Pause()
@@ -1198,9 +1198,9 @@ internal sealed class RecordingSession
         _chrome!.SetPaused(true);
     }
 
-    /// <summary>Fans a pause/resume toggle out to whatever is currently capturing — the single
+    /// <summary>Fans a pause/resume toggle out to whatever is currently capturing - the single
     /// recorder (phase 1) or every recorder in a spanning take's set (phase 2, PLAN-MULTIMON-
-    /// RECORDING.md §7's "trivial fan-out" call). Same field, same semantics
+    /// RECORDING.md sec 7's "trivial fan-out" call). Same field, same semantics
     /// (<see cref="RegionRecorder.Paused"/>), just iterated for the spanning case.</summary>
     private void SetAllRecordersPaused(bool paused)
     {
@@ -1217,15 +1217,15 @@ internal sealed class RecordingSession
         }
     }
 
-    /// <summary>Chrome's Resume button — UI thread only. Folds the just-ended pause into the
+    /// <summary>Chrome's Resume button - UI thread only. Folds the just-ended pause into the
     /// running total BEFORE flipping _paused/_recorder.Paused back off, so the very next frame the
     /// encoder thread sees already has the enlarged _pausedTicks available (see the EncoderLoop/
     /// DrainAudio doc comments for why a per-frame Volatile.Read of it is safe here).
     ///
     /// Also reachable from REVIEWING (a soft-stopped take is just a paused take with review
-    /// chrome — see StopCaptureToReview): resuming there steps back into Capturing and the same
+    /// chrome - see StopCaptureToReview): resuming there steps back into Capturing and the same
     /// take keeps recording, with the whole review span excluded from the media timeline like any
-    /// other pause — that is what makes stop-review-resume cuts seamless in the output.</summary>
+    /// other pause - that is what makes stop-review-resume cuts seamless in the output.</summary>
     private void Resume()
     {
         if (!_paused || (_phase != Phase.Capturing && _phase != Phase.Reviewing))
@@ -1237,7 +1237,7 @@ internal sealed class RecordingSession
         SetAllRecordersPaused(false);
         if (_phase == Phase.Reviewing)
         {
-            // The soft stop released the audio engine (mic indicator off during review) — bring it
+            // The soft stop released the audio engine (mic indicator off during review) - bring it
             // back for takes whose MP4 already carries an AAC track. A device failure here keeps
             // the video going; the track just has a silent gap.
             if (_audioTrackEnabled)
@@ -1266,7 +1266,7 @@ internal sealed class RecordingSession
 
     /// <summary>Safety-net path for triggers that have no user present to click through Setup ->
     /// Reviewing -> Save themselves (a mid-recording capture fault, or a display-settings change
-    /// while capturing — e.g. a monitor was unplugged). Marshals onto the UI thread first (both
+    /// while capturing - e.g. a monitor was unplugged). Marshals onto the UI thread first (both
     /// triggers can fire off-thread) then stops the current take into review and immediately saves
     /// it, matching the old single-step "stop and save" behavior for these automatic cases.</summary>
     private void RequestForceStopAndSave()
@@ -1286,7 +1286,7 @@ internal sealed class RecordingSession
     {
         if (_phase == Phase.Setup)
         {
-            // Nothing was ever captured — there is nothing to save, just close quietly.
+            // Nothing was ever captured - there is nothing to save, just close quietly.
             CancelAndDiscard();
             return;
         }
@@ -1298,7 +1298,7 @@ internal sealed class RecordingSession
         {
             // Never re-arm from this path: it runs because the pipeline faulted or the display
             // topology changed, so "record another take on the same region" may not even be
-            // possible — save what exists and end the session.
+            // possible - save what exists and end the session.
             SaveAndFinish(rearmAfterSave: false);
         }
     }
@@ -1309,7 +1309,7 @@ internal sealed class RecordingSession
     /// before the video channel completes: the encoder thread's terminal DrainAudio runs almost
     /// immediately after _recorder.Stop(), so a fire-and-forget audio stop would race the capture
     /// thread's final flush and silently drop the take's last ~10ms of audio. Bounded join: a
-    /// wedged encoder (stuck MF call, disk stall) must never hang the UI thread forever — if it
+    /// wedged encoder (stuck MF call, disk stall) must never hang the UI thread forever - if it
     /// doesn't finish in time we must NOT touch _mp4Encoder/_gifEncoder or the temp file from here
     /// on (the abandoned thread can still be inside IMFSinkWriter.WriteSample/Finalize, and that COM
     /// interface is not safe to call concurrently from two threads), so this deliberately leaks the
@@ -1320,7 +1320,7 @@ internal sealed class RecordingSession
     {
         // Gate on the pipeline, not the phase: since Stop became a soft stop, the recorder/encoder
         // stay alive through Reviewing (so Resume can continue the take) and the hard stop happens
-        // from there — Save, Restart, and Cancel all funnel through here with _phase == Reviewing.
+        // from there - Save, Restart, and Cancel all funnel through here with _phase == Reviewing.
         // Spanning mode (multi-monitor recording phase 2): _recorder and _spanTopology are mutually
         // exclusive (see _spanTopology's own doc comment), so checking both null is exactly "is
         // anything capturing" for either mode.
@@ -1330,7 +1330,7 @@ internal sealed class RecordingSession
         }
 
         // Belt-and-braces: stop the drag-rebuild debounce before it can fire a rebuild against a
-        // topology this method is about to tear down — see the timer field's own doc comment.
+        // topology this method is about to tear down - see the timer field's own doc comment.
         _spanningRebuildDebounce?.Stop();
         _pendingSpanIntersecting = null;
 
@@ -1364,7 +1364,7 @@ internal sealed class RecordingSession
             return false;
         }
 
-        _mp4Encoder?.Dispose(); // only safe once the encoder thread — the only other owner — has actually finished
+        _mp4Encoder?.Dispose(); // only safe once the encoder thread - the only other owner - has actually finished
         _mp4Encoder = null;
         _gifEncoder?.Dispose(); // same ownership rule for the GIF temp-file stream
         _gifEncoder = null;
@@ -1387,7 +1387,7 @@ internal sealed class RecordingSession
     }
 
     /// <summary>Chrome's Stop button (or PrtScr while Capturing). SOFT stop: pauses the pipeline
-    /// (identical bookkeeping to Pause — frames drop pre-readback, the review span accumulates as
+    /// (identical bookkeeping to Pause - frames drop pre-readback, the review span accumulates as
     /// paused time) and moves to Reviewing with the recorder and encoders still alive, so the
     /// Reviewing chrome's Resume can step back into Capturing and CONTINUE the same take with a
     /// seamless cut. The hard stop (encoder join + finalize) happens on the way out of Reviewing:
@@ -1406,12 +1406,12 @@ internal sealed class RecordingSession
             _paused = true;
             SetAllRecordersPaused(true);
         }
-        // else: stopped while already paused — the running pause span simply continues.
+        // else: stopped while already paused - the running pause span simply continues.
 
         // Release the microphone/loopback for the review span (unlike a quick Pause, a review can
         // last minutes and must not keep the OS "microphone in use" indicator lit). The reference
         // is deliberately KEPT: Dispose's final flush enqueues the last pre-stop chunks, and the
-        // encoder thread's periodic DrainAudio still drains that queue — its timestamp check
+        // encoder thread's periodic DrainAudio still drains that queue - its timestamp check
         // writes everything captured before the stop and drops the rest. Resume re-creates the
         // engine; the hard stop disposes again, which is documented-idempotent.
         _audio?.Dispose();
@@ -1420,7 +1420,7 @@ internal sealed class RecordingSession
         _chrome!.SetPaused(true); // Reviewing's Pause/Resume button must read (and route as) Resume
         // Senior-review fix (Finding 1c): re-evaluate the chrome's Share button gate every time
         // Reviewing is (re-)entered, from the same fresh-disk-read helper RequestShare itself uses
-        // — mirrors ToolbarControl.SetShareProviders' own "no clickable-but-broken button" rule
+        // - mirrors ToolbarControl.SetShareProviders' own "no clickable-but-broken button" rule
         // instead of RecordingChrome's old check (whether ShareRequested has ANY subscriber, which
         // Start() always satisfies unconditionally and so never actually reflected whether Share
         // could ever succeed).
@@ -1462,7 +1462,7 @@ internal sealed class RecordingSession
     /// <summary>Sharing/* subsystem: the single fresh-disk-state provider lookup shared by
     /// <see cref="RequestShare"/> (deciding whether Share is a no-op) and
     /// <see cref="StopCaptureToReview"/> (deciding whether the chrome's Share button should even be
-    /// enabled) — see RequestShare's own doc comment for why "fresh" (a plain <see
+    /// enabled) - see RequestShare's own doc comment for why "fresh" (a plain <see
     /// cref="SettingsStore.Load()"/>, not this session's own <see cref="_liveSettings"/> snapshot)
     /// matters here specifically: a provider configured via the tray's Settings window while a take
     /// sits in Reviewing must be picked up without needing a new take.</summary>
@@ -1481,8 +1481,8 @@ internal sealed class RecordingSession
     }
 
     /// <summary>Chrome's confirmed Restart (the confirmation prompt itself lives in
-    /// RecordingChrome). Discards whatever the current take is — mid-capture or already stopped and
-    /// under review — and re-arms for a fresh <see cref="BeginCapture"/> with new temp file paths.
+    /// RecordingChrome). Discards whatever the current take is - mid-capture or already stopped and
+    /// under review - and re-arms for a fresh <see cref="BeginCapture"/> with new temp file paths.
     /// Reuses the session's fixed tone-map options and target fps; everything else about the
     /// capture pipeline is rebuilt from scratch on the next Start.</summary>
     private void RestartTake()
@@ -1509,7 +1509,7 @@ internal sealed class RecordingSession
         _outline?.SetInteractionMode(allowResize: true); // back to setup - the region can be reshaped again
     }
 
-    /// <summary>Available in every phase — aborts the whole recording without saving. Discards any
+    /// <summary>Available in every phase - aborts the whole recording without saving. Discards any
     /// in-progress or already-stopped take, then tears the session down.</summary>
     private void CancelAndDiscard()
     {
@@ -1518,14 +1518,14 @@ internal sealed class RecordingSession
         {
             CleanupTempFile();
         }
-        // else: encoder thread abandoned — deliberately leak rather than race it, same rule as
+        // else: encoder thread abandoned - deliberately leak rather than race it, same rule as
         // HardStopCaptureIfNeeded's own doc comment.
         TeardownSession(finalPath: null, dialogCancelled: false, encoderAbandoned: !joined);
     }
 
-    /// <summary>Chrome's Save button (or PrtScr while Reviewing) — only valid once a take has
+    /// <summary>Chrome's Save button (or PrtScr while Reviewing) - only valid once a take has
     /// actually been stopped into review. Hard-stops the still-alive pipeline (Stop is a soft stop
-    /// now), finalizes/moves the temp file to a real path, then — on a successful save — returns
+    /// now), finalizes/moves the temp file to a real path, then - on a successful save - returns
     /// to Setup with the same region so another take can be recorded immediately; every other
     /// outcome tears the session down as before.</summary>
     private void SaveAndFinish(bool rearmAfterSave = true)
@@ -1537,11 +1537,11 @@ internal sealed class RecordingSession
             // second save of a file that has already been moved to its final path.
             // _saving: the save dialog below runs a nested message pump on this thread, so a
             // PrtScr press while it is open dispatches straight back into this method with _phase
-            // still Reviewing — without this guard the reentrant call could save/re-arm first and
+            // still Reviewing - without this guard the reentrant call could save/re-arm first and
             // the suspended outer call would then tear the fresh session down when it resumed.
             // _sharing: belt-and-braces (RequestShare never re-enters via a nested pump the way Save
             // does, and it always resets _sharing/re-arms to Setup before returning, so in practice
-            // _phase is already back to Setup by the time this could fire concurrently) — see
+            // _phase is already back to Setup by the time this could fire concurrently) - see
             // RequestShare's own doc comment.
             return;
         }
@@ -1560,7 +1560,7 @@ internal sealed class RecordingSession
         bool dialogCancelled = false;
         try
         {
-            // The chrome is Hidden (not yet Closed) so it can still own the SaveFileDialog — a WPF
+            // The chrome is Hidden (not yet Closed) so it can still own the SaveFileDialog - a WPF
             // window needs to exist as a valid HWND for Dialog.ShowDialog(owner) to parent correctly;
             // closing it first would leave the dialog unowned (it could appear behind other windows
             // on a multi-monitor setup).
@@ -1700,7 +1700,7 @@ internal sealed class RecordingSession
 
     /// <summary>After a successful save: back to Setup with the SAME selected region instead of
     /// tearing down, so the user can immediately record another take (chrome Start, or PrtScr).
-    /// Mirrors RestartTake's re-arm minus the discard — the finished file was already moved to its
+    /// Mirrors RestartTake's re-arm minus the discard - the finished file was already moved to its
     /// final path, so only the stale temp-path fields need clearing. Cancel (chrome button) remains
     /// the way to dismiss the session from here.</summary>
     private void RearmForAnotherTake()
@@ -1719,63 +1719,63 @@ internal sealed class RecordingSession
         _outline?.SetInteractionMode(allowResize: true); // new take - the region can be reshaped again
     }
 
-    /// <summary>Reviewing state's Share button (Sharing/* subsystem — RecordingChrome.ShareRequested's
+    /// <summary>Reviewing state's Share button (Sharing/* subsystem - RecordingChrome.ShareRequested's
     /// own doc comment names this class as the owner responsible for wiring it). DESIGN, spelled out
     /// because the integration brief specifically asked for it:
     ///
     /// Senior-review fix (HIGH, data loss): the provider is resolved FIRST, from a FRESH
-    /// <see cref="SettingsStore.Load()"/> — not this session's own <see cref="_liveSettings"/>
-    /// snapshot, which can be minutes stale by the time a Reviewing take gets around to sharing —
+    /// <see cref="SettingsStore.Load()"/> - not this session's own <see cref="_liveSettings"/>
+    /// snapshot, which can be minutes stale by the time a Reviewing take gets around to sharing -
     /// so a provider added via the tray's Settings window WHILE this take sits in Reviewing is seen.
     /// If nothing resolves, this is a plain NO-OP: an honest balloon ("configure a share provider in
     /// Settings first") and an early return, before <see cref="HardStopCaptureIfNeeded"/> ever runs.
-    /// The take is left exactly as it was — still soft-stopped, still fully Resumable — instead of
+    /// The take is left exactly as it was - still soft-stopped, still fully Resumable - instead of
     /// the old behavior, which hard-stopped and rearmed regardless, then discovered "no provider"
     /// only inside a detached upload task, by which point its own finally-block had already deleted
     /// the only copy of a take the user could never get back.
     ///
     /// Only once a provider resolves does this go on to do what Share always did:
     ///
-    /// Stop is a SOFT stop (see StopCaptureToReview's own doc comment) — the recorder/encoder stay
+    /// Stop is a SOFT stop (see StopCaptureToReview's own doc comment) - the recorder/encoder stay
     /// alive through Reviewing so Resume can continue the SAME take. The temp file is therefore NOT
     /// necessarily complete/stable yet when Share is clicked; uploading it mid-write would race the
     /// encoder thread. So Share's next step is exactly what Save's first step already is: call
     /// HardStopCaptureIfNeeded() to join the encoder thread and finalize the container. That call is
-    /// irreversible (it's the same hard stop Save/Restart/Cancel all use) — once it succeeds, Resume
+    /// irreversible (it's the same hard stop Save/Restart/Cancel all use) - once it succeeds, Resume
     /// is gone regardless of what Share does next, exactly as if the user had clicked Save. The
     /// finalized file's size is exactly what ShareManager.UploadAsync's own offline MaxUploadBytes
     /// pre-flight check (run against the real FileStream this method opens, before any network call)
-    /// judges — a preflight rejection surfaces through the exact same Success=false result an
+    /// judges - a preflight rejection surfaces through the exact same Success=false result an
     /// ordinary upload failure would, so it needs no separate code path here.
     ///
-    /// Unlike Save, this never calls SaveOutput/File.Move — the point is to upload the file WITHOUT
+    /// Unlike Save, this never calls SaveOutput/File.Move - the point is to upload the file WITHOUT
     /// moving it, so the temp path stays exactly where BeginCapture wrote it and a plain FileStream
     /// reads it for the upload.
     ///
     /// "Re-arm or teardown consistent with Save's flow" (the brief's own phrasing): this chooses
-    /// re-arm, unconditionally, immediately after a successful hard stop — mirroring SaveAndFinish's
+    /// re-arm, unconditionally, immediately after a successful hard stop - mirroring SaveAndFinish's
     /// OWN successful-save branch (RearmForAnotherTake), not its dialog-cancelled/failure branches.
     /// The reasoning: once the pipeline is hard-stopped, sitting in Reviewing has nothing left to
     /// offer (Resume is impossible; Restart/Cancel would just discard a take the user explicitly
-    /// asked to share) — the take is DONE, precisely like a completed Save. Re-arming immediately
+    /// asked to share) - the take is DONE, precisely like a completed Save. Re-arming immediately
     /// also happens to be the only option that doesn't block the UI thread on the network: the actual
     /// upload is handed to <see cref="RoeSnip.Sharing.ShareFlowPresenter"/> (never awaited here)
     /// against a few plain local values captured before rearming (a FileStream opened on the temp
-    /// path, a friendly filename, content type, the resolved provider config) — none of them alias
+    /// path, a friendly filename, content type, the resolved provider config) - none of them alias
     /// the session's own mutable fields, so a user who immediately starts a brand-new take (fresh
     /// _mp4TempPath/_gifTempPath) can never race the in-flight upload of the OLD one. The upload's
     /// own progress/result is now reported via the presenter's own ShareResultWindow (a small
-    /// always-on-top toast) rather than a tray balloon — there is deliberately no "please wait" UI on
+    /// always-on-top toast) rather than a tray balloon - there is deliberately no "please wait" UI on
     /// the chrome itself for it, since the chrome has already moved on to Setup by the time the
     /// network call even starts.
     ///
     /// FAILURE = DATA LOSS, confronted honestly: once HardStopCaptureIfNeeded succeeds, Resume is
-    /// gone for good — there is no path back to Reviewing. So the temp file is deleted ONLY via the
+    /// gone for good - there is no path back to Reviewing. So the temp file is deleted ONLY via the
     /// presenter's onSuccess callback below; every failure (network error, timeout, an offline
     /// MaxUploadBytes rejection, cancellation, a provider that stopped resolving between the check
     /// above and the call) leaves the finished mp4/gif sitting in the temp directory and the
     /// ShareResultWindow's Failure state names its FULL PATH, so the user can still go rescue it by
-    /// hand. A leaked temp file only if the process exits mid-upload remains the one accepted gap —
+    /// hand. A leaked temp file only if the process exits mid-upload remains the one accepted gap -
     /// everything else that can go wrong now preserves the recording instead of silently discarding
     /// it.
     ///
@@ -1838,15 +1838,15 @@ internal sealed class RecordingSession
     {
         if (_phase != Phase.Reviewing || _saving || _sharing || _copying || _awaitingAnotherTakeChoice)
         {
-            return; // same reentrancy reasoning as SaveAndFinish's own guard — see _sharing's own doc comment
+            return; // same reentrancy reasoning as SaveAndFinish's own guard - see _sharing's own doc comment
         }
 
-        // Resolve the provider FIRST and from FRESH disk state — see this method's own doc comment
+        // Resolve the provider FIRST and from FRESH disk state - see this method's own doc comment
         // for why both of those must happen before the irreversible hard stop below, not after it.
         var config = ResolveFreshDefaultShareProvider();
         if (config is null)
         {
-            // No-op: the take stays exactly as it was — still soft-stopped, still fully Resumable.
+            // No-op: the take stays exactly as it was - still soft-stopped, still fully Resumable.
             _notifier?.ShowError("Recording not shared: configure a share provider in Settings first.");
             return;
         }
@@ -1866,7 +1866,7 @@ internal sealed class RecordingSession
         string ext = _format == RecordingFormat.Mp4 ? ".mp4" : ".gif";
         string contentType = _format == RecordingFormat.Mp4 ? "video/mp4" : "image/gif";
         string fileName = $"roesnip_{DateTime.Now:yyyyMMdd_HHmmss}{ext}";
-        // Captured before the prompt below for the same reason as the locals above — _monitor is
+        // Captured before the prompt below for the same reason as the locals above - _monitor is
         // mutated by a brand-new take (HandoffToMonitor/spanning rebuild), so a bare field read
         // after re-arming could report the NEXT take's monitor instead of this one's.
         MonitorInfo monitor = _monitor;
@@ -1889,7 +1889,7 @@ internal sealed class RecordingSession
             onSuccess: () =>
             {
                 // The DATA-LOSS RULE's enforcement point: delete ONLY here, on a genuine upload
-                // success — never in the presenter's own generic plumbing. See this method's own doc
+                // success - never in the presenter's own generic plumbing. See this method's own doc
                 // comment ("FAILURE = DATA LOSS").
                 try { if (File.Exists(tempPath)) File.Delete(tempPath); }
                 catch (Exception ex) { FileLog.Write($"RoeSnip: failed to delete shared recording temp file: {ex.Message}"); }
@@ -1996,21 +1996,21 @@ internal sealed class RecordingSession
         {
             _notifier?.ShowError("Recording could not be saved: the encoder did not stop in time.");
         }
-        // else: a plain user Cancel — silent, matching the toolbar Cancel button's own "close
+        // else: a plain user Cancel - silent, matching the toolbar Cancel button's own "close
         // without capturing" semantics elsewhere.
 
-        RoeSnip.CaptureGate.Exit(); // exactly once, last — see AppComposition.StartRecording's doc comment
+        RoeSnip.CaptureGate.Exit(); // exactly once, last - see AppComposition.StartRecording's doc comment
         RecordingController.OnSessionEnded(this);
 
         // A recording is the app's biggest allocation burst (GifEncoder buffers every frame in
-        // memory until SaveTo — its own doc comment cites ~1-1.5 GB peak for a 60 s GIF). Without
+        // memory until SaveTo - its own doc comment cites ~1-1.5 GB peak for a 60 s GIF). Without
         // an explicit trim that peak stays committed for the rest of the process's life; this is
         // the recording-path counterpart of TrayApp.ObserveCaptureTask's post-snip schedule.
         RoeSnip.IdleMemoryTrimmer.Schedule(Dispatcher.CurrentDispatcher);
     }
 
     /// <summary>UI thread (called from <see cref="SaveAndFinish"/>). Test hook: when
-    /// ROESNIP_RECORD_AUTOSAVE is set, saves straight there instead of showing the SaveFileDialog —
+    /// ROESNIP_RECORD_AUTOSAVE is set, saves straight there instead of showing the SaveFileDialog -
     /// this is how the automated smoke/verify harness drives Record without needing UIA against a
     /// native Win32 file-picker. Returns null if the user cancelled the dialog (temp file already
     /// cleaned up by the caller's CleanupTempFile in that case).</summary>
@@ -2089,18 +2089,18 @@ internal sealed class RecordingSession
 
     /// <summary>Encoder thread only (never the WGC callback thread, never the UI thread): drains
     /// RegionRecorder.Frames, tone-maps each raw CapturedFrame with the FIXED options computed once
-    /// in Start() (or re-pinned per monitor at a handoff — see <see cref="ComputeFixedToneMapOpts"/>),
+    /// in Start() (or re-pinned per monitor at a handoff - see <see cref="ComputeFixedToneMapOpts"/>),
     /// and feeds the chosen encoder. Exits when the LIVE recorder's own channel completes
     /// (RegionRecorder.Stop() was called on the recorder that is STILL the session's current one) or
     /// on an unrecoverable encoder exception. A channel completing because a cross-monitor drag
     /// handoff swapped <see cref="_recorder"/> out from under this loop (multi-monitor recording
-    /// phase 1, PLAN-MULTIMON-RECORDING.md §3 — the section's own "load-bearing" fix) does NOT end
-    /// the take: see the reader-reacquisition branch below. Runs once per take — a Restart spins up
+    /// phase 1, PLAN-MULTIMON-RECORDING.md sec 3 - the section's own "load-bearing" fix) does NOT end
+    /// the take: see the reader-reacquisition branch below. Runs once per take - a Restart spins up
     /// a brand-new thread via the next BeginCapture.</summary>
     private void EncoderLoop()
     {
         double freq = System.Diagnostics.Stopwatch.Frequency;
-        // recorderRef tracks WHICH recorder `reader` currently drains — compared against the live
+        // recorderRef tracks WHICH recorder `reader` currently drains - compared against the live
         // _recorder (Volatile.Read) whenever the channel completes, so a handoff's swap can be told
         // apart from a real Stop() without a separate pending-handoff flag (see the completion
         // branch below for the full reasoning).
@@ -2110,7 +2110,7 @@ internal sealed class RecordingSession
         // Epoch is the FIRST frame actually dequeued here, not an independent Stopwatch sample taken
         // on this thread's own first line. RegionRecorder.Start() (and thus frame production) begins
         // before this thread is even created/scheduled/JITed, so a Stopwatch.GetTimestamp() sampled
-        // here could land AFTER one or more frames already sitting in the queue — those would get a
+        // here could land AFTER one or more frames already sitting in the queue - those would get a
         // negative-then-clamped-to-0 SampleTime, producing duplicate/non-monotonic timestamps that
         // Media Foundation's sink writer can reject. Deriving the epoch from the first real frame
         // makes timestamp 0 always correspond to an actual frame and every later one strictly larger.
@@ -2118,26 +2118,26 @@ internal sealed class RecordingSession
         // The raw pixels of the last frame actually handed to the encoder, for WHICHEVER format
         // this take is (only one of the two is ever non-null for the session's whole lifetime).
         // WGC's dirty tracking is monitor-wide, so a change anywhere on the monitor delivers a
-        // frame even when the recorded crop is untouched — comparing raw bytes here skips those
+        // frame even when the recorded crop is untouched - comparing raw bytes here skips those
         // before paying the (much more expensive) tone-map. Applies to BOTH formats: GIF also has
         // GifEncoder's own SDR diff as a second, finer-grained gate underneath this one, but MP4
-        // has no such second gate — WriteFrame is a straight encode, so this raw check is the ONLY
+        // has no such second gate - WriteFrame is a straight encode, so this raw check is the ONLY
         // thing standing between a static region and paying full tone-map + H.264 encode on every
         // single WGC callback (this was the "MP4 pays full CPU while the user works elsewhere on
-        // the same monitor" bug). Each starts null, so the FIRST frame of a take is always kept —
+        // the same monitor" bug). Each starts null, so the FIRST frame of a take is always kept -
         // there is nothing yet to compare it against.
         CapturedFrame? prevGifRaw = null;
         CapturedFrame? prevMp4Raw = null;
         // GIF only: two persistent exactly-canvas-sized tone-map targets so the 50fps path never
         // allocates a fresh (LOH-sized) output array per frame. GifEncoder.AddFrame(SdrImage, long)
-        // never retains a reference to the buffer it's handed, on EITHER outcome — it copies
+        // never retains a reference to the buffer it's handed, on EITHER outcome - it copies
         // whatever it paints into its own internal diff baseline synchronously before returning
-        // (see that method's doc comment) — so there is no aliasing hazard for this rotation to
+        // (see that method's doc comment) - so there is no aliasing hazard for this rotation to
         // protect against in the first place. The alternation below is kept anyway as cheap,
         // harmless housekeeping, not because it's required for correctness.
         byte[]? gifTonemapA = null, gifTonemapB = null, mp4Tonemap = null;
         bool gifUseA = true;
-        // GIF downscaled render (Compact/Minimal tiers, _gifRenderScale < 1.0 — see
+        // GIF downscaled render (Compact/Minimal tiers, _gifRenderScale < 1.0 - see
         // GifEncoderOptions.RenderScale's own doc comment): a THIRD persistent exactly-scaled-canvas
         // buffer, allocated once on first use, that the box-filtered downsample writes into before
         // AddFrame ever sees it. Kept separate from gifTonemapA/B (which stay full selection size,
@@ -2152,7 +2152,7 @@ internal sealed class RecordingSession
             {
                 // Bounded wait rather than a plain block: audio must keep flowing into the writer
                 // even when the screen is static and WGC delivers no video frame (it only fires on
-                // dirty updates) — otherwise queued audio would pile up until the next pixel moved.
+                // dirty updates) - otherwise queued audio would pile up until the next pixel moved.
                 if (!waitTask.Wait(50))
                 {
                     DrainAudio(freq, epochTicks);
@@ -2161,18 +2161,18 @@ internal sealed class RecordingSession
                 if (!waitTask.Result)
                 {
                     // The channel we were draining (recorderRef's) completed. Two possible reasons:
-                    //   1. A REAL Stop() (HardStopCaptureIfNeeded) — the take genuinely ended.
-                    //   2. A cross-monitor drag HANDOFF (HandoffToMonitor) — it deliberately calls
+                    //   1. A REAL Stop() (HardStopCaptureIfNeeded) - the take genuinely ended.
+                    //   2. A cross-monitor drag HANDOFF (HandoffToMonitor) - it deliberately calls
                     //      Stop() on the OLD recorder after already swapping _recorder to the NEW
                     //      one, so this channel completing is expected and does NOT mean the take
                     //      is over.
                     // Distinguish them by comparing the recorder we were draining against the LIVE
                     // one: HardStopCaptureIfNeeded never reassigns _recorder before calling Stop()
                     // on it (it nulls _recorder only AFTER Join()ing this very thread, i.e. after
-                    // this loop has already returned) — so a real stop always sees them equal.
+                    // this loop has already returned) - so a real stop always sees them equal.
                     // HandoffToMonitor's Volatile.Write(ref _recorder, newRecorder) happens strictly
                     // BEFORE its oldRecorder.Stop() call (same UI thread, program order), and that
-                    // Stop() is what makes waitTask.Result observably false here — so by the time we
+                    // Stop() is what makes waitTask.Result observably false here - so by the time we
                     // get here after a handoff, this Volatile.Read is guaranteed to already see the
                     // new recorder (release/acquire pair), never null and never the old one.
                     var live = Volatile.Read(ref _recorder);
@@ -2185,8 +2185,8 @@ internal sealed class RecordingSession
                     reader = recorderRef.Frames;
                     // Dispose-and-null the raw-skip baselines at the handoff boundary: avoids
                     // comparing a stale monitor-A frame against monitor-B's first frame. Harmless
-                    // either way (dimensions can't mismatch — region size is fixed for the whole
-                    // take, plan §3), just cheap correctness housekeeping.
+                    // either way (dimensions can't mismatch - region size is fixed for the whole
+                    // take, plan sec 3), just cheap correctness housekeeping.
                     prevGifRaw?.Dispose();
                     prevGifRaw = null;
                     prevMp4Raw?.Dispose();
@@ -2202,7 +2202,7 @@ internal sealed class RecordingSession
                     try
                     {
                         // Subtract the accumulated paused time so the media clock is continuous across
-                        // a pause — frames captured DURING a pause never reach this queue at all
+                        // a pause - frames captured DURING a pause never reach this queue at all
                         // (RegionRecorder.Paused drops them before GPU readback), so the only thing left
                         // to correct for is the gap the pause left behind in the raw QPC timestamps.
                         // _pausedTicks only ever grows and Resume() updates it before any post-resume
@@ -2213,7 +2213,7 @@ internal sealed class RecordingSession
                         CapturedFrame? prevRaw = _format == RecordingFormat.Gif ? prevGifRaw : prevMp4Raw;
                         if (prevRaw is not null && RawFramesEqual(prevRaw, frame))
                         {
-                            continue; // crop unchanged (monitor was dirty elsewhere) — skip pre-tone-map
+                            continue; // crop unchanged (monitor was dirty elsewhere) - skip pre-tone-map
                         }
 
                         epochTicks ??= effectiveTicks;
@@ -2233,7 +2233,7 @@ internal sealed class RecordingSession
                             // frame (not a copy) as next iteration's comparison target instead of
                             // disposing it, and tell the finally block not to dispose it out from
                             // under that reference. MF's sink writer is fine with sparse/VFR
-                            // samples — each WriteFrame call already carries its own explicit
+                            // samples - each WriteFrame call already carries its own explicit
                             // timestamp100ns, so a skipped stretch just means fewer, further-apart
                             // samples rather than any timestamp math changing.
                             prevMp4Raw?.Dispose();
@@ -2248,7 +2248,7 @@ internal sealed class RecordingSession
                             var sdr = SdrImage.FromCapturedFrame(frame, _fixedToneMapOpts, target);
 
                             // Compact/Minimal tiers: box-filter the full-size tone-mapped frame down
-                            // into the reused scaled buffer BEFORE GifEncoder ever sees it — the
+                            // into the reused scaled buffer BEFORE GifEncoder ever sees it - the
                             // encoder's own canvas was opened at the scaled size in BeginCapture, so
                             // every frame handed to AddFrame from here on must already match it.
                             SdrImage encodeSource = sdr;
@@ -2264,7 +2264,7 @@ internal sealed class RecordingSession
                             // frame's delay to its real display duration once the next frame lands.
                             if (_gifEncoder!.AddFrame(encodeSource, effectiveTicks))
                             {
-                                gifUseA = !gifUseA; // harmless housekeeping only — see the comment above
+                                gifUseA = !gifUseA; // harmless housekeeping only - see the comment above
                             }
                             prevGifRaw?.Dispose();
                             prevGifRaw = frame; // becomes the raw-skip baseline for the next frame
@@ -2299,7 +2299,7 @@ internal sealed class RecordingSession
             if (_format == RecordingFormat.Mp4)
             {
                 // Whatever audio was still queued when the video channel completed belongs in the
-                // file — Stop() halts the audio engine BEFORE completing the channel, so this final
+                // file - Stop() halts the audio engine BEFORE completing the channel, so this final
                 // drain is bounded.
                 try { DrainAudio(freq, epochTicks); }
                 catch (Exception ex) { FileLog.Write($"RoeSnip: final audio drain failed: {ex}"); }
@@ -2323,41 +2323,41 @@ internal sealed class RecordingSession
         }
     }
 
-    /// <summary>Encoder thread only — the spanning-mode counterpart of <see cref="EncoderLoop"/>
-    /// (multi-monitor recording phase 2, PLAN-MULTIMON-RECORDING.md §1). Structurally different from
+    /// <summary>Encoder thread only - the spanning-mode counterpart of <see cref="EncoderLoop"/>
+    /// (multi-monitor recording phase 2, PLAN-MULTIMON-RECORDING.md sec 1). Structurally different from
     /// EncoderLoop by necessity: EncoderLoop blocks on ONE recorder's <c>WaitToReadAsync</c> and
     /// forwards every frame it produces (subject to that recorder's own throttle) as soon as it
     /// arrives; spanning has N independent, unsynchronized WGC delivery streams (mixed refresh rates,
-    /// no common vsync across monitors — see the plan's own "OBS-style latest-per-monitor" rationale),
+    /// no common vsync across monitors - see the plan's own "OBS-style latest-per-monitor" rationale),
     /// so this loop instead runs its OWN fixed-cadence tick (paced at 1/_targetFps, the same
     /// schedule-advance-not-since-last-forward throttle idea <see cref="RegionRecorder.
     /// OnFrameArrived"/> already uses) and, each tick, drains every recorder's channel down to its
-    /// OWN latest frame — a monitor with nothing new this tick simply leaves its own canvas sub-rect
+    /// OWN latest frame - a monitor with nothing new this tick simply leaves its own canvas sub-rect
     /// as whatever it last composited (WGC only fires on a dirty update, so this is expected, not a
-    /// bug — same reasoning EncoderLoop's own RawFramesEqual skip already relies on, just now
+    /// bug - same reasoning EncoderLoop's own RawFramesEqual skip already relies on, just now
     /// explicit per monitor instead of implicit for the whole frame).
     ///
     /// Termination: unlike EncoderLoop (which treats its one channel completing as "the take ended,"
-    /// then has to disambiguate a real Stop() from a phase-1 handoff swap — see that method's own
+    /// then has to disambiguate a real Stop() from a phase-1 handoff swap - see that method's own
     /// comment), this loop never blocks on channel completion at all, so there is nothing to
     /// disambiguate: it simply re-reads <see cref="_spanTopology"/> fresh every tick (a UI-thread
-    /// rebuild — RebuildSpanningRecorders/TrySlideSpanningInPlace — publishes a new bundled Slots+
-    /// Recorders pair at any time, as ONE Volatile reference — see that field's own doc comment for
+    /// rebuild - RebuildSpanningRecorders/TrySlideSpanningInPlace - publishes a new bundled Slots+
+    /// Recorders pair at any time, as ONE Volatile reference - see that field's own doc comment for
     /// why never two independent ones) and exits only once EVERY currently-tracked recorder's own
     /// channel has both completed AND been fully drained (<c>ChannelReader.Completion.IsCompleted</c>)
-    /// — which only happens once <see cref="HardStopCaptureIfNeeded"/> has called Stop() on the whole
+    /// - which only happens once <see cref="HardStopCaptureIfNeeded"/> has called Stop() on the whole
     /// set and left <see cref="_spanTopology"/> pointing at that same (now all-stopping) pair, i.e. a
     /// real end of take, never a mid-take rebuild (a rebuild always publishes a NEW pair before
     /// stopping the old recorders, so this loop's own local <c>recorders</c> reference would already
-    /// have moved on to the new array by the time the old one's channels finish) — EXCEPT for one
+    /// have moved on to the new array by the time the old one's channels finish) - EXCEPT for one
     /// narrow timing window this loop closes explicitly: a rebuild's publish-then-Stop can land
     /// entirely WITHIN a single iteration, after this iteration's own top-of-loop read already
     /// committed to the (now-superseded) old array for the rest of that iteration. If every recorder
     /// in that stale old array happens to have zero queued frames (typical for a set that has been
-    /// alive only a few milliseconds — see RegionRecorder.OnFrameArrived's own copy-#0 comment for
+    /// alive only a few milliseconds - see RegionRecorder.OnFrameArrived's own copy-#0 comment for
     /// why a brand-new recorder needs a second WGC callback before it can emit anything), Stop()
     /// completing all of them mid-iteration would otherwise make `allCompleted` read true for an
-    /// array that is NOT actually the take's final one — see the re-check right before the break
+    /// array that is NOT actually the take's final one - see the re-check right before the break
     /// below for how this loop tells that apart from a genuine end of take.</summary>
     private void EncoderLoopSpanning()
     {
@@ -2369,30 +2369,30 @@ internal sealed class RecordingSession
         SpanningCanvasCompositor.MonitorSlot[] slots = initialTopology.Slots;
 
         // Selection size is fixed for the take's whole lifetime once Capturing begins (BeginCapture's
-        // own "encoder canvas stays fixed" note) — hoisted into locals ONCE here rather than reading
+        // own "encoder canvas stays fixed" note) - hoisted into locals ONCE here rather than reading
         // the _selectionPx field's Width/Height repeatedly through the loop below. _selectionPx's
         // POSITION does change live (OnRegionMoved reassigns the whole struct on the UI thread on
         // every drag tick), and a 16-byte struct field read on this thread has no atomicity guarantee
-        // against a concurrent whole-struct write on that one — a torn read could pair a stale Left
+        // against a concurrent whole-struct write on that one - a torn read could pair a stale Left
         // with a fresh Right (or vice versa) and compute a transiently wrong width/height, which then
         // feeds CopyIntoCanvas' row-stride math or SdrImage's exact-length constructor. Reading
         // Width/Height exactly once, before either thread's per-tick/per-drag mutation can interleave
-        // with anything else in this method, removes the race entirely — same reason EncoderLoop's
+        // with anything else in this method, removes the race entirely - same reason EncoderLoop's
         // own single-recorder path already keys off frame.Width instead of re-reading shared state
         // every tick.
         int canvasWidth = _selectionPx.Width;
         int canvasHeight = _selectionPx.Height;
 
-        // Persistent, canvas-sized composite target — allocated ONCE for the whole take, never
+        // Persistent, canvas-sized composite target - allocated ONCE for the whole take, never
         // per-tick (the f7aa9a3 LOH/Gen2 lesson applies here exactly as it does to EncoderLoop's own
         // gifTonemapA/B buffers).
         byte[] canvas = new byte[canvasWidth * 4 * canvasHeight];
         // Per-slot tone-map scratch + raw-skip baseline, index-aligned with `recorders`/`slots`
-        // above. Resynced (not reallocated wholesale) on a topology change — see the resync block
+        // above. Resynced (not reallocated wholesale) on a topology change - see the resync block
         // inside the loop below for how entries are carried over by monitor identity.
         byte[]?[] scratch = new byte[recorders.Length][];
         CapturedFrame?[] prevRaw = new CapturedFrame?[recorders.Length];
-        // Per-slot "have I already tried the one-shot stuck-first-frame flush" guard — see
+        // Per-slot "have I already tried the one-shot stuck-first-frame flush" guard - see
         // RegionRecorder.TryFlushPendingInitialFrame's own doc comment for what this fixes (a
         // monitor whose content never changes after its very first WGC callback would otherwise
         // never contribute a single composited pixel for the whole take, leaving its canvas sub-rect
@@ -2418,7 +2418,7 @@ internal sealed class RecordingSession
 
                 if (!ReferenceEquals(liveRecorders, recorders))
                 {
-                    // Topology changed (RebuildSpanningRecorders published a new pair) — resize the
+                    // Topology changed (RebuildSpanningRecorders published a new pair) - resize the
                     // per-slot scratch/raw-baseline/flush-attempted arrays, carrying over entries for
                     // monitors that are STILL present (matched by DeviceName against the OLD `slots`,
                     // which at this point in the method still refers to the pre-resync geometry) so a
@@ -2434,10 +2434,10 @@ internal sealed class RecordingSession
                         {
                             newScratch[i] = scratch[oldIndex];
                             newPrevRaw[i] = prevRaw[oldIndex];
-                            prevRaw[oldIndex] = null; // ownership moved — don't let the disposal loop below touch it
+                            prevRaw[oldIndex] = null; // ownership moved - don't let the disposal loop below touch it
                             newInitialFlushAttempted[i] = initialFlushAttempted[oldIndex];
                         }
-                        // else: a brand-new slot (monitor just entered the spanning set) — starts at
+                        // else: a brand-new slot (monitor just entered the spanning set) - starts at
                         // false, so the loop below gets exactly one shot at its own stuck-first-frame
                         // flush too, same as a slot that has been there since BeginCapture.
                     }
@@ -2455,7 +2455,7 @@ internal sealed class RecordingSession
                 long now = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (now < nextDueTicks)
                 {
-                    // Not due yet — keep audio flowing (same reason EncoderLoop's own bounded wait
+                    // Not due yet - keep audio flowing (same reason EncoderLoop's own bounded wait
                     // does: audio must not pile up just because the screen is static) and check again
                     // shortly rather than busy-spinning the encoder thread.
                     DrainAudio(freq, epochTicks);
@@ -2472,7 +2472,7 @@ internal sealed class RecordingSession
                     allCompleted &= reader.Completion.IsCompleted;
 
                     // Drain to LATEST: everything but the last dequeued frame this tick is stale by
-                    // definition once a newer one exists (plan §1's own "drain that monitor's channel
+                    // definition once a newer one exists (plan sec 1's own "drain that monitor's channel
                     // with TryRead in a loop, keeping only the LAST" instruction).
                     CapturedFrame? latest = null;
                     while (reader.TryRead(out var queued))
@@ -2484,7 +2484,7 @@ internal sealed class RecordingSession
                     {
                         // Nothing new from this monitor this tick. If it has NEVER composited
                         // anything yet (still showing zero-initialized black for its whole canvas
-                        // sub-rect), try exactly once — ever, per recorder instance — to force its
+                        // sub-rect), try exactly once - ever, per recorder instance - to force its
                         // stuck first frame out; see TryFlushPendingInitialFrame's own doc comment.
                         if (prevRaw[i] is null && !initialFlushAttempted[i])
                         {
@@ -2500,7 +2500,7 @@ internal sealed class RecordingSession
                         }
                         if (latest is null)
                         {
-                            continue; // still nothing — this monitor's canvas sub-rect stays as-is
+                            continue; // still nothing - this monitor's canvas sub-rect stays as-is
                         }
                     }
 
@@ -2509,7 +2509,7 @@ internal sealed class RecordingSession
                     {
                         if (prevRaw[i] is { } prev && RawFramesEqual(prev, latest))
                         {
-                            continue; // this monitor's own crop is byte-identical to last tick — skip its tone-map (plan §5)
+                            continue; // this monitor's own crop is byte-identical to last tick - skip its tone-map (plan sec 5)
                         }
                         SpanningCanvasCompositor.CompositeSlot(canvas, canvasWidth, canvasHeight, slots[i], latest, ref scratch[i]);
                         anyComposited = true;
@@ -2529,8 +2529,8 @@ internal sealed class RecordingSession
                 if (anyComposited)
                 {
                     // Timestamped by the TICK's own schedule, not any one monitor's raw capture time
-                    // — the whole point of fixed-cadence compositing is decoupling the composed
-                    // frame's timing from N independently-jittering WGC delivery streams (plan §1).
+                    // - the whole point of fixed-cadence compositing is decoupling the composed
+                    // frame's timing from N independently-jittering WGC delivery streams (plan sec 1).
                     long paused = Volatile.Read(ref _pausedTicks);
                     long effectiveTicks = now - paused;
                     epochTicks ??= effectiveTicks;
@@ -2565,17 +2565,17 @@ internal sealed class RecordingSession
                     // Re-check the topology reference before actually ending the take: a rebuild can
                     // publish a NEW pair and then Stop() the OLD `recorders` array entirely WITHIN
                     // this same iteration's window (see this method's own class doc for the exact
-                    // race) — if every recorder in that now-stale array had zero frames queued (the
+                    // race) - if every recorder in that now-stale array had zero frames queued (the
                     // common case for a set that only just got rebuilt), `allCompleted` reads true
                     // for an array that was already superseded, not for a real end of take.
                     // `liveTopology` is what THIS iteration read at its own top, before the drain
-                    // above ran — comparing a FRESH read against that same value confirms nothing
+                    // above ran - comparing a FRESH read against that same value confirms nothing
                     // published a newer pair while this iteration's drain was in flight. Only break
-                    // if they still match; otherwise a rebuild landed mid-iteration — loop again, and
+                    // if they still match; otherwise a rebuild landed mid-iteration - loop again, and
                     // the top-of-loop resync will pick up the new array on the very next pass.
                     if (ReferenceEquals(Volatile.Read(ref _spanTopology), liveTopology))
                     {
-                        break; // every currently-tracked recorder is done and nobody swapped the pair under us — real end of take
+                        break; // every currently-tracked recorder is done and nobody swapped the pair under us - real end of take
                     }
                 }
             }
@@ -2584,7 +2584,7 @@ internal sealed class RecordingSession
         {
             FileLog.Write($"RoeSnip: spanning recording encoder failed mid-session after {framesWritten} frame(s): {ex}");
             // Best-effort: keep whatever encoded cleanly so far rather than losing the whole
-            // recording to one bad frame/disk hiccup — same policy EncoderLoop's own catch uses.
+            // recording to one bad frame/disk hiccup - same policy EncoderLoop's own catch uses.
             RequestForceStopAndSave();
         }
         finally
@@ -2616,7 +2616,7 @@ internal sealed class RecordingSession
     }
 
     /// <summary>UI thread (BeginCapture). Scales <paramref name="fullSize"/> by <paramref name="scale"/>
-    /// and floors the result to the nearest even number, minimum 2 — GifEncoder.Create's canvas
+    /// and floors the result to the nearest even number, minimum 2 - GifEncoder.Create's canvas
     /// dimensions must be even for the same reason RecordingController.RoundDownToEven already
     /// floors the UNSCALED selection (H.264 4:2:0 chroma subsampling on the MP4 path; kept even here
     /// too purely for symmetry with that convention, GIF itself has no such constraint).</summary>
@@ -2628,12 +2628,12 @@ internal sealed class RecordingSession
 
     /// <summary>Encoder thread only. Box-filter downsample of a tone-mapped BGRA8 buffer into a
     /// smaller, caller-owned destination buffer (GIF downscaled render, Compact 0.75 / Minimal 0.5
-    /// — see GifEncoderOptions.RenderScale's own doc comment). Each destination pixel averages the
-    /// axis-aligned source rect that maps to it under uniform (srcSize/dstSize) scaling — at
+    /// - see GifEncoderOptions.RenderScale's own doc comment). Each destination pixel averages the
+    /// axis-aligned source rect that maps to it under uniform (srcSize/dstSize) scaling - at
     /// Minimal's 0.5 that rect is always a plain 2x2 block; at Compact's 0.75 (non-integer ratio)
     /// the integer-floored boundaries produce a repeating 1,1,2-pixel rect pattern per axis, i.e.
     /// an integer-snapped area average in which every source pixel contributes wholly to exactly
-    /// one destination pixel (no fractional edge weights — a deliberate approximation of the exact
+    /// one destination pixel (no fractional edge weights - a deliberate approximation of the exact
     /// fractional-coverage box filter, accepted because the per-pixel weight error is at most one
     /// source pixel's worth and GifSizeBenchmarkTests' scale-aware visual gates measure the whole
     /// 0.75 path at meanErr 1.26 on scroll text, nowhere near a legibility problem, without the
@@ -2694,13 +2694,13 @@ internal sealed class RecordingSession
         return true;
     }
 
-    // ---------- Automation hooks (App/AutomationServer.cs) — UI thread only, same as every other
+    // ---------- Automation hooks (App/AutomationServer.cs) - UI thread only, same as every other
     // method above driven by a chrome button click. ----------
 
     internal RecordingAutomationSnapshot GetAutomationSnapshot()
     {
         // _selectionPx is already virtual-desktop-absolute (multi-monitor recording phase 1,
-        // PLAN-MULTIMON-RECORDING.md §4/§6) — a straight passthrough now; this used to fold in
+        // PLAN-MULTIMON-RECORDING.md sec 4/sec 6) - a straight passthrough now; this used to fold in
         // _monitor.BoundsPx's own origin here (a single-monitor-relative _selectionPx needed that
         // conversion at the wire boundary). Simpler, not more complex, per the plan's own note.
         return new RecordingAutomationSnapshot(_phase.ToString(), _format, _selectionPx, _chrome!.EstimateText, _chrome!.CurrentSizePreset, _chrome!.CurrentFps);
@@ -2709,8 +2709,8 @@ internal sealed class RecordingSession
     /// <summary>AutomationServer's `select` command: applies the rect to RegionOutline through the
     /// exact band-drag code path (RegionChanged -> OnRegionMoved -> chrome UpdateSelection, and (if
     /// a recorder is live) the SAME same-monitor-slide/cross-monitor-handoff logic a real drag gets
-    /// — all fire, same as a real drag). No phase gate: RegionOutline shows and accepts a drag in
-    /// every phase this session shows it (Setup through Reviewing — see RegionOutline's own ctor
+    /// - all fire, same as a real drag). No phase gate: RegionOutline shows and accepts a drag in
+    /// every phase this session shows it (Setup through Reviewing - see RegionOutline's own ctor
     /// doc), so a real mouse drag already isn't restricted to Setup either (a Capturing/Reviewing
     /// drag just moves the region, per RegionOutline's own size-locked-once-capturing rule); this
     /// automation hook now matches that instead of rejecting it, which is what lets AutomationServer
@@ -2723,7 +2723,7 @@ internal sealed class RecordingSession
         return null;
     }
 
-    /// <summary>AutomationServer's `preset` command — only valid in Setup, same as a real chip
+    /// <summary>AutomationServer's `preset` command - only valid in Setup, same as a real chip
     /// click (see RecordingChrome.ApplyState's IsEnabled gating on the size row).</summary>
     internal string? SetSizePresetForAutomation(GifSizePreset preset)
     {
@@ -2735,11 +2735,11 @@ internal sealed class RecordingSession
         return null;
     }
 
-    /// <summary>AutomationServer's `fps` command — only valid in Setup, same as a real slider drag
+    /// <summary>AutomationServer's `fps` command - only valid in Setup, same as a real slider drag
     /// (see RecordingChrome.ApplyState's IsEnabled gating on the FPS row). Unlike
     /// <see cref="SetSizePresetForAutomation"/>, the value isn't a fixed enum: AutomationProtocol.
     /// ValidateArgs can only pure-validate up front that it's an integer somewhere in the UNION of
-    /// both formats' ranges (5-60, see that method's own doc comment) — so this live half
+    /// both formats' ranges (5-60, see that method's own doc comment) - so this live half
     /// additionally rejects a value outside THIS session's own format's range, e.g. 55 offered
     /// while recording GIF (whose ceiling is 50), giving the caller a real error instead of
     /// RecordingChrome.InvokeFps's belt-and-braces exception.</summary>
@@ -2759,7 +2759,7 @@ internal sealed class RecordingSession
         return null;
     }
 
-    /// <summary>AutomationServer's `chrome`/`escape` commands — raises the same button Click a real
+    /// <summary>AutomationServer's `chrome`/`escape` commands - raises the same button Click a real
     /// mouse click on that chrome button would (see RecordingChrome's Invoke* methods), after
     /// rejecting an action that button isn't valid for right now as an explicit error instead of
     /// the silent no-op a disabled button would give.</summary>
@@ -2835,7 +2835,7 @@ internal sealed class RecordingSession
 
     /// <summary>Encoder thread only. Moves every queued audio chunk into the MP4 writer, mapping
     /// each chunk's QPC timestamp onto the video timeline (same epoch: the first dequeued video
-    /// frame, itself paused-time-adjusted). Chunks captured before that epoch are dropped — the
+    /// frame, itself paused-time-adjusted). Chunks captured before that epoch are dropped - the
     /// track starts with the video. Chunks captured while paused are dropped outright (not written)
     /// so the audio track stays silent-free across the cut rather than baking in dead air.</summary>
     private void DrainAudio(double freq, long? epochTicks)
@@ -2855,7 +2855,7 @@ internal sealed class RecordingSession
             // silently chop that tail off the take. Chunks captured during the pause itself drop.
             if (_paused && chunk.QpcTicks >= Volatile.Read(ref _pauseStartTicks))
             {
-                continue; // captured while paused — never written
+                continue; // captured while paused - never written
             }
             long paused = Volatile.Read(ref _pausedTicks);
             long effectiveTicks = chunk.QpcTicks - paused;

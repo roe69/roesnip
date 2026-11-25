@@ -9,13 +9,13 @@
          port draws from one shared palette instead of each XAML file inventing its own grays.
          Tracks roeshare's NEUTRAL token set (E:\GitHub\RoeLite\roeshare\public\css\tokens.css): a
          cool near-black foundation with hairline WHITE-ALPHA glass borders and ONE hot accent, the
-         brand ORANGE, reserved for primary actions / the active item / focus — never a second
+         brand ORANGE, reserved for primary actions / the active item / focus - never a second
          arbitrary accent color (the WPF app's old per-button blue/green/purple fills are gone).
          Alpha-tinted colors are pre-multiplied hex (#AARRGGBB), same convention WPF brushes use.
          Defined at Application scope (not per-window) so ToolbarControl, SettingsWindow, and
          TrayApp's toast all reference the exact same StaticResource instances. -->
     <SolidColorBrush x:Key="RlTextPrimaryBrush" Color="#EDEDF0"/>
-    <!-- rl-text: neutral off-white body/icon color, ~16:1 on black — never pure white. -->
+    <!-- rl-text: neutral off-white body/icon color, ~16:1 on black - never pure white. -->
     <SolidColorBrush x:Key="RlTextMutedBrush" Color="#A2A2AB"/>
     <!-- rl-text-muted -->
     <SolidColorBrush x:Key="RlTextDimBrush" Color="#71717B"/>
@@ -36,7 +36,7 @@
     <SolidColorBrush x:Key="RlBorderBrush" Color="#12FFFFFF"/>
     <!-- rl-border, rgba(255,255,255,.07): the workhorse hairline for inputs/menus -->
     <SolidColorBrush x:Key="RlBorderStrongBrush" Color="#24FFFFFF"/>
-    <!-- rl-border-strong, rgba(255,255,255,.14): emphasized edges — group dividers and floating
+    <!-- rl-border-strong, rgba(255,255,255,.14): emphasized edges - group dividers and floating
          panel borders that need to read clearly against arbitrary screenshot content. -->
     <SolidColorBrush x:Key="RlSecondaryBorderBrush" Color="#2EFFFFFF"/>
     <!-- rgba(255,255,255,.18): v_secondary button border (Save) -->
@@ -45,24 +45,24 @@
     <SolidColorBrush x:Key="RlGhostPressedBrush" Color="#1AFFFFFF"/>
     <!-- rgba(255,255,255,.10): v_ghost pressed fill / v_secondary hover fill / dropdown row hover -->
     <SolidColorBrush x:Key="RlActiveTintBrush" Color="#1FFF6B35"/>
-    <!-- rgba(primary,.12): the flat background tint half of the site's active-item recipe — the
+    <!-- rgba(primary,.12): the flat background tint half of the site's active-item recipe - the
          active tool / Save's v_secondary fill get an orange tint, not a neutral one. -->
     <SolidColorBrush x:Key="RlSelectedItemBrush" Color="#33FF6B35"/>
     <!-- rgba(primary,.20): a still-flat, slightly stronger orange tint for a genuinely-selected
          dropdown row -->
     <SolidColorBrush x:Key="RlDangerHoverBrush" Color="#DC2626"/>
     <!-- rl-danger-600: solid hover fill for Cancel and the exact "error red" used everywhere else
-         in the product (matches WPF's ShareProviderEditWindow ErrorBrush) — NOT a softer/lighter
+         in the product (matches WPF's ShareProviderEditWindow ErrorBrush) - NOT a softer/lighter
          coral approximation. -->
     <SolidColorBrush x:Key="RlDangerTextBrush" Color="#E05A5A"/>
     <!-- AUDIT ADDITION (legibility pass): RlDangerHoverBrush was only ever verified as a button
-         fill (paired with light text) or a non-text border/fill (>=3:1 bar) — used as TEXT sitting
+         fill (paired with light text) or a non-text border/fill (>=3:1 bar) - used as TEXT sitting
          directly on a dark surface it measures under the >=4.5:1 body-text bar: 4.35:1 on the
          window's black background, 3.66:1 on RlBgElevated. This token is the WPF app's own
-         Sharing/ShareResultWindow.xaml #E05A5A (5.78:1 on black, 4.87:1 on RlBgElevated — both
+         Sharing/ShareResultWindow.xaml #E05A5A (5.78:1 on black, 4.87:1 on RlBgElevated - both
          pass), reused here rather than inventing a new hue, and used ONLY for danger-colored TEXT
          (ValidationErrorText/WaylandHotkeyCaption/TestStatusText's Failed state/ShareResultWindow's
-         failure message) — never for RlDangerHoverBrush's own fill/border call sites. -->
+         failure message) - never for RlDangerHoverBrush's own fill/border call sites. -->
     <SolidColorBrush x:Key="RlPanelBackgroundBrush" Color="#EB0E0E11"/>
     <!-- The Modal glass-card recipe (rl-bg-secondary + hairline border) pushed from 50% to ~92%
          opacity: a floating toolbar can't be as translucent as a card sitting on the site's own

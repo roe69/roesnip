@@ -6,7 +6,7 @@ namespace RoeSnip.Core.Updates;
 /// <summary>The periodic-check scheduling skeleton shared by every long-lived tray resident's
 /// update loop (WPF's <c>TrayApp.RunUpdateLoopAsync</c>, Avalonia's Windows
 /// <c>TrayApp.RunUpdateLoopAsync</c>, and Avalonia's Linux/macOS
-/// <c>TrayApp.RunPassiveNoticeLoopAsync</c>) — three call sites that differ only in what "check for
+/// <c>TrayApp.RunPassiveNoticeLoopAsync</c>) - three call sites that differ only in what "check for
 /// an update" means (auto-apply vs. a passive notice) and how that work gets marshalled back onto a
 /// UI thread, never in the scheduling itself. <paramref name="tick"/> owns both of those concerns;
 /// this method owns only WHEN to call it.

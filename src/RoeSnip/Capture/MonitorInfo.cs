@@ -23,19 +23,19 @@ public readonly record struct RectPhysical(int Left, int Top, int Right, int Bot
 /// <summary>One physical display, enumerated once per capture trigger.</summary>
 public sealed record MonitorInfo(
     int Index,                 // stable ordinal for this capture session, 0-based
-    string DeviceName,          // GDI device name, e.g. "\\.\DISPLAY1" — matches DXGI_OUTPUT_DESC.DeviceName
+    string DeviceName,          // GDI device name, e.g. "\\.\DISPLAY1" - matches DXGI_OUTPUT_DESC.DeviceName
     nint HMonitor,               // HMONITOR
     RectPhysical BoundsPx,        // this monitor's rect in virtual-desktop physical pixels
     int DpiX,
     int DpiY,
-    bool AdvancedColorActive,     // informational only (DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020) —
+    bool AdvancedColorActive,     // informational only (DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020) -
                                    // NEVER branch capture/tone-map logic on this; branch on delivered format instead
     double SdrWhiteNits,          // DisplayConfigGetDeviceInfo SDR_WHITE_LEVEL; default 240.0 on query failure
     double MaxLuminanceNits,      // IDXGIOutput6.GetDesc1().MaxLuminance; default 1000.0 if 0 or absurd (<10 or >10000)
     bool IsPrimary
 );
 
-/// <summary>Enumerates all active monitors. Never throws for a single bad monitor entry —
+/// <summary>Enumerates all active monitors. Never throws for a single bad monitor entry -
 /// logs to stderr and omits it. Returns empty list only if enumeration itself fails entirely.</summary>
 public static class MonitorEnumerator
 {

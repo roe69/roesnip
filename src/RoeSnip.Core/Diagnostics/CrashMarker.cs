@@ -11,13 +11,13 @@ namespace RoeSnip.Core.Diagnostics;
 /// placement in Core so both apps share one implementation.
 ///
 /// Deliberately never throws: called from inside an unhandled-exception handler, where the process
-/// is already on its way down — an I/O failure here must never mask or replace the real crash.</summary>
+/// is already on its way down - an I/O failure here must never mask or replace the real crash.</summary>
 public static class CrashMarker
 {
     private const string FileName = "crash-marker.txt";
 
     /// <summary>Writes/overwrites "&lt;directory&gt;/crash-marker.txt" with <paramref name="version"/>
-    /// and the current UTC timestamp. Overwrites any previous marker — only the most recent crash
+    /// and the current UTC timestamp. Overwrites any previous marker - only the most recent crash
     /// matters for a future crash-loop guard, not a history of every one.</summary>
     public static void Write(string directory, string version)
     {

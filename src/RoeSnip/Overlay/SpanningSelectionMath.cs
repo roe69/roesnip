@@ -6,17 +6,17 @@ using RoeSnip.Capture;
 namespace RoeSnip.Overlay;
 
 // RoeSnip.csproj enables both UseWPF and UseWindowsForms, so System.Windows.Forms/System.Drawing
-// are in scope alongside System.Windows — alias the colliding name to WPF's, matching every other
+// are in scope alongside System.Windows - alias the colliding name to WPF's, matching every other
 // Overlay/*.cs file's own alias block (see e.g. OverlayWindow.xaml.cs).
 using Point = System.Windows.Point;
 
 /// <summary>Which of a spanning selection's LOCAL (per-monitor) edges are also edges of the TRUE
 /// virtual-desktop rect, versus merely where that monitor's own screen boundary happened to cut the
-/// selection off. A corner/side resize handle only ever makes sense on a real edge — dragging a
+/// selection off. A corner/side resize handle only ever makes sense on a real edge - dragging a
 /// "handle" that's actually just a monitor-boundary clip would silently be dragging the wrong thing
 /// (see <see cref="SpanningSelectionMath.Distribute"/>'s doc comment for how these are computed).
 /// <see cref="SelectionAdorner.RealEdges"/> defaults to <see cref="All"/>, which is exactly every
-/// ordinary (non-spanning) selection's answer — this type only ever varies while spanning.</summary>
+/// ordinary (non-spanning) selection's answer - this type only ever varies while spanning.</summary>
 [Flags]
 public enum SelectionEdges
 {
@@ -40,15 +40,15 @@ public readonly record struct SpanningHit(int MonitorIndex, RectPhysical LocalRe
 public readonly record struct SpanningDistribution(
     RectPhysical ClampedVirtual, IReadOnlyList<SpanningHit> Hits, bool IsSpanning);
 
-/// <summary>Pure geometry for the cross-monitor ("spanning") selection feature — no WPF Window, no
+/// <summary>Pure geometry for the cross-monitor ("spanning") selection feature - no WPF Window, no
 /// mutable session/window state, nothing here touches pixels. Deliberately factored out of
 /// OverlayController.OverlaySession (which owns the actual per-window side effects) and out of
-/// OverlayWindow (which owns the actual mouse-drag plumbing) so this math — the part with real
-/// correctness risk (off-by-one clamps, which edges are "real") — can be unit-tested directly
+/// OverlayWindow (which owns the actual mouse-drag plumbing) so this math - the part with real
+/// correctness risk (off-by-one clamps, which edges are "real") - can be unit-tested directly
 /// without spinning up any WPF window. See docs/architecture.md.</summary>
 public static class SpanningSelectionMath
 {
-    /// <summary>The union of every monitor's own bounds — the outer box a spanning drag candidate
+    /// <summary>The union of every monitor's own bounds - the outer box a spanning drag candidate
     /// gets clamped to before being distributed (a drag can't select space with no monitor at all,
     /// e.g. the gap between two non-adjacent displays, even though it CAN span the monitors on
     /// either side of that gap).</summary>
@@ -85,7 +85,7 @@ public static class SpanningSelectionMath
     /// opposite edges that are both out of bounds by different amounts shrinks the rect, which reads
     /// as the selection silently losing size mid-drag instead of sliding to a stop at the edge, like
     /// every other drag in this app already does. Only shrinks the rect (down to `bounds`' own size)
-    /// in the degenerate case where it doesn't even fit — never grows it.</summary>
+    /// in the degenerate case where it doesn't even fit - never grows it.</summary>
     public static RectPhysical SlideToBounds(RectPhysical r, RectPhysical bounds)
     {
         var n = r.Normalized();
@@ -107,12 +107,12 @@ public static class SpanningSelectionMath
     /// box, intersects the result against every monitor in <paramref name="monitorBounds"/>, and for
     /// each non-empty intersection also works out which of that monitor's own 4 local edges are REAL
     /// edges of the (clamped) candidate rather than just where this monitor's screen happened to cut
-    /// it off — an edge is real iff the intersection didn't have to move it inward from the clamped
+    /// it off - an edge is real iff the intersection didn't have to move it inward from the clamped
     /// candidate's own edge, i.e. <c>intersection.Left == clamped.Left</c> and so on for the other 3.
     /// This is exactly the same comparison <see cref="IntersectRects"/> makes internally, just
     /// surfaced so the caller (and the Adorner, transitively) knows which handles are meaningful to
     /// offer: a handle on a clipped edge would resize based on this window's own visible slice, which
-    /// silently desyncs from the true rect the moment the selection is redrawn — see Adorner's own
+    /// silently desyncs from the true rect the moment the selection is redrawn - see Adorner's own
     /// SuppressBadge/RealEdges doc comments. Degenerates to the plain single-monitor case whenever
     /// the candidate only ever touches one monitor (IsSpanning stays false, that monitor's RealEdges
     /// is always <see cref="SelectionEdges.All"/> since nothing else can clip it away from itself).</summary>
@@ -147,10 +147,10 @@ public static class SpanningSelectionMath
     }
 
     /// <summary>Applies one resize handle's delta to <paramref name="start"/>, replacing the edge(s)
-    /// that handle owns with <paramref name="px"/>'s coordinates — a pure function of (start rect,
+    /// that handle owns with <paramref name="px"/>'s coordinates - a pure function of (start rect,
     /// handle, pointer position), so it works identically whether "pointer position" is a window's
     /// own local physical pixels (the plain single-monitor Resize drag, OverlayWindow's own call
-    /// site) or a virtual-desktop physical position (SpanningResize — see OverlayWindow's
+    /// site) or a virtual-desktop physical position (SpanningResize - see OverlayWindow's
     /// OnPreviewMouseMove). Normalizes the result so a handle dragged past its opposite edge (e.g.
     /// dragging Right left of Left) flips into a valid, non-negative-size rect instead of staying
     /// inverted.</summary>

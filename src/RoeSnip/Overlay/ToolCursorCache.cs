@@ -10,7 +10,7 @@ using System.Windows.Media.Imaging;
 namespace RoeSnip.Overlay;
 
 // RoeSnip.csproj enables both UseWPF and UseWindowsForms, so System.Windows.Forms/System.Drawing
-// are in scope alongside System.Windows/System.Windows.Media — alias the colliding names to WPF's,
+// are in scope alongside System.Windows/System.Windows.Media - alias the colliding names to WPF's,
 // matching the convention used throughout Overlay/* (see AnnotationLayer.cs). Cursor is a rarer
 // collision (System.Windows.Forms.Cursor exists too) but the same rule applies.
 using Point = System.Windows.Point;
@@ -23,7 +23,7 @@ using FontFamily = System.Windows.Media.FontFamily;
 using FlowDir = System.Windows.FlowDirection;
 
 /// <summary>Identifies one cached cursor bitmap: which tool is selected, what color it's drawn in,
-/// and (for the stroke-width-sensitive tools) the current stroke width — the plain Select tool
+/// and (for the stroke-width-sensitive tools) the current stroke width - the plain Select tool
 /// never reaches <see cref="ToolCursorCache"/> at all (OverlayWindow keeps the system crosshair for
 /// it), and the Text tool ignores stroke width entirely, so its key always normalizes width to 0 to
 /// avoid needlessly growing the cache every time a scroll-wheel changes a width that tool doesn't
@@ -48,10 +48,10 @@ public readonly record struct CursorKey(AnnotationTool Tool, Color Color, double
 }
 
 /// <summary>Computes the on-screen circle diameter and bitmap canvas size for a given (already
-/// rounded-to-nearest-pixel) stroke width — UX round 4's tool-cursor redesign: every drawing tool's
+/// rounded-to-nearest-pixel) stroke width - UX round 4's tool-cursor redesign: every drawing tool's
 /// cursor is a plain circle outline whose diameter equals the stroke width, so scrolling the width
 /// visibly grows/shrinks the cursor itself, rather than a per-tool shape glyph. The diameter always
-/// equals the stroke width 1:1 — never scaled down to fit — except once it would need a canvas bigger
+/// equals the stroke width 1:1 - never scaled down to fit - except once it would need a canvas bigger
 /// than <see cref="MaxCanvasSize"/>: past that point the bitmap is capped at 64x64, the circle is
 /// drawn at the largest diameter that still fits, and <see cref="ShowLabel"/> switches on so the
 /// actual numeric width is drawn inside it instead of silently lying about the true size. Public
@@ -62,9 +62,9 @@ public readonly record struct CircleSpec(int CanvasSize, double Diameter, bool S
 {
     public const int MaxCanvasSize = 64;
 
-    // The circle is ALWAYS exactly the stroke width — no legibility clamp. At 1-2px the ring is
+    // The circle is ALWAYS exactly the stroke width - no legibility clamp. At 1-2px the ring is
     // tiny, but the dark halo keeps it findable, and a cursor bigger than the brush lies about
-    // what will be drawn ("it should always be the same size as whatever we'll be drawing" —
+    // what will be drawn ("it should always be the same size as whatever we'll be drawing" -
     // user feedback). Kept as a floor of 1 purely to guard against zero/negative widths.
     public const double MinDiameter = 1.0;
 
@@ -119,7 +119,7 @@ file static class CursorInterop
     public struct BITMAPINFO
     {
         public BITMAPINFOHEADER bmiHeader;
-        public uint bmiColors; // unused for 32bpp BI_RGB (no color table) — present only for layout parity
+        public uint bmiColors; // unused for 32bpp BI_RGB (no color table) - present only for layout parity
     }
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -144,27 +144,27 @@ file static class CursorInterop
 }
 
 /// <summary>Builds and caches a small custom Windows cursor per (tool, color, strokeWidth)
-/// combination — item 1 of UX round 3, redesigned in UX round 4 after the original per-tool glyphs
+/// combination - item 1 of UX round 3, redesigned in UX round 4 after the original per-tool glyphs
 /// (a literal drawn rect/ellipse/arrow/line/pencil icon) read as visual artifacts rather than a
-/// cursor — e.g. the arrow/line glyph looked like "a red line through the crosshair". The new design
+/// cursor - e.g. the arrow/line glyph looked like "a red line through the crosshair". The new design
 /// is deliberately minimal: every drawing tool (Rectangle/Ellipse/Arrow/Line/Freehand) gets a plain
 /// circle outline whose diameter *is* the current stroke width, so scrolling the width visibly
 /// grows/shrinks the cursor itself; the Text tool gets a small I-beam-with-T icon. AnnotationTool.None
-/// (the Select tool) is never looked up here — OverlayWindow keeps the plain system crosshair for it.
+/// (the Select tool) is never looked up here - OverlayWindow keeps the plain system crosshair for it.
 ///
-/// Built via DrawingVisual -> RenderTargetBitmap (Pbgra32, i.e. already premultiplied — exactly the
+/// Built via DrawingVisual -> RenderTargetBitmap (Pbgra32, i.e. already premultiplied - exactly the
 /// pixel layout a 32bpp alpha-icon DIB needs) -> a GDI DIB section (CreateDIBSection) copied in as
 /// the icon's color bitmap -> CreateIconIndirect with fIcon=false (a cursor, not an icon) and an
 /// explicit hotspot -> CursorInteropHelper.Create wraps the resulting HICON/HCURSOR as a WPF Cursor.
 /// Entries are cached per <see cref="CursorKey"/> (scroll-wheel resizing revisits the same widths
 /// constantly) in a small LRU-bounded cache; whatever gets evicted is disposed (DestroyIcon)
-/// immediately, and <see cref="Dispose"/> tears down every entry still cached — call it once when the
+/// immediately, and <see cref="Dispose"/> tears down every entry still cached - call it once when the
 /// owning OverlayWindow closes.</summary>
 public sealed class ToolCursorCache : IDisposable
 {
     /// <summary>Owns one HICON/HCURSOR returned by CreateIconIndirect. CreateIconIndirect's own
     /// docs say to destroy the result via DestroyIcon regardless of whether fIcon was true or false
-    /// (HICON and HCURSOR are the same underlying handle kind in Win32) — SafeHandle guarantees that
+    /// (HICON and HCURSOR are the same underlying handle kind in Win32) - SafeHandle guarantees that
     /// happens exactly once even if the owning cache entry is evicted while some other code still
     /// holds a reference to the wrapping WPF Cursor.</summary>
     private sealed class SafeIconHandle : SafeHandle
@@ -239,7 +239,7 @@ public sealed class ToolCursorCache : IDisposable
         else
         {
             // Every stroke tool (Rectangle/Ellipse/Arrow/Line/Freehand) shares one design: a plain
-            // circle outline the same diameter as the stroke width — see CircleSpec.For.
+            // circle outline the same diameter as the stroke width - see CircleSpec.For.
             var spec = CircleSpec.For(normalizedStrokeWidthPx);
             canvasWidth = canvasHeight = spec.CanvasSize;
             hotspotX = hotspotY = spec.CanvasSize / 2;
@@ -292,7 +292,7 @@ public sealed class ToolCursorCache : IDisposable
 
             // The AND mask is irrelevant for a 32bpp color bitmap with a real alpha channel (Windows
             // XP+ composites using the alpha channel instead) but CreateIconIndirect still requires
-            // one of matching dimensions — an all-zero (fully "unmasked") 1bpp mask is the documented
+            // one of matching dimensions - an all-zero (fully "unmasked") 1bpp mask is the documented
             // convention for alpha-icons/cursors, so build it explicitly rather than pass NULL bits
             // (whose contents CreateBitmap leaves undefined).
             int maskStride = ((width + 15) / 16) * 2;
@@ -331,7 +331,7 @@ public sealed class ToolCursorCache : IDisposable
 
     /// <summary>All five drawing tools (Rectangle/Ellipse/Arrow/Line/Freehand) share this one design:
     /// a circle outline sized to the current stroke width, tinted with the draw color, with a dark
-    /// halo so it reads on any background — no per-tool shape glyph, which is what previously read as
+    /// halo so it reads on any background - no per-tool shape glyph, which is what previously read as
     /// stray artifacts (e.g. a line tool's glyph looking like "a red line through the crosshair").</summary>
     private static void DrawCircleGlyph(DrawingContext dc, Color color, CircleSpec spec)
     {
@@ -354,7 +354,7 @@ public sealed class ToolCursorCache : IDisposable
     /// <summary>Text tool: an I-beam with a small bold "T" beside it (unambiguously "text tool", not
     /// a generic text-select caret), tinted with the draw color and haloed like the circle cursor.
     /// The hotspot (<see cref="TextHotspotX"/>/<see cref="TextHotspotY"/>) sits at the top of the
-    /// I-beam's vertical bar — the point BeginTextEditor treats as the new text's origin (top-left of
+    /// I-beam's vertical bar - the point BeginTextEditor treats as the new text's origin (top-left of
     /// the editor), not the bar's vertical center a normal caret would use.</summary>
     private static void DrawTextGlyph(DrawingContext dc, Color color)
     {
@@ -412,7 +412,7 @@ public sealed class ToolCursorCache : IDisposable
         new(-1, 0), new(1, 0), new(0, -1), new(0, 1),
     };
 
-    // Text-tool cursor geometry: a fixed-size canvas (stroke width plays no part in this glyph — see
+    // Text-tool cursor geometry: a fixed-size canvas (stroke width plays no part in this glyph - see
     // CursorKey.For's normalization), with the hotspot at the top of the I-beam bar.
     private const int TextCanvasSize = 28;
     private const double TextBarHeight = 16.0;

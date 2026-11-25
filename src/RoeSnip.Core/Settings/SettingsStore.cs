@@ -9,7 +9,7 @@ namespace RoeSnip.Core.Settings;
 /// <summary>JSON persistence for <see cref="RoeSnipSettings"/> at <c>settings.json</c> in the
 /// portable per-OS config directory (<see cref="ConfigPaths.ConfigDirectory"/>). Fail-closed per
 /// docs/architecture.md: any problem reading the file (missing, empty, unreadable, malformed JSON) returns
-/// <see cref="RoeSnipSettings.Default"/> WITHOUT writing to or otherwise touching the file — a
+/// <see cref="RoeSnipSettings.Default"/> WITHOUT writing to or otherwise touching the file - a
 /// corrupt file on disk is left exactly as it was found so a user/support session can inspect it
 /// later. <see cref="Save(RoeSnipSettings)"/> writes atomically (temp file in the same directory,
 /// then <see cref="File.Replace(string, string, string?)"/> / <see cref="File.Move(string, string)"/>)
@@ -47,7 +47,7 @@ public static class SettingsStore
     public static RoeSnipSettings Load() => Load(SettingsFilePath);
 
     /// <summary>Overload used by tests to point at an isolated temp path instead of the real
-    /// config directory — unit tests must never touch the user's real settings file.</summary>
+    /// config directory - unit tests must never touch the user's real settings file.</summary>
     public static RoeSnipSettings Load(string path)
     {
         try

@@ -23,11 +23,11 @@ public static class PngWriter
         var info = new SkiaSharp.SKImageInfo(image.Width, image.Height, SkiaSharp.SKColorType.Bgra8888, SkiaSharp.SKAlphaType.Unpremul);
         using var bitmap = new SkiaSharp.SKBitmap(info);
         // SdrImage.Stride == Width * 4 always (tightly packed, per its own contract) and matches
-        // SKImageInfo's default RowBytes for Bgra8888 exactly — a straight Marshal.Copy into
+        // SKImageInfo's default RowBytes for Bgra8888 exactly - a straight Marshal.Copy into
         // Skia-owned pixel memory is safe (no manual pinning of the managed array required).
         System.Runtime.InteropServices.Marshal.Copy(image.Pixels, 0, bitmap.GetPixels(), image.Pixels.Length);
         using var skImage = SkiaSharp.SKImage.FromBitmap(bitmap);
-        // SKImage.Encode returns null on encoder failure rather than throwing (C3 audit fix) —
+        // SKImage.Encode returns null on encoder failure rather than throwing (C3 audit fix) -
         // surface a descriptive IOException instead of letting a NullReferenceException escape
         // from SKData.SaveTo/ToArray with no indication of what actually went wrong.
         return skImage.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100)
