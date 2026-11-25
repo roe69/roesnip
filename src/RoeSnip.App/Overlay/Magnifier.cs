@@ -1,5 +1,8 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using Avalonia;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
@@ -216,21 +219,15 @@ public sealed class Magnifier : Control
             new Pen(Brushes.DimGray, 1.0),
             widgetRect, 6.0, 6.0);
 
-        // Pixelated loupe: draw each sampled source pixel as a flat-colored square.
+        // Pixelated loupe: the sampled block as one small bitmap scaled up nearest-neighbour. One
+        // draw per pointer move; a rectangle + brush per pixel (961 at radius 15) made drags lag.
         double loupeLeft = x + (widgetWidth - loupeSize) / 2;
         double loupeTop = y + PadDip;
-        for (int dy = -_sampleRadius; dy <= _sampleRadius; dy++)
+        using (var grid = BuildSampleGrid(preview, cx, cy, _sampleRadius))
+        using (dc.PushRenderOptions(new RenderOptions { BitmapInterpolationMode = BitmapInterpolationMode.None }))
         {
-            for (int dx = -_sampleRadius; dx <= _sampleRadius; dx++)
-            {
-                int sx = Math.Clamp(cx + dx, 0, preview.Width - 1);
-                int sy = Math.Clamp(cy + dy, 0, preview.Height - 1);
-                var (pr, pg, pb) = ReadPreviewPixel(preview, sx, sy);
-                var brush = new SolidColorBrush(Color.FromRgb(pr, pg, pb));
-                double swatchX = loupeLeft + (dx + _sampleRadius) * swatchDip;
-                double swatchY = loupeTop + (dy + _sampleRadius) * swatchDip;
-                dc.DrawRectangle(brush, null, new Rect(swatchX, swatchY, swatchDip, swatchDip));
-            }
+            dc.DrawImage(grid, new Rect(0, 0, grid.PixelSize.Width, grid.PixelSize.Height),
+                new Rect(loupeLeft, loupeTop, loupeSize, loupeSize));
         }
 
         // Selection-border preview: while dragging out a new crop selection, show the SAME edge
@@ -321,6 +318,38 @@ public sealed class Magnifier : Control
         {
             // Click-to-copy is a convenience, not part of the critical Copy/Save path — swallow and
             // let the user retry (same tolerance as ShowColorInfo's own copy attempt).
+        }
+    }
+
+    /// <summary>The (2r+1)^2 block around (cx, cy) as an opaque BGRA bitmap, edges clamped.</summary>
+    private static Bitmap BuildSampleGrid(SdrImage preview, int cx, int cy, int radius)
+    {
+        int side = radius * 2 + 1;
+        var pixels = new byte[side * side * 4];
+        var src = preview.Pixels;
+        for (int dy = -radius; dy <= radius; dy++)
+        {
+            int sy = Math.Clamp(cy + dy, 0, preview.Height - 1);
+            for (int dx = -radius; dx <= radius; dx++)
+            {
+                int sx = Math.Clamp(cx + dx, 0, preview.Width - 1);
+                int s = sy * preview.Stride + sx * 4;
+                int d = ((dy + radius) * side + dx + radius) * 4;
+                pixels[d] = src[s];
+                pixels[d + 1] = src[s + 1];
+                pixels[d + 2] = src[s + 2];
+                pixels[d + 3] = 0xFF;
+            }
+        }
+        var handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
+        try
+        {
+            return new Bitmap(PixelFormat.Bgra8888, AlphaFormat.Opaque, handle.AddrOfPinnedObject(),
+                new PixelSize(side, side), new Vector(96, 96), side * 4);
+        }
+        finally
+        {
+            handle.Free();
         }
     }
 

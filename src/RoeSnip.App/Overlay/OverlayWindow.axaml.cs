@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using Avalonia;
 using Avalonia.Animation;
@@ -258,9 +259,8 @@ public partial class OverlayWindow : Window
     /// windows so the zoom (and the pointer speed tied to it) is one value per session.</summary>
     internal event Action<int>? LoupeRadiusChanged;
 
-    /// <summary>The WPF app's IsMagnifierActive rule, used ONLY to gate pointer scaling here (this
-    /// port's loupe itself has no visibility gate yet - see docs/PARITY.md): pointer speed follows the
-    /// zoom while placing a selection or a blur region, and is normal while moving/resizing/drawing.</summary>
+    /// <summary>The WPF app's IsMagnifierActive rule: the loupe shows and pointer speed follows the
+    /// zoom while placing a selection or a blur region; hidden/normal while moving/resizing/drawing.</summary>
     private bool IsPointerScalingActive => _pickOnlyMode
         || (_selectionPx is null && _dragMode == DragMode.None)
         || _dragMode == DragMode.NewSelection
@@ -373,11 +373,14 @@ public partial class OverlayWindow : Window
         // Tunnel-routed handlers are the Avalonia analog of WPF's Preview* events — they run
         // before any child control (toolbar buttons, text editor) sees the event.
         AddHandler(PointerPressedEvent, OnPreviewPointerPressed, RoutingStrategies.Tunnel);
-        AddHandler(PointerMovedEvent, OnPreviewPointerMoved, RoutingStrategies.Tunnel);
+        AddHandler(PointerMovedEvent, OnPreviewPointerMovedTimed, RoutingStrategies.Tunnel);
         AddHandler(PointerReleasedEvent, OnPreviewPointerReleased, RoutingStrategies.Tunnel);
         AddHandler(PointerWheelChangedEvent, OnPreviewPointerWheelChanged, RoutingStrategies.Tunnel);
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         PointerEntered += OnPointerEnteredWindow;
+        // The loupe belongs to the monitor under the pointer: never leave it frozen on another one.
+        PointerExited += (_, _) => _magnifier.Hide();
+        Deactivated += (_, _) => _magnifier.Hide();
 
         SizeChanged += (_, _) =>
         {
@@ -845,6 +848,51 @@ public partial class OverlayWindow : Window
         e.Handled = true;
     }
 
+    // Drag smoothness numbers for the log: pointer moves handled, UI time spent in them, and frames
+    // the compositor ticked while the button was down.
+    private int _dragMoves, _dragFrames;
+    private long _dragStartTicks, _dragHandlerTicks, _dragHandlerMaxTicks;
+    private bool _dragFramePending;
+
+    private void OnPreviewPointerMovedTimed(object? sender, PointerEventArgs e)
+    {
+        if (_dragMode == DragMode.None)
+        {
+            OnPreviewPointerMoved(sender, e);
+            return;
+        }
+        long t0 = Stopwatch.GetTimestamp();
+        OnPreviewPointerMoved(sender, e);
+        long spent = Stopwatch.GetTimestamp() - t0;
+        if (_dragMoves++ == 0)
+        {
+            _dragStartTicks = t0;
+        }
+        _dragHandlerTicks += spent;
+        _dragHandlerMaxTicks = Math.Max(_dragHandlerMaxTicks, spent);
+        if (!_dragFramePending)
+        {
+            _dragFramePending = true;
+            RequestAnimationFrame(_ =>
+            {
+                _dragFramePending = false;
+                _dragFrames++;
+            });
+        }
+    }
+
+    private void LogDragStats(DragMode mode)
+    {
+        if (_dragMoves >= 20)
+        {
+            double totalMs = Stopwatch.GetElapsedTime(_dragStartTicks).TotalMilliseconds;
+            FileLog.Write(string.Create(CultureInfo.InvariantCulture,
+                $"RoeSnip: drag {mode} {_dragMoves} moves in {totalMs:F0} ms, handler avg {Stopwatch.GetElapsedTime(0, _dragHandlerTicks).TotalMilliseconds / _dragMoves:F2} ms max {Stopwatch.GetElapsedTime(0, _dragHandlerMaxTicks).TotalMilliseconds:F1} ms, {_dragFrames} frames ({_dragFrames * 1000.0 / Math.Max(1, totalMs):F0} fps)"));
+        }
+        _dragMoves = _dragFrames = 0;
+        _dragHandlerTicks = _dragHandlerMaxTicks = 0;
+    }
+
     private void OnPreviewPointerMoved(object? sender, PointerEventArgs e)
     {
         if (SessionInputSuspended)
@@ -886,7 +934,6 @@ public partial class OverlayWindow : Window
         // Color codes only when the color picker is enabled AND not the Pixelate tool — otherwise
         // the loupe is a pure placement/zoom aid with no color readout (WPF OverlayWindow.xaml.cs:1056).
         _magnifier.ShowColorReadout = _liveSettings.ColorPickerEnabled && _currentTool != AnnotationTool.Pixelate;
-        _magnifier.Update(_preview, _frame, dip, px);
 
         switch (_dragMode)
         {
@@ -1014,6 +1061,15 @@ public partial class OverlayWindow : Window
         // placement loupe (which runs with _dragMode == None) — see Magnifier.ShowSelectionPreview's
         // own doc comment for the full gating rationale.
         _magnifier.ShowSelectionPreview = _dragMode == DragMode.NewSelection && !_newSelectionPending;
+        // WPF IsMagnifierActive: the loupe shows only while placing a selection or a blur region.
+        if (IsPointerScalingActive)
+        {
+            _magnifier.Update(_preview, _frame, dip, px);
+        }
+        else
+        {
+            _magnifier.Hide();
+        }
 
         UpdateCursor();
     }
@@ -1029,6 +1085,8 @@ public partial class OverlayWindow : Window
         {
             return;
         }
+
+        LogDragStats(_dragMode);
 
         switch (_dragMode)
         {

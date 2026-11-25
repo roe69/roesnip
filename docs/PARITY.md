@@ -136,13 +136,9 @@ existing WPF test suite is the proof.
       explicitly NOT ported here — there is no selected-shape or in-progress-stroke-resize
       concept in the port yet (Feature B, item 07) — the wheel handler's doc comment says so
       and item 07 is expected to extend this same handler rather than add a second one.
-      Deliberately NOT changed: WPF's drag-based magnifier show/hide gating (IsMagnifierActive,
-      OverlayWindow.xaml.cs:287-295) was never ported to Avalonia in an earlier item — the
-      Avalonia magnifier already updates unconditionally on every pointer move regardless of
-      drag state, which trivially satisfies "visible while dragging a Pixelate region" (it's
-      visible during every drag, a strict superset of WPF's narrower rule) without needing new
-      gating logic; a full port of WPF's per-drag-mode hide/show belongs with item 07's Feature B
-      selection system, which is what actually introduces most of those drag modes. No
+      [x] WPF's magnifier show/hide gating (IsMagnifierActive, MouseLeave/Deactivated hide) is
+      now ported: the loupe shows only while placing a selection or blur region and hides on the
+      monitors the pointer left. No
       linux/mac degradation — this is pure rendering/model logic, no OS-specific behavior.
       Build + full test suite green (791 tests: 482 WPF + 250 Core + 54 App + 5 Platform.Windows).
       Live-verified on Windows: started a standalone --automation instance (never the user's
