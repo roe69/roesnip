@@ -12,7 +12,7 @@ name: Prune old releases
 # Not touched: drafts, prereleases, and immutable releases (GitHub refuses to change the assets of
 # a release published while "immutable releases" was on; that setting is off for this repo now).
 #
-# Runs on our linux-build container with the same job gate as release.yml: main, dispatch, roe69.
+# Runs on our linux-release-roesnip container with the same job gate as release.yml: main, dispatch, roe69.
 
 on:
   workflow_call:
@@ -46,7 +46,7 @@ permissions:
 jobs:
   prune:
     name: Delete superseded release assets
-    runs-on: [self-hosted, linux-build]
+    runs-on: [self-hosted, linux-release-roesnip]
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.actor == 'roe69' && github.triggering_actor == 'roe69'
     permissions:
       contents: write
