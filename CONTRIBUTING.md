@@ -164,7 +164,23 @@ ticked off in `docs/parity.md`. A change to shared behavior goes in
 ## Release assets
 
 Self-update downloads release assets by exact name (`UpdateAssetNames.cs` and
-`.github/workflows/release.yml`). Never rename an asset.
+`.github/workflows/release.yml`). Never rename an asset. After a release publishes,
+`.github/workflows/prune-releases.yml` deletes the assets (not the release, notes
+or tag) of every published release except the newest 3.
+
+## NuGet lock files
+
+Release builds restore with `-p:RestoreLockedMode=true` against the committed
+`packages.lock.json` and `packages.<rid>.lock.json` files next to each project
+(`Directory.Build.props`), so a package version or hash nobody committed fails the
+build. After adding or bumping a package, regenerate with `dotnet restore
+RoeSnip.sln --use-lock-file -p:EnableWindowsTargeting=true`, then once per RID
+the release publishes (`win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`,
+`osx-x64`, `osx-arm64`):
+`dotnet msbuild src/RoeSnip.App -t:restore -p:EnableWindowsTargeting=true
+-p:RuntimeIdentifier=<rid> -p:_CommandLineDefinedRuntimeIdentifier=true` (add
+`-p:PublishProfile=<rid>` for win-x64 and win-arm64, and run the same for
+`src/RoeSnip` with win-x64), and commit every changed lock file.
 
 ## Commit titles
 

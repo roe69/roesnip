@@ -14,17 +14,27 @@ name: release
 # app's updater silently download and swap in the OTHER product's binary). The .dmg and
 # RoeSnip-linux-<arch>.tar.gz (publish folder, for distros without FUSE) are for manual installs.
 #
+# RUNNERS: everything that can runs on our own machines (house repo): Linux x64 jobs (prep, the
+# linux-x64 build, release, prune) on the `linux-build` container for this repo (VM 102), the
+# Windows build on a SEPARATE runner `win-roesnip-build` (label `win-build-roesnip`) on the same
+# Windows VM 104 as the signer, but as the unprivileged local user `roesnip-build` with its own
+# work dir and tool cache and no access to the signing runner's folders. linux-arm64 and macOS stay
+# GitHub-hosted (no self-hosted arm64 / mac). Every self-hosted job carries the job-level `if`
+# below (main, workflow_dispatch, actor and triggering actor roe69); the hosted legs carry it too.
+#
 # WINDOWS SIGNING (same model as installer-src, hardened for a public repo): build-windows runs repo
-# code and NuGet restore, so it runs on GitHub-hosted windows-latest with no OIDC token. Only
-# sign-windows runs on our persistent win-build runner (this repo's runner only): it checks out
-# nothing, runs no repo code, fetches a pinned Temurin JRE + jsign + kmsp11 (sha256) into a fresh
-# temp dir, checks each exe against the sha256 the build job published as a job output, and signs
-# exactly RoeSnip.exe, RoeSnipApp-win-x64.exe and RoeSnipApp-win-arm64.exe with the Cloud KMS key
-# RoeLite-27 through GCP workload identity provider `roesnip` (repo + repo id, refs/heads/main,
-# this workflow file, actor roe69 + actor id). Both jobs carry a job-level `if` (main,
-# workflow_dispatch, actor roe69). The release job (ubuntu, contents: write, gh CLI only) makes
-# each "<name>.exe.gz" from the SIGNED bytes and publishes. Self-updaters trust the GitHub asset
-# digest. Every action is pinned by full commit SHA (tag in the trailing comment).
+# code and NuGet restore on the unprivileged build runner above, with no OIDC token. Only
+# sign-windows runs on our persistent SYSTEM win-build runner (`win-roesnip`, this repo only): it
+# checks out nothing, runs no repo code, fetches a pinned Temurin JRE + jsign + kmsp11 (sha256)
+# into a fresh temp dir, checks each exe against the sha256 the build job published as a job
+# output, and signs exactly RoeSnip.exe, RoeSnipApp-win-x64.exe and RoeSnipApp-win-arm64.exe with
+# the Cloud KMS key RoeLite-27 through GCP workload identity provider `roesnip` (repo + repo id,
+# refs/heads/main, this workflow file, actor roe69 + actor id). The release job (contents: write,
+# gh CLI only) makes each "<name>.exe.gz" from the SIGNED bytes and publishes; prune-releases.yml
+# then strips the assets of all but the newest 3 published releases. Self-updaters trust the GitHub
+# asset digest. Every action is pinned by full commit SHA (tag in the trailing comment).
+# NuGet restore runs in locked mode (Directory.Build.props + packages*.lock.json): a package the
+# lock files do not name fails the build instead of running on the runner.
 # Both UpdateManagers prefer the "<name>.exe.gz" sibling and fall back to the plain exe. Never
 # remove or rename the plain "RoeSnip.exe" / "RoeSnipApp-win-x64.exe" assets: older installs only
 # ever look for those exact names.
@@ -61,7 +71,8 @@ jobs:
   # ---------------------------------------------------------------------------
   prep:
     name: Resolve version
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.actor == 'roe69' && github.triggering_actor == 'roe69'
     permissions:
       contents: read
     outputs:
@@ -73,6 +84,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Resolve version
         id: v
@@ -126,8 +138,10 @@ jobs:
   build-windows:
     name: Build Windows (win-x64)
     needs: prep
-    runs-on: windows-latest
-    # GitHub-hosted: this job runs repo code and NuGet restore, so it never touches the win-build VM.
+    # Our Windows VM, but its own runner: user roesnip-build (not SYSTEM, not admin), own work dir
+    # and tool cache under C:\runner-sandbox, no write or read access to C:\actions-runners (the
+    # signing runner's folders). Only win-build-roesnip jobs land here; sign-windows is `win-build`.
+    runs-on: [self-hosted, win-build-roesnip]
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.actor == 'roe69' && github.triggering_actor == 'roe69'
     # Read-only, no OIDC token (signing is the sign-windows job).
     permissions:
@@ -143,13 +157,17 @@ jobs:
           ref: ${{ needs.prep.outputs.sha }}
           persist-credentials: false
 
-      - name: Set up .NET 8
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: "8.0.x"
+      # The VM has the .NET 8 SDK installed machine-wide (setup-dotnet would install to Program
+      # Files, which this user cannot write).
+      - name: Check the .NET SDK
+        run: |
+          $v = dotnet --version
+          "dotnet $v"
+          if ($v -notmatch '^8\.') { throw "expected a .NET 8 SDK, found $v" }
 
+      # RestoreLockedMode on every command: restore must match the committed packages*.lock.json.
       - name: Build solution (Release)
-        run: dotnet build RoeSnip.sln -c Release
+        run: dotnet build RoeSnip.sln -c Release -p:RestoreLockedMode=true
 
       - name: Test
         run: dotnet test RoeSnip.sln -c Release --no-build
@@ -158,7 +176,8 @@ jobs:
       # single-file compression are deliberately OFF - see the pubxml's comments before changing).
       # Output: src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe.
       - name: Publish WPF app (win-x64)
-        run: dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64 -p:Version=${{ needs.prep.outputs.version }}
+        # -r win-x64 (the profile's own RID) selects packages.win-x64.lock.json for the locked restore.
+        run: dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -r win-x64 -p:PublishProfile=win-x64 -p:RestoreLockedMode=true -p:Version=${{ needs.prep.outputs.version }}
 
       - name: Upload RoeSnip.exe
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -174,7 +193,7 @@ jobs:
       # passed explicitly because a multi-targeted project (net8.0 + this windows TFM) can't resolve
       # which one to publish from the pubxml's own TargetFramework alone (NETSDK1129).
       - name: Publish RoeSnip.App (win-x64)
-        run: dotnet publish src/RoeSnip.App/RoeSnip.App.csproj -c Release -f net8.0-windows10.0.22621.0 -r win-x64 -p:PublishProfile=win-x64 -p:Version=${{ needs.prep.outputs.version }}
+        run: dotnet publish src/RoeSnip.App/RoeSnip.App.csproj -c Release -f net8.0-windows10.0.22621.0 -r win-x64 -p:PublishProfile=win-x64 -p:RestoreLockedMode=true -p:Version=${{ needs.prep.outputs.version }}
 
       - name: Rename RoeSnip.App Windows asset
         run: mv src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnipApp-win-x64.exe
@@ -189,7 +208,7 @@ jobs:
       # RoeSnip.App for Windows on ARM: cross-published on the x64 runner (pure managed + system
       # D3D/MF DLLs; SharpHook/SkiaSharp/HarfBuzz ship win-arm64 natives). Same single-file shape.
       - name: Publish RoeSnip.App (win-arm64)
-        run: dotnet publish src/RoeSnip.App/RoeSnip.App.csproj -c Release -f net8.0-windows10.0.22621.0 -r win-arm64 -p:PublishProfile=win-arm64 -p:Version=${{ needs.prep.outputs.version }}
+        run: dotnet publish src/RoeSnip.App/RoeSnip.App.csproj -c Release -f net8.0-windows10.0.22621.0 -r win-arm64 -p:PublishProfile=win-arm64 -p:RestoreLockedMode=true -p:Version=${{ needs.prep.outputs.version }}
 
       - name: Rename RoeSnip.App win-arm64 asset
         shell: pwsh
@@ -234,28 +253,34 @@ jobs:
   build-xplat:
     name: Build ${{ matrix.rid }}
     needs: prep
-    runs-on: ${{ matrix.runner }}
+    # runner is a JSON runs-on value: linux-x64 builds on our container, the rest are GitHub-hosted
+    # (arm64 and macOS have no self-hosted runner).
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.actor == 'roe69' && github.triggering_actor == 'roe69'
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
           - rid: linux-x64
-            runner: ubuntu-latest
+            runner: '["self-hosted","linux-build"]'
             appimage_arch: x86_64
           - rid: linux-arm64
-            runner: ubuntu-24.04-arm
+            runner: '"ubuntu-24.04-arm"'
             appimage_arch: aarch64
           - rid: osx-arm64
-            runner: macos-15
+            runner: '"macos-15"'
             swift_target: arm64-apple-macos13.0
           - rid: osx-x64
-            runner: macos-15
+            runner: '"macos-15"'
             swift_target: x86_64-apple-macos13.0
     steps:
       - name: Check out (dispatch commit)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prep.outputs.sha }}
+          persist-credentials: false
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
@@ -274,8 +299,7 @@ jobs:
       # property here means flipping single-file on later doesn't silently reintroduce the idle-RAM
       # regression the win-x64 build already fixed.
       - name: Publish RoeSnip.App (${{ matrix.rid }})
-        run: dotnet publish src/RoeSnip.App -c Release -f net8.0 -r ${{ matrix.rid }} --self-contained -p:EnableWindowsTargeting=true -p:PublishReadyToRun=false -p:EnableCompressionInSingleFile=false -p:SatelliteResourceLanguages=en -p:Version=${{ needs.prep.outputs.version }}
-
+        run: dotnet publish src/RoeSnip.App -c Release -f net8.0 -r ${{ matrix.rid }} --self-contained -p:EnableWindowsTargeting=true -p:PublishReadyToRun=false -p:EnableCompressionInSingleFile=false -p:SatelliteResourceLanguages=en -p:RestoreLockedMode=true -p:Version=${{ needs.prep.outputs.version }}
 
       # JxrEncApp (jxrlib, BSD-2-Clause) writes the HDR original as .jxr on Linux and macOS; it ships
       # as a flat sibling of the RoeSnip executable (JxrExport.LocateEncoder), next to its licence.
@@ -565,11 +589,16 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [prep, build-xplat, sign-windows]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.actor == 'roe69' && github.triggering_actor == 'roe69'
     # contents: write only; no OIDC rights, and no third-party actions (gh CLI only).
     permissions:
       contents: write
     steps:
+      # Persistent runner and no checkout here: leftovers of an earlier run would be uploaded too.
+      - name: Start from an empty workspace
+        run: rm -rf dist dist-win
+
       - name: Download cross-platform artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -631,3 +660,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prep.outputs.tag }}
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  # ---------------------------------------------------------------------------
+  # 4. Strip the assets of every published release below the newest 3 (notes and tags stay).
+  #    The release is already live when this runs; a failure here never un-publishes it.
+  # ---------------------------------------------------------------------------
+  prune:
+    name: Prune old release assets
+    needs: release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/prune-releases.yml
