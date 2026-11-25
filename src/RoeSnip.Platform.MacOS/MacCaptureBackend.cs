@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using RoeSnip.Core.Capture;
 using RoeSnip.Core.Diagnostics;
+using RoeSnip.Core.Imaging;
 
 namespace RoeSnip.Platform.MacOS;
 
@@ -16,13 +17,14 @@ namespace RoeSnip.Platform.MacOS;
 ///     <c>SdrWhiteInBufferUnits = 1.0</c> (1.0 buffer units IS SDR reference white by construction).
 ///   - BGRA8 frames are sRGB passthrough; 1.0 is the documented "n/a" sentinel for that format.
 ///   - <see cref="MonitorInfo.SdrWhiteNits"/> has no OS-reported absolute value on macOS (EDR is a
-///     multiplier model, not nits) - 240.0 placeholder.
+///     multiplier model, not nits) - pinned to 203 (BT.2408 reference white).
 ///   - <see cref="MonitorInfo.MaxLuminanceNits"/> = EDR headroom x SdrWhiteNits, so ToneMapper's
 ///     peak derivation (MaxLuminanceNits / SdrWhiteNits == headroom) needs no macOS branch.</summary>
 public sealed class MacCaptureBackend : ICaptureBackend
 {
-    /// <summary>Placeholder - macOS reports EDR headroom as a multiplier, never absolute nits.</summary>
-    public const double DefaultSdrWhiteNits = 240.0;
+    /// <summary>macOS reports EDR headroom as a multiplier, never absolute nits: SDR white is pinned at the
+    /// BT.2408 reference level (203), which the .jxr export writes as 2.5375 scRGB.</summary>
+    public const double DefaultSdrWhiteNits = 203.0;
 
     private readonly ScksnapHelperClient _helper;
     private readonly ScksnapServer? _server;
@@ -38,9 +40,9 @@ public sealed class MacCaptureBackend : ICaptureBackend
 
     public string Name => "macOS (ScreenCaptureKit via scksnap)";
 
-    /// <summary>Save HDR is Windows-only in v1 - no JXR-equivalent export path is defined for macOS
-    /// EDR frames, even though they can carry real headroom.</summary>
-    public bool SupportsHdrExport => false;
+    /// <summary>The .jxr export runs through the bundled JxrEncApp (<see cref="JxrExport"/>); an EDR frame
+    /// is written as true scRGB with 1.0 buffer unit = 203 nits.</summary>
+    public bool SupportsHdrExport => JxrExport.IsAvailable;
 
     public IReadOnlyList<MonitorInfo> EnumerateMonitors()
     {
