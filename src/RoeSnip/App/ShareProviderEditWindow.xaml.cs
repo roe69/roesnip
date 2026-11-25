@@ -31,8 +31,7 @@ using Brush = System.Windows.Media.Brush;
 /// -> the actual HTTP endpoint) against a tiny generated PNG (Sharing/ShareTestImage), using whatever
 /// is currently typed into this form - not yet-saved state - so a user can validate a spec before
 /// committing it. This button is a real, working implementation; it has only been exercised in this
-/// codebase via unit tests against a mock HttpMessageHandler, never against the real network
-/// .</summary>
+/// codebase via unit tests against a mock HttpMessageHandler, never against the real network.</summary>
 public partial class ShareProviderEditWindow : Window
 {
     private readonly ShareProviderConfig _originalConfig;
