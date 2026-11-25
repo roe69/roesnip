@@ -1,3 +1,4 @@
+using static RoeSnip.Platform.Linux.PipeWireNative;
 using System.Runtime.InteropServices;
 using RoeSnip.Core.Capture;
 using RoeSnip.Core.Diagnostics;
@@ -15,7 +16,6 @@ namespace RoeSnip.Platform.Linux;
 /// buffer at once. The cursor meta range must reach mutter's fixed 384x384 size (589872 B).</summary>
 internal sealed unsafe class PipeWireCursorReader : IDisposable
 {
-    private const string Lib = "libpipewire-0.3.so.0";
     private const int StateError = -1, StateStreaming = 3;
     private const uint FlagAutoconnect = 1 << 0, FlagDontReconnect = 1 << 7;
     private const int MaxSpriteSize = 384;
@@ -46,9 +46,9 @@ internal sealed unsafe class PipeWireCursorReader : IDisposable
     public static PipeWireCursorReader? TryStart(int portalFd, IEnumerable<uint> nodeIds, out string why)
     {
         why = "";
-        if (!NativeLibrary.TryLoad(Lib, out _))
+        if (!NativeLibrary.TryLoad(PipeWireNative.Lib, out _))
         {
-            why = $"{Lib} not found";
+            why = $"{PipeWireNative.Lib} not found";
             return null;
         }
         int fd = dup(portalFd);
@@ -324,28 +324,4 @@ internal sealed unsafe class PipeWireCursorReader : IDisposable
             return false;
         }
     }
-
-    [DllImport("libc", SetLastError = true)] private static extern int dup(int fd);
-    [DllImport("libc")] private static extern int close(int fd);
-
-    [DllImport(Lib)] private static extern void pw_init(IntPtr argc, IntPtr argv);
-    [DllImport(Lib)] private static extern IntPtr pw_thread_loop_new([MarshalAs(UnmanagedType.LPUTF8Str)] string name, IntPtr props);
-    [DllImport(Lib)] private static extern IntPtr pw_thread_loop_get_loop(IntPtr loop);
-    [DllImport(Lib)] private static extern int pw_thread_loop_start(IntPtr loop);
-    [DllImport(Lib)] private static extern void pw_thread_loop_stop(IntPtr loop);
-    [DllImport(Lib)] private static extern void pw_thread_loop_lock(IntPtr loop);
-    [DllImport(Lib)] private static extern void pw_thread_loop_unlock(IntPtr loop);
-    [DllImport(Lib)] private static extern void pw_thread_loop_destroy(IntPtr loop);
-    [DllImport(Lib)] private static extern IntPtr pw_context_new(IntPtr loop, IntPtr props, nuint userDataSize);
-    [DllImport(Lib)] private static extern void pw_context_destroy(IntPtr context);
-    [DllImport(Lib)] private static extern IntPtr pw_context_connect_fd(IntPtr context, int fd, IntPtr props, nuint userDataSize);
-    [DllImport(Lib)] private static extern int pw_core_disconnect(IntPtr core);
-    [DllImport(Lib)] private static extern IntPtr pw_properties_new_string([MarshalAs(UnmanagedType.LPUTF8Str)] string text);
-    [DllImport(Lib)] private static extern IntPtr pw_stream_new(IntPtr core, [MarshalAs(UnmanagedType.LPUTF8Str)] string name, IntPtr props);
-    [DllImport(Lib)] private static extern void pw_stream_add_listener(IntPtr stream, IntPtr hook, IntPtr events, IntPtr data);
-    [DllImport(Lib)] private static extern int pw_stream_connect(IntPtr stream, int direction, uint targetId, uint flags, IntPtr* parameters, uint count);
-    [DllImport(Lib)] private static extern int pw_stream_update_params(IntPtr stream, IntPtr* parameters, uint count);
-    [DllImport(Lib)] private static extern IntPtr pw_stream_dequeue_buffer(IntPtr stream);
-    [DllImport(Lib)] private static extern int pw_stream_queue_buffer(IntPtr stream, IntPtr buffer);
-    [DllImport(Lib)] private static extern void pw_stream_destroy(IntPtr stream);
 }

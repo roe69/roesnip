@@ -437,6 +437,8 @@ internal sealed class ScreenCastSession
 
             if (_startAllStreams)
             {
+                await StartHdrReaderAsync(live, portal, sessionPath).ConfigureAwait(false);
+                live.ProbeHdrNodes();
                 foreach (var g in geometries) live.GetStream(g.NodeId);
                 foreach (var g in geometries) live.GetStream(g.NodeId)?.WaitForFirstSample(TimeSpan.FromSeconds(1));
             }
@@ -499,6 +501,34 @@ internal sealed class ScreenCastSession
         }
     }
 
+    /// <summary>Creates the HDR reader (EGL + libpipewire on its own remote of this session, so no
+    /// second dialog) when a monitor is in HDR mode. Any failure leaves every node on the 8-bit
+    /// pipeline; one log line says why.</summary>
+    private static async Task StartHdrReaderAsync(Live live, IPortalScreenCast portal, ObjectPath sessionPath)
+    {
+        if (!HdrDisplayProbe.ShouldTry(out string note))
+        {
+            FileLog.Write($"RoeSnip: HDR screencast capture off ({note})");
+            return;
+        }
+        CloseSafeHandle? hdrFd = null;
+        try
+        {
+            hdrFd = await portal.OpenPipeWireRemoteAsync(sessionPath, new Dictionary<string, object>()).ConfigureAwait(false);
+            using (hdrFd)
+            {
+                live.Hdr = PipeWireHdrReader.TryStart(hdrFd.DangerousGetHandle().ToInt32(), out string why);
+                if (live.Hdr is null) FileLog.Write($"RoeSnip: HDR screencast capture unavailable ({why}); frames stay 8-bit");
+                else FileLog.Write($"RoeSnip: HDR screencast capture enabled ({note})");
+            }
+        }
+        catch (Exception ex)
+        {
+            hdrFd?.Dispose();
+            FileLog.Write($"RoeSnip: HDR screencast capture unavailable ({ex.GetType().Name}: {ex.Message}); frames stay 8-bit");
+        }
+    }
+
     /// <summary>Starts the cursor reader and, after <see cref="CursorMetaCheckAfter"/>, logs whether
     /// the nodes carry cursor metadata (a reader that saw none is dropped).</summary>
     private static void StartCursorMetadata(Live live, int rawFd, IReadOnlyList<ScreenCastStreamGeometry> geometries)
@@ -547,7 +577,9 @@ internal sealed class ScreenCastSession
         private readonly ObjectPath _sessionPath;
         private readonly CloseSafeHandle _fd;
         private readonly int _rawFd;
-        private readonly Dictionary<uint, ScreenCastStream> _streams = new();
+        private readonly Dictionary<uint, IScreenCastStream> _streams = new();
+        private readonly HashSet<uint> _sdrNodes = new();   // nodes that did not offer HDR frames
+        private static readonly TimeSpan HdrProbeWait = TimeSpan.FromMilliseconds(1500);
         private readonly object _gate = new();
         private volatile string? _deadReason;
         private int _disposed;
@@ -560,6 +592,9 @@ internal sealed class ScreenCastSession
 
         /// <summary>Cursor metadata of the nodes; null when the session has none.</summary>
         public volatile PipeWireCursorReader? Cursor;
+
+        /// <summary>The half-float DMA-BUF consumer of the HDR nodes; null when none can be used.</summary>
+        public volatile PipeWireHdrReader? Hdr;
         public bool IsDead => _deadReason is not null;
         public event Action<Live, string>? Died;
 
@@ -610,9 +645,10 @@ internal sealed class ScreenCastSession
             return map.TryGetValue(monitor.Index, out var hit) ? hit : null;
         }
 
-        /// <summary>The running pipeline for a node, started on first use. Null if it cannot start
+        /// <summary>The kept-open stream for a node, started on first use: the HDR consumer when the
+        /// node offers half-float DMA-BUF frames, else the 8-bit pipeline. Null if it cannot start
         /// (the session is then marked dead).</summary>
-        public ScreenCastStream? GetStream(uint nodeId)
+        public IScreenCastStream? GetStream(uint nodeId)
         {
             lock (_gate)
             {
@@ -623,10 +659,30 @@ internal sealed class ScreenCastSession
                     string why = existing.DeadReason ?? "stream died";
                     _streams.Remove(nodeId);
                     existing.Dispose();
-                    ThreadPool.QueueUserWorkItem(_ => MarkDead(why));
-                    return null;
+                    if (existing is HdrScreenCastStream)
+                    {
+                        // An HDR stream that dies (import failures) costs only its HDR: the node goes back to 8-bit.
+                        FileLog.Write($"RoeSnip: HDR stream node {nodeId} unusable ({why}); using the 8-bit stream");
+                        _sdrNodes.Add(nodeId);
+                    }
+                    else
+                    {
+                        ThreadPool.QueueUserWorkItem(_ => MarkDead(why));
+                        return null;
+                    }
                 }
                 var geometry = Geometries.FirstOrDefault(g => g.NodeId == nodeId);
+                if (Hdr is { } hdr && !_sdrNodes.Contains(nodeId))
+                {
+                    var hdrStream = hdr.AddNode(geometry, HdrProbeWait, out string hdrWhy);
+                    if (hdrStream is not null)
+                    {
+                        _streams[nodeId] = hdrStream;
+                        return hdrStream;
+                    }
+                    _sdrNodes.Add(nodeId);
+                    FileLog.Write($"RoeSnip: screencast node {nodeId} stays 8-bit ({hdrWhy})");
+                }
                 try
                 {
                     var stream = new ScreenCastStream(_rawFd, geometry);
@@ -637,6 +693,45 @@ internal sealed class ScreenCastSession
                 {
                     ThreadPool.QueueUserWorkItem(_ => MarkDead("pipeline start failed: " + ex.Message));
                     return null;
+                }
+            }
+        }
+
+        /// <summary>Probes every node for HDR frames at once (an SDR node answers within a moment, but a
+        /// silent one costs the full wait: do not pay it per monitor).</summary>
+        public void ProbeHdrNodes()
+        {
+            var hdr = Hdr;
+            if (hdr is null) return;
+            Parallel.ForEach(Geometries, g =>
+            {
+                var s = hdr.AddNode(g, HdrProbeWait, out string why);
+                lock (_gate)
+                {
+                    if (s is not null && !IsDead && _disposed == 0 && !_streams.ContainsKey(g.NodeId))
+                    {
+                        _streams[g.NodeId] = s;
+                        return;
+                    }
+                    _sdrNodes.Add(g.NodeId);
+                }
+                if (s is not null) s.Dispose();
+                else FileLog.Write($"RoeSnip: screencast node {g.NodeId} stays 8-bit ({why})");
+            });
+        }
+
+        /// <summary>Takes <paramref name="nodeId"/> off HDR for good (the HDR frame could not be read):
+        /// the next <see cref="GetStream"/> builds the 8-bit pipeline.</summary>
+        public void DemoteHdr(uint nodeId, string why)
+        {
+            lock (_gate)
+            {
+                if (_streams.TryGetValue(nodeId, out var s) && s is HdrScreenCastStream)
+                {
+                    _streams.Remove(nodeId);
+                    s.Dispose();
+                    _sdrNodes.Add(nodeId);
+                    FileLog.Write($"RoeSnip: HDR stream node {nodeId} given up ({why}); using the 8-bit stream");
                 }
             }
         }
@@ -652,6 +747,9 @@ internal sealed class ScreenCastSession
                 foreach (var s in _streams.Values) s.Dispose();
                 _streams.Clear();
             }
+            var hdr = Hdr;
+            Hdr = null;
+            try { hdr?.Dispose(); } catch { }
             _shared.Lost -= OnConnectionLost;
             try { ClosedWatch?.Dispose(); } catch { }
             try

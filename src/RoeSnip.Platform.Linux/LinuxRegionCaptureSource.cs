@@ -26,7 +26,7 @@ public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
     private Thread? _pump;
     private int _started;
     private int _stopped;
-    private ScreenCastStream? _stream;
+    private IScreenCastStream? _stream;
 
     public bool Paused { get; set; }
     public event Action<Exception>? Faulted;

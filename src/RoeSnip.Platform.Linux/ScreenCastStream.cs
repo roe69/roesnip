@@ -7,7 +7,7 @@ namespace RoeSnip.Platform.Linux;
 /// (pipewiresrc -> videoconvert -> BGRx -> appsink, max-buffers=1 drop=true). A pump thread keeps
 /// only the newest sample, so a capture copies the screen as it is now without waiting for a
 /// frame. Mutter sends frames on damage only, so the newest sample is current even when old.</summary>
-internal sealed unsafe class ScreenCastStream : IDisposable
+internal sealed unsafe class ScreenCastStream : IScreenCastStream
 {
     private readonly object _gate = new();
     private readonly IntPtr _pipeline;
