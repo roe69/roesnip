@@ -112,6 +112,22 @@ internal sealed unsafe class PipeWireCursorReader : IDisposable
         return null;
     }
 
+    /// <summary>Starts or stops the cursor stream of a node. An idle node reports no cursor (the old
+    /// position is dropped, it would be stale on wake).</summary>
+    public void SetActive(uint nodeId, bool active)
+    {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        pw_thread_loop_lock(_loop);
+        try
+        {
+            foreach (var n in _nodes)
+            {
+                if (n.NodeId == nodeId) n.SetActive(active);
+            }
+        }
+        finally { pw_thread_loop_unlock(_loop); }
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
@@ -192,6 +208,13 @@ internal sealed unsafe class PipeWireCursorReader : IDisposable
                 if (rc < 0) return $"pw_stream_connect returned {rc}";
             }
             return null;
+        }
+
+        public void SetActive(bool active)
+        {
+            if (_stream == IntPtr.Zero) return;
+            pw_stream_set_active(_stream, active);
+            if (!active) Latest = null;
         }
 
         public void Destroy()

@@ -21,6 +21,7 @@ internal sealed class ScreenCastSession
     public static readonly ScreenCastSession Snapshot = new("snapshot", ScreenCastPortal.CursorMetadata, startAllStreams: true, needsPermission: true);
 
     private static readonly TimeSpan CursorMetaCheckAfter = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan IdleAfterOpen = TimeSpan.FromSeconds(5);
 
     /// <summary>Why the snapshot session does not open: no saved token and the user has not pressed
     /// asked (a capture or Settings' "Allow instant capture"); the dialog never opens on its own.</summary>
@@ -453,6 +454,7 @@ internal sealed class ScreenCastSession
             {
                 FileLog.Write("RoeSnip: screencast open - GNOME shows its screen-sharing indicator in the top bar while it stays open");
             }
+            live.TouchAll(IdleAfterOpen); // streams run while the cursor check looks, then idle
             if (cursorMode == ScreenCastPortal.CursorMetadata)
             {
                 // Its own remote (no dialog on a started session): a dup of the gst fd shares the
@@ -598,6 +600,129 @@ internal sealed class ScreenCastSession
         public bool IsDead => _deadReason is not null;
         public event Action<Live, string>? Died;
 
+        // Idle streams: mutter keeps producing (and copying) a frame per damage for every running node,
+        // ~60-80% of a gnome-shell core with three HDR monitors, so a node streams only while wanted.
+        private readonly StreamActivity _activity = new();
+        private readonly object _activityGate = new(); // guards _activity and the timer flag only
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<uint, object> _nodeLocks = new();
+        private Timer? _idleTimer;
+        private bool _idleTimerArmed;
+        private static readonly TimeSpan IdleCheck = TimeSpan.FromMilliseconds(500);
+
+        private static long NowMs => Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency;
+
+        /// <summary>Wants the node's streams (video and cursor) running for at least
+        /// <paramref name="linger"/>. Returns the frame sequence to wait above for a fresh frame when
+        /// the node was idle (<see cref="IScreenCastStream.WaitForFrameAfter"/>), else -1: a running
+        /// stream's newest frame is current.</summary>
+        public long Wake(uint nodeId, TimeSpan linger)
+        {
+            // One lock per node: waking three monitors at once must not queue their (slow) stream restarts.
+            lock (NodeLock(nodeId))
+            {
+                long baseline = -1;
+                bool wasIdle;
+                lock (_activityGate) wasIdle = _activity.Touch(nodeId, NowMs, (long)linger.TotalMilliseconds);
+                if (wasIdle) baseline = Apply(nodeId, true);
+                ArmIdleTimer();
+                return baseline;
+            }
+        }
+
+        private object NodeLock(uint nodeId) => _nodeLocks.GetOrAdd(nodeId, _ => new object());
+
+        /// <summary>Wakes every node (the pointer can be on any monitor). True when one was idle.</summary>
+        public bool WakeAll(TimeSpan linger)
+        {
+            bool woke = false;
+            foreach (var g in Geometries) woke |= Wake(g.NodeId, linger) >= 0;
+            return woke;
+        }
+
+        /// <summary>The same as <see cref="WakeAll"/> for the open: nothing idles before the deadline.</summary>
+        public void TouchAll(TimeSpan linger)
+        {
+            foreach (var g in Geometries) Wake(g.NodeId, linger);
+        }
+
+        /// <summary>Keeps the node streaming until the returned lease is disposed (a recording), then for
+        /// <see cref="HoldLinger"/>. <paramref name="baseline"/> is as for <see cref="Wake"/>.</summary>
+        public IDisposable Hold(uint nodeId, out long baseline)
+        {
+            lock (NodeLock(nodeId))
+            {
+                baseline = -1;
+                bool wasIdle;
+                lock (_activityGate) wasIdle = _activity.Hold(nodeId, NowMs);
+                if (wasIdle) baseline = Apply(nodeId, true);
+                ArmIdleTimer();
+            }
+            return new Lease(this, nodeId);
+        }
+
+        private static readonly TimeSpan HoldLinger = TimeSpan.FromSeconds(2);
+
+        private sealed class Lease : IDisposable
+        {
+            private readonly Live _live;
+            private readonly uint _node;
+            private int _done;
+            public Lease(Live live, uint node) { _live = live; _node = node; }
+            public void Dispose()
+            {
+                if (Interlocked.Exchange(ref _done, 1) != 0) return;
+                lock (_live._activityGate) _live._activity.Release(_node, NowMs, (long)HoldLinger.TotalMilliseconds);
+                _live.ArmIdleTimer();
+            }
+        }
+
+        /// <summary>Starts or stops a node's streams. Returns the video stream's sequence from before.</summary>
+        private long Apply(uint nodeId, bool active)
+        {
+            IScreenCastStream? stream;
+            lock (_gate) _streams.TryGetValue(nodeId, out stream);
+            long before = stream?.Sequence ?? 0;
+            try { stream?.SetActive(active); }
+            catch (Exception ex) { FileLog.Write($"RoeSnip: screencast node {nodeId} set_active({active}) failed: {ex.Message}"); }
+            try { Cursor?.SetActive(nodeId, active); }
+            catch (Exception ex) { FileLog.Write($"RoeSnip: screencast cursor node {nodeId} set_active({active}) failed: {ex.Message}"); }
+            return before;
+        }
+
+        private void ArmIdleTimer()
+        {
+            lock (_activityGate)
+            {
+                if (_idleTimerArmed || _disposed != 0) return;
+                _idleTimerArmed = true;
+                if (_idleTimer is null) _idleTimer = new Timer(_ => IdleTick(), null, IdleCheck, Timeout.InfiniteTimeSpan);
+                else _idleTimer.Change(IdleCheck, Timeout.InfiniteTimeSpan);
+            }
+        }
+
+        private void IdleTick()
+        {
+            List<uint> active;
+            lock (_activityGate)
+            {
+                _idleTimerArmed = false;
+                if (_disposed != 0) return;
+                active = _activity.ActiveIds();
+            }
+            foreach (uint id in active)
+            {
+                lock (NodeLock(id))
+                {
+                    bool idle;
+                    lock (_activityGate) idle = _activity.TryIdle(id, NowMs);
+                    if (idle) Apply(id, false);
+                }
+            }
+            bool any;
+            lock (_activityGate) any = _activity.AnyActive;
+            if (any) ArmIdleTimer();
+        }
+
         public Live(ScreenCastSession owner, PortalConnection shared, ObjectPath sessionPath, CloseSafeHandle fd,
             int rawFd, IReadOnlyList<ScreenCastStreamGeometry> geometries, bool restoredFromToken, string topologySignature)
         {
@@ -650,6 +775,15 @@ internal sealed class ScreenCastSession
         /// (the session is then marked dead).</summary>
         public IScreenCastStream? GetStream(uint nodeId)
         {
+            IScreenCastStream? before;
+            lock (_gate) _streams.TryGetValue(nodeId, out before);
+            var stream = GetStreamCore(nodeId);
+            if (stream is not null && !ReferenceEquals(stream, before)) NoteRunning(nodeId); // outside _gate: Wake takes the locks the other way round
+            return stream;
+        }
+
+        private IScreenCastStream? GetStreamCore(uint nodeId)
+        {
             lock (_gate)
             {
                 if (IsDead || _disposed != 0) return null;
@@ -697,6 +831,16 @@ internal sealed class ScreenCastSession
             }
         }
 
+        /// <summary>A stream that was just built is running whatever the node's idle state said.</summary>
+        private void NoteRunning(uint nodeId)
+        {
+            lock (_activityGate)
+            {
+                _activity.Touch(nodeId, NowMs, (long)HoldLinger.TotalMilliseconds);
+                ArmIdleTimer();
+            }
+        }
+
         /// <summary>Probes every node for HDR frames at once (an SDR node answers within a moment, but a
         /// silent one costs the full wait: do not pay it per monitor).</summary>
         public void ProbeHdrNodes()
@@ -739,6 +883,7 @@ internal sealed class ScreenCastSession
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            lock (_activityGate) { _idleTimer?.Dispose(); }
             var cursor = Cursor;
             Cursor = null;
             try { cursor?.Dispose(); } catch { }
