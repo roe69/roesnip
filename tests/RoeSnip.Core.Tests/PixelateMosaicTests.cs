@@ -5,7 +5,7 @@ using Xunit;
 namespace RoeSnip.Core.Tests;
 
 /// <summary>The pure pixel math behind the Avalonia Pixelate annotation tool's mosaic censor
-/// effect (RoeSnip.Core.Overlay.PixelateMosaic — see its own doc comment for why Avalonia computes
+/// effect (RoeSnip.Core.Overlay.PixelateMosaic - see its own doc comment for why Avalonia computes
 /// this directly instead of leaning on WPF's CroppedBitmap+TransformedBitmap pipeline). Framework-
 /// free, so it is tested here rather than needing a display.</summary>
 public class PixelateMosaicTests

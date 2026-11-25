@@ -7,19 +7,19 @@ using Xunit;
 
 namespace RoeSnip.Tests;
 
-/// <summary>Pure compositor-core tests for multi-monitor recording PHASE 2 (true spanning capture —
-/// see SpanningCanvasCompositor's own class doc and PLAN-MULTIMON-RECORDING.md §1/§2/§8). No live
+/// <summary>Pure compositor-core tests for multi-monitor recording PHASE 2 (true spanning capture -
+/// see SpanningCanvasCompositor's own class doc and PLAN-MULTIMON-RECORDING.md sec 1/sec 2/sec 8). No live
 /// WGC/device/thread dependency: every CapturedFrame here is a synthetic, directly-constructed
 /// Fp16ScRgb buffer with a known constant color, mirroring MultiMonitorRecordingTests' own
-/// no-live-session convention. Fp16 (not Bgra8) frames are used deliberately throughout — Bgra8
+/// no-live-session convention. Fp16 (not Bgra8) frames are used deliberately throughout - Bgra8
 /// frames bypass ToneMapOptions entirely (SdrImage.FromCapturedFrame's passthrough branch), which
 /// would make it impossible to prove a slot's own tone-map curve was actually applied, i.e. exactly
-/// the "assert the seam is reproduced, not accidentally blended" property plan §8 calls out.</summary>
+/// the "assert the seam is reproduced, not accidentally blended" property plan sec 8 calls out.</summary>
 public class SpanningCanvasCompositorTests
 {
     // Two-monitor layout: DISPLAY3 (0,0)-(1000,500), DISPLAY2 to its right (1000,0)-(2000,500).
     // Deliberately different SdrWhiteNits so the two monitors' own fixed tone-map curves produce
-    // DIFFERENT output for the SAME input scRGB value — the whole point of these tests.
+    // DIFFERENT output for the SAME input scRGB value - the whole point of these tests.
     private static MonitorInfo DisplayA => new(
         Index: 0, DeviceName: "\\\\.\\DISPLAYA", HMonitor: 1,
         BoundsPx: new RectPhysical(0, 0, 1000, 500),
@@ -37,7 +37,7 @@ public class SpanningCanvasCompositorTests
     private static readonly ToneMapOptions FixedOpts = new(Knee: 0.90, PeakOverride: 2.0);
 
     /// <summary>Builds a solid-color Fp16ScRgb CapturedFrame (R16G16B16A16Float, 8 bytes/pixel,
-    /// R,G,B,A half-float order — see CapturedFrame.ReadPixelScRgb's own indexing doc). Values are
+    /// R,G,B,A half-float order - see CapturedFrame.ReadPixelScRgb's own indexing doc). Values are
     /// scRGB linear (1.0 == 80 nits), matching what WGC actually delivers for HDR content.</summary>
     private static CapturedFrame MakeSolidFp16Frame(int width, int height, MonitorInfo monitor, float r, float g, float b, float a = 1.0f)
     {
@@ -125,8 +125,8 @@ public class SpanningCanvasCompositorTests
             m.DeviceName == DisplayA.DeviceName ? toneMapA : toneMapB);
 
         // ...but DisplayA/DisplayB have DIFFERENT SdrWhiteNits (200 vs 400), so identical scRGB
-        // input still tone-maps to different SDR output — this is the "seam is correct, not a bug"
-        // property from plan §2.
+        // input still tone-maps to different SDR output - this is the "seam is correct, not a bug"
+        // property from plan sec 2.
         var frameA = MakeSolidFp16Frame(slots[0].MonitorRelativeCrop.Width, slots[0].MonitorRelativeCrop.Height, DisplayA, 0.5f, 0.5f, 0.5f);
         var frameB = MakeSolidFp16Frame(slots[1].MonitorRelativeCrop.Width, slots[1].MonitorRelativeCrop.Height, DisplayB, 0.5f, 0.5f, 0.5f);
 
@@ -140,7 +140,7 @@ public class SpanningCanvasCompositorTests
         SpanningCanvasCompositor.CompositeSlot(canvas, selection.Width, selection.Height, slots[1], frameB, ref scratchB);
 
         // The canvas pixel just left of the seam (x=0, A's own sub-rect) matches A's own tone-map
-        // output; just right of it (x=300, B's own sub-rect) matches B's — proving the seam boundary
+        // output; just right of it (x=300, B's own sub-rect) matches B's - proving the seam boundary
         // lands exactly where the geometry says, and the two halves are NOT blended together.
         Assert.Equal(ReadCanvasPixel(expectedA.Pixels, expectedA.Width, 0, 0), ReadCanvasPixel(canvas, selection.Width, 0, 0));
         Assert.Equal(ReadCanvasPixel(expectedB.Pixels, expectedB.Width, 0, 0), ReadCanvasPixel(canvas, selection.Width, 300, 0));
@@ -152,19 +152,19 @@ public class SpanningCanvasCompositorTests
         var selection = RectPhysical.FromSize(0, 0, 400, 300);
         var slots = SpanningCanvasCompositor.BuildSlots(selection, new[] { DisplayA }, _ => FixedOpts);
         var canvas = new byte[selection.Width * 4 * selection.Height];
-        canvas[0] = 0x42; // sentinel — a real composite would overwrite byte 0 (B channel of pixel 0,0)
+        canvas[0] = 0x42; // sentinel - a real composite would overwrite byte 0 (B channel of pixel 0,0)
         byte[]? scratch = null;
 
         SpanningCanvasCompositor.CompositeSlot(canvas, selection.Width, selection.Height, slots[0], frame: null, ref scratch);
 
-        Assert.Equal(0x42, canvas[0]); // "reuse the last composited frame" policy — no-op on null, plan §1
+        Assert.Equal(0x42, canvas[0]); // "reuse the last composited frame" policy - no-op on null, plan sec 1
         Assert.Null(scratch); // never allocated for a tick that composited nothing
     }
 
     [Fact]
     public void CompositeSlot_WholeCanvasSlot_WritesDirectlyIntoCanvasWithoutAllocatingScratch()
     {
-        // N==1 degenerate case (BuildSlots_SingleMonitorSelection... above) — the canvas-copy step
+        // N==1 degenerate case (BuildSlots_SingleMonitorSelection... above) - the canvas-copy step
         // must be skipped entirely, matching the pre-spanning single-recorder pipeline's own cost.
         var selection = RectPhysical.FromSize(0, 0, 200, 150);
         var slots = SpanningCanvasCompositor.BuildSlots(selection, new[] { DisplayA }, _ => FixedOpts);
@@ -195,21 +195,21 @@ public class SpanningCanvasCompositorTests
         var frame2 = MakeSolidFp16Frame(slots[0].MonitorRelativeCrop.Width, slots[0].MonitorRelativeCrop.Height, DisplayA, 0.9f, 0.9f, 0.9f);
         SpanningCanvasCompositor.CompositeSlot(canvas, selection.Width, selection.Height, slots[0], frame2, ref scratch);
 
-        Assert.Same(firstScratchRef, scratch); // same-sized slot on the next tick — no reallocation (LOH/Gen2 discipline)
+        Assert.Same(firstScratchRef, scratch); // same-sized slot on the next tick - no reallocation (LOH/Gen2 discipline)
     }
 
-    // ---------- Benchmark sanity (plan §5/§8) ----------
+    // ---------- Benchmark sanity (plan sec 5/sec 8) ----------
 
-    /// <summary>Turns plan §5's qualitative "2 monitors is roughly the second monitor's own
+    /// <summary>Turns plan sec 5's qualitative "2 monitors is roughly the second monitor's own
     /// readback + tone-map dispatch overhead, not a 2x multiplier" claim into an actual gate, per
-    /// §8's own "mandate a benchmark before shipping phase 2" instruction. Measures ONLY the
+    /// sec 8's own "mandate a benchmark before shipping phase 2" instruction. Measures ONLY the
     /// compositor's own CPU cost (tone-map + row-copy for both slots, at the GIF format's 50fps
-    /// ceiling's own per-tick budget of 20ms) — GPU readback and encode are deliberately out of
+    /// ceiling's own per-tick budget of 20ms) - GPU readback and encode are deliberately out of
     /// scope here (they're covered by RegionRecorder's own existing readback path and
     /// Mp4Encoder/GifEncoder's own benchmarks respectively; this type has no live dependency on
     /// either, see the class's own top-of-file doc note). A generous multiple of the 20ms design
     /// budget (not 20ms itself) is asserted to keep this a meaningful regression gate without
-    /// making CI flaky on a loaded/virtualized runner — the design number is documented here for a
+    /// making CI flaky on a loaded/virtualized runner - the design number is documented here for a
     /// human to compare against, not enforced to the millisecond.</summary>
     [Fact]
     public void CompositeTick_TwoMonitorsAt1920x1080Canvas_StaysWellUnderTheGifFpsCeilingBudget()
@@ -227,7 +227,7 @@ public class SpanningCanvasCompositorTests
         var canvas = new byte[canvasWidth * 4 * canvasHeight];
         byte[]? scratchLeft = null, scratchRight = null;
 
-        // One warm-up tick — JIT the hot path and prime ToneMapper's per-scale LUT cache (built
+        // One warm-up tick - JIT the hot path and prime ToneMapper's per-scale LUT cache (built
         // lazily on first use, see ToneMapper.GetLut's own doc comment) before timing starts, so the
         // measurement reflects steady-state per-tick cost, not one-time setup.
         SpanningCanvasCompositor.CompositeSlot(canvas, canvasWidth, canvasHeight, slots[0], frameLeft, ref scratchLeft);
@@ -244,7 +244,7 @@ public class SpanningCanvasCompositorTests
 
         double avgMsPerTick = sw.Elapsed.TotalMilliseconds / ticks;
 
-        // Design budget (plan §5): 20ms/tick on real hardware. The threshold is environment-aware
+        // Design budget (plan sec 5): 20ms/tick on real hardware. The threshold is environment-aware
         // because a wall-clock budget cannot mean the same thing on a developer machine and on a
         // 2-core shared GitHub runner: the 100ms gate (5x the design budget) blocked two releases
         // with 114.70 ms and 133.16 ms on runs that changed nothing in this compositor, while the

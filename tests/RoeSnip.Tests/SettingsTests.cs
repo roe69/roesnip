@@ -7,8 +7,8 @@ using Xunit;
 
 namespace RoeSnip.Tests;
 
-/// <summary>Exercises SettingsStore against isolated temp-directory paths only — never the real
-/// %APPDATA%\RoeSnip\settings.json — via the public path-taking overloads of Load/Save.</summary>
+/// <summary>Exercises SettingsStore against isolated temp-directory paths only - never the real
+/// %APPDATA%\RoeSnip\settings.json - via the public path-taking overloads of Load/Save.</summary>
 public class SettingsTests : IDisposable
 {
     private readonly string _tempDir;
@@ -31,7 +31,7 @@ public class SettingsTests : IDisposable
     [Fact]
     public void Load_MissingDirectory_ReturnsDefault_AndDoesNotCreateFile()
     {
-        // _tempDir is never created in this test — simulates a fresh install with no %APPDATA%\RoeSnip yet.
+        // _tempDir is never created in this test - simulates a fresh install with no %APPDATA%\RoeSnip yet.
         string settingsPath = PathFor("settings.json");
 
         var loaded = SettingsStore.Load(settingsPath);
@@ -144,7 +144,7 @@ public class SettingsTests : IDisposable
 
         // RoeSnipSettings.RecentPickedColors/CustomColors are List<string>, whose default
         // (reference) equality means a freshly-deserialized instance never == the original list
-        // instance even with identical content — assert their contents explicitly (xUnit's
+        // instance even with identical content - assert their contents explicitly (xUnit's
         // Assert.Equal does a structural/sequence compare for IEnumerable<T>), then neutralize
         // them to the same reference before the whole-record equality check below so it isn't
         // tripped up by that same reference-equality quirk on the remaining (scalar) fields.
@@ -281,7 +281,7 @@ public class SettingsTests : IDisposable
 
         var loaded = SettingsStore.Load(settingsPath);
 
-        // The raw string persists as-written (JSON round-trip doesn't validate it) — it's
+        // The raw string persists as-written (JSON round-trip doesn't validate it) - it's
         // GifSizePresets.Parse, consumed at recording time, that fails safe to Quality.
         Assert.Equal("NotARealPreset", loaded.GifSizePreset);
         Assert.Equal(GifSizePreset.Quality, GifSizePresets.Parse(loaded.GifSizePreset));

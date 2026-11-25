@@ -5,7 +5,7 @@ using Xunit;
 
 namespace RoeSnip.Tests;
 
-/// <summary>CursorKey.For's normalization rules (item 1, UX round 3) — the pure part of
+/// <summary>CursorKey.For's normalization rules (item 1, UX round 3) - the pure part of
 /// ToolCursorCache's caching that doesn't require building an actual Win32 cursor.</summary>
 public class ToolCursorCacheTests
 {
@@ -78,7 +78,7 @@ public class ToolCursorCacheTests
     }
 }
 
-/// <summary>CircleSpec.For's sizing rules (item 2, UX round 4) — the tool cursor is now a plain
+/// <summary>CircleSpec.For's sizing rules (item 2, UX round 4) - the tool cursor is now a plain
 /// circle whose diameter tracks the stroke width 1:1, capped at a 64x64 bitmap with a numeric label
 /// once the width would otherwise need a bigger canvas.</summary>
 public class CircleSpecTests

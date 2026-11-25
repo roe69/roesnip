@@ -9,11 +9,11 @@ using Xunit;
 
 namespace RoeSnip.Platform.Windows.Tests;
 
-/// <summary>Port-fidelity checks for this assembly's <see cref="Mp4Encoder"/> — the WPF app's own
+/// <summary>Port-fidelity checks for this assembly's <see cref="Mp4Encoder"/> - the WPF app's own
 /// Mp4EncoderTests already exhaustively covers <c>ComputeBitrate</c> (a straight passthrough to the
 /// shared <see cref="Mp4BitrateEstimator"/>, unchanged by this port, so not re-tested here). What
 /// this file DOES re-verify: the historical upside-down-video regression (MF_MT_DEFAULT_STRIDE's
-/// sign — see Mp4Encoder.Create's own doc comment) survived the copy from
+/// sign - see Mp4Encoder.Create's own doc comment) survived the copy from
 /// src/RoeSnip/Recording/Mp4Encoder.cs into this Windows-only Platform assembly, exercised through
 /// the <see cref="IVideoEncoder"/> seam exactly as RecordingController (item 20) will call it.</summary>
 public class Mp4EncoderTests
@@ -28,7 +28,7 @@ public class Mp4EncoderTests
             try
             {
                 var frame = new SdrImage(64, 64, new byte[64 * 4 * 64]);
-                // MP4 never dedupes — every WriteFrame call is a straight encode, unlike GIF's own
+                // MP4 never dedupes - every WriteFrame call is a straight encode, unlike GIF's own
                 // IVideoEncoder implementation (see GifVideoEncoderTests' identical-repeat test).
                 Assert.True(encoder.WriteFrame(frame, timestamp100ns: 0));
                 Assert.True(encoder.WriteFrame(frame, timestamp100ns: 333_333));
@@ -51,7 +51,7 @@ public class Mp4EncoderTests
     }
 
     /// <summary>Decode-back regression test for the vertical-flip bug the WPF original's own doc
-    /// comment warns about: a red-top/blue-bottom clip must decode back top-down, not flipped —
+    /// comment warns about: a red-top/blue-bottom clip must decode back top-down, not flipped -
     /// see Mp4Encoder.Create's DefaultStride comment for the historical bug this guards against.</summary>
     [Fact]
     public void WriteFrame_EncodedVideo_PreservesTopDownOrientation()

@@ -5,7 +5,7 @@ namespace RoeSnip.Core.Tests;
 
 /// <summary>Locks the exact documented per-preset <see cref="GifEncoderOptions"/> values (the
 /// spec's contract, not just "some options object comes out") and the settings-string parse
-/// mapping — a silent edit to either would otherwise only surface as a benchmark drift, not a
+/// mapping - a silent edit to either would otherwise only surface as a benchmark drift, not a
 /// clear failure pointing at the actual preset table. QUALITY ONLY since the quality/framerate
 /// decoupling workstream: no motion-floor/framerate fields exist on GifEncoderOptions anymore, so
 /// there is nothing left here to assert about them.</summary>
@@ -19,7 +19,7 @@ public class GifSizePresetTests
         Assert.Equal(0, opts.ChannelTolerance);
         Assert.Equal(0, opts.PaletteReuseErrorThreshold);
         Assert.Equal(255, opts.MaxPaletteColors);
-        // DitherErrorFloor/KeyframeInterval untouched — every tier leaves these at the
+        // DitherErrorFloor/KeyframeInterval untouched - every tier leaves these at the
         // GifEncoderOptions defaults (see the class doc comment for why).
         Assert.Equal((byte)3, opts.DitherErrorFloor);
         Assert.Null(opts.KeyframeInterval);
@@ -34,7 +34,7 @@ public class GifSizePresetTests
         Assert.Equal(4, opts.PaletteReuseErrorThreshold);
         Assert.Equal(255, opts.MaxPaletteColors);
 
-        // Quality must be byte-identical to the pre-preset GifEncoderOptions() default — a
+        // Quality must be byte-identical to the pre-preset GifEncoderOptions() default - a
         // recording made before this preset scheme existed must encode exactly the same today.
         Assert.Equal(new GifEncoderOptions(), opts);
     }
@@ -57,13 +57,13 @@ public class GifSizePresetTests
         Assert.Equal(8, opts.ChannelTolerance);
         Assert.Equal(8, opts.PaletteReuseErrorThreshold);
         Assert.Equal(64, opts.MaxPaletteColors);
-        // 12,000, not the original 350,000 — retuned 2026-07-13 after a visual QA pass found the
+        // 12,000, not the original 350,000 - retuned 2026-07-13 after a visual QA pass found the
         // original value streaked smooth gradient/photo-like content; see GifSizePresets.ForPreset's
         // own Compact comment for the full before/after reasoning.
         Assert.Equal(12_000, opts.LossyRunThresholdSq);
         // 0.75, added by the same-day tier-spread pass: the retuned (visually constrained) lossy
         // threshold left Compact's blended byte ratio bunched within ~6% of Balanced's, so the
-        // "Low" tier gets its real size step from resolution instead — see GifSizePresets' own
+        // "Low" tier gets its real size step from resolution instead - see GifSizePresets' own
         // TIER SPREAD doc paragraph for the measured 0.865 -> 0.498 effect.
         Assert.Equal(0.75, opts.RenderScale);
     }
@@ -75,7 +75,7 @@ public class GifSizePresetTests
 
         Assert.Equal(12, opts.ChannelTolerance);
         Assert.Equal(12, opts.PaletteReuseErrorThreshold);
-        // 16, not the section-4 starting point of 32 — widened during calibration (GifSizeBenchmarkTests'
+        // 16, not the section-4 starting point of 32 - widened during calibration (GifSizeBenchmarkTests'
         // blended-ratio gate), see GifSizePresets' own class doc comment for the measured table.
         Assert.Equal(16, opts.MaxPaletteColors);
         Assert.Equal(120_000, opts.LossyRunThresholdSq);
@@ -85,7 +85,7 @@ public class GifSizePresetTests
     [Fact]
     public void ForPreset_MaxAndQuality_HaveNoLossyRunExtension()
     {
-        // Max/Quality must stay bit-exact-vs-pre-workstream — see GifEncoderOptions.
+        // Max/Quality must stay bit-exact-vs-pre-workstream - see GifEncoderOptions.
         // LossyRunThresholdSq's own doc comment for why 0 disables the mechanism entirely.
         Assert.Equal(0, GifSizePresets.ForPreset(GifSizePreset.Max).LossyRunThresholdSq);
         Assert.Equal(0, GifSizePresets.ForPreset(GifSizePreset.Quality).LossyRunThresholdSq);
@@ -96,7 +96,7 @@ public class GifSizePresetTests
     [Fact]
     public void ForPreset_Balanced_HasTheDocumentedLossyThreshold()
     {
-        // 1,500, not the original 90,000 — retuned 2026-07-13 after a visual QA pass found the
+        // 1,500, not the original 90,000 - retuned 2026-07-13 after a visual QA pass found the
         // original value streaked smooth gradient/photo-like content; see GifSizePresets.ForPreset's
         // own Balanced comment for the full before/after reasoning.
         Assert.Equal(1_500, GifSizePresets.ForPreset(GifSizePreset.Balanced).LossyRunThresholdSq);
@@ -109,7 +109,7 @@ public class GifSizePresetTests
         // Max/Quality/Balanced must stay native-resolution (Max/Quality are contractually
         // bit-exact-vs-pre-workstream, and Balanced's whole identity is "quantization levers only");
         // Compact (0.75, tier-spread pass) and Minimal (0.5) are the two tiers that trade
-        // resolution for size — a monotone 1.0 > 0.75 > 0.5 progression, matching the tiers' own
+        // resolution for size - a monotone 1.0 > 0.75 > 0.5 progression, matching the tiers' own
         // size ordering.
         foreach (var preset in new[] { GifSizePreset.Max, GifSizePreset.Quality, GifSizePreset.Balanced })
         {

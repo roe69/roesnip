@@ -11,7 +11,7 @@ namespace RoeSnip.App.Tests;
 /// <see cref="UpdateManager.ParseUpdateInfo"/> parses one GitHub "releases/latest" JSON response
 /// against a current version and a "does this OS need a matching Windows asset" flag, with no HTTP
 /// call and no OS dependency of its own (<c>requireWindowsAsset</c> is an explicit parameter for
-/// exactly this reason — both the Windows and the Linux/macOS-passive-notice code paths are
+/// exactly this reason - both the Windows and the Linux/macOS-passive-notice code paths are
 /// testable from this one Windows-hosted test project). The install/swap/registry mechanics are
 /// reviewed by eye, not unit-tested, matching the WPF reference's own UpdateManager.cs doc
 /// comment.</summary>

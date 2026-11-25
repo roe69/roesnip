@@ -6,10 +6,10 @@ using Xunit;
 
 namespace RoeSnip.Tests;
 
-/// <summary>Pure geometry for the cross-monitor ("spanning") selection feature — see
+/// <summary>Pure geometry for the cross-monitor ("spanning") selection feature - see
 /// SpanningSelectionMath's own doc comment for why this is factored out of OverlayController/
 /// OverlayWindow specifically so it's testable with no WPF Window involved. Covers both the original
-/// distribute primitive (used by every drag mode: NewSelection, and — as of resize-after-place —
+/// distribute primitive (used by every drag mode: NewSelection, and - as of resize-after-place -
 /// SpanningResize/SpanningMove too) and ApplyResize, the resize math those last two now share with
 /// the plain single-monitor Resize drag.</summary>
 public class SpanningSelectionMathTests
@@ -18,7 +18,7 @@ public class SpanningSelectionMathTests
     private static readonly RectPhysical MonitorA = new(0, 0, 1920, 1080);
     private static readonly RectPhysical MonitorB = new(1920, 0, 3840, 1080);
 
-    // Two monitors with a real gap between them (x in [1920, 3000] belongs to no monitor) — e.g.
+    // Two monitors with a real gap between them (x in [1920, 3000] belongs to no monitor) - e.g.
     // non-adjacent displays, or a portrait monitor that doesn't reach as far down as its neighbor.
     private static readonly RectPhysical MonitorAGap = new(0, 0, 1920, 1080);
     private static readonly RectPhysical MonitorCGap = new(3000, 0, 4920, 1080);
@@ -67,7 +67,7 @@ public class SpanningSelectionMathTests
     // ---------- SlideToBounds ----------
     // The Move-drag clamp: preserves width/height by sliding the ORIGIN back inside bounds, unlike
     // ClampToVirtualDesktop's independent-per-edge clamp (correct for Resize/NewSelection, wrong for
-    // Move — see SlideToBounds's own doc comment).
+    // Move - see SlideToBounds's own doc comment).
 
     [Fact]
     public void SlideToBounds_RectEntirelyInside_IsUnchanged()
@@ -80,7 +80,7 @@ public class SpanningSelectionMathTests
     [Fact]
     public void SlideToBounds_OverhangingLeftEdge_SlidesWithoutShrinking()
     {
-        // An 800-wide rect whose Left would be -200 (Right = 600) — sliding it to Left=0 keeps the
+        // An 800-wide rect whose Left would be -200 (Right = 600) - sliding it to Left=0 keeps the
         // full 800 width (Right becomes 800), unlike ClampToVirtualDesktop which would independently
         // pull Left to 0 and leave Right at 600, shrinking the rect to 600 wide.
         var vdb = new RectPhysical(0, 0, 3840, 1080);
@@ -128,7 +128,7 @@ public class SpanningSelectionMathTests
         Assert.False(result.IsSpanning);
         Assert.Single(result.Hits);
         Assert.Equal(0, result.Hits[0].MonitorIndex);
-        Assert.Equal(candidate, result.Hits[0].LocalRect); // MonitorA's origin is (0,0) — local == virtual
+        Assert.Equal(candidate, result.Hits[0].LocalRect); // MonitorA's origin is (0,0) - local == virtual
         Assert.Equal(SelectionEdges.All, result.Hits[0].RealEdges); // nothing clipped it away from itself
     }
 
@@ -163,7 +163,7 @@ public class SpanningSelectionMathTests
         // MonitorA's own local rect: candidate clipped to [0,1920), MonitorA's origin is (0,0).
         Assert.Equal(new RectPhysical(1500, 100, 1920, 900), hitA.LocalRect);
         // Left/Top/Bottom are real edges of the true selection; Right is where MonitorA's own screen
-        // cuts it off (the selection continues onto MonitorB) — must NOT offer a Right/corner handle.
+        // cuts it off (the selection continues onto MonitorB) - must NOT offer a Right/corner handle.
         Assert.Equal(SelectionEdges.Left | SelectionEdges.Top | SelectionEdges.Bottom, hitA.RealEdges);
 
         var hitB = result.Hits[1];
@@ -185,7 +185,7 @@ public class SpanningSelectionMathTests
         Assert.Equal(2, result.Hits.Count);
         Assert.Equal(new RectPhysical(1500, 100, 1920, 900), result.Hits[0].LocalRect);
         Assert.Equal(new RectPhysical(0, 100, 500, 900), result.Hits[1].LocalRect); // 3500-3000=500
-        // Neither monitor's facing edge is real — the true selection's middle third is the gap,
+        // Neither monitor's facing edge is real - the true selection's middle third is the gap,
         // which belongs to no monitor at all, so there is nothing there to grab a handle on.
         Assert.Equal(SelectionEdges.None, result.Hits[0].RealEdges & SelectionEdges.Right);
         Assert.Equal(SelectionEdges.None, result.Hits[1].RealEdges & SelectionEdges.Left);
@@ -196,7 +196,7 @@ public class SpanningSelectionMathTests
     {
         var vdb = SpanningSelectionMath.ComputeVirtualDesktopBounds(new[] { MonitorA, MonitorB });
         // Right edge (9999) is WAY past MonitorB's own 3840 edge, which is also the virtual desktop's
-        // own outer edge — after clamping, that edge legitimately IS the true selection's own edge
+        // own outer edge - after clamping, that edge legitimately IS the true selection's own edge
         // (there's no monitor beyond it to clip it further), so MonitorB should report Right as real.
         var candidate = new RectPhysical(1500, 100, 9999, 900);
         var result = SpanningSelectionMath.Distribute(candidate, vdb, new[] { MonitorA, MonitorB });
@@ -210,7 +210,7 @@ public class SpanningSelectionMathTests
     public void Distribute_NormalizesAnInvertedCandidateBeforeDistributing()
     {
         var vdb = SpanningSelectionMath.ComputeVirtualDesktopBounds(new[] { MonitorA, MonitorB });
-        // Right < Left, Bottom < Top — as a drag anchored at the bottom-right and dragged up-left
+        // Right < Left, Bottom < Top - as a drag anchored at the bottom-right and dragged up-left
         // would produce before normalization.
         var inverted = new RectPhysical(2500, 900, 1500, 100);
         var result = SpanningSelectionMath.Distribute(inverted, vdb, new[] { MonitorA, MonitorB });
@@ -241,7 +241,7 @@ public class SpanningSelectionMathTests
     public void ApplyResize_DraggedPastTheOppositeCorner_NormalizesInsteadOfStayingInverted()
     {
         // Dragging TopLeft's handle down-right past the opposite (BottomRight) corner would produce
-        // Left=500 > Right=300 and Top=500 > Bottom=300 before normalization — the rect must still
+        // Left=500 > Right=300 and Top=500 > Bottom=300 before normalization - the rect must still
         // come out as a valid, non-negative-size rect afterwards.
         var result = SpanningSelectionMath.ApplyResize(ResizeStart, SelectionHandle.TopLeft, new Point(500, 500));
         Assert.Equal(new RectPhysical(300, 300, 500, 500), result);
@@ -251,7 +251,7 @@ public class SpanningSelectionMathTests
     public void ApplyResize_Body_LeavesTheRectUnchanged()
     {
         // Body isn't a real resize handle (OverlayWindow never calls ApplyResize for a Body/None hit
-        // — this just documents that the switch's default (no case) is a safe no-op if it ever were).
+        // - this just documents that the switch's default (no case) is a safe no-op if it ever were).
         var result = SpanningSelectionMath.ApplyResize(ResizeStart, SelectionHandle.Body, new Point(999, 999));
         Assert.Equal(ResizeStart, result);
     }

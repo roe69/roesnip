@@ -9,11 +9,11 @@ namespace RoeSnip.Core.Tests;
 /// <summary>Ported from tests/RoeSnip.Tests/ToneMapperEquivalenceTests.cs (item 10). The hard
 /// constraint of the r5-latency tone-map optimization: the optimized ToneMapper.MapToSdr must
 /// produce BYTE-IDENTICAL output to ToneMapper.MapToSdrScalar (the original implementation, kept
-/// as the reference) for every input — pass-through frames, shoulder frames, and adversarial raw
+/// as the reference) for every input - pass-through frames, shoulder frames, and adversarial raw
 /// FP16 bit patterns (NaN/Inf/denormals/negatives) alike. All frames are randomized with fixed
 /// seeds so failures reproduce. One mechanical change from the WPF original: every synthetic
 /// CapturedFrame supplies <c>sdrWhiteInBufferUnits: sdrWhiteNits / 80.0</c> (the Windows scRGB
-/// convention Core generalizes from — see ToneMapper's class doc), and MonitorInfo uses Core's
+/// convention Core generalizes from - see ToneMapper's class doc), and MonitorInfo uses Core's
 /// BackendKey/Scale shape instead of a raw HMONITOR.</summary>
 public class ToneMapperEquivalenceTests
 {
@@ -132,7 +132,7 @@ public class ToneMapperEquivalenceTests
     public void NaNConfinedToSingleChannels_ByteIdentical()
     {
         // A NaN in ANY channel makes the scalar reference discard that whole pixel from the M
-        // scan — this frame plants isolated NaNs among otherwise-bright HDR pixels so a lane-wise
+        // scan - this frame plants isolated NaNs among otherwise-bright HDR pixels so a lane-wise
         // SIMD max that kept the non-NaN channels alive would compute a different M (and thus
         // different bytes) than the reference.
         var monitor = MakeMonitor(80.0, 1000.0);

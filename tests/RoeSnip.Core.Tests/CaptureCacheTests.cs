@@ -5,8 +5,8 @@ using Xunit;
 
 namespace RoeSnip.Core.Tests;
 
-/// <summary>Exercises CaptureCache against isolated temp-directory paths only — never the real
-/// per-OS config-directory capture-cache.json — via the public path-taking constructor.</summary>
+/// <summary>Exercises CaptureCache against isolated temp-directory paths only - never the real
+/// per-OS config-directory capture-cache.json - via the public path-taking constructor.</summary>
 public class CaptureCacheTests : IDisposable
 {
     private readonly string _tempDir;
@@ -29,7 +29,7 @@ public class CaptureCacheTests : IDisposable
     [Fact]
     public void Query_MissingFile_ReturnsFalse_AndDoesNotCreateFile()
     {
-        // _tempDir is never created — simulates a fresh install with no config dir yet.
+        // _tempDir is never created - simulates a fresh install with no config dir yet.
         var cache = new CaptureCache(CachePath);
 
         Assert.False(cache.IsDesktopDuplicationBroken(@"\\.\DISPLAY1"));
@@ -62,7 +62,7 @@ public class CaptureCacheTests : IDisposable
     public void Mark_RoundTripsAcrossInstances()
     {
         // Keys use the real "{DeviceName}::{capturerIndex}" shape (per-slot memo entries are what
-        // every current caller actually writes) — a BARE device name is only ever seen as legacy
+        // every current caller actually writes) - a BARE device name is only ever seen as legacy
         // input to the C1 migration path, covered separately; it is not itself a round-trip case.
         var writer = new CaptureCache(CachePath);
         writer.MarkDesktopDuplicationBroken(@"\\.\DISPLAY1::0");
@@ -145,7 +145,7 @@ public class CaptureCacheTests : IDisposable
 
         Assert.False(cache.IsDesktopDuplicationBroken(@"\\.\DISPLAY1"));
 
-        // Fresh instance on the same path = simulated app relaunch — the removal must be persisted,
+        // Fresh instance on the same path = simulated app relaunch - the removal must be persisted,
         // not just cleared from the in-memory memo.
         var reloaded = new CaptureCache(CachePath);
         Assert.False(reloaded.IsDesktopDuplicationBroken(@"\\.\DISPLAY1"));
@@ -154,7 +154,7 @@ public class CaptureCacheTests : IDisposable
     [Fact]
     public void Unmark_MissingEntry_DoesNotCreateFile()
     {
-        // _tempDir is never created — simulates unmarking something that was never marked broken.
+        // _tempDir is never created - simulates unmarking something that was never marked broken.
         var cache = new CaptureCache(CachePath);
 
         cache.Unmark(@"\\.\DISPLAY1");
@@ -201,7 +201,7 @@ public class CaptureCacheTests : IDisposable
         Assert.True(cache.IsDesktopDuplicationBroken(@"\\.\DISPLAY1::0"));
         Assert.False(cache.IsDesktopDuplicationBroken(@"\\.\DISPLAY1"));
 
-        // The migration is persisted, not just applied in-memory — a fresh instance on the same
+        // The migration is persisted, not just applied in-memory - a fresh instance on the same
         // path must see the migrated (suffixed) form, not the original bare entry.
         var reloaded = new CaptureCache(CachePath);
         Assert.True(reloaded.IsDesktopDuplicationBroken(@"\\.\DISPLAY1::0"));

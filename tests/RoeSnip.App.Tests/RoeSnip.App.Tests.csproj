@@ -3,7 +3,7 @@
   <PropertyGroup>
     <!-- Windows TFM (not plain net8.0): AutomationProtocol/AutomationClient are portable, but
          this project references RoeSnip.App's multi-targeted csproj, and the windows TFM is the
-         one that carries the real Platform.Windows reference — testing against it keeps this
+         one that carries the real Platform.Windows reference - testing against it keeps this
          suite closest to the actual resident build this machine runs (same rationale as
          tests/RoeSnip.Tests targeting the WPF app's own TFM). -->
     <TargetFramework>net8.0-windows10.0.22621.0</TargetFramework>

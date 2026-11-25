@@ -6,7 +6,7 @@ using Xunit;
 
 namespace RoeSnip.App.Tests;
 
-/// <summary>Feature B (Select tool: editable Pixelate/Text/Rectangle/Ellipse/Line/Arrow) — the
+/// <summary>Feature B (Select tool: editable Pixelate/Text/Rectangle/Ellipse/Line/Arrow) - the
 /// hit-testing/selection/drag-gesture model ported from the frozen WPF app's
 /// src/RoeSnip/Overlay/AnnotationLayer.cs:308-752. No Avalonia Application/visual-tree bootstrap is
 /// needed: AnnotationLayer's Feature B surface is plain CLR state manipulated through its public
@@ -49,7 +49,7 @@ public class AnnotationLayerSelectEditTests
             Rect(new Point(0, 0), new Point(100, 100)),
             Rect(new Point(50, 50), new Point(150, 150)));
 
-        // Both rectangles cover (60,60), but only near their own stroke (outline hit rule) —
+        // Both rectangles cover (60,60), but only near their own stroke (outline hit rule) -
         // the second (topmost) rect's top-left stroke passes near (55,55).
         var hit = layer.HitTestEditable(new Point(55, 55));
         Assert.NotNull(hit);
@@ -61,7 +61,7 @@ public class AnnotationLayerSelectEditTests
     {
         var layer = NewLayerWith(Rect(new Point(0, 0), new Point(100, 100)));
 
-        Assert.Null(layer.HitTestEditable(new Point(50, 50))); // dead center — far from any stroke
+        Assert.Null(layer.HitTestEditable(new Point(50, 50))); // dead center - far from any stroke
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public class AnnotationLayerSelectEditTests
         layer.Select(shape);
 
         layer.BeginDragSelected();
-        // A huge negative delta would push the shape off both the left and top edges — the clamp
+        // A huge negative delta would push the shape off both the left and top edges - the clamp
         // must slide it back fully inside [0, frameSize], preserving its 20x20 size.
         layer.TranslateSelected(new Vector(-1000, -1000), new Size(200, 200));
 
@@ -173,7 +173,7 @@ public class AnnotationLayerSelectEditTests
         layer.Select(shape);
 
         // Simulate three wheel notches, each calling BeginDragSelected (idempotent after the
-        // first) then mutating — mirroring OverlayWindow's wheel handler.
+        // first) then mutating - mirroring OverlayWindow's wheel handler.
         layer.BeginDragSelected();
         layer.SetSelectedStrokeWidth(6.0);
         layer.BeginDragSelected(); // no-op: a gesture is already open
@@ -183,7 +183,7 @@ public class AnnotationLayerSelectEditTests
         layer.EndDragSelected();
 
         Assert.Equal(10.0, layer.SelectedShape!.StrokeWidthPx);
-        // Two undoable actions exist: the original placement (Add) and this gesture's Replace —
+        // Two undoable actions exist: the original placement (Add) and this gesture's Replace -
         // proving the 3-notch gesture collapsed into exactly ONE Replace, not three.
         Assert.True(layer.CanUndo);
 
@@ -202,7 +202,7 @@ public class AnnotationLayerSelectEditTests
         layer.Select(shape);
 
         layer.BeginDragSelected();
-        layer.EndDragSelected(); // nothing changed — must not push a Replace on top of the placement's Add
+        layer.EndDragSelected(); // nothing changed - must not push a Replace on top of the placement's Add
 
         // Only the placement's own Add action should exist: one Undo removes the shape entirely
         // rather than merely reverting a no-op Replace back to the same (already-current) state.
@@ -265,7 +265,7 @@ public class AnnotationLayerSelectEditTests
         Assert.Same(replacement, layer.SelectedShape);
         Assert.True(layer.CanUndo);
 
-        // Undo() deselects first (its own documented contract — a Replace targeting the selection
+        // Undo() deselects first (its own documented contract - a Replace targeting the selection
         // must leave the selection in a sane state). ReplaceAction.Unapply puts the SAME `original`
         // reference back in the list slot, so re-selecting it directly (rather than hit-testing,
         // which for Text needs a real font manager unavailable in a headless unit test) proves the
@@ -286,6 +286,6 @@ public class AnnotationLayerSelectEditTests
 
         layer.SetSelectedPixelateBlock(12.0);
 
-        Assert.Equal(4.0, shape.StrokeWidthPx); // untouched — a Rectangle isn't a Pixelate
+        Assert.Equal(4.0, shape.StrokeWidthPx); // untouched - a Rectangle isn't a Pixelate
     }
 }

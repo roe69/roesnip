@@ -9,7 +9,7 @@ namespace RoeSnip.Tests;
 ///
 /// This is NOT the same thing as reading <c>GifBitmapDecoder.Frames[i]</c> directly: each
 /// <c>BitmapFrame</c> WPF hands back is that ONE Image Descriptor's own raw sub-rect pixels,
-/// uncomposited against every earlier frame — grabbing just the LAST frame that way shows only its
+/// uncomposited against every earlier frame - grabbing just the LAST frame that way shows only its
 /// own small delta rect against an otherwise blank/undefined canvas, not the true final displayed
 /// image (the exact bug this class exists to avoid: an earlier version of
 /// GifSizeBenchmarkTests.Minimal_Scroll_VisuallySane_MeanErrorBounded measured a ~40-per-channel
@@ -23,7 +23,7 @@ internal static class GifRawCompositor
     /// <paramref name="canvasWidth"/> x <paramref name="canvasHeight"/> BGRA8 buffer using GIF's "do
     /// not dispose" disposal rule (later frames paint over earlier ones inside their own sub-rect;
     /// pixels whose decoded index is that frame's transparent index leave whatever was already
-    /// there untouched — this encoder only ever writes disposal method 1, see GifEncoder's own
+    /// there untouched - this encoder only ever writes disposal method 1, see GifEncoder's own
     /// DisposalDoNotDispose constant) and returns the FINAL state: exactly what a real viewer shows
     /// once the whole animation has played through once.</summary>
     public static byte[] CompositeFinalFrame(byte[] gif, int canvasWidth, int canvasHeight)
@@ -100,7 +100,7 @@ internal static class GifRawCompositor
                         {
                             continue;
                         }
-                        // GIF89a Color Table entries are stored Red, Green, Blue (in that order —
+                        // GIF89a Color Table entries are stored Red, Green, Blue (in that order -
                         // see GifEncoder.WriteFrame's own comment on the LCT write); flip into this
                         // canvas's BGRA layout here.
                         int po = (canvasY * canvasWidth + canvasX) * 4;

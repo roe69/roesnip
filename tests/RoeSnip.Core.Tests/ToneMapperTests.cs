@@ -235,8 +235,8 @@ public class ToneMapperTests
         // naive Clamp(r,0,1) passthrough branch instead of applying the shoulder rolloff. After
         // sanitizing Knee into [0.5, 0.99], (1) the huge override must behave identically to passing
         // 0.99 explicitly, and (2) values straddling that real (sanitized) knee boundary must still
-        // produce adjacent bytes — exactly like the pre-existing ShoulderContinuity test already
-        // proves for the literal default knee — demonstrating the shoulder is active, not disabled.
+        // produce adjacent bytes - exactly like the pre-existing ShoulderContinuity test already
+        // proves for the literal default knee - demonstrating the shoulder is active, not disabled.
         const double sanitizedKnee = 0.99;
         var monitor = MakeMonitor(sdrWhiteNits: 80.0, maxLuminanceNits: 1000.0);
 
@@ -260,7 +260,7 @@ public class ToneMapperTests
         Assert.Equal(rBelowExplicit, rBelowHuge);
         Assert.Equal(rAboveExplicit, rAboveHuge);
         Assert.True(Math.Abs(rAboveHuge - rBelowHuge) <= 1,
-            $"Expected adjacent bytes at the (sanitized) knee boundary, got {rBelowHuge} and {rAboveHuge} — shoulder appears disabled.");
+            $"Expected adjacent bytes at the (sanitized) knee boundary, got {rBelowHuge} and {rAboveHuge} - shoulder appears disabled.");
     }
 
     [Theory]
@@ -335,7 +335,7 @@ public class ToneMapperTests
     public void Bgra8SrgbPassthrough_LeavesBytesUnchanged_AndForcesOpaqueAlpha()
     {
         var monitor = MakeMonitor();
-        // B=10, G=20, R=30, A=128 (not opaque) — passthrough must force alpha to 255 and leave BGR untouched.
+        // B=10, G=20, R=30, A=128 (not opaque) - passthrough must force alpha to 255 and leave BGR untouched.
         var frame = new CapturedFrame(FrameFormat.Bgra8Srgb, 1, 1, 4, new byte[] { 10, 20, 30, 128 }, monitor,
             sdrWhiteInBufferUnits: 1.0);
 
@@ -377,7 +377,7 @@ public class ToneMapperTests
         // SDR mid-bright. Per the algebraic identity, this frame must be
         // byte-identical to a Windows-convention frame carrying the same post-scale values
         // (SdrWhiteNits=240 => SdrWhiteInBufferUnits=3.0; raw values 7.5 and 1.5) on the same
-        // monitor — proving the generalized 1/SdrWhiteInBufferUnits scale step, not just the
+        // monitor - proving the generalized 1/SdrWhiteInBufferUnits scale step, not just the
         // Windows-equivalent path, shoulders correctly.
         var monitor = MakeMonitor(sdrWhiteNits: 240.0, maxLuminanceNits: 1000.0);
 
@@ -426,7 +426,7 @@ public class ToneMapperTests
     {
         // The documented Bgra8Srgb rule: the sRGB branch keeps the WPF app's exact
         // constant-*80.0 math (ReadPixelScRgb already bakes SdrWhiteNits/80 into the decode), so a
-        // pure-white byte reads back as exactly Monitor.SdrWhiteNits — NOT SdrWhiteNits²/80, which
+        // pure-white byte reads back as exactly Monitor.SdrWhiteNits - NOT SdrWhiteNits^2/80, which
         // is what naively routing this format through SdrWhiteInBufferUnits would produce.
         var monitor = MakeMonitor(sdrWhiteNits: 240.0);
         var frame = new CapturedFrame(FrameFormat.Bgra8Srgb, 1, 1, 4, new byte[] { 255, 255, 255, 255 },

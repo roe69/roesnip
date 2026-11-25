@@ -4,7 +4,7 @@ using Xunit;
 
 namespace RoeSnip.Core.Tests;
 
-/// <summary>RawFrameEquality.RawFramesEqual — the encoder-thread pre-tonemap dedupe check, ported
+/// <summary>RawFrameEquality.RawFramesEqual - the encoder-thread pre-tonemap dedupe check, ported
 /// verbatim from the WPF app's RecordingController.RawFramesEqual.</summary>
 public class RawFrameEqualityTests
 {

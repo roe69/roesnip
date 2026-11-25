@@ -45,7 +45,7 @@ public class RecordingSeamsRegistrationTests
     [Fact]
     public void AudioCaptureDeviceRegistry_OnWindows_BothFlagsFalse_ReturnsNull()
     {
-        // Mirrors AudioCaptureEngine.TryStart's own "nothing to capture" short circuit — must not
+        // Mirrors AudioCaptureEngine.TryStart's own "nothing to capture" short circuit - must not
         // even attempt device activation when neither source was requested.
         IAudioCaptureDevice? device = AudioCaptureDeviceRegistry.TryStart(microphone: false, systemAudio: false);
         Assert.Null(device);

@@ -68,7 +68,7 @@ public sealed class FileLogTests : IDisposable
         string rotatedPath = logPath + ".1";
         Assert.True(File.Exists(rotatedPath));
         Assert.True(new FileInfo(rotatedPath).Length > 1024 * 1024);
-        // The active file was moved out from under itself, not copied — nothing oversized remains
+        // The active file was moved out from under itself, not copied - nothing oversized remains
         // at the live path until the next Write() recreates it fresh.
         Assert.False(File.Exists(logPath));
 

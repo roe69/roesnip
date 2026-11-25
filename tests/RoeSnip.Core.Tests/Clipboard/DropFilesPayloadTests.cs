@@ -49,7 +49,8 @@ public sealed class DropFilesPayloadTests
     [Fact]
     public void Build_NonAsciiPath_RoundTripsAsUtf16()
     {
-        const string path = @"C:\temp\スクリーン ショット.mp4";
+        string path = @"C:\temp\" + new string(new[] { (char)0x30B9, (char)0x30AF, (char)0x30EA, (char)0x30FC, (char)0x30F3 })
+            + " " + new string(new[] { (char)0x30B7, (char)0x30E7, (char)0x30C3, (char)0x30C8 }) + ".mp4";
         byte[] payload = DropFilesPayload.Build(new[] { path });
 
         string names = Encoding.Unicode.GetString(payload, DropFilesPayload.HeaderSize,

@@ -9,14 +9,14 @@ using Xunit;
 
 namespace RoeSnip.Tests;
 
-/// <summary>The pure bitrate heuristic behind Mp4Encoder.Create — no live MF SinkWriter needed.</summary>
+/// <summary>The pure bitrate heuristic behind Mp4Encoder.Create - no live MF SinkWriter needed.</summary>
 public class Mp4EncoderTests
 {
     [Fact]
     public void ComputeBitrate_TypicalSelection_IsWithinTheClampedBand()
     {
         long bitrate = Mp4Encoder.ComputeBitrate(1280, 720, 30);
-        // 0.1 * 1280 * 720 * 30 = 2,764,800 — inside [2e6, 16e6], not clamped.
+        // 0.1 * 1280 * 720 * 30 = 2,764,800 - inside [2e6, 16e6], not clamped.
         Assert.Equal(2_764_800, bitrate);
     }
 
@@ -61,7 +61,7 @@ public class Mp4EncoderTests
     public void ComputeBitrate_Max_TypicalSelection_Is4xTheQualityFactor()
     {
         long bitrate = Mp4Encoder.ComputeBitrate(1280, 720, 30, GifSizePreset.Max);
-        // 4.0 * 0.1 * 1280 * 720 * 30 = 11,059,200 — inside [8e6, 64e6], not clamped.
+        // 4.0 * 0.1 * 1280 * 720 * 30 = 11,059,200 - inside [8e6, 64e6], not clamped.
         Assert.Equal(11_059_200, bitrate);
     }
 
@@ -83,7 +83,7 @@ public class Mp4EncoderTests
     public void ComputeBitrate_Balanced_TypicalSelection_Is0Point6xTheQualityFactor()
     {
         long bitrate = Mp4Encoder.ComputeBitrate(1280, 720, 30, GifSizePreset.Balanced);
-        // 0.6 * 0.1 * 1280 * 720 * 30 = 1,658,880 — inside [1.5e6, 10e6], not clamped.
+        // 0.6 * 0.1 * 1280 * 720 * 30 = 1,658,880 - inside [1.5e6, 10e6], not clamped.
         Assert.Equal(1_658_880, bitrate);
     }
 
@@ -106,7 +106,7 @@ public class Mp4EncoderTests
     {
         long bitrate = Mp4Encoder.ComputeBitrate(1920, 1080, 30, GifSizePreset.Compact);
         // 0.35 * 0.1 * 1920 * 1080 * 30 = 2,177,280 mathematically, but 0.35 * 0.1 is not exactly
-        // representable in double (like the legacy overload's own 0.1 factor) — the actual
+        // representable in double (like the legacy overload's own 0.1 factor) - the actual
         // left-to-right double multiplication lands one ulp below the whole number, and the
         // (long) cast in ComputeBitrate truncates rather than rounds, so the real return value is
         // 2,177,279. Still comfortably inside [1e6, 6e6], not clamped.
@@ -116,7 +116,7 @@ public class Mp4EncoderTests
     [Fact]
     public void ComputeBitrate_Compact_SmallSelection_ClampsToTheOneMbpsFloor()
     {
-        // 0.35 * 0.1 * 1280 * 720 * 30 = 967,680 — below the 1e6 floor even at a common 720p30
+        // 0.35 * 0.1 * 1280 * 720 * 30 = 967,680 - below the 1e6 floor even at a common 720p30
         // selection, unlike Balanced/Max at the same size.
         long bitrate = Mp4Encoder.ComputeBitrate(1280, 720, 30, GifSizePreset.Compact);
         Assert.Equal(1_000_000, bitrate);
@@ -147,7 +147,7 @@ public class Mp4EncoderTests
     public void ComputeBitrate_Minimal_TypicalSelection_Is0Point15xTheQualityFactor()
     {
         long bitrate = Mp4Encoder.ComputeBitrate(1280, 720, 30, GifSizePreset.Minimal);
-        // 0.15 * 0.1 * 1280 * 720 * 30 = 414,720 — below the 500k floor at this common 720p30
+        // 0.15 * 0.1 * 1280 * 720 * 30 = 414,720 - below the 500k floor at this common 720p30
         // selection (Minimal's clamp band starts noticeably higher than its unclamped formula
         // would produce here, unlike Balanced/Max at the same size).
         Assert.Equal(500_000, bitrate);
@@ -196,7 +196,7 @@ public class Mp4EncoderTests
     /// media type once set MF_MT_DEFAULT_STRIDE to a NEGATIVE value (declaring the buffer
     /// bottom-up) while WriteFrame fed it SdrImage's top-down rows verbatim, so every recorded
     /// .mp4 played upside down. This writes a red-top/blue-bottom clip, decodes it back with an
-    /// IMFSourceReader, and asserts the TRUE image orientation (not raw buffer layout — the
+    /// IMFSourceReader, and asserts the TRUE image orientation (not raw buffer layout - the
     /// decoder's own negotiated stride can itself come back negative, so this test must resolve
     /// that sign before comparing rows, or it would just be checking two wrongs cancel out).</summary>
     [Fact]
@@ -246,7 +246,7 @@ public class Mp4EncoderTests
 
             // --- Decode back and inspect the actual (not raw-buffer) top/bottom rows. ---
             // EnableVideoProcessing lets the source reader insert a color-conversion MFT so the
-            // H.264 decoder's native YUV (NV12) output can be requested as RGB32 below — without
+            // H.264 decoder's native YUV (NV12) output can be requested as RGB32 below - without
             // it, SetCurrentMediaType(RGB32) fails with MF_E_INVALIDMEDIATYPE.
             using var readerAttrs = MediaFactory.MFCreateAttributes(1);
             readerAttrs.Set(SourceReaderAttributeKeys.EnableVideoProcessing, true).CheckError();
@@ -306,7 +306,7 @@ public class Mp4EncoderTests
                     }
 
                     // RGB32 is 32bpp BGRX, same byte order as SdrImage.Pixels (see Mp4Encoder's
-                    // own comment) — no channel swap needed, only the row-order correction above.
+                    // own comment) - no channel swap needed, only the row-order correction above.
                     (byte b, byte g, byte r) PixelAt(int x, int trueY)
                     {
                         int bufferRow = decodedBottomUp ? height - 1 - trueY : trueY;
@@ -315,7 +315,7 @@ public class Mp4EncoderTests
                     }
 
                     // Sample a few columns, a few rows away from the exact middle seam (H.264 is
-                    // lossy — blocky compression can smear pixels right at the seam).
+                    // lossy - blocky compression can smear pixels right at the seam).
                     int[] sampleXs = { width / 4, width / 2, 3 * width / 4 };
                     int topY = height / 4;
                     int bottomY = 3 * height / 4;

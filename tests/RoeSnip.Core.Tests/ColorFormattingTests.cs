@@ -84,7 +84,7 @@ public class ColorFormattingTests
         var (h, s, l) = ColorFormatting.RgbToHsl(r, g, b);
         var (r2, g2, b2) = ColorFormatting.HslToRgb(h, s, l);
 
-        // Byte quantization through the HSL round trip can be off by a hair — allow +-1.
+        // Byte quantization through the HSL round trip can be off by a hair - allow +-1.
         Assert.InRange(r2, Math.Max(0, r - 1), Math.Min(255, r + 1));
         Assert.InRange(g2, Math.Max(0, g - 1), Math.Min(255, g + 1));
         Assert.InRange(b2, Math.Max(0, b - 1), Math.Min(255, b + 1));

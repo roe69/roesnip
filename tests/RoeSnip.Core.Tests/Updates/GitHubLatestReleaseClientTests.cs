@@ -12,7 +12,7 @@ using Xunit;
 namespace RoeSnip.Core.Tests.Updates;
 
 /// <summary>Records every request it sees and hands back canned responses from a caller-supplied
-/// queue, in order — GitHubLatestReleaseClientTests needs to assert on a SEQUENCE of requests
+/// queue, in order - GitHubLatestReleaseClientTests needs to assert on a SEQUENCE of requests
 /// (first probe vs. second probe headers, backoff window behavior), which the single-response
 /// StubHttpMessageHandler used by the Sharing tests isn't shaped for.</summary>
 internal sealed class SequenceHttpMessageHandler : HttpMessageHandler

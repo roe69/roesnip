@@ -8,7 +8,7 @@ using Xunit;
 
 namespace RoeSnip.Core.Tests;
 
-/// <summary>PolledRegionCaptureSource — the portable (non-Windows) IRegionCaptureSource fallback:
+/// <summary>PolledRegionCaptureSource - the portable (non-Windows) IRegionCaptureSource fallback:
 /// polls a fake ICaptureBackend and crops in managed code. Exercises the polling/crop/pause/origin-
 /// clamp/fault-propagation logic with no real capture backend involved.</summary>
 public class PolledRegionCaptureSourceTests
@@ -19,7 +19,7 @@ public class PolledRegionCaptureSourceTests
         DpiX: 96, DpiY: 96, Scale: 1.0, AdvancedColorActive: false,
         SdrWhiteNits: 240.0, MaxLuminanceNits: 1000.0, IsPrimary: true);
 
-    /// <summary>4x4 monitor whose B channel holds each pixel's own linear index (0..15) — lets a
+    /// <summary>4x4 monitor whose B channel holds each pixel's own linear index (0..15) - lets a
     /// test assert exactly which source pixels a crop pulled from.</summary>
     private static byte[] IndexedPixels(int width, int height)
     {
@@ -121,7 +121,7 @@ public class PolledRegionCaptureSourceTests
         var backend = new FakeCaptureBackend(m => IndexedPixels(m.BoundsPx.Width, m.BoundsPx.Height));
         using var source = new PolledRegionCaptureSource(backend, monitor, RectPhysical.FromSize(0, 0, 2, 2), targetFps: 200);
 
-        // Way out of bounds — must clamp to the monitor's own max origin (4-2, 4-2) = (2,2), not throw
+        // Way out of bounds - must clamp to the monitor's own max origin (4-2, 4-2) = (2,2), not throw
         // and not silently accept an out-of-range crop box.
         source.SetOrigin(999, 999);
         source.Start();

@@ -371,7 +371,7 @@ public class GifEncoderTests
         {
             var encoder = GifEncoder.Create(path, 3, 3, timestampTicksPerSecond: 1000);
             encoder.AddFrame(SolidFrame(3, 3, 255, 0, 0), 0L);
-            encoder.AddFrame(SolidFrame(3, 3, 255, 0, 0), 300L); // identical — skipped
+            encoder.AddFrame(SolidFrame(3, 3, 255, 0, 0), 300L); // identical - skipped
             encoder.AddFrame(SolidFrame(3, 3, 0, 255, 0), 600L);
             encoder.FinalizeAndClose();
 
@@ -402,7 +402,7 @@ public class GifEncoderTests
 
             var frames = ParseFrames(File.ReadAllBytes(path));
             Assert.Equal(2, frames.Count);
-            Assert.Equal(2, frames[0].Delay); // floored — browsers clamp 0-1cs to 10cs
+            Assert.Equal(2, frames[0].Delay); // floored - browsers clamp 0-1cs to 10cs
         }
         finally
         {
@@ -419,7 +419,7 @@ public class GifEncoderTests
             var encoder = GifEncoder.Create(path, 3, 3, timestampTicksPerSecond: 1000);
             encoder.AddFrame(SolidFrame(3, 3, 255, 0, 0), 0L);
             encoder.AddFrame(SolidFrame(3, 3, 0, 255, 0), 400L);
-            encoder.AddFrame(SolidFrame(3, 3, 0, 255, 0), 700L);  // identical — skipped
+            encoder.AddFrame(SolidFrame(3, 3, 0, 255, 0), 700L);  // identical - skipped
             encoder.FinalizeAndClose(2400L); // user held the final state for 2s before Stop
 
             var frames = ParseFrames(File.ReadAllBytes(path));
@@ -440,7 +440,7 @@ public class GifEncoderTests
         try
         {
             var encoder = GifEncoder.Create(path, 3, 3, timestampTicksPerSecond: 1000);
-            encoder.FinalizeAndClose(5000L); // nothing to patch — must not throw or corrupt
+            encoder.FinalizeAndClose(5000L); // nothing to patch - must not throw or corrupt
             byte[] bytes = File.ReadAllBytes(path);
             Assert.Equal(0x3B, bytes[^1]);
             Assert.Empty(ParseFrames(bytes));

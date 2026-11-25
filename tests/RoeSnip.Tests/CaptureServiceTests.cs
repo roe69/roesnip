@@ -11,7 +11,7 @@ namespace RoeSnip.Tests;
 
 /// <summary>Exercises CaptureService's fallback/omission contract and the parallel-capture
 /// ordering guarantee with fake capturers, using the public test constructor and an isolated
-/// temp-path CaptureCache — never real monitors or the real %APPDATA% cache file.</summary>
+/// temp-path CaptureCache - never real monitors or the real %APPDATA% cache file.</summary>
 public class CaptureServiceTests : IDisposable
 {
     private readonly string _tempDir;
@@ -66,7 +66,7 @@ public class CaptureServiceTests : IDisposable
     public void CaptureAll_PreservesInputOrder_EvenWhenCapturesFinishOutOfOrder()
     {
         var monitors = new[] { Monitor(0), Monitor(1), Monitor(2) };
-        // Monitor 0 is the slowest, monitor 2 the fastest — with parallel capture the completion
+        // Monitor 0 is the slowest, monitor 2 the fastest - with parallel capture the completion
         // order is the reverse of the input order, but the results must still come back 0, 1, 2.
         var primary = new FakeCapturer(m =>
         {
@@ -117,7 +117,7 @@ public class CaptureServiceTests : IDisposable
     public void CaptureAll_PrimaryFailure_IsMemoized_SecondCallSkipsPrimary()
     {
         var monitors = new[] { Monitor(0) };
-        // The memo only records failures that PROVE the permanent quirk (all-zero frame) — see
+        // The memo only records failures that PROVE the permanent quirk (all-zero frame) - see
         // CaptureException.IndicatesPermanentlyBroken; transient failures are covered below.
         var primary = new FakeCapturer(m =>
             throw new CaptureException("black frame") { IndicatesPermanentlyBroken = true });

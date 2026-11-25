@@ -8,7 +8,7 @@ using Xunit;
 namespace RoeSnip.Core.Tests;
 
 /// <summary>Exercises <see cref="GifVideoEncoder"/> entirely THROUGH the <see cref="IVideoEncoder"/>
-/// seam (never the concrete type directly) — the recording-seams workstream's whole point is that
+/// seam (never the concrete type directly) - the recording-seams workstream's whole point is that
 /// RecordingController (item 20) never has to know it is talking to a GIF encoder specifically, so
 /// these tests hold it to that contract.</summary>
 public class GifVideoEncoderTests : IDisposable
@@ -57,7 +57,7 @@ public class GifVideoEncoderTests : IDisposable
         try
         {
             // Must be safe to call unconditionally per IVideoEncoder's own contract, even with a
-            // nonsense length/short buffer — GIF has no audio track to write into at all.
+            // nonsense length/short buffer - GIF has no audio track to write into at all.
             encoder.WriteAudioSamples(new byte[4], 4, timestamp100ns: 0);
         }
         finally
@@ -90,7 +90,7 @@ public class GifVideoEncoderTests : IDisposable
         {
             var frame = SolidFrame(8, 8, 10, 20, 30);
             Assert.True(encoder.WriteFrame(frame, timestamp100ns: 0));
-            // Same pixels, later timestamp (still within the 100ns domain this seam is pinned to) —
+            // Same pixels, later timestamp (still within the 100ns domain this seam is pinned to) -
             // GifEncoder's own dedupe must skip it, and that "no" must surface through this seam's
             // return value exactly like it does calling GifEncoder.AddFrame directly.
             bool emittedAgain = encoder.WriteFrame(frame, timestamp100ns: 1_000_000);
@@ -120,7 +120,7 @@ public class GifVideoEncoderTests : IDisposable
         byte[] bytes = File.ReadAllBytes(_tempPath);
         Assert.True(bytes.Length > 16);
         Assert.Equal("GIF89a", System.Text.Encoding.ASCII.GetString(bytes, 0, 6));
-        Assert.Equal(0x3B, bytes[^1]); // GIF trailer byte — proves FinishAsync actually closed the stream
+        Assert.Equal(0x3B, bytes[^1]); // GIF trailer byte - proves FinishAsync actually closed the stream
     }
 
     [Fact]
@@ -130,7 +130,7 @@ public class GifVideoEncoderTests : IDisposable
         try
         {
             encoder.WriteFrame(SolidFrame(8, 8, 10, 20, 30), timestamp100ns: 0);
-            await encoder.FinishAsync(); // null endTimestampTicks — the hard/error-stop path
+            await encoder.FinishAsync(); // null endTimestampTicks - the hard/error-stop path
         }
         finally
         {

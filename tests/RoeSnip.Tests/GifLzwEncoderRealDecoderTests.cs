@@ -14,20 +14,20 @@ namespace RoeSnip.Tests;
 /// <summary>Ground-truth regression coverage for <see cref="GifLzwEncoder"/>: decodes its output
 /// through REAL, independent GIF decoders (WPF's <see cref="GifBitmapDecoder"/> and GDI+'s
 /// <see cref="Image.FromStream(Stream)"/>) rather than only the test-only <see cref="GifLzwTestDecoder"/>
-/// helper — a shared test decoder that happens to agree with the encoder proves nothing if both sides
+/// helper - a shared test decoder that happens to agree with the encoder proves nothing if both sides
 /// share the same bug (exactly what happened here: a code-width-growth off-by-one in the encoder
 /// went undetected for months because <c>GifLzwTestDecoder</c> was tuned to match it instead of the
 /// GIF89a spec, and both real decoders rejected the result). See <see cref="GifLzwEncoder"/>'s
 /// <c>Encode</c> doc comment and <see cref="GifLzwTestDecoder"/>'s class doc comment for the actual
 /// defect: the encoder must grow its code width when its post-increment <c>nextCode</c> reaches
-/// <c>(1 &lt;&lt; codeWidth) + 1</c>, not <c>1 &lt;&lt; codeWidth</c> — growing one entry too early
+/// <c>(1 &lt;&lt; codeWidth) + 1</c>, not <c>1 &lt;&lt; codeWidth</c> - growing one entry too early
 /// desyncs the bitstream from every real-world decoder.</summary>
 public class GifLzwEncoderRealDecoderTests
 {
     // ---- A minimal, hand-built single-frame GIF container around raw LZW payload bytes, so these
     // tests exercise GifLzwEncoder.Encode's bitstream in isolation from GifEncoder's palette/box/GCE
     // orchestration. The palette is a pure grayscale ramp (index i -> gray level i), so a decoded
-    // pixel's blue channel IS the original palette index — real-decoder output can be checked
+    // pixel's blue channel IS the original palette index - real-decoder output can be checked
     // directly against the source indices with no LUT/quantization step in between. ----
 
     private static byte[] BuildMinimalGif(byte[] lzwPayload, int width, int height, int minCodeSize)
@@ -57,7 +57,7 @@ public class GifLzwEncoderRealDecoderTests
     }
 
     /// <summary>Decodes via WPF's <see cref="GifBitmapDecoder"/>, converts to a known pixel format,
-    /// and returns the raw BGRA bytes — throws if the real decoder rejects the stream.</summary>
+    /// and returns the raw BGRA bytes - throws if the real decoder rejects the stream.</summary>
     private static byte[] DecodeWpfBgra(byte[] gif, int width, int height)
     {
         using var ms = new MemoryStream(gif);
@@ -69,7 +69,7 @@ public class GifLzwEncoderRealDecoderTests
         return buf;
     }
 
-    /// <summary>Decodes via GDI+ — an entirely separate real-world decoder implementation from WPF's,
+    /// <summary>Decodes via GDI+ - an entirely separate real-world decoder implementation from WPF's,
     /// so the two catching the SAME defect (as they did before the fix) is strong evidence the defect
     /// is in the bitstream itself, not a quirk of one decoder.</summary>
     private static void AssertGdiPlusDecodes(byte[] gif)
@@ -104,12 +104,12 @@ public class GifLzwEncoderRealDecoderTests
 
     /// <summary>Decodes <paramref name="gif"/> through BOTH real decoders and the shared
     /// <see cref="GifLzwTestDecoder"/>, asserting every one of them recovers exactly
-    /// <paramref name="indices"/> — the real decoders via their composited pixel output (blue channel
+    /// <paramref name="indices"/> - the real decoders via their composited pixel output (blue channel
     /// == index, thanks to the grayscale-ramp palette), the shared helper directly against the raw
     /// index stream.</summary>
     /// <summary><paramref name="width"/>/<paramref name="height"/> must multiply out to
     /// <paramref name="indices"/>.Length and each stay under the GIF format's 16-bit dimension limit
-    /// (65535) — a caller-picked single-row layout would silently truncate the LE16 width field for
+    /// (65535) - a caller-picked single-row layout would silently truncate the LE16 width field for
     /// anything over 65535 indices, corrupting the container independent of anything under test.</summary>
     private static void AssertAllDecodersAgree(byte[] indices, int minCodeSize, int width, int height)
     {
@@ -149,7 +149,7 @@ public class GifLzwEncoderRealDecoderTests
     {
         int alphabetSize = 1 << minCodeSize;
         // Long enough, and varied enough (run-length mixed with singletons breaking runs), that the
-        // dictionary reliably grows past 256 entries and crosses the 8->9 bit code-width boundary —
+        // dictionary reliably grows past 256 entries and crosses the 8->9 bit code-width boundary -
         // the exact region the original bug manifested in on real recording content.
         byte[] indices = RunLengthHeavyIndices(alphabetSize, length: 30_000, seed: 1000 + minCodeSize);
         AssertAllDecodersAgree(indices, minCodeSize, width: 300, height: 100);
@@ -184,7 +184,7 @@ public class GifLzwEncoderRealDecoderTests
 
     // ---- (b) End-to-end: a 640x400 solid+glyphs keyframe (same shape as GifSizeBenchmarkTests'
     // static scenario) through the REAL GifEncoder pipeline, decoded by GifBitmapDecoder with
-    // pixel-content assertions against known painted regions — not just "no throw". ----
+    // pixel-content assertions against known painted regions - not just "no throw". ----
 
     private static void SetPixel(byte[] pixels, int width, int x, int y, byte b, byte g, byte r)
     {
@@ -202,7 +202,7 @@ public class GifLzwEncoderRealDecoderTests
     }
 
     /// <summary>Same shape as <c>GifSizeBenchmarkTests.StaticUiFrame</c> (flat background, title bar
-    /// band, glyph-block grid, a moving cursor block) — the exact content shape whose keyframe the
+    /// band, glyph-block grid, a moving cursor block) - the exact content shape whose keyframe the
     /// original bug report says "fails to decode".</summary>
     private static SdrImage StaticUiFrame(int width, int height)
     {
@@ -237,7 +237,7 @@ public class GifLzwEncoderRealDecoderTests
 
             byte[] gif = File.ReadAllBytes(path);
 
-            // Must not throw on either real decoder — this exact content shape (solid regions +
+            // Must not throw on either real decoder - this exact content shape (solid regions +
             // sparse glyph blocks) is precisely what triggered the original bug.
             AssertGdiPlusDecodes(gif);
 

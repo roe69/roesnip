@@ -5,8 +5,8 @@ using Xunit;
 
 namespace RoeSnip.Tests;
 
-/// <summary>Exercises CaptureCache against isolated temp-directory paths only — never the real
-/// %APPDATA%\RoeSnip\capture-cache.json — via the public path-taking constructor.</summary>
+/// <summary>Exercises CaptureCache against isolated temp-directory paths only - never the real
+/// %APPDATA%\RoeSnip\capture-cache.json - via the public path-taking constructor.</summary>
 public class CaptureCacheTests : IDisposable
 {
     private readonly string _tempDir;
@@ -29,7 +29,7 @@ public class CaptureCacheTests : IDisposable
     [Fact]
     public void Query_MissingFile_ReturnsFalse_AndDoesNotCreateFile()
     {
-        // _tempDir is never created — simulates a fresh install with no %APPDATA%\RoeSnip yet.
+        // _tempDir is never created - simulates a fresh install with no %APPDATA%\RoeSnip yet.
         var cache = new CaptureCache(CachePath);
 
         Assert.False(cache.IsDesktopDuplicationBroken(@"\\.\DISPLAY1"));

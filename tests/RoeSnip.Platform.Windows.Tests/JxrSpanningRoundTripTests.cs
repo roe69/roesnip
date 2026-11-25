@@ -11,10 +11,10 @@ namespace RoeSnip.Platform.Windows.Tests;
 
 /// <summary>Cross-monitor selection (item 09) HDR save (JxrWriter.WriteSpanning): stitching raw
 /// scRGB crops from multiple monitors into one .jxr is well-defined because raw scRGB is one
-/// absolute linear space (1.0 = 80 nits) regardless of which monitor a pixel came from — see
+/// absolute linear space (1.0 = 80 nits) regardless of which monitor a pixel came from - see
 /// WriteSpanning's own doc comment. These tests build two small synthetic CapturedFrames with
 /// distinct, known pixel values, place them at different offsets in a shared virtual canvas via
-/// SpanningFrameCrop, and verify the written file's decoded pixels land exactly where expected —
+/// SpanningFrameCrop, and verify the written file's decoded pixels land exactly where expected -
 /// including the documented gap fill (opaque linear black) for canvas pixels no crop covers.
 ///
 /// Ported from tests/RoeSnip.Tests/JxrSpanningRoundTripTests.cs - same
@@ -124,7 +124,7 @@ public class JxrSpanningRoundTripTests
         var monitorA = MakeMonitor(0, new RectPhysical(0, 0, 1, 1));
         var frameA = MakeFp16Frame(1, 1, (_, _) => (3.0f, 3.0f, 3.0f, 1.0f), monitorA);
 
-        // A 3-pixel-wide virtual canvas but only the LEFT pixel has a contributing crop — mirrors a
+        // A 3-pixel-wide virtual canvas but only the LEFT pixel has a contributing crop - mirrors a
         // real gap between non-adjacent monitors, or a monitor whose own selection slice didn't
         // reach as far as the composite's own bounding box.
         var virtualRect = new RectPhysical(0, 0, 3, 1);
@@ -138,7 +138,7 @@ public class JxrSpanningRoundTripTests
         {
             JxrWriter.WriteSpanning(path, virtualRect, crops);
 
-            // The JXR (WMP) codec is not bit-exact even at its "lossless" setting — a written 0.0
+            // The JXR (WMP) codec is not bit-exact even at its "lossless" setting - a written 0.0
             // can come back as a tiny non-zero value (observed ~1.5e-5, i.e. within a couple of
             // half-precision ULPs of zero). A tight tolerance still distinguishes "gap, left at the
             // documented black fill" from "a real (bright or dark-but-nonzero) pixel".
@@ -158,7 +158,7 @@ public class JxrSpanningRoundTripTests
     public void WriteSpanning_Bgra8SrgbCrop_DoesNotThrow_AndProducesFile()
     {
         // Degenerate case: one of the contributing monitors delivered an SDR-only (Bgra8Srgb) frame
-        // rather than Fp16 — CapturedFrame.ReadPixelScRgb decodes it uniformly either way, exactly
+        // rather than Fp16 - CapturedFrame.ReadPixelScRgb decodes it uniformly either way, exactly
         // like the single-monitor JxrWriter.Write already handles this (see
         // JxrRoundTripTests.Write_Bgra8SrgbFrame_DoesNotThrow_AndProducesFile).
         var monitor = MakeMonitor(0, new RectPhysical(0, 0, 1, 1), sdrWhiteNits: 240.0);
