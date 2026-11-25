@@ -1,0 +1,150 @@
+name: Prune old releases
+
+# Every release carries 14 binaries, so each one kept costs release storage on GitHub for good,
+# and only the newest is ever downloaded: the README links and both self-updaters resolve through
+# /releases/latest. Everything older is paid for and unreachable.
+#
+# So this deletes the ASSETS of the published releases below the newest few (by version) and leaves
+# the releases, their notes and their tags alone. Same design as installer-src's prune-releases.yml,
+# except that it runs right after release.yml publishes (workflow_call from its last job) instead
+# of on a schedule, because the releases live in this repository.
+#
+# Not touched: drafts, prereleases, and immutable releases (GitHub refuses to change the assets of
+# a release published while "immutable releases" was on; that setting is off for this repo now).
+#
+# Runs on our linux-build container with the same job gate as release.yml: main, dispatch, roe69.
+
+on:
+  workflow_call:
+    inputs:
+      keep:
+        type: string
+        default: "3"
+      dry_run:
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: "How many published releases to keep (newest by version)"
+        required: false
+        default: "3"
+      dry_run:
+        description: "List what would be deleted without deleting it"
+        type: boolean
+        required: false
+        default: true
+
+# One at a time: two prunes would enumerate the same list and race each other's deletes.
+concurrency:
+  group: prune-releases
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prune:
+    name: Delete superseded release assets
+    runs-on: [self-hosted, linux-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.actor == 'roe69' && github.triggering_actor == 'roe69'
+    permissions:
+      contents: write
+    steps:
+      - name: Strip assets below the newest releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP: ${{ inputs.keep }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          case "$KEEP" in
+            ''|*[!0-9]*) echo "::error::keep must be a whole number, got '$KEEP'."; exit 1 ;;
+          esac
+          if [ "$KEEP" -lt 1 ]; then
+            echo "::error::keep must be at least 1 - something has to serve /releases/latest."
+            exit 1
+          fi
+
+          # Newest first, by version (not created_at): tag<TAB>id<TAB>immutable.
+          mapfile -t rows < <(gh api "repos/$REPO/releases" --paginate \
+            --jq '.[] | select(.draft == false and .prerelease == false) | "\(.tag_name)\t\(.id)\t\(.immutable // false)"' \
+            | sort -Vr)
+
+          echo "Published releases: ${#rows[@]} (keeping newest $KEEP)"
+          if [ "${#rows[@]}" -le "$KEEP" ]; then
+            echo "Nothing to prune - ${#rows[@]} published release(s), keeping $KEEP." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # THE GUARD: the newest release must carry the complete set, else the older ones are
+          # the only working copies (a partial upload) and nothing is deleted behind it.
+          newest_tag="${rows[0]%%$'\t'*}"
+          names="RoeSnip.exe RoeSnip.exe.gz RoeSnipApp-win-x64.exe RoeSnipApp-win-x64.exe.gz
+                 RoeSnipApp-win-arm64.exe RoeSnipApp-win-arm64.exe.gz
+                 RoeSnip-linux-x64.AppImage RoeSnip-linux-x64.tar.gz RoeSnip-linux-arm64.AppImage RoeSnip-linux-arm64.tar.gz
+                 RoeSnip-osx-arm64.dmg RoeSnip-osx-arm64.app.tar.gz RoeSnip-osx-x64.dmg RoeSnip-osx-x64.app.tar.gz"
+          have=$(gh api "repos/$REPO/releases/tags/$newest_tag" --jq '[.assets[].name] | join(" ")')
+          missing=""
+          for want in $names; do
+            case " $have " in *" $want "*) ;; *) missing="$missing $want" ;; esac
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::$newest_tag is missing:$missing - refusing to delete anything behind an incomplete release."
+            exit 1
+          fi
+          echo "$newest_tag carries a complete set - safe to prune behind it."
+
+          stripped=0
+          freed=0
+          {
+            echo "### Release asset pruning"
+            echo ""
+            echo "Kept whole (newest $KEEP by version):"
+            for row in "${rows[@]:0:$KEEP}"; do echo "- \`${row%%$'\t'*}\`"; done
+            echo ""
+            echo "Stripped:"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for row in "${rows[@]:$KEEP}"; do
+            IFS=$'\t' read -r tag id immutable <<< "$row"
+
+            mapfile -t assets < <(gh api "repos/$REPO/releases/$id/assets" --paginate \
+              --jq '.[] | "\(.id)\t\(.size)"')
+            # Already stripped on an earlier pass: every release below the cut settles at zero.
+            [ "${#assets[@]}" -gt 0 ] || continue
+
+            bytes=0
+            for a in "${assets[@]}"; do bytes=$((bytes + ${a##*$'\t'})); done
+            mb=$((bytes / 1024 / 1024))
+
+            if [ "$immutable" = "true" ]; then
+              echo "::warning::$tag is immutable - its ${#assets[@]} asset(s), ${mb}MB, cannot be deleted."
+              echo "- \`$tag\` - immutable, ${mb}MB stays" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "[dry run] would strip ${#assets[@]} asset(s), ${mb}MB, from $tag"
+              echo "- \`$tag\` - ${#assets[@]} asset(s), ${mb}MB (dry run, kept)" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            echo "Stripping ${#assets[@]} asset(s), ${mb}MB, from $tag"
+            failed=0
+            for a in "${assets[@]}"; do
+              gh api -X DELETE "repos/$REPO/releases/assets/${a%%$'\t'*}" \
+                || { failed=$((failed + 1)); echo "::warning::could not delete asset ${a%%$'\t'*} of $tag"; }
+            done
+            echo "- \`$tag\` - ${#assets[@]} asset(s), ${mb}MB, $failed failed" >> "$GITHUB_STEP_SUMMARY"
+            stripped=$((stripped + 1))
+            freed=$((freed + bytes))
+          done
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run - nothing was deleted."
+          else
+            echo "Stripped $stripped release(s), about $((freed / 1024 / 1024))MB. Releases, notes and tags left in place."
+          fi

@@ -1,0 +1,12 @@
+<Project>
+  <PropertyGroup>
+    <!-- NuGet lock files: CI restores with RestoreLockedMode, so a package the lock file does not
+         name (or a changed content hash) fails the restore instead of running new code on the
+         build host. After changing a package, regenerate with `dotnet restore` plus the
+         use-lock-file switch (see CONTRIBUTING.md). -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!-- A RID-specific restore (publish -r) drops or adds the conditional per-OS references, so
+         its graph differs from the RID-less one: each RID gets its own lock file. -->
+    <NuGetLockFilePath Condition="'$(RuntimeIdentifier)' != ''">$(MSBuildProjectDirectory)/packages.$(RuntimeIdentifier).lock.json</NuGetLockFilePath>
+  </PropertyGroup>
+</Project>

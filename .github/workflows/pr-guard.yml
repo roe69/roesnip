@@ -12,8 +12,8 @@ name: PR Guard
 #   * the diff is read through the API and handled as data by jq/grep,
 #   * nothing from github.event.pull_request.* is interpolated into a run: block; the PR number
 #     goes through env and is checked to be numeric.
-# Runs on GitHub-hosted ubuntu-latest ONLY. Never self-hosted: the win-build runner is the signing
-# runner (see release.yml) and must never see PR-triggered work. If a future change needs to build
+# Runs on GitHub-hosted ubuntu-latest ONLY. Never self-hosted: our build and signing runners (see
+# release.yml) must never see PR-triggered work. If a future change needs to build
 # or test a PR, that is a separate `pull_request` workflow on a GitHub-hosted runner with no token.
 
 on:
@@ -62,7 +62,7 @@ jobs:
               [ [ "^\\.github/", "CI workflows and repository automation" ],
                 [ "^\\.githooks/", "git hooks (run on every commit and push)" ],
                 [ "(^|/)[^/]*\\.(csproj|vbproj|fsproj|props|targets|pubxml|nuspec|ps1|sh|cmd|bat)$", "project, build or script file (runs on the build runner)" ],
-                [ "(^|/)(Directory\\.[^/]*|NuGet\\.config|global\\.json|packages\\.lock\\.json|dotnet-tools\\.json)$", "NuGet, SDK or MSBuild configuration" ],
+                [ "(^|/)(Directory\\.[^/]*|NuGet\\.config|global\\.json|packages(\\.[^/]*)?\\.lock\\.json|dotnet-tools\\.json)$", "NuGet, SDK or MSBuild configuration" ],
                 [ "^\\.config/", "dotnet tool manifest or config" ],
                 [ "^helpers/", "native and helper build code" ],
                 [ "\\.(pfx|p12|pem|key|jks|snk|keystore)$|(^|/)\\.env", "credential or key material" ],
@@ -78,7 +78,7 @@ jobs:
           jq -r '
             def clean: gsub("[`\r\n]"; "?");
             def line_rules:
-              [ [ "self-hosted|win-build", "adds a self-hosted runner label" ],
+              [ [ "self-hosted|win-build|linux-build","adds a self-hosted runner label" ],
                 [ "id-token:\\s*write", "grants an OIDC token" ],
                 [ "pull_request_target", "adds a pull_request_target trigger" ],
                 [ "secrets\\.|google-github-actions/auth|workload_identity_provider", "references secrets or Google Cloud auth" ],
