@@ -474,7 +474,7 @@ jobs:
             @{ url = 'https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13.1%2B2/OpenJDK21U-jre_x64_windows_hotspot_21.0.13.1_2.zip'; file = 'jre.zip'; sha = 'E15EE1E54A5A3B38027A09CEDFA87BC3348D7DD3CE50866DD3D9671D7FFFC6C1' },
             @{ url = 'https://github.com/ebourg/jsign/releases/download/7.6/jsign-7.6.jar'; file = 'jsign.jar'; sha = '6CF58AA080E7FF82656F320CFF8D4A3BFF30408DF8766806DCBA3740DD839FA5' },
             @{ url = 'https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/pkcs11-v1.9/libkmsp11-1.9-windows-amd64.zip'; file = 'kmsp11.zip'; sha = '2592C65FA78B07F4F112FA137FCCE1F5497BC47907FFCED51AB5AD0F9E3904A0' },
-            @{ url = "https://raw.githubusercontent.com/roe69/roesnip/$($env:SHA)/.github/codesign/roelite-27-chain.pem"; file = 'chain.pem'; sha = '687A9A8A1B60967B3247F9B95D39EFC123524FF78077596BACC285E77BD2E522' }
+            @{ url = "https://raw.githubusercontent.com/roe69/roesnip/$($env:SHA)/.github/codesign/roelite-27-chain.pem"; file = 'chain.pem'; sha = '00EC41EAC09DE16BBD7BD0B3DCF52375803492E7C02F01AAF905C19D7DC410C6' }
           )
           foreach ($t in $tools) {
             $out = Join-Path $dir $t.file
