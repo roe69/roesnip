@@ -50,7 +50,7 @@ jobs:
           else msg="$total"; fi
           echo "archived $archived + live $live = $total ($msg)"
 
-          json='{"schemaVersion":1,"label":"downloads","message":"'"$msg"'","color":"FF6B35","namedLogo":"github"}'
+          json='{"schemaVersion":1,"label":"total downloads","message":"'"$msg"'","color":"FF6B35","namedLogo":"github"}'
           cur=$(gh api "$api/downloads.json?ref=stats" --jq '(.sha) + " " + (.content | gsub("\n"; "") | @base64d)')
           sha="${cur%% *}"
           if [ "${cur#* }" = "$json" ]; then echo "Badge already says $msg."; exit 0; fi
