@@ -25,8 +25,8 @@ dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64
 `src/RoeSnip.App` multi-targets, so publishing it needs `-f`, for example
 `dotnet publish src/RoeSnip.App -c Release -f net8.0 -r linux-x64 --self-contained`
 (`-f net8.0-windows10.0.22621.0` for Windows). Some Core tests that decode PNGs
-fail on a Linux box without libSkiaSharp; [TESTING.md](TESTING.md) records what
-has been verified on which OS.
+fail on a Linux box without libSkiaSharp; [docs/testing.md](docs/testing.md) lists
+the test projects and what needs a person at a real desktop.
 
 Enable the repo's git hooks once per clone: `git config core.hooksPath .githooks`
 (they reject non-ASCII and AI-credit lines in commit messages and run a build
@@ -42,14 +42,10 @@ check before push).
 | `src/RoeSnip.Platform.Windows/`, `.Linux/`, `.MacOS/` | Per-OS capture, hotkey and recording backends. |
 | `helpers/scksnap/` | Swift helper for macOS capture and recording. |
 | `tests/` | `RoeSnip.Tests` (WPF), `RoeSnip.Core.Tests`, `RoeSnip.App.Tests`, `RoeSnip.Platform.Windows.Tests`. |
-| `docs/PARITY.md` | Checklist of WPF features and their Avalonia status. |
+| `docs/` | `architecture.md`, `testing.md` and `parity.md` (see below). |
 
 `RoeSnip.App` references `RoeSnip.Platform.Linux` only for Linux builds, so any
 use of `RoeSnip.Platform.Linux.*` in App code must sit inside `#if LINUX_BACKEND`.
-
-Design docs: [DESIGN.md](DESIGN.md) (capture paths, tone mapping, overlay
-semantics, failure modes), [PLAN.md](PLAN.md), [DESIGN-XPLAT.md](DESIGN-XPLAT.md)
-and [PLAN-XPLAT.md](PLAN-XPLAT.md) (the cross-platform port).
 
 ## Tools for developers and AI agents
 
@@ -93,8 +89,8 @@ Without the flag the pipe does not exist. The pipe is `RoeSnip-Automation`
 for the WPF app and `RoeSnip.App-Automation` for the Avalonia app, so the two
 never drive each other. Commands include `state`, `trigger`, `select`, `zoom`,
 `toast`, `record`, `preset`, `fps`, `chrome`, `escape`, `screenshot`,
-`confirm`, `settings`, `lastcapture` and `tray`. [TESTING.md](TESTING.md)
-lists every command, its fields and what has been verified.
+`confirm`, `settings`, `lastcapture` and `tray`. [docs/testing.md](docs/testing.md)
+lists every command and its fields.
 
 Never drive RoeSnip with synthetic mouse or UI Automation input (it can steal
 real input and gives flaky results). Use the pipe, or ask a person to click.
@@ -131,11 +127,10 @@ To summarize a log, replace digits with `N` and count:
 
 ### Docs to read first
 
-- [docs/PARITY.md](docs/PARITY.md): every WPF feature and its Avalonia status.
-- [DESIGN.md](DESIGN.md): capture paths, tone mapping, overlay behavior,
-  failure modes.
-- [TESTING.md](TESTING.md): the automation pipe and what has been verified on
-  which OS.
+- [docs/architecture.md](docs/architecture.md): projects, capture paths, tone
+  mapping, overlay behavior (including cross-monitor selection), failure modes.
+- [docs/testing.md](docs/testing.md): the test projects and the automation pipe.
+- [docs/parity.md](docs/parity.md): every WPF feature and its Avalonia status.
 
 ### Platform notes
 
@@ -163,7 +158,7 @@ To summarize a log, replace digits with `N` and count:
 ## Parity rule
 
 A change to the WPF app is ported to the Avalonia app, as its own commit, and
-ticked off in `docs/PARITY.md`. A change to shared behavior goes in
+ticked off in `docs/parity.md`. A change to shared behavior goes in
 `RoeSnip.Core` where it can serve both.
 
 ## Release assets
