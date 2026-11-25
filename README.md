@@ -2,12 +2,13 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/roe69/roesnip)](https://github.com/roe69/roesnip/releases/latest)
-[![Platforms: Windows, Linux, macOS](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-0078d4)](#install)
+[![Platforms: Windows, Linux, macOS](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-0078d4)](#download)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 
 RoeSnip is a free, open source snipping tool and screen recorder that takes
 **HDR-correct screenshots**. Press PrintScreen, the screen dims instantly, drag
 a region, annotate, then copy, save or upload. Recordings go to MP4 or GIF.
+It runs on **Windows, Linux and macOS**.
 
 On an HDR display Windows composites in linear scRGB FP16, and legacy tools
 (Snipping Tool, PrintScreen, Lightshot, ShareX's default path) clip or
@@ -17,8 +18,58 @@ looks like what you saw on screen.
 
 ![RoeSnip capture overlay: region selection with annotation toolbar](docs/screenshot.png)
 
-**Download:** [latest release](https://github.com/roe69/roesnip/releases/latest)
-(Windows, Linux, macOS), see [Install](#install).
+## Download
+
+**[Get the latest release](https://github.com/roe69/roesnip/releases/latest)**,
+then pick the file for your system from the Assets list at the bottom of that
+page. No .NET install is needed.
+
+| Your system | Download | Then |
+|---|---|---|
+| Windows 10 (2004+) or 11 | `RoeSnip.exe` | Double-click it. RoeSnip starts in the system tray. |
+| Windows on ARM | `RoeSnipApp-win-arm64.exe` | Same as above. |
+| Linux, Intel / AMD (64-bit) | `RoeSnip-linux-x64.AppImage` | Make it executable (right-click, Properties, Allow executing; or `chmod +x`), run it, then pick **Install RoeSnip** in the tray menu. |
+| Linux, ARM | `RoeSnip-linux-arm64.AppImage` | Same as above. |
+| Mac with Apple silicon (M1 or newer) | `RoeSnip-osx-arm64.dmg` | Open the dmg, then right-click RoeSnip and choose Open the first time. |
+| Mac with an Intel chip | `RoeSnip-osx-x64.dmg` | Same as above. |
+
+**Your first capture:** press **PrintScreen**, drag over the part of the screen
+you want, then press Ctrl+C to copy it (or use the toolbar to save, annotate or
+record it). Press Esc to cancel. On Windows, RoeSnip asks once whether it may
+take PrintScreen over from the Snipping Tool; say no and it uses
+Ctrl+PrintScreen instead. You can change the hotkey in Settings from the tray
+icon.
+
+**Updates:** an installed copy checks GitHub Releases in the background and
+updates itself. On Windows a copy you just double-click from Downloads is
+portable and does not update; use **Install RoeSnip** in the tray menu to turn
+updates on. On Linux and macOS the same **Install RoeSnip** menu item installs
+it and starts it at login. The Linux `.tar.gz` build (for systems without
+FUSE) only shows a notice when a new version is out.
+
+Linux and macOS have a few one-time permission steps (Wayland screen sharing,
+macOS Screen Recording): see [Linux](#linux) and [macOS](#macos).
+
+## Actively developed: report bugs, request features, send fixes
+
+RoeSnip is under active development and new releases come out often.
+
+- **Found a bug or want a feature?** [Open an issue](https://github.com/roe69/roesnip/issues/new).
+  Say which OS and version you use, what you did and what you expected.
+- **Fixed something?** Pull requests are welcome: [open a pull request](https://github.com/roe69/roesnip/pulls).
+  See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build and test.
+
+Attach the log file to a bug report if you can. It records each capture and
+any error:
+
+| OS | Log file |
+|---|---|
+| Windows (`RoeSnip.exe`) | `%APPDATA%\RoeSnip\roesnip.log` |
+| Windows (`RoeSnipApp-win-*.exe`) | `%APPDATA%\RoeSnip.App\roesnip.log` |
+| Linux | `~/.config/roesnip-app/roesnip.log` (or under `$XDG_CONFIG_HOME/roesnip-app/`) |
+| macOS | `~/Library/Application Support/RoeSnip.App/roesnip.log` |
+
+The previous log is kept next to it as `roesnip.log.1`.
 
 ## Features
 
@@ -58,22 +109,42 @@ looks like what you saw on screen.
 | Save untouched HDR original (.jxr) | Yes | No | No |
 | Annotations, picker, MP4 / GIF recording | Yes | Yes | Yes |
 
-## Install
+## FAQ
 
-Get the files from the [latest release](https://github.com/roe69/roesnip/releases/latest).
+### Why are my screenshots washed out on HDR?
+With HDR on, Windows composites the desktop in linear scRGB FP16 at HDR
+brightness levels. Tools that treat that buffer as ordinary 8-bit sRGB clip
+the highlights and mis-scale the midtones, so the result looks gray, faded or
+blown out. RoeSnip reads the FP16 frame and tone-maps it: SDR content is
+scaled by your "SDR content brightness" setting to the exact SDR result, and
+only real HDR highlights are rolled off.
 
-- **Windows:** download `RoeSnip.exe` (self-contained, no .NET install
-  needed) and run it. It sits in the tray; PrintScreen opens the capture
-  overlay. Arm64 build of the cross-platform app: `RoeSnipApp-win-arm64.exe`.
-- **Linux:** download `RoeSnip-linux-x64.AppImage` (or `-arm64`), make it
-  executable, run it and pick **Install RoeSnip** in the tray menu. A
-  `.tar.gz` is there for distros without FUSE. Details in [Linux](#linux).
-- **macOS:** open `RoeSnip-osx-arm64.dmg` (Apple silicon) or
-  `RoeSnip-osx-x64.dmg` (Intel). Details in [macOS](#macos).
+### How do I take a screenshot in HDR on Windows 11?
+Install RoeSnip, press PrintScreen, drag a region, then copy or save. For the
+HDR original as well, enable the automatic HDR copy in Settings (it writes a
+`.jxr` next to the PNG), or use `RoeSnip.exe --capture --jxr` from a terminal.
+
+### Is there an HDR screenshot fix for the Snipping Tool?
+RoeSnip replaces it for this purpose. On first run it asks whether to take
+over PrintScreen from the Snipping Tool or use Ctrl+PrintScreen instead.
+
+### Can I record my screen in HDR?
+Recordings are saved as MP4 or GIF from the tone-mapped frames, so colors
+match RoeSnip's screenshots. They are SDR files, not HDR video.
+
+### Is RoeSnip a Lightshot alternative?
+It covers the same workflow (hotkey, drag a region, annotate, copy, save,
+upload) and adds correct HDR handling on Windows plus MP4/GIF recording.
+
+### Does it work on Linux and macOS?
+Yes, see [Linux](#linux) and [macOS](#macos). HDR tone-mapping is
+Windows-only so far: Linux captures are SDR, and macOS uses the HDR
+screenshot preset only on macOS 15+ on Apple silicon.
+
+### Is it free?
+Yes. MIT licensed and open source.
 
 ## Using it on Windows
-
-Run `RoeSnip.exe` with no arguments to start the tray app.
 
 Run `RoeSnip.exe` with no arguments to start the tray app; PrintScreen opens
 the capture overlay. If Windows currently intercepts PrintScreen for Snipping
@@ -95,7 +166,7 @@ shortcuts). A missing
 or corrupt file falls back to defaults in memory without being overwritten,
 so it can always be inspected or repaired by hand.
 
-## CLI
+### CLI
 
 ```sh
 RoeSnip.exe --diag
@@ -168,61 +239,12 @@ installed copy updates itself from GitHub Releases. The ad-hoc signature
 changes with every build, so macOS may ask for Screen Recording permission
 again after an update.
 
-## FAQ
+## Contributing and building from source
 
-### Why are my screenshots washed out on HDR?
-With HDR on, Windows composites the desktop in linear scRGB FP16 at HDR
-brightness levels. Tools that treat that buffer as ordinary 8-bit sRGB clip
-the highlights and mis-scale the midtones, so the result looks gray, faded or
-blown out. RoeSnip reads the FP16 frame and tone-maps it: SDR content is
-scaled by your "SDR content brightness" setting to the exact SDR result, and
-only real HDR highlights are rolled off.
+Build, test and project layout notes are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Design docs: [DESIGN.md](DESIGN.md) (behavioral spec), [DESIGN-XPLAT.md](DESIGN-XPLAT.md)
+(cross-platform port) and [TESTING.md](TESTING.md) (what has been verified, per OS).
 
-### How do I take a screenshot in HDR on Windows 11?
-Install RoeSnip, press PrintScreen, drag a region, then copy or save. For the
-HDR original as well, enable the automatic HDR copy in Settings (it writes a
-`.jxr` next to the PNG), or use `RoeSnip.exe --capture --jxr` from a terminal.
+## License
 
-### Is there an HDR screenshot fix for the Snipping Tool?
-RoeSnip replaces it for this purpose. On first run it asks whether to take
-over PrintScreen from the Snipping Tool or use Ctrl+PrintScreen instead.
-
-### Can I record my screen in HDR?
-Recordings are saved as MP4 or GIF from the tone-mapped frames, so colors
-match RoeSnip's screenshots. They are SDR files, not HDR video.
-
-### Is RoeSnip a Lightshot alternative?
-It covers the same workflow (hotkey, drag a region, annotate, copy, save,
-upload) and adds correct HDR handling on Windows plus MP4/GIF recording.
-
-### Does it work on Linux and macOS?
-Yes, see [Linux](#linux) and [macOS](#macos). HDR tone-mapping is
-Windows-only so far: Linux captures are SDR, and macOS uses the HDR
-screenshot preset only on macOS 15+ on Apple silicon.
-
-### Is it free?
-Yes. MIT licensed and open source.
-
-## Build from source
-
-Needs the .NET 8 SDK; the Windows app needs Windows 10 2004+.
-
-```sh
-dotnet build RoeSnip.sln -c Release
-dotnet test RoeSnip.sln
-
-# single-file exe -> src/RoeSnip/bin/Release/.../win-x64/publish/RoeSnip.exe
-dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64
-```
-
-## Docs
-
-- [DESIGN.md](DESIGN.md): behavioral spec covering capture paths, tone
-  mapping, overlay semantics, and failure modes.
-- [PLAN.md](PLAN.md): the implementation plan the WPF app was built against.
-- [DESIGN-XPLAT.md](DESIGN-XPLAT.md) / [PLAN-XPLAT.md](PLAN-XPLAT.md): the
-  in-progress cross-platform port (`src/RoeSnip.App`, Avalonia +
-  `RoeSnip.Core` + `RoeSnip.Platform.*`) targeting Linux (X11) and macOS
-  (`helpers/scksnap`). The WPF app in `src/RoeSnip` is the Windows daily
-  driver.
-- [TESTING.md](TESTING.md): what has actually been verified, per OS and how.
+[MIT](LICENSE).
