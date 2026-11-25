@@ -20,8 +20,10 @@ name: release
 # draft, verifies the attestation (this workflow file, refs/heads/main), signs with the Cloud KMS
 # key, uploads the signed "<name>.exe" and its "<name>.exe.gz" (made from the SIGNED bytes), removes
 # the .unsigned assets and publishes the release. Until then the draft is invisible to the updaters.
-# Every other asset is attested in the release job; the signer refuses to publish a draft with an
-# asset whose digest has no attestation for that exact name.
+# Every asset (the Windows exes and all others) is attested in the attest job (the only job with
+# id-token/attestations write); the signer refuses to publish a draft with an asset whose digest has
+# no attestation for that exact name. The release job has contents: write only and uses the gh CLI.
+# Every action is pinned by full commit SHA (tag in the trailing comment).
 # Asset names, the .gz siblings and the signing-ready.txt marker are a contract with
 # docker/roe-signing in the house repo. Both UpdateManagers prefer the "<name>.exe.gz" sibling and
 # fall back to the plain exe. Never remove or rename the plain "RoeSnip.exe" /
@@ -33,7 +35,7 @@ name: release
 #     (prep refuses other refs; the signer rejects any other source ref).
 #   * prep pushes nothing: the version bump is committed to main by a person before dispatch.
 #   * concurrency serialises runs so two releases can't race.
-#   NEVER replace GITHUB_TOKEN with a PAT/App token in checkout or action-gh-release - every guard
+#   NEVER replace GITHUB_TOKEN with a PAT/App token in checkout or gh release - every guard
 #   above assumes GITHUB_TOKEN.
 
 on:
@@ -68,7 +70,7 @@ jobs:
       sha: ${{ steps.v.outputs.sha }}
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -94,7 +96,7 @@ jobs:
           if gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null | grep -q '^false$'; then
             echo "::error::A published release $TAG already exists - refusing to overwrite."; exit 1
           fi
-          # Deleting a release does NOT delete its tag; a stale tag would make action-gh-release
+          # Deleting a release does NOT delete its tag; a stale tag would make the release step
           # attach new binaries to a tag pointing at the OLD commit.
           git fetch --tags --quiet || true
           if git rev-parse -q --verify "refs/tags/${TAG}^{commit}" >/dev/null; then
@@ -127,19 +129,17 @@ jobs:
     name: Build Windows (win-x64)
     needs: prep
     runs-on: windows-latest
-    # id-token + attestations: Sigstore build provenance only. No Google trust exists for this repo.
+    # Build jobs run dotnet/NuGet code: read-only, no OIDC token (attestation is the attest job).
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     steps:
       - name: Check out (dispatch commit)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prep.outputs.sha }}
 
       - name: Set up .NET 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: "8.0.x"
 
@@ -156,7 +156,7 @@ jobs:
         run: dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64 -p:Version=${{ needs.prep.outputs.version }}
 
       - name: Upload RoeSnip.exe
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: win
           path: src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe
@@ -175,7 +175,7 @@ jobs:
         run: mv src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnipApp-win-x64.exe
 
       - name: Upload RoeSnip.App Windows asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: win-app
           path: src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnipApp-win-x64.exe
@@ -194,20 +194,11 @@ jobs:
           mv "$OUT/RoeSnip.exe" "$OUT/RoeSnipApp-win-arm64.exe"
 
       - name: Upload RoeSnip.App win-arm64 asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: win-app-arm64
           path: src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-arm64/publish/RoeSnipApp-win-arm64.exe
           if-no-files-found: error
-
-      # The signer verifies these exact bytes against this attestation before signing anything.
-      - name: Attest build provenance (unsigned Windows exes)
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: |
-            src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe
-            src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnipApp-win-x64.exe
-            src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-arm64/publish/RoeSnipApp-win-arm64.exe
 
   # ---------------------------------------------------------------------------
   # 2b. Cross-platform (RoeSnip.App, net8.0): one matrix leg per shippable arch;
@@ -240,12 +231,12 @@ jobs:
             swift_target: x86_64-apple-macos13.0
     steps:
       - name: Check out (dispatch commit)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prep.outputs.sha }}
 
       - name: Set up .NET 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: "8.0.x"
 
@@ -331,7 +322,15 @@ jobs:
           EOF
           chmod +x "$APPDIR/AppRun"
           # --appimage-extract-and-run avoids needing FUSE on the runner.
-          curl -fsSL "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.appimage_arch }}.AppImage" -o appimagetool
+          # Pinned release 1.9.1 + sha256. The release publishes no checksum file; these are GitHub's
+          # asset digests (releases API), and a download of both assets hashed to the same values.
+          case "${{ matrix.appimage_arch }}" in
+            x86_64)  AIT_SHA=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 ;;
+            aarch64) AIT_SHA=f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158 ;;
+            *) echo "::error::no pinned appimagetool for ${{ matrix.appimage_arch }}"; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${{ matrix.appimage_arch }}.AppImage" -o appimagetool
+          echo "$AIT_SHA  appimagetool" | sha256sum -c -
           chmod +x appimagetool
           mkdir -p dist
           ARCH=${{ matrix.appimage_arch }} VERSION="$VERSION" ./appimagetool --appimage-extract-and-run "$APPDIR" "dist/RoeSnip-${{ matrix.rid }}.AppImage"
@@ -404,11 +403,47 @@ jobs:
           tar -tzf "dist/RoeSnip-${{ matrix.rid }}.app.tar.gz" | grep -qx "RoeSnip.app/Contents/MacOS/RoeSnip"
 
       - name: Upload ${{ matrix.rid }} artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: xplat-${{ matrix.rid }}
           path: dist/*
           if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 2c. Attest every built asset (Windows exes under their unsigned bytes + all cross-platform
+  #     assets). Own job: it only downloads the build artifacts and runs GitHub-owned actions, so
+  #     the OIDC/attestation rights never sit next to dotnet/NuGet code or release creation. The
+  #     subject names are the file basenames; the signer verifies each asset against an attestation
+  #     of its own name and refuses to publish a draft with an unattested asset. No Google trust
+  #     exists for this repo.
+  # ---------------------------------------------------------------------------
+  attest:
+    name: Attest build provenance
+    needs: [prep, build-windows, build-xplat]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      - name: Download cross-platform artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: xplat-*
+          path: dist
+
+      - name: Download unsigned Windows artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: win*
+          path: winin
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            dist/**/*
+            winin/**/*
 
   # ---------------------------------------------------------------------------
   # 3. Collect every platform's asset and cut ONE Release. It is created as a
@@ -418,28 +453,20 @@ jobs:
   # ---------------------------------------------------------------------------
   release:
     name: Publish GitHub Release
-    needs: [prep, build-windows, build-xplat]
+    needs: [prep, build-windows, build-xplat, attest]
     runs-on: ubuntu-latest
+    # contents: write only; no OIDC/attestation rights, and no third-party actions (gh CLI only).
     permissions:
       contents: write
-      id-token: write       # Sigstore build provenance for the cross-platform assets (below)
-      attestations: write
     steps:
       - name: Download cross-platform artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: xplat-*
           path: dist
 
-      # The signer also verifies every non-Windows asset against an attestation of its own name
-      # before it publishes, so nothing in the draft is trusted just for being there.
-      - name: Attest build provenance (cross-platform assets)
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: dist/**/*
-
       - name: Download unsigned Windows artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: win*
           path: winin
@@ -468,17 +495,17 @@ jobs:
             while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"; done
 
       - name: Create draft release (unsigned Windows exes, signer publishes)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prep.outputs.tag }}
-          target_commitish: ${{ needs.prep.outputs.sha }}
-          name: RoeSnip ${{ needs.prep.outputs.version }}
-          draft: true
-          prerelease: false
-          fail_on_unmatched_files: true
-          files: |
-            dist/**/*
-            unsigned/*
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prep.outputs.tag }}
+          SHA: ${{ needs.prep.outputs.sha }}
+          VERSION: ${{ needs.prep.outputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find dist unsigned -type f -print0)
+          [ "${#files[@]}" -gt 0 ] || { echo "::error::no assets to upload"; exit 1; }
+          gh release create "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
+            --draft --target "$SHA" --title "RoeSnip $VERSION" --notes ""
 
       # Uploaded last: the signer ignores a draft until this file lists every asset it will end up
       # with, so it can never publish a release whose uploads were still in flight.
