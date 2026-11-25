@@ -3,7 +3,7 @@
 # multi-minute build+test on every push to GitHub, verify locally that the whole solution still
 # COMPILES (Release, the same config a release build uses) before a push leaves this machine.
 # Compiling the solution also compiles every test project, so a broken test file is still caught;
-# the full test RUN is deliberately not part of this gate (RoeSnip.Tests alone takes ~4 min) — run
+# the full test RUN is deliberately not part of this gate (RoeSnip.Tests alone takes ~4 min) - run
 # `dotnet test RoeSnip.sln` by hand when a change warrants it.
 #
 # Enable once per clone:  git config core.hooksPath .githooks
@@ -13,7 +13,7 @@
 zero=0000000000000000000000000000000000000000
 need_build=0
 
-# Only build when the pushed commits actually touch build inputs — a docs-only push (README,
+# Only build when the pushed commits actually touch build inputs - a docs-only push (README,
 # docs/**, this hook) skips the build, mirroring the old workflow's paths filter.
 while read -r local_ref local_sha remote_ref remote_sha; do
 	[ "$local_sha" = "$zero" ] && continue # branch deletion: nothing to build
@@ -37,7 +37,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 done
 
 if [ "$need_build" -eq 0 ]; then
-	echo "pre-push: no build-relevant changes — skipping solution build."
+	echo "pre-push: no build-relevant changes - skipping solution build."
 	exit 0
 fi
 
@@ -46,9 +46,9 @@ echo "pre-push: building RoeSnip.sln (Release) before push..."
 # dotnet-install.sh puts the SDK in ~/.dotnet without touching PATH.
 [ -x "$HOME/.dotnet/dotnet" ] && PATH="$HOME/.dotnet:$PATH"
 if dotnet build RoeSnip.sln -c Release -v q -nologo -p:EnableWindowsTargeting=true; then
-	echo "pre-push: build OK — pushing."
+	echo "pre-push: build OK - pushing."
 	exit 0
 fi
 
-echo "pre-push: build FAILED — push aborted. Fix the build, then push again (or --no-verify to skip)."
+echo "pre-push: build FAILED - push aborted. Fix the build, then push again (or --no-verify to skip)."
 exit 1

@@ -20,10 +20,8 @@
 # The soft class ends in a catch-all for ANY byte >= 0x80, so a character
 # nobody thought to list (bullet, star, section sign, a Cyrillic homoglyph)
 # still blocks; the named byte rules above it exist only to put a useful word
-# in the error message. One character is exempt, U+00A9: the Windows and macOS
-# copyright strings in forge.config.js / package.json need it. Its ASCII
-# spellings (&copy;, a backslash-u escape) stay blocked - where the character
-# itself is allowed there is no reason to spell it out.
+# in the error message. No character is exempt; a glyph the code really needs is
+# built from its code point, e.g. (char)0x25CF.
 #
 # Escape hatch (per commit):  ALLOW_UNICODE=1 git commit ...
 #   relaxes the SOFT class below (typography / emoji / their ASCII spellings)
@@ -116,10 +114,10 @@ scan_entities() {
     }' "$1"
 }
 
-# The catch-all: any byte >= 0x80 left over, minus the one exempt character.
+# The catch-all: any byte >= 0x80 left over.
 scan_high_bytes() {
-  LC_ALL=C awk -v ok="$(printf '%b' '\0302\0251')" -v hi="$(printf '%b' '[\0200-\0377]')" '
-    { t = $0; gsub(ok, "", t); if (t ~ hi) print }' "$1"
+  LC_ALL=C awk -v hi="$(printf '%b' '[\0200-\0377]')" '
+    { if ($0 ~ hi) print }' "$1"
 }
 
 # scan_ai_tells <file-with-lines>: prints "  [label] <line>" for each hit. A
