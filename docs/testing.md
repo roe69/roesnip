@@ -138,6 +138,9 @@ persists.
 
 `{"cmd":"toast","text":"..."}` shows an info toast through `TrayApp.ShowToast`, so its placement can
 be checked with a `screenshot` and the log line `toast placed at X,Y (source)`.
+`{"cmd":"toast","mode":"whatsnew","text":"2.7.8"}` raises the post-update "what's new" toast for that
+version; `{"cmd":"toast","mode":"click"}` runs the open toast's click handler (the same one a real
+press runs), which logs `toast clicked`, closes it and opens the release page (`open url (toast click)`).
 
 #### `trigger`
 

@@ -63,7 +63,7 @@ public partial class ShareResultWindow : Window
         HeaderText.Text = providerName;
         _monitor = monitor;
 
-        _autoDismissTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+        _autoDismissTimer = new DispatcherTimer { Interval = RoeSnip.Core.Notifications.ToastDuration.Cap(TimeSpan.FromSeconds(10)) };
         _autoDismissTimer.Tick += (_, _) => { _autoDismissTimer.Stop(); Close(); };
 
         PositionNextToCursor();
@@ -180,7 +180,7 @@ public partial class ShareResultWindow : Window
         }
         try
         {
-            Process.Start(new ProcessStartInfo(_openUrl) { UseShellExecute = true });
+            RoeSnip.Core.Sharing.UrlLauncher.Open(_openUrl, "share Open button");
         }
         catch (Exception ex)
         {

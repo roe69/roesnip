@@ -227,7 +227,14 @@ public static class AutomationProtocol
             // dropped programmatically the way a WinForms ContextMenuStrip can.
             // Shows a plain info toast through TrayApp.ShowToast, so placement can be checked with
             // a `screenshot` and the "toast placed at" log line.
+            // Optional "mode": "whatsnew" shows the post-update toast (text = version), "click"
+            // runs the open toast's click path (same handler as a real press).
             case "toast":
+                if (TryGetString(request, "mode", out string? toastMode))
+                {
+                    if (toastMode == "click") return null;
+                    if (toastMode != "whatsnew") return "toast \"mode\" must be whatsnew or click";
+                }
                 return TryGetString(request, "text", out string? toastText) && !string.IsNullOrWhiteSpace(toastText)
                     ? null
                     : "toast requires a non-empty \"text\"";
@@ -701,13 +708,14 @@ internal sealed class AutomationServer
     /// open` captures the SAME window a real tray click would show. Independent of overlay/
     /// recording `mode` - the trailing state snapshot below reflects whatever `mode` already was.</summary>
     /// <summary>Set by TrayApp when the pipe starts: shows an info toast with the given text.</summary>
-    internal static Action<string>? ShowToastHook;
+    internal static Action<string, string?>? ShowToastHook;
 
     private string HandleToast(JsonObject request)
     {
-        string text = (string)request["text"]!;
+        string? text = request["text"] is JsonValue tv && tv.TryGetValue(out string? t) ? t : null;
+        string? mode = request["mode"] is JsonValue mv && mv.TryGetValue(out string? m) ? m : null;
         if (ShowToastHook is not { } show) return AutomationProtocol.BuildError("toast: no toast host in this build");
-        InvokeOnUi<object?>(() => { show(text); return null; });
+        InvokeOnUi<object?>(() => { show(text ?? "", mode); return null; });
         return AutomationProtocol.SerializeState(InvokeOnUi(GetStateSnapshot));
     }
 
