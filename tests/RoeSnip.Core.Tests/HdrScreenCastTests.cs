@@ -138,6 +138,30 @@ public class HdrScreenCastTests
     }
 
     [Fact]
+    public void HdrEnumFormatReadsBackAsF16Pq()
+    {
+        byte[] pod = SpaPod.HdrEnumFormat(new ulong[] { 0x0300000000606010UL, 0x00FFFFFFFFFFFFFFUL });
+        Assert.True(SpaPod.TryReadVideoFormat(pod, out var f));
+        Assert.Equal(SpaPod.VideoRgbaF16, f.Format);
+        Assert.Equal(SpaPod.TransferSmpte2084, f.Transfer);
+        Assert.Equal(SpaPod.PrimariesBt2020, f.Primaries);
+        Assert.True(f.HasModifier);
+        Assert.True(f.ModifierIsChoice);
+        Assert.Equal(0x0300000000606010UL, f.Modifier);
+        Assert.Equal(1920, f.Width);
+        Assert.Equal(0, pod.Length % 8);
+    }
+
+    [Fact]
+    public void DmaBufBuffersParamIsAnAlignedObject()
+    {
+        byte[] pod = SpaPod.DmaBufBuffersParam();
+        Assert.Equal(pod.Length - 8, (int)BitConverter.ToUInt32(pod, 0));
+        Assert.Equal(SpaPod.TypeObject, BitConverter.ToUInt32(pod, 4));
+        Assert.Equal(0, pod.Length % 8);
+    }
+
+    [Fact]
     public void TiffHeaderDescribesRgbaFloat()
     {
         using var ms = new MemoryStream();

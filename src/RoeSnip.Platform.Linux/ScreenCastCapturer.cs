@@ -59,6 +59,23 @@ public sealed class ScreenCastCapturer : IScreenCapturer
                 (stream?.DeadReason is string why ? $" ({why})" : ""));
         }
 
+        if (stream is HdrScreenCastStream hdr)
+        {
+            var frame = hdr.ReadFrame(monitor, HdrDisplayProbe.PeakNits(monitor.DeviceName), out string why, out string timing);
+            if (frame is not null)
+            {
+                FileLog.Write($"RoeSnip: HDR screencast frame {monitor.DeviceName}: {timing}");
+                return frame;
+            }
+            // The 8-bit stream is the fallback for this node from now on.
+            live.DemoteHdr(geometry.Value.NodeId, why);
+            stream = live.GetStream(geometry.Value.NodeId);
+            if (stream is null || !stream.WaitForFirstSample(FirstFrameWait))
+            {
+                throw new CaptureException($"screencast stream node {geometry.Value.NodeId} has no frame after the HDR fallback");
+            }
+        }
+
         int width = monitor.BoundsPx.Width, height = monitor.BoundsPx.Height;
         var pixels = new byte[width * height * 4];
         if (!stream.TryCopy(0, 0, width, height, width, height, pixels, out _, out string? sizeNote))
