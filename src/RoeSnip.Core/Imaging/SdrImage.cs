@@ -7,8 +7,8 @@ namespace RoeSnip.Core.Imaging;
 /// top-down. This is the one and only "what you see is what you get" image type — the overlay
 /// preview, the clipboard payload, and the saved PNG are all built from this type.
 /// Ported from the WPF app with the WPF-only ToBitmapSource() method removed — Core has zero UI
-/// dependency (DESIGN-XPLAT.md); Avalonia's WriteableBitmap conversion is a WP-X3 extension method
-/// living in RoeSnip.App (PLAN-XPLAT.md §2.7/§3.3).</summary>
+/// dependency (docs/architecture.md); Avalonia's WriteableBitmap conversion is a WP-X3 extension method
+/// living in RoeSnip.App (docs/architecture.md).</summary>
 public sealed class SdrImage
 {
     public int Width { get; }
@@ -32,7 +32,7 @@ public sealed class SdrImage
 
     /// <summary>The single entry point every call site (CLI, overlay preview, exports) must use
     /// to turn a CapturedFrame into an SdrImage — this is what encodes the format branch from
-    /// DESIGN.md ("BGRA8-source frames bypass the tone-mapper entirely"), so no call site needs
+    /// docs/architecture.md ("BGRA8-source frames bypass the tone-mapper entirely"), so no call site needs
     /// to know or duplicate that branch.</summary>
     public static SdrImage FromCapturedFrame(CapturedFrame frame, Color.ToneMapOptions opts) =>
         FromCapturedFrame(frame, opts, reuseOutput: null);

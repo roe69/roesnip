@@ -2,7 +2,7 @@ using System;
 
 namespace RoeSnip.Core.Capture;
 
-/// <summary>Physical-pixel rectangle. Identical to the WPF app's type (PLAN.md §2.1) — copy verbatim,
+/// <summary>Physical-pixel rectangle. Identical to the WPF app's type - copy verbatim,
 /// only the namespace changed.</summary>
 public readonly record struct RectPhysical(int Left, int Top, int Right, int Bottom)
 {

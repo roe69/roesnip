@@ -1,11 +1,11 @@
 namespace RoeSnip.Core.Capture;
 
 /// <summary>Selects the one <see cref="ICaptureBackend"/> that applies to the OS actually running,
-/// regardless of how many platform assemblies happen to be LOADED (see PLAN-XPLAT.md §1.7's
+/// regardless of how many platform assemblies happen to be LOADED (docs/architecture.md: the
 /// design-time-build note — a no-RID build references all three Platform.* projects, but exactly one
 /// candidate ever reports <c>isSupported() == true</c> at runtime). Each Platform.* project registers
 /// itself via a <c>[ModuleInitializer]</c>-attributed method in its own file, mirroring Phase 1's
-/// AppComposition hook pattern (PLAN.md §2.4) — Core/App never references a concrete Platform.* type
+/// AppComposition hook pattern - Core/App never references a concrete Platform.* type
 /// by name.</summary>
 public static class CaptureBackendRegistry
 {
@@ -16,7 +16,7 @@ public static class CaptureBackendRegistry
     private static readonly object _gate = new();
 
     /// <summary>Called by each Platform.* project's own [ModuleInitializer]. Order of registration
-    /// across assemblies is unspecified (same caveat as PLAN.md §4's ModuleInitializer note) — this
+    /// across assemblies is unspecified (a ModuleInitializer caveat) - this
     /// is safe here because selection filters by IsSupported(), not by registration order.</summary>
     public static void Register(Func<bool> isSupported, Func<ICaptureBackend> factory)
     {

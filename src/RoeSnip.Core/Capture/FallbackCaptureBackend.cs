@@ -3,10 +3,10 @@ using RoeSnip.Core.Diagnostics;
 namespace RoeSnip.Core.Capture;
 
 /// <summary>Generalizes the WPF app's CaptureService fallback/cache/parallel-capture orchestration
-/// (PLAN.md §2.3 + the Phase-A CaptureCache addition) into reusable infrastructure for ANY platform
+/// (see docs/architecture.md) into reusable infrastructure for ANY platform
 /// whose capture strategy is itself an ordered list of capturers with a "once broken, skip forever"
 /// memo — Windows (DD then WGC) and Linux (portal then X11) both fit this shape; macOS does not
-/// (exactly one capturer) and implements ICaptureBackend directly instead (PLAN-XPLAT.md §3.5).
+/// (exactly one capturer) and implements ICaptureBackend directly instead.
 ///
 /// Behavior, copied from the WPF app's CaptureService.CaptureAll/CaptureOneOrNull (unchanged):
 /// monitors are captured in PARALLEL (each capturer call is independent); per monitor, try

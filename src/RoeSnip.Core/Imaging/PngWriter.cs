@@ -1,7 +1,7 @@
 namespace RoeSnip.Core.Imaging;
 
 /// <summary>SkiaSharp-based replacement for the WPF app's PngBitmapEncoder-based PngWriter
-/// (PLAN.md §2.6/§3.1) — same two-method surface, same BGRA8-straight-alpha-tightly-packed
+/// - same two-method surface, same BGRA8-straight-alpha-tightly-packed
 /// contract as SdrImage guarantees, so no caller needs to change.</summary>
 public static class PngWriter
 {

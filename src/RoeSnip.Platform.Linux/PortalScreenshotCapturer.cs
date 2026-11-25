@@ -39,7 +39,7 @@ public interface IPortalRequest : IDBusObject
 /// requests (and N GNOME permission prompts) for N monitors.
 ///
 /// GNOME may show a one-time (new portals) or per-shot (old portals) permission dialog — documented,
-/// not fought, per DESIGN-XPLAT.md; the response wait allows 60s for the user to answer it.</summary>
+/// not fought; the response wait allows 60s for the user to answer it.</summary>
 public sealed class PortalScreenshotCapturer : IScreenCapturer
 {
     private const string PortalService = "org.freedesktop.portal.Desktop";
@@ -217,7 +217,7 @@ public sealed class PortalScreenshotCapturer : IScreenCapturer
             try { File.Delete(path); } catch { /* portal temp file — best-effort cleanup */ }
         }
 
-        // Runtime pixel-scale verification (PLAN-XPLAT.md §3.4): HiDPI portals return physical
+        // Runtime pixel-scale verification: HiDPI portals return physical
         // pixels while RandR bounds may be logical on some compositors. Discover the actual scale
         // instead of assuming 1:1, and log it on every capture so a mismatch is visible, not silent.
         double scaleX = (double)pngWidth / union.Width;

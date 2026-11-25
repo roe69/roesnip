@@ -2,7 +2,7 @@ using System;
 
 namespace RoeSnip.Core.Capture;
 
-/// <summary>Sanity checks on captured pixel buffers (DESIGN.md "Failure modes": the DD
+/// <summary>Sanity checks on captured pixel buffers (docs/architecture.md "Failure modes": the DD
 /// black-frame quirk observed on NVIDIA RTX + HDR — a structurally-successful capture whose
 /// buffer is all zeros, including alpha, which a real desktop frame never has).</summary>
 public static class FrameSanity
