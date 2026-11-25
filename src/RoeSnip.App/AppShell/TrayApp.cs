@@ -19,6 +19,8 @@ using RoeSnip.Core.Capture;
 using RoeSnip.Core.Clipboard;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Core.Imaging;
+using RoeSnip.Core.Notifications;
+using RoeSnip.Core.Sharing;
 using RoeSnip.Core.Settings;
 using RoeSnip.Core.Updates;
 
@@ -220,7 +222,12 @@ public sealed class TrayApp : ITrayNotifier
             _automationServer = new AutomationServer(
                 TriggerCapture, OpenSettingsForAutomation, CloseSettingsForAutomation,
                 CopyKeptCapture, SaveKeptCapture);
-            AutomationServer.ShowToastHook = text => ShowToast(text, isError: false, durationMs: 6000, onClick: null);
+            AutomationServer.ShowToastHook = (text, mode) =>
+            {
+                if (mode == "whatsnew") ShowWhatsNewToast(text);
+                else if (mode == "click") ClickOpenToast();
+                else ShowToast(text, isError: false, durationMs: 6000, onClick: null);
+            };
             _automationServer.Start();
         }
 
@@ -265,13 +272,7 @@ public sealed class TrayApp : ITrayNotifier
                 {
                     // Updates install on their own (UpdateCheckFrequency); say so once, after the fact.
                     string version = UpdateManager.CurrentVersionText;
-                    DispatcherTimer.RunOnce(
-                        () => ShowToast(
-                            $"RoeSnip updated to {version} - click for what's new",
-                            isError: false,
-                            durationMs: 8000,
-                            onClick: () => OpenUrl(UpdateManager.ReleasePageUrl(version))),
-                        TimeSpan.FromSeconds(2));
+                    DispatcherTimer.RunOnce(() => ShowWhatsNewToast(version), TimeSpan.FromSeconds(2));
                 }
             }
             if (UpdateManager.IsInstalled)
@@ -2047,16 +2048,23 @@ public sealed class TrayApp : ITrayNotifier
         Dispatcher.UIThread.Post(() => ShowToast(message, isError: true, durationMs: 6000, onClick: null));
     }
 
-    private static void OpenUrl(string url)
+    private static void OpenUrl(string url) => UrlLauncher.Open(url, "toast click");
+
+    /// <summary>The post-update toast: click opens the release page.</summary>
+    private void ShowWhatsNewToast(string version) =>
+        ShowToast(
+            $"RoeSnip updated to {version} - click for what's new",
+            isError: false,
+            durationMs: 8000,
+            onClick: () => OpenUrl(UpdateManager.ReleasePageUrl(version)));
+
+    // The newest open toast's click path, for the automation `toast` command (mode "click").
+    private Action? _openToastClick;
+
+    private void ClickOpenToast()
     {
-        try
-        {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            FileLog.Write($"RoeSnip: failed to open {url}: {ex.Message}");
-        }
+        if (_openToastClick is { } click) click();
+        else FileLog.Write("RoeSnip: toast click requested but no toast is open");
     }
 
     /// <summary>A small topmost, non-activating toast window next to the mouse cursor (ToastAnchor)
@@ -2107,16 +2115,29 @@ public sealed class TrayApp : ITrayNotifier
             // Physical-pixel position next to the cursor, set BEFORE Show().
             ToastAnchor.Place(window, toastWidth, toastHeight);
 
-            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(durationMs) };
-            timer.Tick += (_, _) => { timer.Stop(); window.Close(); };
+            int lifetimeMs = ToastDuration.Cap(durationMs);
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(lifetimeMs) };
+            long shownAt = Stopwatch.GetTimestamp();
+            string closedBy = "window closed";
+            timer.Tick += (_, _) => { timer.Stop(); closedBy = "timeout"; window.Close(); };
 
-            window.PointerPressed += (_, _) =>
+            Action click = () =>
+            {
+                FileLog.Write($"RoeSnip: toast clicked ({(onClick is null ? "no action" : "action")}): {message}");
+                timer.Stop();
+                closedBy = "click";
+                window.Close();
+                try { onClick?.Invoke(); }
+                catch (Exception ex) { FileLog.Write($"RoeSnip: toast click action failed ({ex.Message})"); }
+            };
+            window.PointerPressed += (_, _) => click();
+            window.Closed += (_, _) =>
             {
                 timer.Stop();
-                window.Close();
-                onClick?.Invoke();
+                if (ReferenceEquals(_openToastClick, click)) _openToastClick = null;
+                FileLog.Write($"RoeSnip: toast closed after {Stopwatch.GetElapsedTime(shownAt).TotalMilliseconds:0} ms ({closedBy}, limit {lifetimeMs} ms)");
             };
-            window.Closed += (_, _) => timer.Stop();
+            _openToastClick = click;
 
             window.Show();
             timer.Start();

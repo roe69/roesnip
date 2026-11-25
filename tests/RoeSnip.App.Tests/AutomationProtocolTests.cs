@@ -444,6 +444,18 @@ public class AutomationProtocolTests
         Assert.Null(AutomationProtocol.ValidateArgs("tray", request));
     }
 
+    [Theory]
+    [InlineData("{\"cmd\":\"toast\",\"mode\":\"click\"}", true)]
+    [InlineData("{\"cmd\":\"toast\",\"mode\":\"whatsnew\",\"text\":\"2.7.8\"}", true)]
+    [InlineData("{\"cmd\":\"toast\",\"text\":\"hi\"}", true)]
+    [InlineData("{\"cmd\":\"toast\",\"mode\":\"whatsnew\"}", false)]
+    [InlineData("{\"cmd\":\"toast\",\"mode\":\"bogus\",\"text\":\"hi\"}", false)]
+    public void ValidateArgs_Toast_Modes(string json, bool valid)
+    {
+        var request = AutomationProtocol.TryParseRequest(json, out _)!;
+        Assert.Equal(valid, AutomationProtocol.ValidateArgs("toast", request) is null);
+    }
+
     [Fact]
     public void ValidateArgs_Tray_RejectsAnUnknownAction()
     {

@@ -2022,3 +2022,11 @@ because a correct implementation needs live hardware this repo cannot exercise.
   (`ROESNIP_JXRENC_PATH` overrides); without it the button and the auto copy stay off
   (`SupportsHdrExport` follows `JxrExport.IsAvailable`). Round trip checked with JxrDecApp: a
   test pattern's 100 / 203 / 1000 nit bars read back as 1.26 / 2.54 / 11.5 scRGB.
+- [x] 37-toast-click-and-10s-cap (Avalonia live-verified on Linux; WPF ported, not built or run here):
+  every toast and balloon lifetime goes through `Core/Notifications/ToastDuration.Cap` (max 10 s; the
+  share-result window's success auto-dismiss dropped from 15 s to 10 s, still paused while hovered).
+  Opening a web page (post-update toast, balloon, share window Open button) goes through
+  `Core/Sharing/UrlLauncher`: Linux runs xdg-open then gio open with the AppImage environment stripped
+  (`UrlLauncherEnvironment`) and no inherited descriptors, macOS runs open, Windows uses the shell;
+  every outcome is logged (`open url (<source>) <url>: <opener> exit N`). Avalonia toasts log
+  `toast clicked` and `toast closed after N ms (click|timeout, limit N ms)`.
