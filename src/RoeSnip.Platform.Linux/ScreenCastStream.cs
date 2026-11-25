@@ -16,8 +16,9 @@ internal sealed unsafe class ScreenCastStream : IScreenCastStream
     private readonly Thread _pump;
     private readonly ManualResetEventSlim _firstSample = new(false);
     private IntPtr _latest; // GstSample*, owned, guarded by _gate
-    private long _sequence;
+    private readonly FrameSignal _frames = new();
     private volatile bool _stop;
+    private volatile bool _idle;
     private volatile string? _deadReason;
     private int _disposed;
 
@@ -26,7 +27,7 @@ internal sealed unsafe class ScreenCastStream : IScreenCastStream
     public bool IsDead => _deadReason is not null;
 
     /// <summary>Bumped for every new sample; lets the recorder skip unchanged frames.</summary>
-    public long Sequence => Interlocked.Read(ref _sequence);
+    public long Sequence => _frames.Sequence;
 
     public ScreenCastStream(int pipeWireFd, ScreenCastStreamGeometry geometry)
     {
@@ -58,10 +59,29 @@ internal sealed unsafe class ScreenCastStream : IScreenCastStream
     /// <summary>Waits until the first sample arrived (or the stream died). False on timeout.</summary>
     public bool WaitForFirstSample(TimeSpan timeout) => _firstSample.Wait(timeout) && !IsDead;
 
+    /// <summary>READY disconnects pipewiresrc's pw_stream, so the compositor stops producing for the node
+    /// (PAUSED/PLAYING toggles hung the state change). PLAYING reconnects it.</summary>
+    public void SetActive(bool active)
+    {
+        if (_stop || _disposed != 0) return;
+        if (!active) _idle = true;
+        int rc = Gst.gst_element_set_state(_pipeline, active ? Gst.StatePlaying : Gst.StateReady);
+        if (active) _idle = false;
+        if (rc == Gst.StateChangeFailure && active) MarkDead(Gst.PopFailure(_bus) ?? "state change to PLAYING failed");
+    }
+
+    public bool WaitForFrameAfter(long sequence, TimeSpan timeout)
+        => _frames.WaitAbove(sequence, timeout, () => IsDead || _stop) && !IsDead;
+
     private void Pump()
     {
         while (!_stop)
         {
+            if (_idle) // a stopped appsink returns at once: do not spin
+            {
+                Thread.Sleep(20);
+                continue;
+            }
             IntPtr sample;
             try
             {
@@ -80,8 +100,8 @@ internal sealed unsafe class ScreenCastStream : IScreenCastStream
                 {
                     old = _latest;
                     _latest = sample;
-                    _sequence++;
                 }
+                _frames.Bump();
                 if (old != IntPtr.Zero) Gst.gst_mini_object_unref(old);
                 _firstSample.Set();
                 continue;
@@ -121,7 +141,7 @@ internal sealed unsafe class ScreenCastStream : IScreenCastStream
         lock (_gate)
         {
             if (_latest == IntPtr.Zero) return false;
-            sequence = _sequence;
+            sequence = _frames.Sequence;
 
             IntPtr caps = Gst.gst_sample_get_caps(_latest);
             IntPtr buffer = Gst.gst_sample_get_buffer(_latest);

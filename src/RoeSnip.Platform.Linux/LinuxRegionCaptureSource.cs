@@ -70,6 +70,9 @@ public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
         {
             return $"stream node {geometry.Value.NodeId} delivered no frame";
         }
+        // The stream idles between captures: hold it for the recording and take a frame sent after the wake.
+        _lease = live.Hold(geometry.Value.NodeId, out long baseline);
+        if (baseline >= 0) stream.WaitForFrameAfter(baseline, TimeSpan.FromMilliseconds(400));
         _stream = stream;
         _live = live;
         _nodeId = geometry.Value.NodeId;
@@ -80,6 +83,7 @@ public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
     }
 
     private ScreenCastSession.Live? _live;
+    private IDisposable? _lease;
     private uint _nodeId;
 
     private static long Pack(int left, int top) => ((long)left << 32) | (uint)top;
@@ -162,6 +166,7 @@ public sealed class LinuxRegionCaptureSource : IRegionCaptureSource
     {
         if (Interlocked.Exchange(ref _stopped, 1) != 0) return;
         _pump?.Join(TimeSpan.FromSeconds(2));
+        Interlocked.Exchange(ref _lease, null)?.Dispose();
         _queue.Writer.TryComplete();
     }
 

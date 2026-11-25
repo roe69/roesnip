@@ -18,6 +18,8 @@ public sealed class ScreenCastCapturer : IScreenCapturer
     private static readonly TimeSpan WaitWithToken = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan WaitForDialog = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan FirstFrameWait = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan FreshFrameWait = TimeSpan.FromMilliseconds(400);
+    private static readonly TimeSpan CaptureLinger = TimeSpan.FromMilliseconds(1500);
     private static int s_sizeNoteLogged;
 
     private readonly Func<IReadOnlyList<MonitorInfo>> _enumerateMonitors;
@@ -25,6 +27,19 @@ public sealed class ScreenCastCapturer : IScreenCapturer
     public ScreenCastCapturer(Func<IReadOnlyList<MonitorInfo>> enumerateMonitors)
     {
         _enumerateMonitors = enumerateMonitors;
+    }
+
+    /// <summary>The kept-open streams idle between captures (the compositor produces nothing for them):
+    /// wake the node and take the first frame it sends, so the copy shows the screen as it is now.</summary>
+    private static void WaitForFreshFrame(ScreenCastSession.Live live, IScreenCastStream stream, uint nodeId)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        long baseline = live.Wake(nodeId, CaptureLinger);
+        if (baseline < 0) return; // already running
+        bool fresh = stream.WaitForFrameAfter(baseline, FreshFrameWait);
+        FileLog.Write(fresh
+            ? $"RoeSnip: screencast node {nodeId} woke, fresh frame in {watch.ElapsedMilliseconds} ms"
+            : $"RoeSnip: screencast node {nodeId} woke, no fresh frame in {watch.ElapsedMilliseconds} ms; using the last frame");
     }
 
     public CapturedFrame Capture(MonitorInfo monitor)
@@ -58,6 +73,7 @@ public sealed class ScreenCastCapturer : IScreenCapturer
                 $"screencast stream node {geometry.Value.NodeId} has no frame" +
                 (stream?.DeadReason is string why ? $" ({why})" : ""));
         }
+        WaitForFreshFrame(live, stream, geometry.Value.NodeId);
 
         if (stream is HdrScreenCastStream hdr)
         {

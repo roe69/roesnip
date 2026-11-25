@@ -13,6 +13,7 @@ internal static unsafe class Gst
     private const string LibGlib = "libglib-2.0.so.0";
 
     public const int StateNull = 1;
+    public const int StateReady = 2;
     public const int StatePlaying = 4;
     public const int StateChangeFailure = 0;
 

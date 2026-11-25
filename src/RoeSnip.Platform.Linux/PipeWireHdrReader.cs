@@ -131,6 +131,14 @@ internal sealed unsafe class PipeWireHdrReader : IDisposable
         return node;
     }
 
+    internal void SetStreamActive(HdrScreenCastStream node, bool active)
+    {
+        if (IsDisposed) return;
+        pw_thread_loop_lock(_loop);
+        try { node.SetActiveLocked(active); }
+        finally { pw_thread_loop_unlock(_loop); }
+    }
+
     internal void RemoveNode(HdrScreenCastStream node)
     {
         if (IsDisposed)
@@ -182,7 +190,7 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
     private DmaBufGl.Target? _target;
     private SpaPod.VideoFormat _format;
     private bool _formatOk;
-    private long _sequence;
+    private readonly FrameSignal _frames = new();
     private int _importFailures;
     private volatile string? _deadReason;
     private int _firstImportLogged;
@@ -194,7 +202,7 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
     public volatile string? Error;
     public string? DeadReason => _deadReason;
     public bool IsDead => _deadReason is not null;
-    public long Sequence => Interlocked.Read(ref _sequence);
+    public long Sequence => _frames.Sequence;
 
     /// <summary>The stream's buffer size once negotiated.</summary>
     public (int Width, int Height) BufferSize => (_format.Width, _format.Height);
@@ -417,7 +425,7 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
         {
             FileLog.Write($"RoeSnip: HDR stream node {Geometry.NodeId} first frame imported in {watch.ElapsedMilliseconds} ms (stride {stride})");
         }
-        Interlocked.Increment(ref _sequence);
+        _frames.Bump();
         _firstSample.Set();
     }
 
@@ -430,6 +438,16 @@ internal sealed unsafe class HdrScreenCastStream : IScreenCastStream
     }
 
     public bool WaitForFirstSample(TimeSpan timeout) => _firstSample.Wait(timeout) && !IsDead;
+
+    public void SetActive(bool active) => _owner.SetStreamActive(this, active);
+
+    public bool WaitForFrameAfter(long sequence, TimeSpan timeout)
+        => _frames.WaitAbove(sequence, timeout, () => IsDead) && !IsDead;
+
+    internal void SetActiveLocked(bool active)
+    {
+        if (_stream != IntPtr.Zero) pw_stream_set_active(_stream, active);
+    }
 
     /// <summary>Reads the newest frame back as a linear scRGB frame at the monitor's size, SDR white
     /// 203 nits (PQ BT.2020 converted by <see cref="PqBt2020"/>). Null with <paramref name="why"/> when

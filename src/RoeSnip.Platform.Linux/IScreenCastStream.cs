@@ -16,6 +16,14 @@ internal interface IScreenCastStream : IDisposable
 
     bool WaitForFirstSample(TimeSpan timeout);
 
+    /// <summary>Starts or stops the compositor producing frames for this stream. An idle stream keeps
+    /// its newest frame, which goes stale when the screen changes: wake it and wait with
+    /// <see cref="WaitForFrameAfter"/> before reading.</summary>
+    void SetActive(bool active);
+
+    /// <summary>Waits for a frame newer than <paramref name="sequence"/>. False on timeout or when the stream died.</summary>
+    bool WaitForFrameAfter(long sequence, TimeSpan timeout);
+
     /// <summary>Copies a block of the newest frame as tight BGRA8 (see <see cref="ScreenCastStream.TryCopy"/>).</summary>
     bool TryCopy(int srcLeft, int srcTop, int outWidth, int outHeight,
         int monitorWidth, int monitorHeight, byte[] dest, out long sequence, out string? sizeNote);

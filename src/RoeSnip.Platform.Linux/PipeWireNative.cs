@@ -28,6 +28,7 @@ internal static unsafe class PipeWireNative
     [DllImport(Lib)] public static extern void pw_stream_add_listener(IntPtr stream, IntPtr hook, IntPtr events, IntPtr data);
     [DllImport(Lib)] public static extern int pw_stream_connect(IntPtr stream, int direction, uint targetId, uint flags, IntPtr* parameters, uint count);
     [DllImport(Lib)] public static extern int pw_stream_update_params(IntPtr stream, IntPtr* parameters, uint count);
+    [DllImport(Lib)] public static extern int pw_stream_set_active(IntPtr stream, [MarshalAs(UnmanagedType.U1)] bool active);
     [DllImport(Lib)] public static extern IntPtr pw_stream_dequeue_buffer(IntPtr stream);
     [DllImport(Lib)] public static extern int pw_stream_queue_buffer(IntPtr stream, IntPtr buffer);
     [DllImport(Lib)] public static extern void pw_stream_destroy(IntPtr stream);
