@@ -144,9 +144,7 @@ public class GifSizeBenchmarkTests
     // masking a real regression back toward "no timing effect at all".
     private const double ScrollLowFpsMaxFraction = 0.55;
 
-    private static readonly string ResultsFilePath = Path.Combine(
-        @"C:\Users\Roelof\AppData\Local\Temp\claude\E--GitHub-RoeLite\75d3a910-4e39-42fa-816c-534f29ff40ed\scratchpad",
-        "gif-bench.txt");
+    private static readonly string ResultsFilePath = Path.Combine(Path.GetTempPath(), "gif-bench.txt");
 
     private readonly ITestOutputHelper _output;
 
