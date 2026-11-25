@@ -306,14 +306,14 @@ public sealed class TrayApp : ITrayNotifier
             _activeBalloonClickHandler = (_, _) =>
             {
                 DetachActiveBalloonHandler();
-                try { Process.Start(new ProcessStartInfo(UpdateManager.ReleasePageUrl(version)) { UseShellExecute = true }); }
-                catch (Exception ex) { FileLog.Write($"RoeSnip: could not open the release page: {ex.Message}"); }
+                FileLog.Write("RoeSnip: update balloon clicked");
+                RoeSnip.Core.Sharing.UrlLauncher.Open(UpdateManager.ReleasePageUrl(version), "update balloon click");
             };
             _notifyIcon.BalloonTipClicked += _activeBalloonClickHandler;
             _notifyIcon.BalloonTipTitle = "RoeSnip";
             _notifyIcon.BalloonTipText = $"RoeSnip updated to {version} - click for what's new";
             _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
-            _notifyIcon.ShowBalloonTip(8000);
+            _notifyIcon.ShowBalloonTip(RoeSnip.Core.Notifications.ToastDuration.Cap(8000));
         }
         if (healthAction == UpdateManager.HealthCheckAction.ProceedDeferredCleanup)
         {
@@ -855,7 +855,7 @@ public sealed class TrayApp : ITrayNotifier
         _notifyIcon.BalloonTipTitle = "RoeSnip";
         _notifyIcon.BalloonTipText = message;
         _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
-        _notifyIcon.ShowBalloonTip(3000);
+        _notifyIcon.ShowBalloonTip(RoeSnip.Core.Notifications.ToastDuration.Cap(3000));
     }
 
     /// <inheritdoc/>
@@ -879,7 +879,7 @@ public sealed class TrayApp : ITrayNotifier
         _notifyIcon.BalloonTipClicked += _activeBalloonClickHandler;
         _notifyIcon.BalloonTipTitle = "RoeSnip";
         _notifyIcon.BalloonTipText = $"Saved {Path.GetFileName(filePath)}. Click to open the folder.";
-        _notifyIcon.ShowBalloonTip(4000);
+        _notifyIcon.ShowBalloonTip(RoeSnip.Core.Notifications.ToastDuration.Cap(4000));
     }
 
     /// <inheritdoc/>
@@ -895,7 +895,7 @@ public sealed class TrayApp : ITrayNotifier
         _notifyIcon.BalloonTipTitle = "RoeSnip";
         _notifyIcon.BalloonTipText = message;
         _notifyIcon.BalloonTipIcon = ToolTipIcon.Error;
-        _notifyIcon.ShowBalloonTip(6000);
+        _notifyIcon.ShowBalloonTip(RoeSnip.Core.Notifications.ToastDuration.Cap(6000));
     }
 
     private void DetachActiveBalloonHandler()
@@ -1153,7 +1153,7 @@ public sealed class TrayApp : ITrayNotifier
         _notifyIcon.BalloonTipTitle = "RoeSnip";
         _notifyIcon.BalloonTipText = $"RoeSnip {info.Version} is available. Click to update.";
         _notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
-        _notifyIcon.ShowBalloonTip(8000);
+        _notifyIcon.ShowBalloonTip(RoeSnip.Core.Notifications.ToastDuration.Cap(8000));
     }
 
     /// <summary>Runs off the UI thread (download + file swap); on success the new build takes over
@@ -1253,7 +1253,7 @@ public sealed class TrayApp : ITrayNotifier
         _notifyIcon.BalloonTipTitle = "RoeSnip";
         _notifyIcon.BalloonTipText = message;
         _notifyIcon.BalloonTipIcon = ToolTipIcon.Warning;
-        _notifyIcon.ShowBalloonTip(8000);
+        _notifyIcon.ShowBalloonTip(RoeSnip.Core.Notifications.ToastDuration.Cap(8000));
     }
 
     // ---------------- Cold-start warmup (item 6b, UX round 3; extended for r5-latency) ----------------
