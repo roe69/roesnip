@@ -1,0 +1,134 @@
+name: PR Guard
+
+# Alerts the owner when a pull request touches what could reach our signing runner or leak a
+# secret: .github/, project/build files, build scripts, helpers/, hooks, credentials, or an added
+# `self-hosted` runner label. Modelled on community-plugins' PR Guard (one sticky comment by
+# github-actions[bot]); advisory only - a human decides.
+#
+# WHY pull_request_target: the workflow file and this logic always come from the DEFAULT branch,
+# so a PR cannot edit or delete its own judge, and fork PRs get a token that can comment.
+# That trigger is only safe because this job EXECUTES NOTHING FROM THE PULL REQUEST:
+#   * no checkout at all (the job needs no repository files),
+#   * the diff is read through the API and handled as data by jq/grep,
+#   * nothing from github.event.pull_request.* is interpolated into a run: block; the PR number
+#     goes through env and is checked to be numeric.
+# Runs on GitHub-hosted ubuntu-latest ONLY. Never self-hosted: the win-build runner is the signing
+# runner (see release.yml) and must never see PR-triggered work. If a future change needs to build
+# or test a PR, that is a separate `pull_request` workflow on a GitHub-hosted runner with no token.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Pull request number to re-scan"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-guard-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Scan the changed paths and added lines
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          INPUT_PR: ${{ inputs.pr }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          number="${EVENT_PR:-$INPUT_PR}"
+          case "$number" in ""|*[!0-9]*) echo "::error::not a pull request number"; exit 1 ;; esac
+
+          gh api --paginate "repos/$REPO/pulls/$number/files?per_page=100" | jq -s 'add // []' > files.json
+          total=$(jq length files.json)
+
+          # Paths: current AND previous name (a rename hides the real path in previous_filename).
+          jq -r '
+            def clean: gsub("[`\r\n]"; "?");
+            def path_rules:
+              [ [ "^\\.github/", "CI workflows and repository automation" ],
+                [ "^\\.githooks/", "git hooks (run on every commit and push)" ],
+                [ "(^|/)[^/]*\\.(csproj|vbproj|fsproj|props|targets|pubxml|nuspec|ps1|sh|cmd|bat)$", "project, build or script file (runs on the build runner)" ],
+                [ "(^|/)(Directory\\.[^/]*|NuGet\\.config|global\\.json|packages\\.lock\\.json|dotnet-tools\\.json)$", "NuGet, SDK or MSBuild configuration" ],
+                [ "^\\.config/", "dotnet tool manifest or config" ],
+                [ "^helpers/", "native and helper build code" ],
+                [ "\\.(pfx|p12|pem|key|jks|snk|keystore)$|(^|/)\\.env", "credential or key material" ],
+                [ "^(CLAUDE|AGENTS)\\.md$|^\\.claude/", "agent instructions loaded by coding agents" ] ];
+            .[] | . as $f
+            | [ $f.filename, ($f.previous_filename // "") ] | map(select(. != "")) as $names
+            | path_rules[] as $r
+            | select($names | any(test($r[0]; "i")))
+            | "- `\($f.filename | clean)` (\($f.status)): \($r[1])"
+          ' files.json | sort -u > path-hits.txt
+
+          # Added lines only; matched against fixed rules, never echoed back.
+          jq -r '
+            def clean: gsub("[`\r\n]"; "?");
+            def line_rules:
+              [ [ "self-hosted|win-build", "adds a self-hosted runner label" ],
+                [ "id-token:\\s*write", "grants an OIDC token" ],
+                [ "pull_request_target", "adds a pull_request_target trigger" ],
+                [ "secrets\\.|google-github-actions/auth|workload_identity_provider", "references secrets or Google Cloud auth" ],
+                [ "BEGIN [A-Z ]*PRIVATE KEY|\"private_key\"", "contains a private key" ],
+                [ "gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{35}|AKIA[0-9A-Z]{16}|xox[baprs]-[0-9A-Za-z-]{10,}|ya29\\.[0-9A-Za-z_-]{20,}", "looks like an access token or API key" ] ];
+            .[] | . as $f
+            | ($f.patch // "") as $p
+            | ($p | split("\n") | map(select(startswith("+") and (startswith("+++") | not)))) as $added
+            | line_rules[] as $r
+            | select($added | any(test($r[0])))
+            | "- `\($f.filename | clean)`: \($r[1])"
+          ' files.json | sort -u > line-hits.txt
+
+          # A changed file under .github or a build file with no patch (too large / binary) cannot be read.
+          jq -r '.[] | select((.patch // "") == "" and .changes > 0) |"- `\(.filename | gsub("[`\r\n]"; "?"))`: no diff available (binary or too large) - read it by hand"' files.json | sort -u | head -20 > nopatch-hits.txt
+
+          marker='<!-- roesnip-pr-guard -->'
+          flagged=0
+          if [ -s path-hits.txt ] || [ -s line-hits.txt ]; then flagged=1; fi
+
+          {
+            echo "## PR Guard"
+            echo
+            if [ "$flagged" = 1 ]; then
+              echo "@roe69 **Needs a human read before merge.** This pull request touches files that can run on our build or signing runner, or content that could leak a secret. The release runner and the signing key are only reachable from a dispatch on main by the owner, so read these before merging:"
+              echo
+              if [ -s path-hits.txt ]; then echo "**Sensitive paths**"; echo; cat path-hits.txt; echo; fi
+              if [ -s line-hits.txt ]; then echo "**Added lines**"; echo; cat line-hits.txt; echo; fi
+            else
+              echo "No sensitive paths or risky added lines found in $total changed file(s). This is a path and pattern check only, not a code review."
+              echo
+            fi
+            if [ -s nopatch-hits.txt ]; then echo "**Unreadable diffs**"; echo; cat nopatch-hits.txt; echo; fi
+            echo "[Run]($RUN_URL)"
+            echo
+            echo "$marker"
+          } > comment.md
+
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "$flagged" = 1 ]; then echo "::warning::PR Guard: needs a human read"; fi
+
+          # The sticky comment is the bot's own comment carrying the marker. Replace it with a new
+          # one when something is flagged (a new comment notifies), edit it in place when clear.
+          old=$(gh api --paginate "repos/$REPO/issues/$number/comments?per_page=100" \
+            --jq "[.[] | select(.user.login == \"github-actions[bot]\" and (.body | contains(\"$marker\")))] | last | .id // empty" | tail -n1 || true)
+          if [ "$flagged" = 1 ]; then
+            gh api -X POST "repos/$REPO/issues/$number/comments" -F body=@comment.md > /dev/null
+            [ -z "$old" ] || gh api -X DELETE "repos/$REPO/issues/comments/$old" > /dev/null || true
+          elif [ -n "$old" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$old" -F body=@comment.md > /dev/null
+          elif [ -s nopatch-hits.txt ]; then
+            gh api -X POST "repos/$REPO/issues/$number/comments" -F body=@comment.md > /dev/null
+          fi
