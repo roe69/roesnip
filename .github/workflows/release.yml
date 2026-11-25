@@ -592,10 +592,14 @@ jobs:
       - name: Stage Windows exes and gzip siblings
         run: |
           set -euo pipefail
-          for n in RoeSnip.exe RoeSnipApp-win-x64.exe RoeSnipApp-win-arm64.exe; do
-            [ -f "dist-win/$n" ] || { echo "::error::missing signed $n"; exit 1; }
-            gzip -9 -n -c "dist-win/$n" > "dist-win/$n.gz"
-          done
+          # Names spelled out: CrossPlatformInstallTests checks every update asset appears here literally.
+          gz() {
+            [ -f "dist-win/$1" ] || { echo "::error::missing signed $1"; exit 1; }
+            gzip -9 -n -c "dist-win/$1" > "dist-win/$2"
+          }
+          gz RoeSnip.exe RoeSnip.exe.gz
+          gz RoeSnipApp-win-x64.exe RoeSnipApp-win-x64.exe.gz
+          gz RoeSnipApp-win-arm64.exe RoeSnipApp-win-arm64.exe.gz
           find dist dist-win -type f -printf '%p  (%s bytes)\n'
 
       # A leftover draft of this tag (failed or abandoned run) is replaced.
