@@ -1,6 +1,6 @@
 name: release
 
-# ONE action: bump -> build (win-x64 + win-arm64 / linux-x64 + linux-arm64 / osx-arm64 + osx-x64)
+# ONE action: version check -> build (win-x64 + win-arm64 / linux-x64 + linux-arm64 / osx-arm64 + osx-x64)
 # -> publish a single GitHub Release. Modelled on installer-src's build-all.yml shape (a
 # preflight/version job -> parallel per-platform builds -> one all-or-nothing publish job), collapsed
 # into a single workflow so cutting a release is a single dispatch. TWO in-app self-updaters poll
@@ -26,14 +26,13 @@ name: release
 # "RoeSnipApp-win-x64.exe" assets: older installs only ever look for those exact names.
 #
 # LOOP SAFETY (why this cannot re-trigger itself):
-#   * There is NO `push` trigger at all (no branches, no tags): the version-bump commit prep pushes
-#     starts no run (ci.yml is likewise skipped - see below), and the release tag the signer's publish
-#     creates starts none either. A release is only ever started by workflow_dispatch from main
-#     (the signer rejects any other source ref).
-#   * The bump/commit step is gated to workflow_dispatch.
+#   * There is NO `push` trigger at all (no branches, no tags): the release tag the signer's publish
+#     creates starts no run. A release is only ever started by workflow_dispatch from main
+#     (prep refuses other refs; the signer rejects any other source ref).
+#   * prep pushes nothing: the version bump is committed to main by a person before dispatch.
 #   * concurrency serialises runs so two releases can't race.
 #   NEVER replace GITHUB_TOKEN with a PAT/App token in checkout or action-gh-release - every guard
-#   above assumes GITHUB_TOKEN; a PAT would make the bump commit / release tag fire workflows.
+#   above assumes GITHUB_TOKEN.
 
 on:
   workflow_dispatch:
@@ -42,7 +41,7 @@ on:
         description: "Version e.g. 1.0.2"
         required: true
 
-# Default to read; only prep (pushes the bump) and release (creates the release) get write.
+# Default to read; only release (creates the release) gets write.
 permissions:
   contents: read
 
@@ -52,15 +51,15 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1. Resolve the version, bump the shipping csproj, commit + push the bump.
-  #    Outputs the exact commit SHA so every build leg + the release tag point at
-  #    the bumped commit.
+  # 1. Resolve the version and check both csprojs already carry it (no commit is
+  #    pushed). Outputs the dispatch commit SHA so every build leg + the release
+  #    tag point at the commit the attestation names.
   # ---------------------------------------------------------------------------
   prep:
-    name: Resolve version and bump
+    name: Resolve version
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     outputs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
@@ -71,22 +70,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve version and bump
+      - name: Resolve version
         id: v
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Dispatch must come from a branch (the bump commit is pushed to it), never a tag ref.
-            if [ "${{ github.ref_type }}" != "branch" ]; then
-              echo "::error::Dispatch this workflow from a branch, not a tag."; exit 1
-            fi
-            VERSION="${INPUT_VERSION#v}"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
+          # The signer's attestation check pins the build to the dispatch commit, so a release is
+          # built from exactly that commit on main.
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Dispatch this workflow from main."; exit 1
           fi
+          VERSION="${INPUT_VERSION#v}"
           if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "::error::Version '$VERSION' is not in x.y.z form"; exit 1
           fi
@@ -97,33 +93,24 @@ jobs:
             echo "::error::A published release $TAG already exists - refusing to overwrite."; exit 1
           fi
           # Deleting a release does NOT delete its tag; a stale tag would make action-gh-release
-          # attach new binaries to a tag pointing at the OLD commit. Fail the dispatch path if the
-          # tag already exists (on the tag-push path the tag IS the build ref, so allow it).
+          # attach new binaries to a tag pointing at the OLD commit.
           git fetch --tags --quiet || true
           if git rev-parse -q --verify "refs/tags/${TAG}^{commit}" >/dev/null; then
-            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-              echo "::error::Tag $TAG already exists (stale from an earlier run?). Delete it or pick a new version."; exit 1
-            fi
+            echo "::error::Tag $TAG already exists (stale from an earlier run?). Delete it or pick a new version."; exit 1
           fi
 
-          # Bump only on manual dispatch. A tag-push builds the already-tagged commit unchanged.
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # Both shipping apps carry <Version>, each compared against the release tag by their
-            # own UpdateManager.cs - always bump both together (one release covers both products).
-            sed -i -E "s#<Version>[^<]*</Version>#<Version>${VERSION}</Version>#" src/RoeSnip/RoeSnip.csproj
-            sed -i -E "s#<Version>[^<]*</Version>#<Version>${VERSION}</Version>#" src/RoeSnip.App/RoeSnip.App.csproj
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/RoeSnip/RoeSnip.csproj src/RoeSnip.App/RoeSnip.App.csproj
-            if git diff --cached --quiet; then
-              echo "Version already $VERSION - nothing to commit."
-            else
-              git commit -m "Release $TAG"
-              git push origin "HEAD:${GITHUB_REF_NAME}"
-            fi
-          fi
+          # No bump commit is pushed (main is protected, and the signer needs attested digest ==
+          # release target): commit the version of both apps to main first, then dispatch. Each
+          # app's UpdateManager.cs compares its own <Version> to the release tag, so both must match;
+          # the signer re-checks this at the target commit.
+          for f in src/RoeSnip/RoeSnip.csproj src/RoeSnip.App/RoeSnip.App.csproj; do
+            [ "$(grep -oE '<Version>[^<]*</Version>' "$f" | sed -E 's#</?Version>##g')" = "$VERSION" ] || {
+              echo "::error::$f <Version> is not $VERSION - commit the bump to main first, then dispatch."; exit 1
+            }
+          done
 
           SHA="$(git rev-parse HEAD)"
+          [ "$SHA" = "$GITHUB_SHA" ] || { echo "::error::checkout is not the dispatch commit"; exit 1; }
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
@@ -144,7 +131,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - name: Check out (bumped commit)
+      - name: Check out (dispatch commit)
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.prep.outputs.sha }}
@@ -250,7 +237,7 @@ jobs:
             runner: macos-15
             swift_target: x86_64-apple-macos13.0
     steps:
-      - name: Check out (bumped commit)
+      - name: Check out (dispatch commit)
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.prep.outputs.sha }}
