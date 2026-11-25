@@ -14,25 +14,23 @@ name: release
 # app's updater silently download and swap in the OTHER product's binary). The .dmg and
 # RoeSnip-linux-<arch>.tar.gz (publish folder, for distros without FUSE) are for manual installs.
 #
-# WINDOWS SIGNING (the EV key never touches GitHub): the three Windows exes are built here UNSIGNED,
-# attested (actions/attest-build-provenance) and uploaded to the DRAFT as "<name>.exe.unsigned".
-# This workflow never publishes. The roe-signing container on a house-managed box polls for the
-# draft, verifies the attestation (this workflow file, refs/heads/main), signs with the Cloud KMS
-# key, uploads the signed "<name>.exe" and its "<name>.exe.gz" (made from the SIGNED bytes), removes
-# the .unsigned assets and publishes the release. Until then the draft is invisible to the updaters.
-# Every asset (the Windows exes and all others) is attested in the attest job (the only job with
-# id-token/attestations write); the signer refuses to publish a draft with an asset whose digest has
-# no attestation for that exact name. The release job has contents: write only and uses the gh CLI.
-# Every action is pinned by full commit SHA (tag in the trailing comment).
-# Asset names, the .gz siblings and the signing-ready.txt marker are a contract with
-# docker/roe-signing in the house repo. Both UpdateManagers prefer the "<name>.exe.gz" sibling and
-# fall back to the plain exe. Never remove or rename the plain "RoeSnip.exe" /
-# "RoeSnipApp-win-x64.exe" assets: older installs only ever look for those exact names.
+# WINDOWS SIGNING (same model as installer-src): build-windows and sign-windows run on our own
+# win-build runner (this repo's runner only). build-windows has no OIDC token; sign-windows is the
+# only job with id-token: write, runs no repo-built code, and signs exactly RoeSnip.exe,
+# RoeSnipApp-win-x64.exe and RoeSnipApp-win-arm64.exe with the Cloud KMS key RoeLite-27 (jsign +
+# kmsp11) through GCP workload identity provider `roesnip` (repo, refs/heads/main, this workflow
+# file, actor roe69). Both jobs carry a job-level `if` (main, workflow_dispatch, actor roe69) that
+# GitHub evaluates before routing to the runner. The release job (ubuntu, contents: write, gh CLI
+# only) makes each "<name>.exe.gz" from the SIGNED bytes and publishes. Self-updaters trust the
+# GitHub asset digest. Every action is pinned by full commit SHA (tag in the trailing comment).
+# Both UpdateManagers prefer the "<name>.exe.gz" sibling and fall back to the plain exe. Never
+# remove or rename the plain "RoeSnip.exe" / "RoeSnipApp-win-x64.exe" assets: older installs only
+# ever look for those exact names.
 #
 # LOOP SAFETY (why this cannot re-trigger itself):
-#   * There is NO `push` trigger at all (no branches, no tags): the release tag the signer's publish
-#     creates starts no run. A release is only ever started by workflow_dispatch from main
-#     (prep refuses other refs; the signer rejects any other source ref).
+#   * There is NO `push` trigger at all (no branches, no tags): the release tag created at publish
+#     starts no run. A release is only ever started by workflow_dispatch from main (prep refuses
+#     other refs).
 #   * prep pushes nothing: the version bump is committed to main by a person before dispatch.
 #   * concurrency serialises runs so two releases can't race.
 #   NEVER replace GITHUB_TOKEN with a PAT/App token in checkout or gh release - every guard
@@ -57,7 +55,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # 1. Resolve the version and check both csprojs already carry it (no commit is
   #    pushed). Outputs the dispatch commit SHA so every build leg + the release
-  #    tag point at the commit the attestation names.
+  #    tag point at the same commit.
   # ---------------------------------------------------------------------------
   prep:
     name: Resolve version
@@ -81,8 +79,7 @@ jobs:
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          # The signer's attestation check pins the build to the dispatch commit, so a release is
-          # built from exactly that commit on main.
+          # A release is built from exactly the dispatch commit on main.
           if [ "$GITHUB_REF" != "refs/heads/main" ]; then
             echo "::error::Dispatch this workflow from main."; exit 1
           fi
@@ -103,10 +100,9 @@ jobs:
             echo "::error::Tag $TAG already exists (stale from an earlier run?). Delete it or pick a new version."; exit 1
           fi
 
-          # No bump commit is pushed (main is protected, and the signer needs attested digest ==
-          # release target): commit the version of both apps to main first, then dispatch. Each
-          # app's UpdateManager.cs compares its own <Version> to the release tag, so both must match;
-          # the signer re-checks this at the target commit.
+          # No bump commit is pushed (main is protected): commit the version of both apps to main
+          # first, then dispatch. Each app's UpdateManager.cs compares its own <Version> to the
+          # release tag, so both must match.
           for f in src/RoeSnip/RoeSnip.csproj src/RoeSnip.App/RoeSnip.App.csproj; do
             [ "$(grep -oE '<Version>[^<]*</Version>' "$f" | sed -E 's#</?Version>##g')" = "$VERSION" ] || {
               echo "::error::$f <Version> is not $VERSION - commit the bump to main first, then dispatch."; exit 1
@@ -128,8 +124,10 @@ jobs:
   build-windows:
     name: Build Windows (win-x64)
     needs: prep
-    runs-on: windows-latest
-    # Build jobs run dotnet/NuGet code: read-only, no OIDC token (attestation is the attest job).
+    runs-on: [self-hosted, win-build]
+    # GitHub evaluates this before routing the job to our runner: only the owner's dispatch from main.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.actor == 'roe69' && github.triggering_actor == 'roe69'
+    # Runs dotnet/NuGet code: read-only, no OIDC token (signing is the sign-windows job).
     permissions:
       contents: read
     steps:
@@ -137,12 +135,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prep.outputs.sha }}
+          persist-credentials: false
 
-      - name: Set up .NET 8
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: "8.0.x"
-
+      # The VM carries .NET SDK 8 (house setup-toolchain.ps1); no setup-dotnet on the persistent runner.
       - name: Build solution (Release)
         run: dotnet build RoeSnip.sln -c Release
 
@@ -187,11 +182,10 @@ jobs:
         run: dotnet publish src/RoeSnip.App/RoeSnip.App.csproj -c Release -f net8.0-windows10.0.22621.0 -r win-arm64 -p:PublishProfile=win-arm64 -p:Version=${{ needs.prep.outputs.version }}
 
       - name: Rename RoeSnip.App win-arm64 asset
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          OUT=src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-arm64/publish
-          mv "$OUT/RoeSnip.exe" "$OUT/RoeSnipApp-win-arm64.exe"
+          $out = 'src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-arm64/publish'
+          Move-Item "$out/RoeSnip.exe" "$out/RoeSnipApp-win-arm64.exe"
 
       - name: Upload RoeSnip.App win-arm64 asset
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -410,52 +404,129 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 2c. Attest every built asset (Windows exes under their unsigned bytes + all cross-platform
-  #     assets). Own job: it only downloads the build artifacts and runs GitHub-owned actions, so
-  #     the OIDC/attestation rights never sit next to dotnet/NuGet code or release creation. The
-  #     subject names are the file basenames; the signer verifies each asset against an attestation
-  #     of its own name and refuses to publish a draft with an unattested asset. No Google trust
-  #     exists for this repo.
+  # 2c. Sign the three RoeSnip exes (EV key RoeLite-27 in Cloud KMS, reached keylessly through
+  #     workload identity federation, exactly as installer-src does). Runs on our own win-build
+  #     runner and is the ONLY job with id-token: write. It executes no code from this repo: it
+  #     downloads the exes the build job made, fetches sha256-pinned jsign + kmsp11, and signs
+  #     the three named files. The GCP provider `roesnip` accepts only this repo, refs/heads/main,
+  #     this workflow file and actor roe69. Never a third-party binary: only these names.
   # ---------------------------------------------------------------------------
-  attest:
-    name: Attest build provenance
-    needs: [prep, build-windows, build-xplat]
-    runs-on: ubuntu-latest
+  sign-windows:
+    name: Sign Windows exes
+    needs: [prep, build-windows]
+    runs-on: [self-hosted, win-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.actor == 'roe69' && github.triggering_actor == 'roe69'
     permissions:
-      id-token: write
-      attestations: write
       contents: read
+      id-token: write
     steps:
-      - name: Download cross-platform artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: Check out (dispatch commit; only the certificate chain is used)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          pattern: xplat-*
-          path: dist
+          ref: ${{ needs.prep.outputs.sha }}
+          persist-credentials: false
 
-      - name: Download unsigned Windows artifacts
+      - name: Download unsigned Windows exes
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: win*
           path: winin
 
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+      - name: Authenticate to Google Cloud (code signing)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
-          subject-path: |
-            dist/**/*
-            winin/**/*
+          workload_identity_provider: projects/327472973067/locations/global/workloadIdentityPools/github/providers/roesnip
+
+      # kmsp11 ships for amd64 only, so the JVM must be x64.
+      - name: Set up Java x64 (code signing)
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          architecture: x64
+
+      - name: Fetch signing tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'codesign'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $tools = @(
+            @{ url = 'https://github.com/ebourg/jsign/releases/download/7.6/jsign-7.6.jar'; file = 'jsign.jar'; sha = '6CF58AA080E7FF82656F320CFF8D4A3BFF30408DF8766806DCBA3740DD839FA5' },
+            @{ url = 'https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/pkcs11-v1.9/libkmsp11-1.9-windows-amd64.zip'; file = 'kmsp11.zip'; sha = '2592C65FA78B07F4F112FA137FCCE1F5497BC47907FFCED51AB5AD0F9E3904A0' }
+          )
+          foreach ($t in $tools) {
+            $out = Join-Path $dir $t.file
+            Invoke-WebRequest $t.url -OutFile $out
+            if ((Get-FileHash $out -Algorithm SHA256).Hash -ne $t.sha) { throw "checksum mismatch: $($t.url)" }
+          }
+          Expand-Archive (Join-Path $dir 'kmsp11.zip') -DestinationPath $dir -Force
+          $dll = (Join-Path $dir 'libkmsp11-1.9-windows-amd64\kmsp11.dll') -replace '\\', '/'
+          "name = kmsp11`nlibrary = $dll`nslotListIndex = 0`n" | Set-Content -Encoding ascii (Join-Path $dir 'pkcs11.cfg')
+          "generate_certs: true`ntokens:`n  - key_ring: `"projects/roelite-codesign/locations/australia-southeast2/keyRings/codesign-keyring`"`n" | Set-Content -Encoding ascii (Join-Path $dir 'kms.yaml')
+          "KMS_PKCS11_CONFIG=$(Join-Path $dir 'kms.yaml')" | Add-Content $env:GITHUB_ENV
+
+      # --replace: jsign would otherwise nest a new signature under an existing one.
+      - name: Sign RoeSnip.exe, RoeSnipApp-win-x64.exe, RoeSnipApp-win-arm64.exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'codesign'
+          $names = @('RoeSnip.exe', 'RoeSnipApp-win-x64.exe', 'RoeSnipApp-win-arm64.exe')
+          New-Item -ItemType Directory -Force signed | Out-Null
+          foreach ($n in $names) {
+            $found = @(Get-ChildItem winin -Recurse -File -Filter $n)
+            if ($found.Count -ne 1) { throw "expected exactly one $n, found $($found.Count)" }
+            $dest = Join-Path (Resolve-Path signed) $n
+            Copy-Item $found[0].FullName $dest
+            java -jar (Join-Path $dir 'jsign.jar') --replace --storetype PKCS11 --keystore (Join-Path $dir 'pkcs11.cfg') `
+              --storepass none --alias RoeLite-27 --certfile .github/codesign/roelite-27-chain.pem --alg SHA-256 `
+              --tsaurl http://timestamp.globalsign.com/tsa/r6advanced1 --tsmode RFC3161 --tsretries 5 --tsretrywait 10 $dest
+            if ($LASTEXITCODE -ne 0) { throw "jsign failed for $n" }
+          }
+
+      - name: Verify Authenticode signatures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bad = 0
+          foreach ($f in Get-ChildItem signed -File) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            "{0,-10} {1} | {2}" -f $s.Status, $f.Name, $s.SignerCertificate.Subject
+            if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'Roelof Solutions Pty Ltd' -or -not $s.TimeStamperCertificate) { $bad++ }
+          }
+          if (@(Get-ChildItem signed -File).Count -ne 3) { $bad++ }
+          if ($bad) { throw "$bad file(s) not validly signed and timestamped" }
+
+      - name: Upload signed Windows exes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signed-win
+          path: signed/*
+          if-no-files-found: error
+
+      # The persistent runner keeps nothing: credentials file, tool dir and workspace are removed
+      # even when an earlier step failed.
+      - name: Remove credentials and workspace
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:GOOGLE_APPLICATION_CREDENTIALS) { Remove-Item -Force -ErrorAction SilentlyContinue $env:GOOGLE_APPLICATION_CREDENTIALS }
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'codesign')
+          Get-ChildItem -Force -ErrorAction SilentlyContinue $env:GITHUB_WORKSPACE | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
   # ---------------------------------------------------------------------------
   # 3. Collect every platform's asset and cut ONE Release. It is created as a
   #    DRAFT first and only flipped live once every asset has attached, so a
   #    flaky upload never leaves a live "latest" release missing RoeSnip.exe (the
-  #    self-updater would find no asset) and never deadlocks the prep guard.
+  #    self-updater would find no asset). The .gz siblings are made here from the
+  #    SIGNED bytes. Self-updaters trust the GitHub asset digest of each file.
   # ---------------------------------------------------------------------------
   release:
     name: Publish GitHub Release
-    needs: [prep, build-windows, build-xplat, attest]
+    needs: [prep, build-xplat, sign-windows]
     runs-on: ubuntu-latest
-    # contents: write only; no OIDC/attestation rights, and no third-party actions (gh CLI only).
+    # contents: write only; no OIDC rights, and no third-party actions (gh CLI only).
     permissions:
       contents: write
     steps:
@@ -465,25 +536,22 @@ jobs:
           pattern: xplat-*
           path: dist
 
-      - name: Download unsigned Windows artifacts
+      - name: Download signed Windows exes
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: win*
-          path: winin
+          name: signed-win
+          path: dist-win
 
-      # ".unsigned" so no plausible unsigned exe ever sits in a release: the signer swaps each for
-      # the signed "<name>.exe" + "<name>.exe.gz" (docker/roe-signing in the house repo).
-      - name: Stage unsigned Windows exes
+      - name: Stage Windows exes and gzip siblings
         run: |
           set -euo pipefail
-          mkdir unsigned
           for n in RoeSnip.exe RoeSnipApp-win-x64.exe RoeSnipApp-win-arm64.exe; do
-            cp "$(find winin -type f -name "$n")" "unsigned/$n.unsigned"
+            [ -f "dist-win/$n" ] || { echo "::error::missing signed $n"; exit 1; }
+            gzip -9 -n -c "dist-win/$n" > "dist-win/$n.gz"
           done
-          find dist unsigned -type f -printf '%p  (%s bytes)\n'
+          find dist dist-win -type f -printf '%p  (%s bytes)\n'
 
-      # A leftover draft of this tag (failed or abandoned run) may still hold the previous run's
-      # signing-ready.txt; the signer must never see a stale marker next to new assets.
+      # A leftover draft of this tag (failed or abandoned run) is replaced.
       - name: Remove a stale draft of this tag
         env:
           GH_TOKEN: ${{ github.token }}
@@ -494,7 +562,7 @@ jobs:
             --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id" |
             while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"; done
 
-      - name: Create draft release (unsigned Windows exes, signer publishes)
+      - name: Create draft release and attach every asset
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prep.outputs.tag }}
@@ -502,23 +570,13 @@ jobs:
           VERSION: ${{ needs.prep.outputs.version }}
         run: |
           set -euo pipefail
-          mapfile -d '' files < <(find dist unsigned -type f -print0)
+          mapfile -d '' files < <(find dist dist-win -type f -print0)
           [ "${#files[@]}" -gt 0 ] || { echo "::error::no assets to upload"; exit 1; }
           gh release create "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
             --draft --target "$SHA" --title "RoeSnip $VERSION" --notes ""
 
-      # Uploaded last: the signer ignores a draft until this file lists every asset it will end up
-      # with, so it can never publish a release whose uploads were still in flight.
-      - name: Mark the draft complete for the signer
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prep.outputs.tag }}
-        run: |
-          set -euo pipefail
-          {
-            find dist -type f -printf '%f\n'
-            printf '%s\n' RoeSnip.exe RoeSnip.exe.gz RoeSnipApp-win-x64.exe RoeSnipApp-win-x64.exe.gz \
-              RoeSnipApp-win-arm64.exe RoeSnipApp-win-arm64.exe.gz
-          } | sort > signing-ready.txt
-          cat signing-ready.txt
-          gh release upload "$TAG" signing-ready.txt --repo "$GITHUB_REPOSITORY"
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
