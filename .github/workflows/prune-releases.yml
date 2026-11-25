@@ -9,7 +9,7 @@ name: Prune old releases
 # except that it runs right after release.yml publishes (workflow_call from its last job) instead
 # of on a schedule, because the releases live in this repository.
 #
-# Not touched: drafts, prereleases, and immutable releases (GitHub refuses to change the assets of
+# Not touched: the release GitHub marks latest, drafts, prereleases, and immutable releases (GitHub refuses to change the assets of
 # a release published while "immutable releases" was on; that setting is off for this repo now).
 #
 # Runs on our linux-release-roesnip container with the same job gate as release.yml: main, dispatch, roe69.
@@ -108,8 +108,20 @@ jobs:
             echo "Stripped:"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # The release GitHub marks latest is what /releases/latest (README links, both updaters) serves:
+          # never stripped, even when it is not among the newest by version.
+          latest_tag="$(gh api "repos/$REPO/releases/latest" --jq '.tag_name')"
+          [ -n "$latest_tag" ] || { echo "::error::could not resolve the latest release."; exit 1; }
+          echo "Latest release: $latest_tag (never stripped)"
+
           for row in "${rows[@]:$KEEP}"; do
             IFS=$'\t' read -r tag id immutable <<< "$row"
+
+            if [ "$tag" = "$latest_tag" ]; then
+              echo "$tag is the release marked latest - kept whole."
+              echo "- \`$tag\` - marked latest, kept whole" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
 
             mapfile -t assets < <(gh api "repos/$REPO/releases/$id/assets" --paginate \
               --jq '.[] | "\(.id)\t\(.size)"')

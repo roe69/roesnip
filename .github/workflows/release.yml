@@ -163,11 +163,73 @@ jobs:
           $bad = @($p | Where-Object { $_.'Privilege Name' -match '^Se(Impersonate|AssignPrimaryToken|Debug|Tcb|LoadDriver|Backup|Restore|TakeOwnership|CreateToken|Relabel|SecurityAudit)Privilege$' })
           if ($bad.Count) { throw "job token holds: $($bad.'Privilege Name' -join ', ')" }
 
+      # Windows Firewall blocks this user's outbound traffic to LAN, link-local, CGNAT and ULA ranges
+      # (house setup-runner-sandboxed.ps1). Every probe below must FAIL; a connect that succeeds means the
+      # filter is gone, and the job stops before any repo code runs. 192.168.1.1 is the router (also the DNS
+      # server: only port 53 is open to it), 192.168.1.106 the Docker host (ssh), .169 the Proxmox node.
+      - name: Outbound filter blocks the LAN, internet and DNS work
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Probe([string] $h, [int] $port) {
+            $c = [Net.Sockets.TcpClient]::new()
+            try { $t = $c.ConnectAsync($h, $port); return ($t.Wait(4000) -and $c.Connected) } catch { return $false } finally { $c.Dispose() }
+          }
+          $open = @()
+          foreach ($t in @(@('192.168.1.1', 445), @('192.168.1.1', 443), @('192.168.1.106', 22), @('192.168.1.169', 8006), @('169.254.169.254', 80))) {
+            if (Probe $t[0] $t[1]) { $open += "$($t[0]):$($t[1])" }
+          }
+          if ($open.Count) { throw "LAN reachable from the build user: $($open -join ', ')" }
+          "LAN probes blocked"
+          $null = Resolve-DnsName github.com -Type A -ErrorAction Stop
+          if (-not (Probe 'github.com' 443)) { throw 'github.com:443 is not reachable' }
+          "DNS and internet reachable"
+
+      # Per-run NuGet caches: nothing a restore (or a job) left in a global cache or the http cache reaches the next run.
+      - name: Per-run NuGet caches
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP "nuget-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"
+          if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+          New-Item -ItemType Directory -Force "$dir\packages", "$dir\http", "$dir\plugins" | Out-Null
+          "NUGET_PACKAGES=$dir\packages" | Add-Content $env:GITHUB_ENV
+          "NUGET_HTTP_CACHE_PATH=$dir\http" | Add-Content $env:GITHUB_ENV
+          "NUGET_PLUGINS_CACHE_PATH=$dir\plugins" | Add-Content $env:GITHUB_ENV
+          "NUGET_CACHE_DIR=$dir" | Add-Content $env:GITHUB_ENV
+
       - name: Check out (dispatch commit)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prep.outputs.sha }}
           persist-credentials: false
+
+      # A MISSING lock file would not fail a locked restore (it writes a new one), so the committed set is
+      # asserted first: exactly these files, tracked, identical to the checked-out commit.
+      - name: Every NuGet lock file is committed (before the first restore)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = @(
+            'src/RoeSnip/packages.lock.json', 'src/RoeSnip/packages.win-x64.lock.json',
+            'src/RoeSnip.App/packages.lock.json', 'src/RoeSnip.App/packages.linux-arm64.lock.json', 'src/RoeSnip.App/packages.linux-x64.lock.json',
+            'src/RoeSnip.App/packages.osx-arm64.lock.json', 'src/RoeSnip.App/packages.osx-x64.lock.json',
+            'src/RoeSnip.App/packages.win-arm64.lock.json', 'src/RoeSnip.App/packages.win-x64.lock.json',
+            'src/RoeSnip.Core/packages.lock.json', 'src/RoeSnip.Core/packages.linux-arm64.lock.json', 'src/RoeSnip.Core/packages.linux-x64.lock.json',
+            'src/RoeSnip.Core/packages.osx-arm64.lock.json', 'src/RoeSnip.Core/packages.osx-x64.lock.json',
+            'src/RoeSnip.Core/packages.win-arm64.lock.json', 'src/RoeSnip.Core/packages.win-x64.lock.json',
+            'src/RoeSnip.Platform.Linux/packages.lock.json', 'src/RoeSnip.Platform.Linux/packages.linux-arm64.lock.json', 'src/RoeSnip.Platform.Linux/packages.linux-x64.lock.json',
+            'src/RoeSnip.Platform.MacOS/packages.lock.json', 'src/RoeSnip.Platform.MacOS/packages.osx-arm64.lock.json', 'src/RoeSnip.Platform.MacOS/packages.osx-x64.lock.json',
+            'src/RoeSnip.Platform.Windows/packages.lock.json', 'src/RoeSnip.Platform.Windows/packages.win-arm64.lock.json', 'src/RoeSnip.Platform.Windows/packages.win-x64.lock.json',
+            'tests/RoeSnip.App.Tests/packages.lock.json', 'tests/RoeSnip.Core.Tests/packages.lock.json',
+            'tests/RoeSnip.Platform.Windows.Tests/packages.lock.json', 'tests/RoeSnip.Tests/packages.lock.json'
+          )
+          $tracked = @(git ls-files -- ':(glob)**/packages*.lock.json')
+          $bad = @($expected | Where-Object { ($tracked -notcontains $_) -or -not (Test-Path -LiteralPath $_) }) + @($tracked | Where-Object { $expected -notcontains $_ })
+          if ($bad.Count) { $bad; throw 'NuGet lock files differ from the expected set' }
+          git diff --quiet HEAD -- $expected
+          if ($LASTEXITCODE -ne 0) { throw 'a NuGet lock file differs from the checked-out commit' }
+          "$($expected.Count) lock files present and committed"
 
       # The VM has the .NET 8 SDK installed machine-wide (setup-dotnet would install to Program
       # Files, which this user cannot write).
@@ -261,6 +323,12 @@ jobs:
             "$h  $($map[$k])"
           }
 
+      - name: Remove the per-run NuGet caches
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:NUGET_CACHE_DIR) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $env:NUGET_CACHE_DIR }
+
   # ---------------------------------------------------------------------------
   # 2b. Cross-platform (RoeSnip.App, net8.0): one matrix leg per shippable arch;
   #     the steps branch on runner.os. Linux: .AppImage (self-updates) + .tar.gz of
@@ -296,11 +364,75 @@ jobs:
             runner: '"macos-15"'
             swift_target: x86_64-apple-macos13.0
     steps:
+      # Job-scoped NuGet caches (the linux-x64 container keeps its home between jobs): wiped now and at the end.
+      - name: Per-run NuGet caches
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/nuget-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ matrix.rid }}"
+          rm -rf "$dir"
+          mkdir -p "$dir/packages" "$dir/http" "$dir/plugins"
+          {
+            echo "NUGET_PACKAGES=$dir/packages"
+            echo "NUGET_HTTP_CACHE_PATH=$dir/http"
+            echo "NUGET_PLUGINS_CACHE_PATH=$dir/plugins"
+            echo "NUGET_CACHE_DIR=$dir"
+          } >> "$GITHUB_ENV"
+
       - name: Check out (dispatch commit)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prep.outputs.sha }}
           persist-credentials: false
+
+      # A MISSING lock file would not fail a locked restore (it writes a new one), so the committed set is
+      # asserted first: exactly these files, tracked, identical to the checked-out commit.
+      - name: Every NuGet lock file is committed (before the first restore)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/lock-expected.txt" <<'LOCKS'
+          src/RoeSnip.App/packages.lock.json
+          src/RoeSnip.App/packages.linux-arm64.lock.json
+          src/RoeSnip.App/packages.linux-x64.lock.json
+          src/RoeSnip.App/packages.osx-arm64.lock.json
+          src/RoeSnip.App/packages.osx-x64.lock.json
+          src/RoeSnip.App/packages.win-arm64.lock.json
+          src/RoeSnip.App/packages.win-x64.lock.json
+          src/RoeSnip.Core/packages.lock.json
+          src/RoeSnip.Core/packages.linux-arm64.lock.json
+          src/RoeSnip.Core/packages.linux-x64.lock.json
+          src/RoeSnip.Core/packages.osx-arm64.lock.json
+          src/RoeSnip.Core/packages.osx-x64.lock.json
+          src/RoeSnip.Core/packages.win-arm64.lock.json
+          src/RoeSnip.Core/packages.win-x64.lock.json
+          src/RoeSnip.Platform.Linux/packages.lock.json
+          src/RoeSnip.Platform.Linux/packages.linux-arm64.lock.json
+          src/RoeSnip.Platform.Linux/packages.linux-x64.lock.json
+          src/RoeSnip.Platform.MacOS/packages.lock.json
+          src/RoeSnip.Platform.MacOS/packages.osx-arm64.lock.json
+          src/RoeSnip.Platform.MacOS/packages.osx-x64.lock.json
+          src/RoeSnip.Platform.Windows/packages.lock.json
+          src/RoeSnip.Platform.Windows/packages.win-arm64.lock.json
+          src/RoeSnip.Platform.Windows/packages.win-x64.lock.json
+          src/RoeSnip/packages.lock.json
+          src/RoeSnip/packages.win-x64.lock.json
+          tests/RoeSnip.App.Tests/packages.lock.json
+          tests/RoeSnip.Core.Tests/packages.lock.json
+          tests/RoeSnip.Platform.Windows.Tests/packages.lock.json
+          tests/RoeSnip.Tests/packages.lock.json
+          LOCKS
+          sort "$RUNNER_TEMP/lock-expected.txt" > "$RUNNER_TEMP/lock-expected.sorted"
+          git ls-files -- ':(glob)**/packages*.lock.json' | sort > "$RUNNER_TEMP/lock-tracked.sorted"
+          if ! diff "$RUNNER_TEMP/lock-expected.sorted" "$RUNNER_TEMP/lock-tracked.sorted"; then
+            echo "::error::NuGet lock files differ from the expected set (< expected, > tracked)"; exit 1
+          fi
+          while read -r f; do
+            [ -f "$f" ] || { echo "::error::missing lock file $f"; exit 1; }
+            git diff --quiet HEAD -- "$f" || { echo "::error::$f differs from the checked-out commit"; exit 1; }
+          done < "$RUNNER_TEMP/lock-expected.sorted"
+          echo "$(wc -l < "$RUNNER_TEMP/lock-expected.sorted" | tr -d ' ') lock files present and committed"
+          rm -f "$RUNNER_TEMP"/lock-*
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
@@ -481,6 +613,12 @@ jobs:
           name: xplat-${{ matrix.rid }}
           path: dist/*
           if-no-files-found: error
+
+      - name: Remove the per-run NuGet caches
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${NUGET_CACHE_DIR:-}" ]; then rm -rf "$NUGET_CACHE_DIR"; fi
   # ---------------------------------------------------------------------------
   # 2c. Sign the three RoeSnip exes (EV key RoeLite-27 in Cloud KMS, reached keylessly through
   #     workload identity federation, exactly as installer-src does). Runs on our persistent
@@ -695,6 +833,29 @@ jobs:
           gz RoeSnipApp-win-x64.exe RoeSnipApp-win-x64.exe.gz
           gz RoeSnipApp-win-arm64.exe RoeSnipApp-win-arm64.exe.gz
           find dist dist-win -type f -printf '%p  (%s bytes)\n'
+
+      # Exactly the 14 asset names the updaters and README links resolve, as plain files; anything else
+      # (a stray file in an artifact, a duplicate name, a symlink) stops the release before it is created.
+      - name: Staged assets are exactly the 14 expected names
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            RoeSnip.exe RoeSnip.exe.gz \
+            RoeSnipApp-win-x64.exe RoeSnipApp-win-x64.exe.gz \
+            RoeSnipApp-win-arm64.exe RoeSnipApp-win-arm64.exe.gz \
+            RoeSnip-linux-x64.AppImage RoeSnip-linux-x64.tar.gz \
+            RoeSnip-linux-arm64.AppImage RoeSnip-linux-arm64.tar.gz \
+            RoeSnip-osx-arm64.dmg RoeSnip-osx-arm64.app.tar.gz \
+            RoeSnip-osx-x64.dmg RoeSnip-osx-x64.app.tar.gz | sort > expected.names
+          [ "$(wc -l < expected.names)" = 14 ] || { echo "::error::expected list is not 14 names"; exit 1; }
+          if [ -n "$(find dist dist-win ! -type f ! -type d)" ]; then
+            echo "::error::staged assets include something that is not a regular file"; exit 1
+          fi
+          find dist dist-win -type f -printf '%f\n' | sort > staged.names
+          if ! diff expected.names staged.names; then
+            echo "::error::staged assets differ from the 14 expected names (< expected, > staged)"; exit 1
+          fi
+          rm -f expected.names staged.names
 
       # A leftover draft of this tag (failed or abandoned run) is replaced.
       - name: Remove a stale draft of this tag
