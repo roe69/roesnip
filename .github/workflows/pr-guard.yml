@@ -92,6 +92,25 @@ jobs:
             | "- `\($f.filename | clean)`: \($r[1])"
           ' files.json | sort -u > line-hits.txt
 
+          # Runner selection in workflow files: only a plain GitHub-hosted image (ubuntu-*, windows-*, macos-*)
+          # is safe. Flags a runs-on / runner / labels value that is anything else (a self-hosted label list, an
+          # expression, a matrix variable), and a bare list item or quoted label naming Windows, X64, ARM64,
+          # Linux, linux-* or win-* (the default labels of our own runners). Comment lines are skipped.
+          jq -r '
+            def clean: gsub("[`\r\n]"; "?");
+            def runner_rules:
+              [ [ "^\\+(?!\\s*#)\\s*(-\\s*)?runs-on\\s*:\\s*(?![\"'"'"']?(ubuntu|windows|macos)-[A-Za-z0-9._-]+[\"'"'"']?\\s*(#.*)?$)\\S", "runs-on is not one plain GitHub-hosted image" ],
+                [ "^\\+(?!\\s*#)\\s*(-\\s*)?(runner|labels)\\s*:.*(?i:[\"\\[,\\s](self-hosted|windows|x64|arm64|linux|linux-[a-z0-9-]+|win-[a-z0-9-]+)[\"\\],\\s])", "names a self-hosted or default runner label" ],
+                [ "^\\+\\s*-\\s*[\"'"'"']?(?i:self-hosted|windows|x64|arm64|linux|linux-[a-z0-9-]+|win-[a-z0-9-]+)[\"'"'"']?\\s*(#.*)?$", "list item names a self-hosted or default runner label" ] ];
+            .[] | . as $f
+            | select($f.filename | test("^\\.github/"))
+            | ($f.patch // "") as $p
+            | ($p | split("\n") | map(select(startswith("+") and (startswith("+++") | not)))) as $added
+            | runner_rules[] as $r
+            | select($added | any(test($r[0])))
+            | "- `\($f.filename | clean)`: \($r[1])"
+          ' files.json | sort -u >> line-hits.txt
+
           # Added lines with any non-ASCII character (em dash, curly quote, arrow, emoji...). The repo
           # rule is plain 7-bit ASCII; the local hooks enforce it, this catches web edits and clones
           # without the hooks. Only the file and the count are reported, never the line.
