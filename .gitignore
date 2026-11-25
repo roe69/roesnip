@@ -9,3 +9,8 @@ TestResults/
 !assets/**/*.png
 !docs/**/*.png
 RoeSnip*.exe
+.idea/
+.vscode/
+.DS_Store
+*.log
+helpers/scksnap/.build/
