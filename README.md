@@ -1,20 +1,28 @@
-# RoeSnip
+# RoeSnip: HDR screenshot tool and screen recorder for Windows, Linux and macOS
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-0078d4)](#quick-start)
+[![Latest release](https://img.shields.io/github/v/release/roe69/roesnip)](https://github.com/roe69/roesnip/releases/latest)
+[![Platforms: Windows, Linux, macOS](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-0078d4)](#install)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
-[![Built with Claude Code](https://img.shields.io/badge/built%20with-Claude%20Code-D97757?logo=claude&logoColor=white)](https://claude.com/claude-code)
 
-An HDR-correct screenshot tool: press PrintScreen, the screen dims instantly,
-drag a region, annotate, copy or save. On HDR desktops Windows composites in
-linear scRGB FP16, and legacy tools (Snipping Tool, Lightshot, ShareX's
-default path) clip or mis-scale that buffer, which is why their screenshots
-come out washed-out and gray. RoeSnip captures the true FP16 frame and
-converts it properly.
+RoeSnip is a free, open source snipping tool and screen recorder that takes
+**HDR-correct screenshots**. Press PrintScreen, the screen dims instantly, drag
+a region, annotate, then copy, save or upload. Recordings go to MP4 or GIF.
 
-![RoeSnip capture overlay](docs/screenshot.png)
+On an HDR display Windows composites in linear scRGB FP16, and legacy tools
+(Snipping Tool, PrintScreen, Lightshot, ShareX's default path) clip or
+mis-scale that buffer, so screenshots come out washed-out, gray or blown out.
+RoeSnip captures the true FP16 frame and tone-maps it properly, so a capture
+looks like what you saw on screen.
 
-- **HDR done right.** SDR content (the common case) comes out
+![RoeSnip capture overlay: region selection with annotation toolbar](docs/screenshot.png)
+
+**Download:** [latest release](https://github.com/roe69/roesnip/releases/latest)
+(Windows, Linux, macOS), see [Install](#install).
+
+## Features
+
+- **HDR done right (Windows).** SDR content (the common case) comes out
   pixel-identical to a plain SDR monitor's screenshot: an exact pass-through,
   matched to the "SDR content brightness" level. Genuine HDR highlights get a
   smooth, hue-preserving rolloff instead of blowing out. Optionally saves the
@@ -33,25 +41,39 @@ converts it properly.
 - **Screen recording.** Record the selected region to MP4 or GIF straight
   from the overlay toolbar. A small floating control bar shows elapsed time
   and lets you stop and save or cancel. Pressing PrintScreen again while
-  recording stops and saves it, the same shortcut you used to start it.
+  recording stops and saves it.
+- **Share.** Upload a snip to your default share provider with Ctrl+U.
 - **Multi-monitor.** One overlay per monitor, per-monitor HDR state and SDR
   white levels, capture via Desktop Duplication with a
   Windows.Graphics.Capture fallback per monitor.
 - **CLI modes.** Headless `--capture` and per-monitor `--diag` HDR
-  diagnostics, no UI involved.
+  diagnostics on Windows, plus `capture` / `settings` verbs on Linux.
+- **Self-updating.** An installed copy updates itself from GitHub Releases.
 
-## Quick start
+### What works on which OS
 
-Requires Windows 10 2004+ and the .NET 8 SDK to build (the published exe is
-self-contained).
+| | Windows 10 2004+ / 11 | Linux (X11, Wayland) | macOS |
+|---|---|---|---|
+| HDR-correct capture | Yes (verified on real HDR monitors) | Not attempted: captures are SDR | Requests the HDR screenshot preset on macOS 15+ (Apple silicon); SDR on older macOS |
+| Save untouched HDR original (.jxr) | Yes | No | No |
+| Annotations, picker, MP4 / GIF recording | Yes | Yes | Yes |
 
-```sh
-dotnet build RoeSnip.sln -c Release
-dotnet test RoeSnip.sln
+## Install
 
-# single-file exe -> src/RoeSnip/bin/Release/.../win-x64/publish/RoeSnip.exe
-dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64
-```
+Get the files from the [latest release](https://github.com/roe69/roesnip/releases/latest).
+
+- **Windows:** download `RoeSnip.exe` (self-contained, no .NET install
+  needed) and run it. It sits in the tray; PrintScreen opens the capture
+  overlay. Arm64 build of the cross-platform app: `RoeSnipApp-win-arm64.exe`.
+- **Linux:** download `RoeSnip-linux-x64.AppImage` (or `-arm64`), make it
+  executable, run it and pick **Install RoeSnip** in the tray menu. A
+  `.tar.gz` is there for distros without FUSE. Details in [Linux](#linux).
+- **macOS:** open `RoeSnip-osx-arm64.dmg` (Apple silicon) or
+  `RoeSnip-osx-x64.dmg` (Intel). Details in [macOS](#macos).
+
+## Using it on Windows
+
+Run `RoeSnip.exe` with no arguments to start the tray app.
 
 Run `RoeSnip.exe` with no arguments to start the tray app; PrintScreen opens
 the capture overlay. If Windows currently intercepts PrintScreen for Snipping
@@ -145,6 +167,53 @@ Open the first time. Pick **Install RoeSnip** in the tray menu to copy it to
 installed copy updates itself from GitHub Releases. The ad-hoc signature
 changes with every build, so macOS may ask for Screen Recording permission
 again after an update.
+
+## FAQ
+
+### Why are my screenshots washed out on HDR?
+With HDR on, Windows composites the desktop in linear scRGB FP16 at HDR
+brightness levels. Tools that treat that buffer as ordinary 8-bit sRGB clip
+the highlights and mis-scale the midtones, so the result looks gray, faded or
+blown out. RoeSnip reads the FP16 frame and tone-maps it: SDR content is
+scaled by your "SDR content brightness" setting to the exact SDR result, and
+only real HDR highlights are rolled off.
+
+### How do I take a screenshot in HDR on Windows 11?
+Install RoeSnip, press PrintScreen, drag a region, then copy or save. For the
+HDR original as well, enable the automatic HDR copy in Settings (it writes a
+`.jxr` next to the PNG), or use `RoeSnip.exe --capture --jxr` from a terminal.
+
+### Is there an HDR screenshot fix for the Snipping Tool?
+RoeSnip replaces it for this purpose. On first run it asks whether to take
+over PrintScreen from the Snipping Tool or use Ctrl+PrintScreen instead.
+
+### Can I record my screen in HDR?
+Recordings are saved as MP4 or GIF from the tone-mapped frames, so colors
+match RoeSnip's screenshots. They are SDR files, not HDR video.
+
+### Is RoeSnip a Lightshot alternative?
+It covers the same workflow (hotkey, drag a region, annotate, copy, save,
+upload) and adds correct HDR handling on Windows plus MP4/GIF recording.
+
+### Does it work on Linux and macOS?
+Yes, see [Linux](#linux) and [macOS](#macos). HDR tone-mapping is
+Windows-only so far: Linux captures are SDR, and macOS uses the HDR
+screenshot preset only on macOS 15+ on Apple silicon.
+
+### Is it free?
+Yes. MIT licensed and open source.
+
+## Build from source
+
+Needs the .NET 8 SDK; the Windows app needs Windows 10 2004+.
+
+```sh
+dotnet build RoeSnip.sln -c Release
+dotnet test RoeSnip.sln
+
+# single-file exe -> src/RoeSnip/bin/Release/.../win-x64/publish/RoeSnip.exe
+dotnet publish src/RoeSnip/RoeSnip.csproj -c Release -p:PublishProfile=win-x64
+```
 
 ## Docs
 
