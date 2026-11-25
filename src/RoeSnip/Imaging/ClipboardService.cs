@@ -8,7 +8,7 @@ namespace RoeSnip.Imaging;
 /// <summary>Writes both a PNG (the well-known registered "PNG" clipboard format, recognized by
 /// browsers, Discord, Paint.NET) and a CF_DIBV5 (BITMAPV5HEADER, 32bpp BGRA with an explicit
 /// alpha mask, recognized by Word/Paint/most legacy GDI consumers) to the clipboard in one
-/// OpenClipboard/EmptyClipboard/SetClipboardData(x2)/CloseClipboard transaction, per PLAN.md
+/// OpenClipboard/EmptyClipboard/SetClipboardData(x2)/CloseClipboard transaction
 /// §3.2 — so both "paste as PNG" and "paste as bitmap" consumers work from a single copy.</summary>
 public static class ClipboardService
 {
@@ -16,7 +16,7 @@ public static class ClipboardService
     private const uint LCS_sRGB = 0x73524742; // 'sRGB' FourCC, per wingdi.h
     private const uint LCS_GM_IMAGES = 4;
 
-    // Not in Interop/NativeMethods.cs (WP-A's §5 P/Invoke list) — added locally per PLAN.md §3.1's
+    // Not in Interop/NativeMethods.cs - added locally,
     // "may add its own P/Invoke declaration inside its own file" allowance, used only to release a
     // GlobalAlloc block on the (rare) error paths below where ownership never transferred to the OS.
     [DllImport("kernel32.dll")]

@@ -273,7 +273,7 @@ internal static class FlashDimmer
         // that never claims foreground, but it DOES change what WindowFromPoint(cursor) resolves to,
         // which can independently make an already-hovering tooltip's own hover-tracking
         // (TrackMouseEvent) self-dismiss via WM_MOUSELEAVE. That residual path is not touched by this
-        // removal; see docs/CAPTURE-FIDELITY-SPEC.md item 1.
+        // removal; see docs/architecture.md "Capture".
 
         Dispatcher.CurrentDispatcher.Invoke(static () => { }, DispatcherPriority.Loaded);
 
@@ -624,7 +624,7 @@ internal static class FlashDimmer
             // ClipCursor/SetCapture call exists on this path). The perceived "cursor stopped
             // working" effect users report is this glyph changing to the same crosshair the real
             // overlay's select tool uses (signaling "snip mode is active") COMBINED with clicks
-            // being swallowed for the flash phase - see CAPTURE-FIDELITY-SPEC.md item 2. Note this
+            // being swallowed for the flash phase - see docs/architecture.md "Capture". Note this
             // glyph no longer actually applies now that the window is WS_EX_TRANSPARENT: a
             // click-through window is not hit-tested, so the cursor underneath keeps its own shape
             // until the real overlay takes over a few tens of ms later. Kept for the

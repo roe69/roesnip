@@ -249,7 +249,7 @@ public class UpdateManagerTests
     [Fact]
     public void InstallDir_DiffersFromWpfAppsInstallDir()
     {
-        // Both products can be installed side by side (docs/PARITY.md) - the directory names must
+        // Both products can be installed side by side (docs/parity.md) - the directory names must
         // never collide. Windows only: elsewhere InstallDir is the Linux/macOS location.
         if (!OperatingSystem.IsWindows())
         {

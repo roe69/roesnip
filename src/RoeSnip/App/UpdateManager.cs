@@ -28,7 +28,7 @@ namespace RoeSnip.App;
 /// throw out into the tray or leave %LOCALAPPDATA%\RoeSnip without a runnable RoeSnip.exe. Not
 /// covered by an automated test for the same reason StartupManager isn't - it mutates the real
 /// registry/filesystem and talks to a real HTTP endpoint; the file/registry logic is reviewed by
-/// eye instead (see docs/PARITY.md's Notes section for how that manual review is tracked).</summary>
+/// eye instead (see docs/parity.md's Notes section for how that manual review is tracked).</summary>
 public static class UpdateManager
 {
     private const string GitHubOwner = "roe69";

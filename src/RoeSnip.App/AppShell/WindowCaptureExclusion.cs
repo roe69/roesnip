@@ -29,7 +29,7 @@ namespace RoeSnip.App.AppShell;
 ///
 /// Non-Windows: a documented no-op. X11/Wayland compositors expose no per-window
 /// capture-exclusion API, and Avalonia does not surface NSWindow.sharingType on macOS — recorded
-/// as an accepted limitation in docs/PARITY.md. Overlay (and later flash/recording-chrome/
+/// as an accepted limitation in docs/parity.md. Overlay (and later flash/recording-chrome/
 /// color-picker) windows may appear in re-captures on those platforms.</summary>
 public static class WindowCaptureExclusion
 {

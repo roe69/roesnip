@@ -9,7 +9,7 @@ using Mp4BitrateEstimator = RoeSnip.Core.Recording.Mp4BitrateEstimator;
 namespace RoeSnip.Recording;
 
 /// <summary>Encodes BGRA8 <see cref="SdrImage"/> frames to H.264/MP4 via Media Foundation's
-/// IMFSinkWriter — the exact API surface pinned in PLAN.md §1 (verified by reflecting the real
+/// IMFSinkWriter - the exact API surface (verified by reflecting the real
 /// Vortice.MediaFoundation 3.8.3 DLL, not assumed). Encoder-thread-only (RecordingSession's
 /// dedicated thread) — never the WGC callback thread, never the UI thread.
 ///

@@ -1,18 +1,18 @@
 namespace RoeSnip.Core.Settings;
 
-/// <summary>Per-OS config directory (DESIGN-XPLAT.md "portable config dirs"). Shared by
-/// SettingsStore (settings.json) and CaptureCache (capture-cache.json, PLAN-XPLAT.md §2.4) so both
+/// <summary>Per-OS config directory (docs/architecture.md, Projects). Shared by
+/// SettingsStore (settings.json) and CaptureCache (capture-cache.json) so both
 /// files live side by side per OS.
 ///
 /// P5 audit fix: this directory is deliberately DISTINCT from the frozen WPF app's
 /// %APPDATA%\RoeSnip this cycle, not a "RoeSnip" convergence with it. Both apps can be resident at
-/// once (they are separate deliverables this cycle — DESIGN-XPLAT.md "Strategy"); sharing one
+/// once (they are separate deliverables this cycle - docs/architecture.md, Projects); sharing one
 /// config directory meant they'd load the same settings.json, including the same
 /// HotkeyVirtualKey/HotkeyModifiers — so a single PrintScreen press fired BOTH SharpHook's global
 /// hook (this app) and RegisterHotKey (the WPF app), producing two overlay stacks plus concurrent
 /// capture-cache.json rewrites from two processes. Splitting the directory removes the collision
 /// entirely. Convergence to one shared config directory is a later cleanup, once the WPF app
-/// retires (DESIGN-XPLAT.md "Convergence to a single app is a later cleanup").</summary>
+/// retires (docs/architecture.md, Projects).</summary>
 public static class ConfigPaths
 {
     public const string AppName = "RoeSnip.App";       // Windows/macOS directory name

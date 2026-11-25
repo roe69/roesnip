@@ -16,13 +16,13 @@ public readonly record struct ToneMapOptions(
     double Epsilon = 1e-3           // M <= 1.0 + Epsilon => exact SDR pass-through, no shoulder, no dither
 );
 
-/// <summary>The tone-map pipeline. See DESIGN.md "Tone-map pipeline" for the full spec; the exact
-/// Hermite shoulder formula is pinned in PLAN.md §3.1 so all implementers (and tests) agree on it.
+/// <summary>The tone-map pipeline. See docs/architecture.md "Tone-map pipeline" for the full spec; the exact
+/// Hermite shoulder formula is pinned here so the code and the tests agree on it.
 /// Only accepts Fp16ScRgb frames — Bgra8Srgb frames must go through SdrImage.FromCapturedFrame's
 /// passthrough branch instead (do not call MapToSdr on a Bgra8Srgb frame; it throws).
 ///
 /// Ported to Core from the WPF app's src/RoeSnip/Color/ToneMapper.cs (item 10, r5-latency) with
-/// exactly one behavioral generalization (PLAN-XPLAT.md §2.5): the pass-1/pass-2 scale step
+/// exactly one behavioral generalization: the pass-1/pass-2 scale step
 /// generalizes from the WPF app's hardcoded <c>80.0 / Monitor.SdrWhiteNits</c> to
 /// <c>1.0 / frame.SdrWhiteInBufferUnits</c> — algebraically identical on Windows (where
 /// SdrWhiteInBufferUnits == SdrWhiteNits / 80.0), and correct for macOS EDR buffers (where it is

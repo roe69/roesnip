@@ -67,7 +67,7 @@ public class ColorMathTests
     [Fact]
     public void SrgbEncode_Half_QuantizesTo188()
     {
-        // Golden pair from DESIGN.md: scRGB linear 0.5 -> byte 188.
+        // Golden pair from docs/architecture.md: scRGB linear 0.5 -> byte 188.
         byte quantized = ColorMath.QuantizeRoundNearest(ColorMath.SrgbEncode(0.5f));
         Assert.Equal(188, quantized);
     }

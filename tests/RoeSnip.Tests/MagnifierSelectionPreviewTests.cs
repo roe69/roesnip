@@ -5,7 +5,7 @@ using Xunit;
 
 namespace RoeSnip.Tests;
 
-/// <summary>Pure geometry for the loupe's selection-border preview (CAPTURE-FIDELITY-SPEC.md §3):
+/// <summary>Pure geometry for the loupe's selection-border preview (docs/architecture.md "Overlay"):
 /// <see cref="Magnifier.MapSelectionToLoupeRect"/> maps a physical-pixel candidate crop rectangle
 /// into the loupe's own on-screen DIP square, using the identical per-axis affine the swatch grid
 /// itself uses. Factored out as a static, WPF-rendering-free function specifically so this mapping

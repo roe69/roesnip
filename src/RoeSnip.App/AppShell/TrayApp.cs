@@ -24,11 +24,11 @@ using RoeSnip.Core.Updates;
 
 namespace RoeSnip.App.AppShell;
 
-/// <summary>The tray-app shell (PLAN-XPLAT.md §3.2): an Avalonia <see cref="TrayIcon"/> with a
+/// <summary>The tray-app shell: an Avalonia <see cref="TrayIcon"/> with a
 /// native menu, the SharpHook global hotkey, single-instance enforcement (mutex + pipe via
 /// <see cref="SingleInstance"/>), the Windows PrintScreen consent flow, and the
 /// <see cref="ITrayNotifier"/> notifications the capture flow surfaces back through this class.
-/// The tray icon is STRICTLY optional (DESIGN-XPLAT.md): a failure to create it is caught and
+/// The tray icon is STRICTLY optional (docs/architecture.md): a failure to create it is caught and
 /// logged, and startup (hotkey, pipe listener) proceeds — the app stays fully operable via the
 /// CLI verbs alone.</summary>
 public sealed class TrayApp : ITrayNotifier
@@ -70,7 +70,7 @@ public sealed class TrayApp : ITrayNotifier
     // Kept in a field so ExitApplication can DETACH it (SystemEvents is process-global): a
     // broadcast landing after teardown must not run a resume re-warm against a shut-down app.
     // Ported from the WPF app's identical field/detach pair; the App has no
-    // DisplaySettingsChanged subscription to mirror (see docs/PARITY.md), so only this one
+    // DisplaySettingsChanged subscription to mirror (see docs/parity.md), so only this one
     // applies here.
     private PowerModeChangedEventHandler? _powerModeChangedHandler;
     // Dedup for OnSystemResumed: it can now fire from TWO sources for one wake (the
@@ -123,7 +123,7 @@ public sealed class TrayApp : ITrayNotifier
     /// <summary>The shared resident-instance entry: acquire the single-instance lock, then start
     /// the Avalonia lifetime; once the framework is up, <paramref name="initialAction"/> is
     /// performed (the "become the resident instance and do the requested thing" half of the bare
-    /// CLI verbs, PLAN-XPLAT.md §3.2/§6 flag 4). <see cref="InstanceSignal.None"/> (a plain launch)
+    /// CLI verbs). <see cref="InstanceSignal.None"/> (a plain launch)
     /// takes over any running instance in place (item 13a); a real verb (TriggerCapture/
     /// TriggerSettings) just signals the running instance to do that one thing without
     /// replacing it, and this process exits.</summary>
@@ -551,7 +551,7 @@ public sealed class TrayApp : ITrayNotifier
         // WM_ACTIVATE/WM_ACTIVATEAPP now survives); it does not guarantee every tooltip survives —
         // any topmost window placed over an already-hovering tooltip can still make that tooltip's
         // own hover-tracking self-dismiss via WM_MOUSELEAVE with no dependency on foreground at all.
-        // See docs/CAPTURE-FIDELITY-SPEC.md item 1.
+        // See docs/architecture.md "Capture".
         bool flashShown = false;
         try
         {
@@ -754,7 +754,7 @@ public sealed class TrayApp : ITrayNotifier
     /// always was, not a crash.
     ///
     /// No parked overlay WINDOW pool yet (only the flash dimmer's own tiny parked windows) — see
-    /// docs/PARITY.md item 18's own note: the WPF reference's OverlayWindowPool (pre-built,
+    /// docs/parity.md item 18's own note: the WPF reference's OverlayWindowPool (pre-built,
     /// pre-rendered, single-use overlay windows) is explicitly optional follow-up work per that
     /// item's own instructions ("if the pool destabilizes anything, land the flash dimmer alone
     /// first"). Every real OverlayWindow in this port is still constructed on-demand inside
@@ -776,7 +776,7 @@ public sealed class TrayApp : ITrayNotifier
         // post-wake hotkey used to pay the whole staleness discovery (frame-wait timeouts,
         // re-provisions, ghost-display enumeration) on the hot path. Handler stays tiny:
         // SystemEvents delivers on its own broadcast thread. Windows only — no other platform has
-        // a power-event seam here (see docs/PARITY.md); the net8.0 TFM compiles without the
+        // a power-event seam here (see docs/parity.md); the net8.0 TFM compiles without the
         // Microsoft.Win32.SystemEvents package entirely.
         _powerModeChangedHandler = (_, e) =>
         {
@@ -853,7 +853,7 @@ public sealed class TrayApp : ITrayNotifier
             // one by one for seconds (the WPF log shows 1 monitor, then all 3 about 4 s later, on
             // every wake), so the pass above can miss monitors that were not attached yet at
             // settle+3s. The WPF app covers this with its DisplaySettingsChanged subscription; this
-            // app has none (docs/PARITY.md), so a single delayed re-provision pass is its
+            // app has none (docs/parity.md), so a single delayed re-provision pass is its
             // substitute — a no-op for slots the first pass already provisioned.
             try
             {
@@ -1575,7 +1575,7 @@ public sealed class TrayApp : ITrayNotifier
     // ---------------- PrintScreen / Snipping Tool consent (Windows only) ----------------
 
     /// <summary>The one-time PrintScreen/Snipping-Tool consent flow, ported from the WPF app's
-    /// TrayApp.ResolvePrintScreenConsent (PLAN-XPLAT.md §3.2: "ports unchanged, and
+    /// TrayApp.ResolvePrintScreenConsent ("ports unchanged, and
     /// Windows-only"). Applicable only when the configured hotkey is bare PrintScreen. On
     /// Windows 11 an ABSENT HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled value
     /// means the Snipping Tool intercept is ON by default, so only an explicitly-present 0 counts
@@ -2215,7 +2215,7 @@ public sealed class TrayApp : ITrayNotifier
         catch (Exception ex)
         {
             _trayIcon = null;
-            // Tray is STRICTLY optional (DESIGN-XPLAT.md) — e.g. Linux StatusNotifier may simply
+            // Tray is STRICTLY optional (docs/architecture.md) - e.g. Linux StatusNotifier may simply
             // not render one. Never let this stop the hotkey/pipe-listener startup.
             FileLog.Write(
                 $"RoeSnip: tray icon unavailable ({ex.Message}). The app remains fully operable via " +

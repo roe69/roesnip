@@ -31,7 +31,7 @@ namespace RoeSnip.App.AppShell;
 /// Linux/macOS: this whole feature is HIDDEN (not merely disabled) from Settings — see
 /// SettingsWindow.axaml's ElevatedStartupSection.IsVisible. UIPI and Scheduled Tasks are both
 /// Windows-only concepts; there is no portable equivalent to degrade to. Accepted limitation,
-/// tracked in docs/PARITY.md.</summary>
+/// tracked in docs/parity.md.</summary>
 public static class ElevationManager
 {
     public const string TaskName = "RoeSnip.App";

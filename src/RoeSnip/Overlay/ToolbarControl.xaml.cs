@@ -571,7 +571,7 @@ public partial class ToolbarControl : UserControl
     }
 
     /// <summary>Cross-monitor selection: while the current selection spans multiple monitors,
-    /// annotations stay off (see docs/DESIGN-MULTIMON-SELECTION.md — evaluated alongside the
+    /// annotations stay off (see docs/architecture.md - evaluated alongside the
     /// resize-after-place feature and confirmed this does NOT fall out naturally from it: resize only
     /// shares the selection RECT's own geometry across windows, not an arbitrary annotation shape's
     /// coordinate space, which would need its own cross-window design). Collapses the annotation-tool

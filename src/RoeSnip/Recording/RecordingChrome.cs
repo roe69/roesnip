@@ -512,7 +512,7 @@ internal sealed class RecordingChrome : Window
         // What can still be done with the finished take, on its own row ABOVE the prompt's two
         // answers: these act on the take, they do not answer "record another?", and neither
         // dismisses the prompt - copying twice or saving a second copy is a normal thing to want.
-        // Text, not icons, for the same reason Done/Record another are (PARITY.md): this panel is a
+        // Text, not icons, for the same reason Done/Record another are (docs/parity.md): this panel is a
         // question, not the action bar. Hidden outright when the take has no re-usable file left
         // (a shared take, whose only copy is deleted once the upload succeeds).
         _doneCopyAgainButton = BuildButton("Copy again", isDanger: false);

@@ -8,10 +8,10 @@ using WicPixelFormat = Vortice.WIC.PixelFormat;
 
 namespace RoeSnip.Platform.Windows.Tests;
 
-/// <summary>The acceptance gate DESIGN.md requires before trusting an encoder for HDR export:
+/// <summary>The acceptance gate docs/architecture.md requires before trusting an encoder for HDR export:
 /// encode an FP16 scRGB buffer containing a value of 3.0, decode it back, and assert a value
 /// &gt; 1.0 survives (i.e. the encoder did not flatten/clip to an 8-bit [0,1] SDR format).
-/// Ported unchanged from tests/RoeSnip.Tests/JxrRoundTripTests.cs (PLAN-XPLAT.md §3.2) — the only
+/// Ported unchanged from tests/RoeSnip.Tests/JxrRoundTripTests.cs - the only
 /// mechanical edits are Core's portable MonitorInfo shape (BackendKey/Scale instead of HMonitor)
 /// and CapturedFrame's 7th constructor argument (sdrWhiteInBufferUnits = sdrWhiteNits / 80.0, the
 /// Windows convention, which is 1.0 for these tests' 80-nits monitors — preserving every original
@@ -158,7 +158,7 @@ public class JxrRoundTripTests
     public void Write_Bgra8SrgbFrame_DoesNotThrow_AndProducesFile()
     {
         var monitor = MakeMonitor(sdrWhiteNits: 240.0);
-        // Bgra8Srgb: sdrWhiteInBufferUnits is the documented "unused 1.0 sentinel" (PLAN-XPLAT.md §2.2).
+        // Bgra8Srgb: sdrWhiteInBufferUnits is the documented "unused 1.0 sentinel".
         var frame = new CapturedFrame(
             FrameFormat.Bgra8Srgb, 1, 1, 4, new byte[] { 200, 150, 100, 255 }, monitor,
             sdrWhiteInBufferUnits: 1.0);

@@ -61,7 +61,7 @@ public sealed class CaptureService
     }
 
     /// <summary>One monitor's capture with the DD→WGC fallback policy. Returns null (after logging)
-    /// if both paths failed. Consults the persisted CaptureCache memo (DESIGN.md "Failure modes",
+    /// if both paths failed. Consults the persisted CaptureCache memo (docs/architecture.md "Failure modes",
     /// DD black-frame quirk): once DD is deemed broken for a monitor, every later capture — in this
     /// process AND in future launches — goes straight to WGC instead of paying the doomed DD
     /// attempt (device creation + retry budget) again.</summary>

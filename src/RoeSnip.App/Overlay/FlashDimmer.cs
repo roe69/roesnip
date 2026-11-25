@@ -44,7 +44,7 @@ namespace RoeSnip.App.Overlay;
 /// than duplicating it at every call site. This is also what makes ROESNIP_NO_FLASH=1's fallback
 /// path (direct capture-then-show — see AppShell/TrayApp.TriggerCapture) the PERMANENT behavior on
 /// Linux/macOS: Wayland in particular forbids a client positioning its own window at all, so
-/// off-screen parking cannot exist there (accepted limitation — see docs/PARITY.md). UI (dispatcher)
+/// off-screen parking cannot exist there (accepted limitation - see docs/parity.md). UI (dispatcher)
 /// thread only.
 ///
 /// Input policy: the windows deliberately SWALLOW input rather than click through — while the flash
@@ -269,7 +269,7 @@ internal static class FlashDimmer
         // that never claims foreground, but it DOES change what WindowFromPoint(cursor) resolves to,
         // which can independently make an already-hovering tooltip's own hover-tracking
         // (TrackMouseEvent) self-dismiss via WM_MOUSELEAVE. That residual path is not touched by this
-        // removal; see docs/CAPTURE-FIDELITY-SPEC.md item 1.
+        // removal; see docs/architecture.md "Capture".
 
         // DispatcherPriority.Loaded sits just below Render, so this flush drains every pending
         // layout/render operation without dispatching lower-priority queued work (matches the WPF

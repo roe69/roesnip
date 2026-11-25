@@ -118,7 +118,7 @@ public sealed class Magnifier : FrameworkElement
     /// previous selection is never drawn during the pending-click phase, a Move/Resize drag (where
     /// the whole magnifier is separately hidden), or blur/pixelate region placement (where
     /// <see cref="SelectionPx"/> holds the unrelated, already-confirmed crop rect, not the region
-    /// being placed). See CAPTURE-FIDELITY-SPEC.md §3 for the full state table this implements.
+    /// being placed). See docs/architecture.md "Overlay" for the full state table this implements.
     /// Same no-InvalidateVisual reasoning as <see cref="SelectionPx"/> applies.</summary>
     public bool ShowSelectionPreview { get; set; }
 

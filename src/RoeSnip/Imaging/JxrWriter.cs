@@ -7,10 +7,10 @@ using WicPixelFormat = Vortice.WIC.PixelFormat;
 
 namespace RoeSnip.Imaging;
 
-/// <summary>Writes the untouched HDR original (DESIGN.md "Save HDR") as JPEG XR — no annotations,
+/// <summary>Writes the untouched HDR original (docs/architecture.md "Save HDR") as JPEG XR - no annotations,
 /// raw crop, FP16 scRGB values preserved above 1.0 (headroom).
 ///
-/// Encoder choice (per the acceptance gate in DESIGN.md / PLAN.md §3.3, actually run — not
+/// Encoder choice (per the acceptance gate in docs/architecture.md, actually run - not
 /// guessed): WPF's <c>WmpBitmapEncoder</c>/<c>BitmapDecoder</c> pair was tried first and FAILS the
 /// round-trip test — WPF flattens JXR to 32bpp Pbgra32 on *both* encode and decode regardless of
 /// the source <see cref="System.Windows.Media.PixelFormats.Rgba128Float"/> bitmap supplied to it
@@ -120,7 +120,7 @@ public static class JxrWriter
                 BitConverter.TryWriteBytes(buffer.AsSpan(o, 4), v.X);
                 BitConverter.TryWriteBytes(buffer.AsSpan(o + 4, 4), v.Y);
                 BitConverter.TryWriteBytes(buffer.AsSpan(o + 8, 4), v.Z);
-                // Captured alpha isn't meaningful (per DESIGN.md); the HDR export is always opaque.
+                // Captured alpha isn't meaningful (per docs/architecture.md); the HDR export is always opaque.
                 BitConverter.TryWriteBytes(buffer.AsSpan(o + 12, 4), 1f);
             }
         }

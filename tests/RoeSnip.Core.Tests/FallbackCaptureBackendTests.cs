@@ -8,7 +8,7 @@ using Xunit;
 
 namespace RoeSnip.Core.Tests;
 
-/// <summary>Port of the WPF app's CaptureServiceTests (PLAN-XPLAT.md §3.1): the same
+/// <summary>Port of the WPF app's CaptureServiceTests: the same
 /// fallback/omission/memoization/ordering assertions, exercised against the generalized
 /// FallbackCaptureBackend (two fake IScreenCapturers in priority order) instead of the old
 /// CaptureService(primary, fallback, cache) 3-arg constructor, which no longer exists —

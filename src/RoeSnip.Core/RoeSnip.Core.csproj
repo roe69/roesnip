@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Pinned 2026-07 to Avalonia.Skia 12.0.5's own SkiaSharp floor exactly — see PLAN-XPLAT.md §1.2. -->
+    <!-- Pinned 2026-07 to Avalonia.Skia 12.0.5's own SkiaSharp floor exactly. -->
     <PackageReference Include="SkiaSharp" Version="3.119.4" />
   </ItemGroup>
 

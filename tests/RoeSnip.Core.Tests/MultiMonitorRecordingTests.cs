@@ -13,7 +13,7 @@ namespace RoeSnip.Core.Tests;
 /// no-live-encoder convention.</summary>
 public class MultiMonitorRecordingTests
 {
-    // Three-monitor layout used throughout, modeled on a real dev rig noted in TESTING.md:
+    // Three-monitor layout used throughout, modeled on a real dev rig noted in docs/testing.md:
     // DISPLAY3 primary at (0,0)-(2560,1440), DISPLAY1 directly above it at (0,-1440)-(2560,0), and
     // DISPLAY2 to the right of DISPLAY3 at (2560,0)-(4480,1440). BackendKey/Scale replace the WPF
     // app's own MonitorInfo's HMonitor field here — this portable MonitorInfo has no live handle

@@ -8,7 +8,7 @@ namespace RoeSnip.App.Overlay;
 
 /// <summary>The toolbar palette's right-click "Replace..." picker. WPF's own version
 /// (OverlayWindow.xaml.cs TryPickColorFromDialog) opens a native System.Windows.Forms.ColorDialog,
-/// which has no Avalonia/cross-platform equivalent; per PARITY.md item 08, the closest in-toolkit
+/// which has no Avalonia/cross-platform equivalent; per docs/parity.md item 08, the closest in-toolkit
 /// substitute is this small owned Flyout anchored to the swatch that was right-clicked: a quick-pick
 /// grid of the same ten <see cref="SwatchPalette.DefaultColors"/> plus a typed "#RRGGBB" hex box.
 /// Framework-bound (Flyout/TextBox), unlike SwatchPalette's own pure list logic, so it deliberately

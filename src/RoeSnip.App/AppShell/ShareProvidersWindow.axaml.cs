@@ -11,7 +11,7 @@ using RoeSnip.Core.Sharing;
 
 namespace RoeSnip.App.AppShell;
 
-/// <summary>Avalonia port of the WPF app's ShareProvidersWindow (PARITY.md item 12) — master list
+/// <summary>Avalonia port of the WPF app's ShareProvidersWindow (docs/parity.md item 12) - master list
 /// for the Sharing/* subsystem's settings UI (SettingsWindow's "Providers..." button): every
 /// built-in provider (ShareProviderCatalog.BuiltIns), whether configured yet or not, plus every
 /// "Custom..." one the user has added, each with a quick Enabled toggle and a "Configure" button
@@ -83,7 +83,7 @@ public partial class ShareProvidersWindow : Window
             subtitleParts.Add("custom");
         }
 
-        // Settings redesign pass (docs/PARITY.md item 23): the "untested" case no longer gets a
+        // Settings redesign pass (docs/parity.md item 23): the "untested" case no longer gets a
         // distinct warning color at all - the word itself plus the dedicated UntestedBadgeText
         // banner in the edit window already say it; a second color for the same fact is exactly
         // the "invent a warning color" pattern the design language forbids. WarnBrush is retired.
@@ -133,7 +133,7 @@ public partial class ShareProvidersWindow : Window
         };
     }
 
-    // Settings redesign pass (docs/PARITY.md item 23): these were plain static brushes with their
+    // Settings redesign pass (docs/parity.md item 23): these were plain static brushes with their
     // own hardcoded hex, not one of the app's real Rl* tokens (RlBgElevatedBrush is #18181D vs.
     // the old PanelBrush's identical-looking but independently-typed-out #18181D, RlBorderBrush
     // vs. an independently-typed #12FFFFFF, RlTextMutedBrush's real #A2A2AB vs. the old #9A9A9A

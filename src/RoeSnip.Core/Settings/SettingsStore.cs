@@ -8,7 +8,7 @@ namespace RoeSnip.Core.Settings;
 
 /// <summary>JSON persistence for <see cref="RoeSnipSettings"/> at <c>settings.json</c> in the
 /// portable per-OS config directory (<see cref="ConfigPaths.ConfigDirectory"/>). Fail-closed per
-/// DESIGN.md: any problem reading the file (missing, empty, unreadable, malformed JSON) returns
+/// docs/architecture.md: any problem reading the file (missing, empty, unreadable, malformed JSON) returns
 /// <see cref="RoeSnipSettings.Default"/> WITHOUT writing to or otherwise touching the file — a
 /// corrupt file on disk is left exactly as it was found so a user/support session can inspect it
 /// later. <see cref="Save(RoeSnipSettings)"/> writes atomically (temp file in the same directory,

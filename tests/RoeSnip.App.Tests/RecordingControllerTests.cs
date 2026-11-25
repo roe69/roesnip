@@ -58,7 +58,7 @@ public class RecordingControllerTests
 /// teardown path, none of which touch a real capture backend/encoder (mirrors this file's own
 /// existing precedent - RoundDownToEven above is the only slice of RecordingController.cs that was
 /// unit-testable without one; BeginCapture itself needs a real WGC session and is exercised live via
-/// --record-smoketest / the automation harness instead, per item 20's own PARITY.md note).</summary>
+/// --record-smoketest / the automation harness instead, per item 20's own docs/parity.md note).</summary>
 public class RecordingSessionSetupPhaseTests
 {
     private static MonitorInfo TestMonitor() => new(

@@ -21,7 +21,7 @@ namespace RoeSnip.App.AppShell;
 
 /// <summary>Wire contract for the dev-gated automation channel — ported from the frozen WPF app's
 /// src/RoeSnip/App/AutomationServer.cs (that file's own doc comment has the full picture;
-/// TESTING.md's "Driving RoeSnip.App programmatically" section is the user-facing reference here).
+/// docs/testing.md's "Driving the Avalonia app" section is the user-facing reference here).
 /// Split out into pure static functions — no live window, no Dispatcher, no pipe — so the JSON
 /// parse/dispatch/serialize logic is unit-testable on its own, matching the WPF app's convention.
 ///

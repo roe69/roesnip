@@ -13,7 +13,7 @@ using RoeSnip.Core.Updates;
 
 namespace RoeSnip.App.AppShell;
 
-/// <summary>Avalonia port of the WPF app's SettingsWindow (PLAN-XPLAT.md §3.2): same fields
+/// <summary>Avalonia port of the WPF app's SettingsWindow: same fields
 /// (hotkey capture, save directory picker, auto-save-HDR toggle, tone-map knee/peak overrides,
 /// run-at-startup toggle, copy-on-select toggle), same validation rules, saves via
 /// <see cref="SettingsStore.Save(RoeSnipSettings)"/> and hands the updated settings back to the
@@ -153,8 +153,8 @@ public partial class SettingsWindow : Avalonia.Controls.Window
 
         // Item 15: the elevated-startup section is Windows-only (Scheduled Tasks / UIPI have no
         // portable equivalent) - HIDE it entirely on Linux/macOS rather than showing a
-        // permanently-disabled control with no explanation (DESIGN-XPLAT.md's degrade-gracefully
-        // rule; accepted limitation, docs/PARITY.md).
+        // permanently-disabled control with no explanation (docs/architecture.md's degrade-gracefully
+        // rule; accepted limitation, docs/parity.md).
         bool elevatedSectionSupported = OperatingSystem.IsWindows();
         ElevatedStartupSection.IsVisible = elevatedSectionSupported;
         ElevatedStartupDivider.IsVisible = elevatedSectionSupported;
@@ -300,7 +300,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         }
 
         // Copy shortened from "Currently running as administrator: {yes|no}" (settings redesign
-        // pass, docs/PARITY.md item 23) - same information, reads as a status line under the
+        // pass, docs/parity.md item 23) - same information, reads as a status line under the
         // caption above instead of a third same-weight line.
         ElevationStatusText.Text = $"Currently: {(elevatedNow ? "running as administrator" : "not elevated")}";
 
@@ -780,7 +780,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     }
 
     /// <summary>Maps an Avalonia <see cref="Key"/> to the Windows virtual-key code the settings
-    /// store persists (PLAN-XPLAT.md §2.6: HotkeyModifiers/HotkeyVirtualKey keep their Windows
+    /// store persists (HotkeyModifiers/HotkeyVirtualKey keep their Windows
     /// VK/MOD_* shape on every OS). The inverse of HotkeyManager.VirtualKeyToKeyCode's coverage —
     /// the same key set is supported on both ends.</summary>
     internal static uint? MapKeyToVirtualKey(Key key) => key switch

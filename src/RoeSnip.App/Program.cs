@@ -12,7 +12,7 @@ using RoeSnip.Core.Settings;
 namespace RoeSnip.App;
 
 /// <summary>Data-only result of one overlay session — identical fields to the WPF app's
-/// OverlayResult (PLAN.md §2.4 / PLAN-XPLAT.md §2.8). The Overlay package (WP-X3) produces this;
+/// OverlayResult. The overlay package produces this;
 /// it performs Copy (clipboard) and Save (PNG dialog + file write) itself before returning. Only
 /// the cross-cutting bits (HDR export, "saved" balloon) are threaded back through AppComposition.</summary>
 public sealed record OverlayResult(
@@ -63,7 +63,7 @@ public interface ITrayNotifier
     // mirroring the WPF app's identical removal.
 }
 
-/// <summary>CliMode gains two new verbs beyond the WPF app's CliOptions (PLAN-XPLAT.md §2.8):
+/// <summary>CliMode gains two new verbs beyond the WPF app's CliOptions:
 /// TriggerCapture ("RoeSnip capture" — signal a running instance to run the interactive overlay
 /// flow, or become the resident instance and do so if none is running) and TriggerSettings
 /// ("RoeSnip settings" — open the settings window in the running/new instance). Diag/Capture
@@ -151,8 +151,8 @@ public sealed record CliOptions(CliMode Mode, int? Monitor, string? Out, bool Jx
     }
 }
 
-/// <summary>Composition root — direct analog of Phase 1's AppComposition (PLAN.md §2.4), per
-/// PLAN-XPLAT.md §2.8. WP-X3 registers <see cref="RunOverlay"/> from Overlay/OverlayController.cs
+/// <summary>Composition root - direct analog of Phase 1's AppComposition.
+/// The overlay package registers <see cref="RunOverlay"/> from Overlay/OverlayController.cs
 /// via [ModuleInitializer]; the Windows HDR-export hook is wired by
 /// <see cref="Program.RegisterPlatformHooks"/> (Platform.Windows cannot itself reference this
 /// assembly — the plan's "set by JxrWriter" note is realized as App-side wiring on the windows
@@ -160,12 +160,12 @@ public sealed record CliOptions(CliMode Mode, int? Monitor, string? Out, bool Jx
 /// simplification of the LoadSettings hook); the hook property is kept for structural parity.</summary>
 public static class AppComposition
 {
-    // Kept for drop-in structural parity with Phase 1 (PLAN-XPLAT.md §2.8's own note allows the
+    // Kept for drop-in structural parity with Phase 1: the
     // direct SettingsStore.Load() route, which the shell uses; this hook stays null unless a test
     // wants to inject settings).
     public static Func<RoeSnipSettings>? LoadSettings { get; set; }
 
-    // Set by Overlay/OverlayController.cs (WP-X3) via [ModuleInitializer]. The trailing
+    // Set by Overlay/OverlayController.cs via [ModuleInitializer]. The trailing
     // ITrayNotifier? (Sharing/* subsystem, item 12) is what OverlaySession.ShareCurrentSelection/
     // ShareToSpecificProvider use to surface the toolbar Share button's result (URL-copied balloon /
     // honest error balloon) - it has to be in hand for the WHOLE overlay session (Share can be
@@ -208,7 +208,7 @@ public static class AppComposition
 
     // Set by AppShell/TrayApp.cs alongside RunTrayApp: runs the resident tray app and performs
     // an initial action (capture/settings) once startup completes — the "become the resident
-    // instance" half of the bare CLI verbs (PLAN-XPLAT.md §3.2 / §6 flag 4).
+    // instance" half of the bare CLI verbs.
     internal static Func<AppShell.InstanceSignal, int>? RunResidentWithInitialAction { get; set; }
 
     internal static RoeSnipSettings LoadSettingsOrDefault()
@@ -225,7 +225,7 @@ public static class AppComposition
     }
 
     /// <summary>Implements --diag. Same output shape as the WPF app's RunDiagCli (a direct A/B
-    /// check against src/RoeSnip's own --diag on the same machine, PLAN-XPLAT.md §4), plus the
+    /// check against src/RoeSnip's own --diag on the same machine), plus the
     /// active backend name on stderr.</summary>
     public static int RunDiagCli()
     {
@@ -304,7 +304,7 @@ public static class AppComposition
         {
             // MacCaptureBackend.CaptureAll deliberately propagates this instead of omitting every
             // monitor (§2.3's usual "log + omit" contract) because a TCC denial is a first-class,
-            // UI-surfaced error per DESIGN-XPLAT.md — without this catch it reached here as an
+            // UI-surfaced error per docs/architecture.md - without this catch it reached here as an
             // unhandled exception and crashed the CLI with a raw exception dump instead of the
             // designed grant-Screen-Recording message (P4 audit fix).
             return ReportScreenRecordingPermissionDenied(ex);
@@ -414,7 +414,7 @@ public static class AppComposition
     /// <summary>Implements the bare "capture" verb: signal an already-running instance over
     /// AppShell/SingleInstance.cs (the resident instance does the work and this process exits 0),
     /// or — if none is running — become the resident instance, complete normal tray startup, and
-    /// then immediately trigger the capture flow (PLAN-XPLAT.md §3.2 / §6 flag 4: the process
+    /// then immediately trigger the capture flow (the process
     /// stays resident afterwards; it does NOT exit after one shot).</summary>
     public static int RunTriggerCapture() => RunTrigger(AppShell.InstanceSignal.TriggerCapture);
 
@@ -717,7 +717,7 @@ public static class AppComposition
                         // Only surface this when the user explicitly asked for it; a silent
                         // auto-save setting shouldn't nag on every capture on a platform whose
                         // backend has no HDR export path (SupportsHdrExport == false, v1
-                        // non-Windows — DESIGN-XPLAT.md).
+                        // non-Windows - docs/architecture.md).
                         notifier?.ShowError("HDR export is not available on this platform/build.");
                     }
                 }
@@ -867,8 +867,8 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        // OutputType is WinExe on Windows (orchestrator-approved override to PLAN-XPLAT.md §6
-        // flag 7) — reattach to the invoking terminal's console so CLI verbs still print.
+        // OutputType is WinExe on Windows (overridden from the
+        // library default) - reattach to the invoking terminal's console so CLI verbs still print.
         TryAttachParentConsole();
 
         // Field-visible diagnostics (filelog-sink): as early as possible, before anything else in
@@ -917,8 +917,8 @@ public static class Program
         // Platform assemblies self-register their ICaptureBackend via [ModuleInitializer], which
         // only runs when the assembly is LOADED — and .NET loads assemblies lazily on first type
         // reference. Force-load every referenced Platform.* assembly up front so
-        // CaptureBackendRegistry selection sees all candidates (PLAN.md §4's ModuleInitializer
-        // ordering caveat, resolved deterministically here).
+        // CaptureBackendRegistry selection sees all candidates (ModuleInitializer
+        // ordering across assemblies is unspecified, so it is resolved deterministically here).
         EnsurePlatformAssembliesLoaded();
         RegisterPlatformHooks();
 
@@ -976,8 +976,8 @@ public static class Program
     private static void RegisterPlatformHooks()
     {
 #if WINDOWS
-        // Realizes PLAN-XPLAT.md §2.8's "WriteHdrExport set by RoeSnip.Platform.Windows's
-        // JxrWriter": Platform.Windows cannot reference this assembly (App references it, not
+        // Wires the "WriteHdrExport set by RoeSnip.Platform.Windows's
+        // JxrWriter" hook: Platform.Windows cannot reference this assembly (App references it, not
         // vice versa), so the App wires the hook on the windows TFM instead. Compiled only when
         // Platform.Windows is referenced (windows TFM, win/empty RID).
         AppComposition.WriteHdrExport = RoeSnip.Platform.Windows.JxrWriter.Write;

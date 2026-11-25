@@ -8,7 +8,7 @@ namespace RoeSnip.App.Tests;
 /// AppShell/AutomationServer.cs's own doc comment) — no live window, no Dispatcher, no pipe. Ported
 /// from the WPF app's tests/RoeSnip.Tests/AutomationProtocolTests.cs; the live half (actually
 /// driving OverlayController) is verified end-to-end against a resident process, not here — see
-/// TESTING.md's "Driving RoeSnip.App programmatically" section. "confirm" accepts copy|save|share,
+/// docs/testing.md's "Driving the Avalonia app" section. "confirm" accepts copy|save|share,
 /// matching the WPF suite exactly (Sharing/* subsystem, item 12).</summary>
 public class AutomationProtocolTests
 {

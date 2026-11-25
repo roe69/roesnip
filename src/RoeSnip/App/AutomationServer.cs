@@ -20,7 +20,7 @@ using RoeSnip.Core.Recording.Gif;
 namespace RoeSnip.App;
 
 /// <summary>Wire contract for the dev-gated automation channel (App/AutomationServer.cs's own doc
-/// comment has the full picture; TESTING.md's "Driving RoeSnip programmatically" section is the
+/// comment has the full picture; docs/testing.md's "Driving the WPF app" section is the
 /// user-facing reference). Split out into pure static functions — no live window, no Dispatcher, no
 /// pipe — so the JSON parse/dispatch/serialize logic is unit-testable on its own, same as the rest
 /// of this repo's convention of making the testable slice a plain public class instead of adding an

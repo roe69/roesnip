@@ -13,11 +13,11 @@ using RoeSnip.Interop;
 
 namespace RoeSnip.Capture;
 
-/// <summary>Fallback capture path per DESIGN.md: Windows.Graphics.Capture via
+/// <summary>Fallback capture path per docs/architecture.md: Windows.Graphics.Capture via
 /// IGraphicsCaptureItemInterop.CreateForMonitor, using Direct3D11CaptureFramePool.CreateFreeThreaded
 /// (NOT plain Create, which needs a DispatcherQueue and throws from CLI/console contexts). Covers
 /// RDP and other Desktop-Duplication-denied contexts. The yellow capture border may appear
-/// (unpackaged apps lack the graphicsCaptureWithoutBorder capability) — accepted per DESIGN.md,
+/// (unpackaged apps lack the graphicsCaptureWithoutBorder capability) - accepted per docs/architecture.md,
 /// since Desktop Duplication (the primary path) is borderless.
 ///
 /// Pre-provisioning (r5-latency): the expensive parts of a WGC capture — creating the D3D11
@@ -531,7 +531,7 @@ public sealed class WgcCapturer : IScreenCapturer
         try
         {
             // WGC doesn't expose a "delivered format" the way Desktop Duplication does — request
-            // FP16 for advanced-color displays, BGRA8 otherwise (DESIGN.md's one legitimate use of
+            // FP16 for advanced-color displays, BGRA8 otherwise (docs/architecture.md's one legitimate use of
             // AdvancedColorActive for branching).
             DirectXPixelFormat pixelFormat = monitor.AdvancedColorActive
                 ? DirectXPixelFormat.R16G16B16A16Float
@@ -542,7 +542,7 @@ public sealed class WgcCapturer : IScreenCapturer
             session = framePool.CreateCaptureSession(resources.Item);
             // Deliberate, not a gap: screenshots never include the OS cursor (contrast
             // Recording/WindowsRegionCaptureSource.cs / RegionRecorder.cs, which explicitly enable
-            // cursor capture for recordings). See CAPTURE-FIDELITY-SPEC.md item 2 — a "cursor
+            // cursor capture for recordings). See docs/architecture.md "Capture" - a "cursor
             // missing from my screenshot" report is this, not a bug.
             session.IsCursorCaptureEnabled = false;
             try { session.IsBorderRequired = false; }
@@ -714,7 +714,7 @@ public sealed class WgcCapturer : IScreenCapturer
 
     /// <summary>The default-interface IID of GraphicsCaptureItem (IGraphicsCaptureItem), resolved
     /// from the projection assembly at runtime; falls back to the well-known published GUID if the
-    /// internal ABI type can't be found (projection implementation detail, per PLAN.md flag on
+    /// internal ABI type can't be found (projection implementation detail, a known
     /// IGraphicsCaptureItemInterop's stability).</summary>
     private static Guid ResolveGraphicsCaptureItemIid()
     {

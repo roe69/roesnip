@@ -3,8 +3,8 @@ using System.Runtime.InteropServices;
 
 namespace RoeSnip.Platform.Windows.Interop;
 
-/// <summary>Ported verbatim from src/RoeSnip/Interop/NativeMethods.cs (PLAN.md §5's P/Invoke
-/// appendix) — only the namespace changed (PLAN-XPLAT.md §3.2).</summary>
+/// <summary>Ported verbatim from src/RoeSnip/Interop/NativeMethods.cs with
+/// only the namespace changed - only the namespace changed.</summary>
 public static class NativeMethods
 {
     // ---------- Basic structs ----------

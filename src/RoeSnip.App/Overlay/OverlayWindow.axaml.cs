@@ -29,7 +29,7 @@ namespace RoeSnip.App.Overlay;
 /// All selection/annotation/crop math is physical pixels; DIPs from Avalonia pointer events are
 /// converted via <see cref="_scaleX"/>/<see cref="_scaleY"/> (from the correlated Screen's
 /// Scaling — Avalonia's direct analog of WPF's CompositionTarget.TransformToDevice M11/M22) at
-/// the point of use, per the mixed-DPI contract (PLAN-XPLAT.md §3.3). Ported from the frozen WPF
+/// the point of use, per the mixed-DPI contract. Ported from the frozen WPF
 /// app's src/RoeSnip/Overlay/OverlayWindow.xaml(.cs); interaction behavior is intended to be
 /// identical, including the 4px click-vs-drag threshold and the Esc staging.</summary>
 public partial class OverlayWindow : Window
@@ -946,11 +946,11 @@ public partial class OverlayWindow : Window
                         break; // still a click candidate, not a drag — don't disturb any selection
                     }
                     _newSelectionPending = false;
-                    _onSelectionStarted(this); // clears other monitors' selections, per DESIGN.md
+                    _onSelectionStarted(this); // clears other monitors' selections, per docs/architecture.md
                 }
                 // Cross-monitor selection (item 09): _dragAnchorPx/px are THIS window's own local
                 // physical pixels, deliberately never clamped to this window's frame during the drag
-                // (see docs/DESIGN-MULTIMON-SELECTION.md) — pointer capture keeps delivering these
+                // (see docs/architecture.md) - pointer capture keeps delivering these
                 // even once the cursor has visually left this window. Translate to virtual-desktop
                 // coordinates (this window's own monitor origin folded in) before handing it to the
                 // session, which distributes each monitor's own intersection back out via
@@ -1811,7 +1811,7 @@ public partial class OverlayWindow : Window
             _toolbar.PaletteReplaceRequested += OnPaletteReplaceRequested;
 
             // "Save HDR is Windows-only v1 (backend capability flag hides the button elsewhere)"
-            // — DESIGN-XPLAT.md; the flag reaches the overlay as the composition root's
+            // - docs/architecture.md; the flag reaches the overlay as the composition root's
             // WriteHdrExport hook being non-null (set by WP-X2 from Platform.Windows's JxrWriter).
             // O3 audit fix: gate on the RUNTIME capability too — WriteHdrExport being non-null only
             // means Platform.Windows was compiled in, not that THIS frame can actually be exported
@@ -2150,7 +2150,7 @@ public partial class OverlayWindow : Window
         }
     }
 
-    // ---------- Inline text annotation (cuttable per PLAN.md §3.2 if it endangers the milestone) ----------
+    // ---------- Inline text annotation ----------
 
     /// <summary>Double-click on a placed Text annotation (Select tool, or any tool — placed shapes
     /// are always clickable) reopens this SAME inline editor at the shape's own position, prefilled

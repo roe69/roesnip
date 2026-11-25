@@ -56,7 +56,7 @@ public readonly record struct SpanningDistribution(
 /// deviation from the WPF original is that <see cref="ApplyResize"/> takes plain (double x, double y)
 /// instead of a WPF/Avalonia Point — this project has no UI-framework dependency at all (see
 /// RoeSnip.Core.Overlay.AnnotationGeometry for the same "plain doubles, not a framework Point"
-/// convention already established for the annotation math). See docs/DESIGN-MULTIMON-SELECTION.md.</summary>
+/// convention already established for the annotation math). See docs/architecture.md.</summary>
 public static class SpanningSelectionMath
 {
     /// <summary>The union of every monitor's own bounds — the outer box a spanning drag candidate

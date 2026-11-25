@@ -8,8 +8,8 @@ using SharpHook.Data;
 namespace RoeSnip.App.AppShell;
 
 /// <summary>Global capture hotkey via SharpHook's <see cref="TaskPoolGlobalHook"/>
-/// (PLAN-XPLAT.md §3.2/§5). The settings' HotkeyModifiers/HotkeyVirtualKey keep their Windows
-/// VK/MOD_* shapes (PLAN-XPLAT.md §2.6); this class translates them to SharpHook's OS-independent
+/// - the settings' HotkeyModifiers/HotkeyVirtualKey keep their Windows
+/// VK/MOD_* shapes; this class translates them to SharpHook's OS-independent
 /// key codes, so the same stored combination works on Windows, macOS (Accessibility permission
 /// required — surfaced by the failed-start log, not assumed) and X11 Linux. On Wayland the hook is
 /// never started (libuiohook is X11-only): <c>LinuxGlobalShortcuts</c> binds the hotkey
@@ -210,7 +210,7 @@ public sealed class HotkeyManager : IDisposable
         bool isWayland = IsWaylandSession();
         if (OperatingSystem.IsLinux() && isWayland)
         {
-            // libuiohook is X11-only (PLAN-XPLAT.md §5) — never start the hook on Wayland;
+            // libuiohook is X11-only - never start the hook on Wayland;
             // starting-then-failing and never-starting both end in "no global hotkey", but
             // never-starting avoids a confusing failure log on every launch.
             FileLog.Write(

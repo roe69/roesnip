@@ -16,7 +16,7 @@ namespace RoeSnip.Core.Sharing;
 /// feature's implementation (2026-07); see each entry's own Notes for what was confirmed and what
 /// wasn't. Anything that couldn't be pinned down precisely is marked Verified=false ("untested" in
 /// the settings UI) rather than shipped as if it were equally solid - none of these specs has yet
-/// been exercised over the real network by this codebase (see TESTING.md).</summary>
+/// been exercised over the real network by this codebase.</summary>
 public static class ShareProviderCatalog
 {
     /// <summary>RoeShare (E:\GitHub\RoeLite\roeshare) - the primary, self-hosted target. Uses the

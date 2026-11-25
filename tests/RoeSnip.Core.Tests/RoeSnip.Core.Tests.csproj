@@ -18,7 +18,7 @@
     </PackageReference>
     <!-- RoeSnip.Core itself stays native-asset-agnostic (the App supplies natives transitively via
          Avalonia.Skia); this test project needs its own native asset since it never references
-         Avalonia — PLAN-XPLAT.md §1.2. -->
+         Avalonia. -->
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.4" />
   </ItemGroup>
 

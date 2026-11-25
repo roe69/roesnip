@@ -15,7 +15,7 @@ using RoeSnip.Core.Sharing;
 
 namespace RoeSnip.App.AppShell;
 
-/// <summary>Avalonia port of the WPF app's ShareProviderEditWindow (PARITY.md item 12) — the
+/// <summary>Avalonia port of the WPF app's ShareProviderEditWindow (docs/parity.md item 12) - the
 /// per-provider detail form: for a built-in provider, just its ProviderSpec.ConfigFields (e.g.
 /// RoeShare's Server URL + API key) plus Enabled/DisplayName — the request shape itself (which IS
 /// the built-in spec) is not editable here, only looked up fresh from ShareProviderCatalog every
@@ -403,7 +403,7 @@ public partial class ShareProviderEditWindow : Window
 
     // ---------- Shared dark-palette brushes + the owned Yes/No confirm (Avalonia has no MessageBox) ----------
 
-    // Settings redesign pass (docs/PARITY.md item 23): resolved from Application.Resources
+    // Settings redesign pass (docs/parity.md item 23): resolved from Application.Resources
     // instead of independently-typed-out hex, so TestStatusText's three states use the app's
     // real tokens. Three of these are deliberate VALUE changes, mirroring the WPF app's own
     // MutedBrush/OkBrush/ErrorBrush alias repoint: OkBrush was #FF4A9EFF (an invented blue

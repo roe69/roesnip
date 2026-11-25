@@ -49,7 +49,7 @@ public sealed class SelectionAdorner : FrameworkElement
     // so WPF can share them across renders. Widths are in DIPs (this is view-layer chrome).
     // Internal (not private): Magnifier reuses these exact frozen instances to draw the loupe's
     // selection-border preview, so the preview is unambiguously "this is the crop edge" rather than
-    // a new, invented style — see CAPTURE-FIDELITY-SPEC.md §3.
+    // a new, invented style - see docs/architecture.md "Overlay".
     internal static readonly Pen BorderUnderPen = CreateFrozenPen(Color.FromArgb(0xB0, 0x00, 0x00, 0x00), 1.0, null);
     internal static readonly Pen BorderDashPen = CreateFrozenPen(
         Color.FromArgb(0xFF, 0xDC, 0xDC, 0xE0), 1.0, new DashStyle(new double[] { 3, 3 }, 0));

@@ -11,7 +11,7 @@ using RoeSnip.Core.Updates;
 namespace RoeSnip.App.AppShell;
 
 /// <summary>The single byte sent over the single-instance pipe — extends the WPF app's fixed
-/// single meaning (capture) to a small enum matching the two bare CLI verbs (PLAN-XPLAT.md §3.2)
+/// single meaning (capture) to a small enum matching the two bare CLI verbs
 /// plus <see cref="Exit"/> (item 13a), which implements replace-on-run: a plain (no-flag) launch
 /// asks the resident instance to exit instead of capturing, mirroring the WPF app's TrayApp.cs:
 /// 46-133 semantics ("just run the exe" always means "run the latest build", never "poke whatever
@@ -25,14 +25,14 @@ public enum InstanceSignal : byte
 }
 
 /// <summary>Single-instance enforcement: named mutex + named pipe, ported from the WPF app's
-/// TrayApp (SignalExistingInstance/ListenForSignalAsync, PLAN.md §3.3) per PLAN-XPLAT.md §3.2.
-/// .NET named pipes are Unix domain sockets on macOS/Linux and named Mutex works cross-platform
-/// (PLAN-XPLAT.md section 5), so this code is OS-conditional only in the names (off Windows they carry
+/// TrayApp (SignalExistingInstance/ListenForSignalAsync).
+/// .NET named pipes are Unix domain sockets on macOS/Linux and named Mutex works cross-platform,
+/// so this code is OS-conditional only in the names (off Windows they carry
 /// the user name and the mutex is Global\, see PipeName).
 ///
 /// DELIBERATE deviation from §3.2's literal names: the plan reuses the frozen WPF app's exact
 /// mutex/pipe names ("RoeSnip-SingleInstance"/"RoeSnip-SingleInstance-Capture"), but both apps run
-/// side by side on the verification machine this cycle (PLAN-XPLAT.md §4's own A/B checklist), and
+/// side by side on the verification machine, and
 /// sharing names would make whichever app launches second silently signal the OTHER app's capture
 /// flow and exit. Distinct names ("RoeSnip.App-...") keep the two products' instances independent;
 /// flagged in the WP-X2 report for the integrator.</summary>

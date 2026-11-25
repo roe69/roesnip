@@ -49,7 +49,7 @@ public static class OverlayController
 {
     /// <summary>One OverlayWindow per monitor; runs until the user cancels (Esc) or confirms
     /// (Enter / double-click / toolbar action). Returns null on cancel. On confirm, performs
-    /// Copy/Save side effects itself (clipboard + PNG dialog) per DESIGN.md, then returns a
+    /// Copy/Save side effects itself (clipboard + PNG dialog) per docs/architecture.md, then returns a
     /// populated OverlayResult. Matches the AppComposition.RunOverlay hook signature exactly.
     /// <paramref name="notifier"/> (Sharing/* subsystem addition) is the same ITrayNotifier
     /// RunCaptureFlowAsync already threads into StartRecording — the toolbar's Share button needs
@@ -435,7 +435,7 @@ public static class OverlayController
     /// dialog entirely — same production render/write calls Confirm/ConfirmSpanning already use,
     /// just without the interactive picker. Added specifically so a spanning selection's Copy/Save
     /// path — the one place this feature has no other test lever — can be driven and verified
-    /// end-to-end; see docs/DESIGN-MULTIMON-SELECTION.md. See SetSelectionForAutomation's doc
+    /// end-to-end; see docs/architecture.md. See SetSelectionForAutomation's doc
     /// comment for why this reads s_activeSession into a local and branches on it instead of "?."
     /// + "??".</summary>
     internal static string? ConfirmForAutomation(string action, string? path)
@@ -638,7 +638,7 @@ public static class OverlayController
         // _windows.FirstOrDefault(w => w.SelectionPx is not null)) are what run in that case,
         // completely unchanged. These two fields are only ever non-null while a NewSelection,
         // SpanningResize, or SpanningMove drag's candidate rect has been distributed across ≥2
-        // monitors — see OnSpanningCandidate. See docs/DESIGN-MULTIMON-SELECTION.md for the full
+        // monitors - see OnSpanningCandidate. See docs/architecture.md for the full
         // design.
         private RectPhysical? _spanningVirtual;
         private OverlayWindow? _spanningPrimaryWindow;
@@ -989,7 +989,7 @@ public static class OverlayController
         /// already opened — treat it exactly like a normal Esc press.</summary>
         internal void CancelStageFromFlash() => OnCommand(OverlayCommand.CancelStage);
 
-        /// <summary>Mouse-enter (or a click) on another overlay activates it, per DESIGN.md — only
+        /// <summary>Mouse-enter (or a click) on another overlay activates it, per docs/architecture.md - only
         /// the OS-focused window receives keyboard input, so this is what lets Esc/Enter/Ctrl+C/
         /// Ctrl+S/Ctrl+Z "work from any monitor."</summary>
         private void OnActivatedByMouse(OverlayWindow window)
@@ -1214,7 +1214,7 @@ public static class OverlayController
         /// FP16/tone-mapping — this only ever combines bytes each window's own OverlayWindow.Preview
         /// already tone-mapped with ITS OWN monitor's photometrics, per the hard constraint. Gaps (no
         /// captured monitor covers part of the rect) are left OPAQUE BLACK — a deliberate, documented
-        /// choice (see docs/DESIGN-MULTIMON-SELECTION.md), not an accidental default. Annotations are
+        /// choice (see docs/architecture.md), not an accidental default. Annotations are
         /// never burned in here: a spanning selection can never have any (see
         /// OverlayWindow.SetSpanningLocalSelection), so this is a plain array composite, not a
         /// DrawingVisual/RenderTargetBitmap pass.</summary>
@@ -1257,7 +1257,7 @@ public static class OverlayController
         /// composites are geometrically identical, only the pixel source and the sink (BGRA8 canvas
         /// vs. a WIC 128bppRGBAFloat encode) differ. This is what makes the stitch well-defined
         /// despite different monitors' own SDR-white/peak photometrics (see
-        /// docs/DESIGN-MULTIMON-SELECTION.md's "HDR save for a spanning selection"): raw scRGB is ONE
+        /// docs/architecture.md "Cross-monitor selection"): raw scRGB is ONE
         /// absolute linear space (1.0 = 80 nits) for every monitor, so per-monitor photometrics never
         /// enter into it — they only matter for TONE-MAPPING (SdrImage.FromCapturedFrame), a
         /// completely different code path this never touches. Program.cs (WP-A) calls this via
@@ -1334,7 +1334,7 @@ public static class OverlayController
                 case OverlayCommand.SaveHdr:
                     // Sets SaveHdrRequested=true on the eventual result only — the actual HDR
                     // write happens back in AppComposition.RunCaptureFlowAsync using SourceFrame +
-                    // SelectionPx, per PLAN.md §3.2 ("does not call any HDR-export API itself").
+                    // SelectionPx ("does not call any HDR-export API itself").
                     Confirm(copy: _settings.CopyOnSelect, save: false, saveHdr: true);
                     break;
 
@@ -1912,7 +1912,7 @@ public static class OverlayController
         }
 
         /// <summary>Cross-monitor selection: the `select` automation command's own lever for
-        /// spanning rects (see docs/DESIGN-MULTIMON-SELECTION.md's "Automation" section) — routes
+        /// spanning rects (see docs/architecture.md's "Automation" section) - routes
         /// through the EXACT same OnSpanningCandidate/FinalizeNewSelectionDrag functions a real drag
         /// uses, never a separate implementation. The owning/"primary" window is chosen the same way
         /// the pre-existing single-monitor automation path already did: whichever monitor contains

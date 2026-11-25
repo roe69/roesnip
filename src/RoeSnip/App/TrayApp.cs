@@ -14,7 +14,7 @@ using RoeSnip.Interop;
 
 namespace RoeSnip.App;
 
-/// <summary>The tray-app shell (DESIGN.md §1-2, PLAN.md §3.3): a WinForms <see cref="NotifyIcon"/>
+/// <summary>The tray-app shell (docs/architecture.md): a WinForms <see cref="NotifyIcon"/>
 /// with a context menu, the global hotkey, single-instance enforcement (named mutex + a named-pipe
 /// signal so a second launch triggers the first instance's capture flow and exits 0), and the
 /// <see cref="ITrayNotifier"/> balloons for the cross-cutting "saved"/"error" notifications that
@@ -424,7 +424,7 @@ public sealed class TrayApp : ITrayNotifier
         // It does NOT guarantee every tooltip survives — placing any topmost window over an already-
         // hovering tooltip can still make that tooltip's own hover-tracking (TrackMouseEvent) resolve
         // WindowFromPoint(cursor) to the new flash window and self-dismiss via WM_MOUSELEAVE, with no
-        // dependency on foreground/activation at all. See docs/CAPTURE-FIDELITY-SPEC.md item 1 for
+        // dependency on foreground/activation at all. See docs/architecture.md "Capture" for
         // the full reasoning and why that residual path is not closed by this fix.
         bool flashShown = false;
         try
@@ -590,7 +590,7 @@ public sealed class TrayApp : ITrayNotifier
         return null;
     }
 
-    /// <summary>The one-time PrintScreen/Snipping-Tool consent flow (DESIGN.md §2), applicable only
+    /// <summary>The one-time PrintScreen/Snipping-Tool consent flow (docs/architecture.md), applicable only
     /// when the configured hotkey is bare PrintScreen (no modifiers). On Windows 11 an ABSENT
     /// <c>HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled</c> value means the Snipping
     /// Tool intercept is ON by default, so only an explicitly-present 0 counts as "no conflict";

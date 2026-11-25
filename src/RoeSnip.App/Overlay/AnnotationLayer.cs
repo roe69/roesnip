@@ -8,7 +8,7 @@ using RoeSnip.Core.Overlay;
 namespace RoeSnip.App.Overlay;
 
 /// <summary>Annotation tool kinds. Text is implemented but is the lowest-priority / most cuttable
-/// tool per PLAN.md §3.2 (allowance restated by PLAN-XPLAT.md §3.3) — the other five
+/// tool; the other five
 /// (Rectangle/Ellipse/Arrow/Line/Freehand) must work regardless of whether Text makes it in.
 /// Mirrors the WPF enum at src/RoeSnip/Overlay/AnnotationLayer.cs:31-45.</summary>
 public enum AnnotationTool

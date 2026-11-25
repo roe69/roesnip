@@ -68,7 +68,7 @@ public sealed record OverlayResult(
     IReadOnlyList<SpanningFrameCrop>? SpanningFrameCrops = null
 );
 
-/// <summary>Settings data shape (DESIGN.md §6). Persistence (JSON load/save, fail-closed-on-unreadable)
+/// <summary>Settings data shape (docs/architecture.md). Persistence (JSON load/save, fail-closed-on-unreadable)
 /// is WP-C's job in App/Settings.cs; this record is the pure shape so WP-A's composition root and
 /// WP-B's overlay can reference it without depending on WP-C's persistence file.</summary>
 public sealed record RoeSnipSettings
@@ -93,7 +93,7 @@ public sealed record RoeSnipSettings
     public uint UploadShortcutModifiers { get; init; } = RoeSnip.Core.Settings.OverlayShortcuts.DefaultUploadModifiers;
     public uint UploadShortcutVirtualKey { get; init; } = RoeSnip.Core.Settings.OverlayShortcuts.DefaultUploadVirtualKey;
 
-    // ---------- UX round 2 (additive; see DESIGN.md addendum / Overlay/ColorPickerWindow etc.) ----------
+    // ---------- UX round 2 (additive; see docs/architecture.md addendum / Overlay/ColorPickerWindow etc.) ----------
 
     /// <summary>Last 8 picked colors from the standalone ColorPickerWindow's eyedropper ("Pick"),
     /// newest first, stored as "#RRGGBB". Deduplicated (a re-pick of an existing entry moves it to
@@ -862,7 +862,7 @@ public static class AppComposition
         }
 
         // Multiple monitors captured with an explicit --out: avoid every monitor overwriting the
-        // same file by inserting a per-monitor suffix (not explicitly specified in PLAN.md).
+        // same file by inserting a per-monitor suffix (a design choice).
         string dir = System.IO.Path.GetDirectoryName(explicitOut) ?? string.Empty;
         string name = System.IO.Path.GetFileNameWithoutExtension(explicitOut);
         string ext = System.IO.Path.GetExtension(explicitOut);

@@ -24,7 +24,7 @@ namespace RoeSnip.Core.Sharing;
 /// DefaultShareProviderId fields straight through.
 ///
 /// Unit tests (ShareManagerTests) exercise this facade only against a mock HttpMessageHandler - no
-/// test here opens a real socket; see TESTING.md's "Sharing/upload subsystem" section for what has
+/// test here opens a real socket; for what has
 /// and hasn't been verified against a real provider.</summary>
 public static class ShareManager
 {

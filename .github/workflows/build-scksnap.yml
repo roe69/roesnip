@@ -1,7 +1,7 @@
 name: build-scksnap
 
 # Builds RoeSnip's macOS capture helper (helpers/scksnap) on a macOS runner - it cannot be built
-# on the Windows dev machine (PLAN-XPLAT.md section 3.5 / DESIGN-XPLAT.md "Verification reality").
+# on the Windows dev machine.
 # Artifact: scksnap.tar.gz containing the universal, ad-hoc-signed 'scksnap' binary.
 
 on:

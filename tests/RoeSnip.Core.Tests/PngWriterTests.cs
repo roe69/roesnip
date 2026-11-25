@@ -7,9 +7,8 @@ using Xunit;
 namespace RoeSnip.Core.Tests;
 
 /// <summary>NEW in the Core port (not in the WPF test suite): the SkiaSharp PngWriter replaced the
-/// WPF PngBitmapEncoder implementation (PLAN-XPLAT.md §2.7), so its BGRA byte-exact round-trip is
-/// verified here — this is also why this test project references SkiaSharp.NativeAssets.Win32
-/// (PLAN-XPLAT.md §1.2).</summary>
+/// WPF PngBitmapEncoder implementation, so its BGRA byte-exact round-trip is
+/// verified here - this is also why this test project references SkiaSharp.NativeAssets.Win32.</summary>
 public class PngWriterTests : IDisposable
 {
     private readonly string _tempDir;

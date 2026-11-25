@@ -111,7 +111,7 @@ public sealed class Magnifier : Control
     /// pending-click phase (SelectionPx may still hold an unrelated previous selection), during
     /// Resize/Move of an existing selection, and while placing the Pixelate tool's region (that
     /// state's SelectionPx is the confirmed crop rect, not the region being placed) — see
-    /// CAPTURE-FIDELITY-SPEC.md item 3 for the full gating rationale.</summary>
+    /// docs/architecture.md "Overlay" for the full gating rationale.</summary>
     public bool ShowSelectionPreview { get; set; }
 
     private bool HasSample => _sampleX >= 0 && _sampleY >= 0 && _preview is not null && _frame is not null;

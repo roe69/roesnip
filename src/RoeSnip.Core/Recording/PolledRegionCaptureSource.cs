@@ -10,7 +10,7 @@ namespace RoeSnip.Core.Recording;
 /// <see cref="ICaptureBackend.CaptureAll"/> at the <see cref="RecordingSchedule"/> cadence and crops
 /// the result to the requested region in managed code. Correct, but pays a full one-shot
 /// capture-backend round trip per accepted frame instead of a persistent low-latency GPU session -
-/// see <see cref="IRegionCaptureSource"/>'s own class doc comment and docs/PARITY.md item 20's
+/// see <see cref="IRegionCaptureSource"/>'s own class doc comment and docs/parity.md item 20's
 /// accepted-limitation note. This is the fallback <see cref="RegionCaptureSourceRegistry.Create"/>
 /// returns whenever no Platform.* project has registered a native implementation (every OS except
 /// Windows today).</summary>

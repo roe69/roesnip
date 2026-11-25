@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Same pins as src/RoeSnip/RoeSnip.csproj (PLAN.md §1.2) — this is a mechanical port of the
+    <!-- Same pins as src/RoeSnip/RoeSnip.csproj - this is a mechanical port of the
          same DD/WGC/JXR code against Core contracts, not a rewrite. -->
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />

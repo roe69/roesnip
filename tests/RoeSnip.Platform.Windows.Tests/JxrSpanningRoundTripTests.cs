@@ -17,7 +17,7 @@ namespace RoeSnip.Platform.Windows.Tests;
 /// SpanningFrameCrop, and verify the written file's decoded pixels land exactly where expected —
 /// including the documented gap fill (opaque linear black) for canvas pixels no crop covers.
 ///
-/// Ported from tests/RoeSnip.Tests/JxrSpanningRoundTripTests.cs (PLAN-XPLAT.md §3.2) — same
+/// Ported from tests/RoeSnip.Tests/JxrSpanningRoundTripTests.cs - same
 /// mechanical edits as JxrRoundTripTests.cs (Core's portable MonitorInfo shape, CapturedFrame's
 /// sdrWhiteInBufferUnits argument). Same WIC-direct decode helper as JxrRoundTripTests (a WPF/
 /// Avalonia decoder flattens float headroom regardless of what's actually in the file).</summary>

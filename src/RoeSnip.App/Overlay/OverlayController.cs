@@ -281,7 +281,7 @@ public static class OverlayController
 
     /// <summary>One OverlayWindow per monitor; runs until the user cancels (Esc) or confirms
     /// (Enter / double-click / toolbar action). Returns null on cancel. On confirm, performs
-    /// Copy/Save side effects itself (clipboard + PNG dialog) per DESIGN.md, then returns a
+    /// Copy/Save side effects itself (clipboard + PNG dialog) per docs/architecture.md, then returns a
     /// populated OverlayResult. Matches the AppComposition.RunOverlay hook signature exactly.
     /// Must be invoked on the Avalonia UI thread (Dispatcher.UIThread) — the WPF version's
     /// EnsureApplication dance has no Avalonia equivalent because App.axaml.cs (WP-X2) has
@@ -478,7 +478,7 @@ public static class OverlayController
         // _windows.FirstOrDefault(w => w.SelectionPx is not null)) are what run in that case,
         // completely unchanged. These two fields are only ever non-null while a NewSelection,
         // SpanningResize, or SpanningMove drag's candidate rect has been distributed across ≥2
-        // monitors — see OnSpanningCandidate. See docs/DESIGN-MULTIMON-SELECTION.md for the full
+        // monitors - see OnSpanningCandidate. See docs/architecture.md for the full
         // design.
         private RectPhysical? _spanningVirtual;
         private OverlayWindow? _spanningPrimaryWindow;
@@ -585,7 +585,7 @@ public static class OverlayController
             }
 
             // Correlate every frame to its Avalonia screen and set position/size BEFORE Show()
-            // (mixed-DPI discipline, PLAN-XPLAT.md §3.3). A frame with no exactly-matching screen
+            // (mixed-DPI discipline). A frame with no exactly-matching screen
             // is skipped (logged inside TryPlaceOnScreen), never guessed.
             var placed = new List<OverlayWindow>();
             foreach (var window in _windows)
@@ -714,7 +714,7 @@ public static class OverlayController
         /// already started by the time the key is dispatched — route it as a normal stage-cancel.</summary>
         internal void CancelStageFromFlash() => OnCommand(OverlayCommand.CancelStage);
 
-        /// <summary>Mouse-enter (or a click) on another overlay activates it, per DESIGN.md — only
+        /// <summary>Mouse-enter (or a click) on another overlay activates it, per docs/architecture.md - only
         /// the OS-focused window receives keyboard input, so this is what lets Esc/Enter/Ctrl+C/
         /// Ctrl+S/Ctrl+Z "work from any monitor."</summary>
         private void OnActivatedByMouse(OverlayWindow window)
@@ -928,7 +928,7 @@ public static class OverlayController
         /// ever combines bytes each window's own OverlayWindow.Preview already tone-mapped with ITS
         /// OWN monitor's photometrics, per the hard constraint. Gaps (no captured monitor covers part
         /// of the rect) are left OPAQUE BLACK — a deliberate, documented choice (see
-        /// docs/DESIGN-MULTIMON-SELECTION.md), not an accidental default. Annotations are never
+        /// docs/architecture.md), not an accidental default. Annotations are never
         /// burned in here: a spanning selection can never have any (see OverlayWindow.
         /// SetSpanningLocalSelection), so this is a plain array composite, not a render-target pass.</summary>
         private SdrImage RenderSpanningSelection(RectPhysical virtualRect)
@@ -1042,7 +1042,7 @@ public static class OverlayController
                 case OverlayCommand.SaveHdr:
                     // Sets SaveHdrRequested=true on the eventual result only — the actual HDR
                     // write happens back in AppComposition.RunCaptureFlowAsync using SourceFrame +
-                    // SelectionPx (PLAN-XPLAT.md §3.3: the overlay never calls an HDR-export API).
+                    // SelectionPx (the overlay never calls an HDR-export API).
                     FireAndForget(ConfirmAsync(copy: _settings.CopyOnSelect, save: false, saveHdr: true));
                     break;
 
@@ -1061,7 +1061,7 @@ public static class OverlayController
         }
 
         /// <summary>Record MP4/GIF (item 21) - a single-monitor selection only (spanning/multi-
-        /// monitor recording is a separate, not-yet-ported track - see docs/PARITY.md item 20's own
+        /// monitor recording is a separate, not-yet-ported track - see docs/parity.md item 20's own
         /// note); a spanning selection surfaces an honest error instead of silently recording just
         /// one of the contributing monitors. Performs no clipboard/PNG/HDR I/O itself - packages
         /// (Monitor, SelectionPx, Format) onto the OverlayResult and closes the overlay normally, same

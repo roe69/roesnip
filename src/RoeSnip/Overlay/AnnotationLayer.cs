@@ -27,7 +27,7 @@ using FlowDir = System.Windows.FlowDirection;
 using Geo = global::RoeSnip.Core.Overlay.AnnotationGeometry;
 
 /// <summary>Annotation tool kinds. Text is implemented but is the lowest-priority / most cuttable
-/// tool per PLAN.md §3.2 — the other five (Rectangle/Ellipse/Arrow/Line/Freehand) must work
+/// tool - the other five (Rectangle/Ellipse/Arrow/Line/Freehand) must work
 /// regardless of whether Text makes it in.</summary>
 public enum AnnotationTool
 {

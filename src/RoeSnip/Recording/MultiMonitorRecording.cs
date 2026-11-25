@@ -21,7 +21,7 @@ namespace RoeSnip.Recording;
 /// read directly, while the portable <c>RoeSnip.Core.Capture.MonitorInfo</c> deliberately has no
 /// equivalent (an opaque cross-platform <c>BackendKey</c> string instead). Unifying the two would
 /// mean refactoring this app's live monitor-enumeration/capture layer, out of scope for a
-/// recording-math extraction — see docs/PARITY.md's 04-recording-core-extraction entry. Both
+/// recording-math extraction - see docs/parity.md's 04-recording-core-extraction entry. Both
 /// copies implement the exact same geometry and are independently unit-tested.</summary>
 public static class MultiMonitorRecording
 {

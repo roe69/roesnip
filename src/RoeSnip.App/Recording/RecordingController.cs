@@ -14,7 +14,7 @@ namespace RoeSnip.App.Recording;
 /// RoeSnip.App's own OverlayController.IsSessionActive/s_activeSession shape, and the WPF app's
 /// RoeSnip.Recording.RecordingController static class (same name, same role). Single-monitor takes
 /// only in this item - spanning (multi-monitor) recording is a separate, not-yet-ported track, same
-/// as the WPF app's own history (see docs/PARITY.md item 20's own note).</summary>
+/// as the WPF app's own history (see docs/parity.md item 20's own note).</summary>
 public static class RecordingController
 {
     private static RecordingSession? s_active; // set/cleared on the UI thread only

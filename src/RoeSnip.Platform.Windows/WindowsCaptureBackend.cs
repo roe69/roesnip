@@ -5,7 +5,7 @@ namespace RoeSnip.Platform.Windows;
 
 /// <summary>The Windows <see cref="ICaptureBackend"/>: DXGI/DisplayConfig monitor enumeration
 /// (<see cref="MonitorEnumerator"/>) plus the Desktop-Duplication-then-WGC capture chain, composed
-/// into Core's reusable <see cref="FallbackCaptureBackend"/> exactly per PLAN-XPLAT.md §3.2 — the
+/// into Core's reusable <see cref="FallbackCaptureBackend"/> - the
 /// fallback ordering, parallel capture, and the persisted "capturer broken here" memo
 /// (<see cref="CaptureCache"/>, keyed "{DeviceName}::{capturerIndex}") are all Core behavior,
 /// unchanged from the WPF app's CaptureService.</summary>
@@ -41,7 +41,7 @@ public sealed class WindowsCaptureBackend : ICaptureBackend
 file static class ModuleInit
 {
     // CA2255 warns against [ModuleInitializer] in a library; this exact usage is the seam
-    // PLAN-XPLAT.md §2.3/§3.2 mandates (each Platform.* assembly self-registers its backend so
+    // the design requires (each Platform.* assembly self-registers its backend so
     // Core/App never name a concrete Platform.* type). The App shell force-loads the platform
     // assemblies at startup, which is what makes this initializer's timing deterministic.
 #pragma warning disable CA2255

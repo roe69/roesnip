@@ -13,7 +13,7 @@ using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
 namespace RoeSnip.App;
 
-/// <summary>Minimal WPF settings window (DESIGN.md §6 / PLAN.md §3.3): binds every
+/// <summary>Minimal WPF settings window (docs/architecture.md): binds every
 /// <see cref="RoeSnipSettings"/> field, saves via <see cref="SettingsStore.Save(RoeSnipSettings)"/>,
 /// and hands the updated settings back to the caller (TrayApp) via <c>onSaved</c> so it can
 /// re-register the hotkey.</summary>

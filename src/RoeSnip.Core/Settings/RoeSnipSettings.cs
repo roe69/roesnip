@@ -1,9 +1,9 @@
 namespace RoeSnip.Core.Settings;
 
-/// <summary>Same shape as the WPF app's RoeSnipSettings (PLAN.md §2.4 / Phase-A additions) — moved
-/// into Core per DESIGN-XPLAT.md's own solution layout ("Settings/ RoeSnipSettings + SettingsStore").
-/// HotkeyModifiers/HotkeyVirtualKey remain Windows VK/MOD_* values in shape — see PLAN-XPLAT.md §5
-/// hotkey facts for how WP-X2's hotkey code interprets (or ignores) them per OS.</summary>
+/// <summary>Same shape as the WPF app's RoeSnipSettings, moved
+/// into Core (see docs/architecture.md, Projects).
+/// HotkeyModifiers/HotkeyVirtualKey remain Windows VK/MOD_* values in shape; the
+/// hotkey code interprets (or ignores) them per OS.</summary>
 public sealed record RoeSnipSettings
 {
     public int SchemaVersion { get; init; } = 1;

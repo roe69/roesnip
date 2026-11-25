@@ -8,7 +8,7 @@ using WicPixelFormat = Vortice.WIC.PixelFormat;
 
 namespace RoeSnip.Tests;
 
-/// <summary>The acceptance gate DESIGN.md requires before trusting an encoder for HDR export:
+/// <summary>The acceptance gate docs/architecture.md requires before trusting an encoder for HDR export:
 /// encode an FP16 scRGB buffer containing a value of 3.0, decode it back, and assert a value
 /// &gt; 1.0 survives (i.e. the encoder did not flatten/clip to an 8-bit [0,1] SDR format).
 ///
@@ -16,8 +16,7 @@ namespace RoeSnip.Tests;
 /// <c>WmpBitmapEncoder</c>/<c>BitmapDecoder</c> pair FAILS — WPF flattens JXR to 32bpp Pbgra32 on
 /// both encode and decode regardless of the source pixel format supplied to it (a 3.0 value came
 /// back as ~0.78). Talking to WIC directly (namespace <see cref="Vortice.WIC"/>, from the
-/// <c>Vortice.Direct2D1</c> package which bundles the WIC bindings — see PLAN.md's "Plan-time
-/// flags" §1) with pixel format <see cref="WicPixelFormat.Format128bppRGBAFloat"/> DOES preserve
+/// <c>Vortice.Direct2D1</c> package which bundles the WIC bindings ) with pixel format <see cref="WicPixelFormat.Format128bppRGBAFloat"/> DOES preserve
 /// the float headroom, so <see cref="JxrWriter"/> and this test's decode helper both bypass WPF's
 /// imaging stack entirely.</summary>
 public class JxrRoundTripTests

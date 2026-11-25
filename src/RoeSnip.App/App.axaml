@@ -69,7 +69,7 @@
          near-black page background. -->
     <SolidColorBrush x:Key="RlDropdownArrowBrush" Color="#A2A2AB"/>
 
-    <!-- Settings redesign pass (docs/PARITY.md item 23): FluentTheme's accent axis is
+    <!-- Settings redesign pass (docs/parity.md item 23): FluentTheme's accent axis is
          unconfigured by default, so accent-driven states (ComboBox hover/selected row, checked
          CheckBox, etc.) render in the OS/platform accent color instead of the brand orange -
          this is the ONE genuine gap the Avalonia side of that audit found (no white-on-white
@@ -107,7 +107,7 @@
   <Application.Styles>
     <FluentTheme />
 
-    <!-- Settings redesign pass (docs/PARITY.md item 23): promoted from SettingsWindow.axaml's
+    <!-- Settings redesign pass (docs/parity.md item 23): promoted from SettingsWindow.axaml's
          own Window.Styles (verbatim) to Application scope so every window in the app - not just
          SettingsWindow - gets the same dark TextBox/ComboBox/CheckBox/Button chrome for free,
          including ShareProvidersWindow/ShareProviderEditWindow, which previously had zero

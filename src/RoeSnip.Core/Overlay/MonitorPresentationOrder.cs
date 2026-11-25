@@ -4,7 +4,7 @@ namespace RoeSnip.Core.Overlay;
 
 /// <summary>Pure helpers backing the Windows flash-dimmer's monitor set/ordering decisions
 /// (RoeSnip.App/Overlay/FlashDimmer.cs, item 18) — pulled into Core so they're unit-testable
-/// without a live window/display, matching PLAN-XPLAT.md's "portable logic lands in Core" rule.
+/// without a live window/display, following the rule that portable logic lives in Core.
 /// Ported from the WPF app's src/RoeSnip/Overlay/FlashDimmer.cs (Matches/OrderCursorMonitorFirst,
 /// both private instance-state methods there); this port keeps the exact same semantics as free
 /// functions over MonitorInfo plus an explicit cursor position.</summary>

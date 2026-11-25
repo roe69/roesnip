@@ -4,7 +4,7 @@ using Xunit;
 
 namespace RoeSnip.Platform.Windows.Tests;
 
-/// <summary>PLAN-XPLAT.md §4's explicit "CaptureBackendRegistry selection risk" check: on this
+/// <summary>The "CaptureBackendRegistry selection risk" check: on this
 /// Windows machine, <see cref="CaptureBackendRegistry.CreateForCurrentPlatform"/> must return a
 /// <see cref="WindowsCaptureBackend"/> specifically (not just "some backend"), proving the
 /// [ModuleInitializer] registration in WindowsCaptureBackend.cs actually ran and its IsSupported

@@ -45,7 +45,7 @@ public readonly record struct SpanningDistribution(
 /// OverlayController.OverlaySession (which owns the actual per-window side effects) and out of
 /// OverlayWindow (which owns the actual mouse-drag plumbing) so this math — the part with real
 /// correctness risk (off-by-one clamps, which edges are "real") — can be unit-tested directly
-/// without spinning up any WPF window. See docs/DESIGN-MULTIMON-SELECTION.md.</summary>
+/// without spinning up any WPF window. See docs/architecture.md.</summary>
 public static class SpanningSelectionMath
 {
     /// <summary>The union of every monitor's own bounds — the outer box a spanning drag candidate

@@ -8,7 +8,7 @@ using RoeSnip.Core.Diagnostics;
 namespace RoeSnip.Capture;
 
 /// <summary>Persisted per-monitor memo of "Desktop Duplication is broken here" (the NVIDIA + HDR
-/// black-frame quirk, DESIGN.md "Failure modes"), keyed by GDI DeviceName. The old memo was a
+/// black-frame quirk, docs/architecture.md "Failure modes"), keyed by GDI DeviceName. The old memo was a
 /// process-lifetime static, so every fresh app launch re-paid the doomed DD attempt (device
 /// creation + the AcquireNextFrame retry budget, per monitor) before falling back to WGC. This
 /// cache lives in its own small JSON file at <c>%APPDATA%\RoeSnip\capture-cache.json</c>

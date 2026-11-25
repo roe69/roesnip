@@ -35,7 +35,7 @@
          and any future window may reference these directly by key).
          No literal hex anywhere else in this file except here and the
          one pure-white "on danger red" exception called out at its
-         point of use below (AUDIT CORRECTION, see docs/PARITY.md entry).
+         point of use below (AUDIT CORRECTION, see docs/parity.md entry).
          ============================================================ -->
     <SolidColorBrush x:Key="RlTextPrimaryBrush" Color="#EDEDF0"/>
     <!-- rl-text: neutral off-white body/icon color, ~18:1 on black - never pure white. -->

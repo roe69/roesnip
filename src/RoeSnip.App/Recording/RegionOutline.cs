@@ -43,7 +43,7 @@ namespace RoeSnip.App.Recording;
 /// FlashDimmer's own window parking). RecordingOrchestrator only constructs this class when
 /// OperatingSystem.IsWindows() is true; on every other OS a recording proceeds with NO region
 /// boundary marker and no drag-to-move/resize UI - the take itself (RegionRecorder/RecordingChrome)
-/// is unaffected, this is purely the missing visual/interactive outline (docs/PARITY.md item 21's own
+/// is unaffected, this is purely the missing visual/interactive outline (docs/parity.md item 21's own
 /// note).</summary>
 public sealed class RegionOutline : Window
 {

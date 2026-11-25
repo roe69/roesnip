@@ -25,7 +25,7 @@ public readonly record struct RegionCaptureFrame(CapturedFrame Frame, long Times
 ///     assembly) - polls ICaptureBackend.CaptureAll on the SAME schedule-throttle cadence
 ///     (<see cref="RecordingSchedule"/>) and crops the result in managed code. Correct, but pays a
 ///     full one-shot capture-backend round trip per accepted frame instead of a persistent low-
-///     latency GPU session - a documented, accepted perf limitation (docs/PARITY.md item 20), not a
+///     latency GPU session - a documented, accepted perf limitation (docs/parity.md item 20), not a
 ///     functional gap.
 /// Both kinds of implementation share the exact throttle math so a take's effective framerate does
 /// not depend on which backend produced it.</summary>

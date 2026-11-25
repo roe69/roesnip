@@ -7,7 +7,7 @@ namespace RoeSnip.Tests;
 /// <summary>The pure parse/dispatch/serialize half of the dev-gated automation channel (see
 /// App/AutomationServer.cs's own doc comment) — no live window, no Dispatcher, no pipe. The live
 /// half (actually driving OverlayController/RecordingController) is verified end-to-end against a
-/// resident process, not here — see TESTING.md's "Driving RoeSnip programmatically" section.</summary>
+/// resident process, not here - see docs/testing.md's "Driving the WPF app" section.</summary>
 public class AutomationProtocolTests
 {
     // ---------- TryParseRequest ----------

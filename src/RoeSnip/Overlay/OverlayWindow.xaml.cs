@@ -39,7 +39,7 @@ using Cursor = System.Windows.Input.Cursor;
 /// selection exists) the annotation toolbar, and renders the final annotated crop on confirm.
 /// All selection/annotation/crop math is physical pixels; DIPs from WPF mouse events are converted
 /// via <see cref="_scaleX"/>/<see cref="_scaleY"/> (from CompositionTarget.TransformToDevice) at
-/// the point of use, per the mixed-DPI contract in DESIGN.md / PLAN.md §3.2.</summary>
+/// the point of use, per the mixed-DPI contract in docs/architecture.md.</summary>
 public partial class OverlayWindow : Window
 {
     // SelectedMove/SelectedResize/SelectedEndpoint (Feature B, additive) are the Select-tool drags
@@ -52,7 +52,7 @@ public partial class OverlayWindow : Window
     // they never touch _dragStartRect/SetSelection directly. Every candidate they compute is a
     // VIRTUAL-desktop rect fed through _onSpanningCandidate, the exact same distribute primitive a
     // NewSelection drag uses — see OnPreviewMouseLeftButtonDown's spanning branch and
-    // docs/DESIGN-MULTIMON-SELECTION.md.
+    // docs/architecture.md.
     private enum DragMode
     {
         None, NewSelection, Resize, Move, Annotation, SelectedMove, SelectedResize, SelectedEndpoint,
@@ -78,7 +78,7 @@ public partial class OverlayWindow : Window
     // SetSelection directly — see OverlaySession.OnSpanningCandidate/FinalizeNewSelectionDrag in
     // OverlayController.cs for what they do. Originally (v1) only NewSelection routed through these;
     // SpanningResize/SpanningMove (resize-after-place) now do too, for exactly the same reason —
-    // see docs/DESIGN-MULTIMON-SELECTION.md. The plain single-monitor Move/Resize/annotation drag
+    // see docs/architecture.md. The plain single-monitor Move/Resize/annotation drag
     // modes are untouched and still call SetSelection locally; they never run while
     // IsSpanningSelection is true (see OnPreviewMouseLeftButtonDown's spanning branch). The trailing
     // bool is preserveSize: true only for a SpanningMove candidate, so OnSpanningCandidate can slide
@@ -220,7 +220,7 @@ public partial class OverlayWindow : Window
     /// slice included) touches more than one monitor — set only by SetSpanningLocalSelection, never
     /// by the plain SetSelection path Move/Resize/annotation drags still use. Read by
     /// OnPreviewMouseLeftButtonDown to refuse starting a Resize/Move drag against a spanning
-    /// selection (see docs/DESIGN-MULTIMON-SELECTION.md) and by UpdateToolbarPlacement/ShowToolbar
+    /// selection (see docs/architecture.md) and by UpdateToolbarPlacement/ShowToolbar
     /// to hide annotation tools.</summary>
     internal bool IsSpanningSelection => _isSpanningSelection;
 
@@ -1195,11 +1195,11 @@ public partial class OverlayWindow : Window
                         break; // still a click candidate, not a drag — don't disturb any selection
                     }
                     _newSelectionPending = false;
-                    _onSelectionStarted(this); // clears other monitors' selections, per DESIGN.md
+                    _onSelectionStarted(this); // clears other monitors' selections, per docs/architecture.md
                 }
                 // Cross-monitor selection: _dragAnchorPx/px are THIS window's own local physical
                 // pixels, deliberately never clamped to this window's frame during the drag (see
-                // docs/DESIGN-MULTIMON-SELECTION.md) — WPF keeps delivering these even once the
+                // docs/architecture.md) - WPF keeps delivering these even once the
                 // cursor has visually left this window, because CaptureMouse() is a Win32 SetCapture
                 // (HWND-level, not client-area-level). Translate to virtual-desktop coordinates
                 // (this window's own monitor origin folded in) before handing it to the session,
@@ -1658,7 +1658,7 @@ public partial class OverlayWindow : Window
         _selectionPx = rect;
         Adorner.SelectionPx = rect;
         // Mirror to the loupe too: single source of truth for every call site (plain NewSelection,
-        // spanning distribute, Move, Resize, clear-to-null) — see CAPTURE-FIDELITY-SPEC.md §3.
+        // spanning distribute, Move, Resize, clear-to-null) - see docs/architecture.md "Overlay".
         // Whether it actually DRAWS is gated separately by MagnifierControl.ShowSelectionPreview,
         // set at the end of OnPreviewMouseMove.
         MagnifierControl.SelectionPx = rect;
@@ -1699,7 +1699,7 @@ public partial class OverlayWindow : Window
     /// interaction — the window whose drag produced the current candidate). Reuses the existing
     /// SetSelection pipeline verbatim (dim mask, adorner, toolbar placement) — a spanning selection's
     /// per-window rendering is the SAME code path as an ordinary one, just fed a different rect; see
-    /// docs/DESIGN-MULTIMON-SELECTION.md. <paramref name="dragInProgress"/> is true only when this
+    /// docs/architecture.md. <paramref name="dragInProgress"/> is true only when this
     /// call came from OnSpanningCandidate mid-drag (every other call site is a "drag has ended /
     /// selection cleared" moment) — see _suppressToolbarForSpanningDrag's own doc comment for why a
     /// non-owner window needs this to suppress its toolbar too.</summary>
@@ -1774,7 +1774,7 @@ public partial class OverlayWindow : Window
 
         // Cross-monitor selection: only the PRIMARY window of a spanning selection ever shows a
         // toolbar — a secondary window's own local slice is real selection state (for rendering/
-        // hit-testing) but never gets its own toolbar instance. See docs/DESIGN-MULTIMON-SELECTION.md.
+        // hit-testing) but never gets its own toolbar instance. See docs/architecture.md.
         if (_isSpanningSelection && !_isSpanningPrimary)
         {
             HideToolbar();
@@ -2272,7 +2272,7 @@ public partial class OverlayWindow : Window
         }
     }
 
-    // ---------- Inline text annotation (cuttable per PLAN.md §3.2 if it endangers the milestone) ----------
+    // ---------- Inline text annotation ----------
 
     /// <summary>Feature B item 4: double-click on a placed Text annotation (Select tool) reopens
     /// this SAME inline editor at the shape's own position, prefilled with its text/styling — reuses

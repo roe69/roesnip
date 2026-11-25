@@ -241,13 +241,13 @@ public partial class ToolbarControl : UserControl
         _sizeComboInitialized = true;
     }
 
-    /// <summary>DESIGN-XPLAT.md: "Save HDR is Windows-only v1 (backend capability flag hides the
+    /// <summary>docs/architecture.md: "Save HDR is Windows-only v1 (backend capability flag hides the
     /// button elsewhere)" — the owning OverlayWindow sets this from the composition root's
     /// WriteHdrExport hook being non-null.</summary>
     public void SetSaveHdrVisible(bool visible) => _saveHdrButton.IsVisible = visible;
 
     /// <summary>Cross-monitor selection (item 09): while the current selection spans multiple
-    /// monitors, annotations stay off (see docs/DESIGN-MULTIMON-SELECTION.md) — collapses the
+    /// monitors, annotations stay off (see docs/architecture.md) - collapses the
     /// annotation-tool groups (tools, undo/redo, palette) down to Copy/Save/Save HDR/Cancel, which
     /// stay visible and functional exactly as for an ordinary selection (RenderSpanningSelection/
     /// JxrWriter.WriteSpanning already produce the byte composite those buttons act on). Called by

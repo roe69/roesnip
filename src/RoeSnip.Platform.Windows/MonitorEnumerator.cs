@@ -10,9 +10,9 @@ using Vortice.DXGI;
 namespace RoeSnip.Platform.Windows;
 
 /// <summary>Enumerates all active monitors. Ported from src/RoeSnip/Capture/MonitorInfo.cs's
-/// MonitorEnumerator (PLAN.md §3.1's numbered steps: EnumDisplayMonitors + GetDpiForMonitor, DXGI
+/// MonitorEnumerator (numbered steps: EnumDisplayMonitors + GetDpiForMonitor, DXGI
 /// IDXGIOutput6.GetDesc1(), QueryDisplayConfig/DisplayConfigGetDeviceInfo SDR white level) with only
-/// the output shape changed per PLAN-XPLAT.md §3.2: the portable Core MonitorInfo, with
+/// the output shape changed: the portable Core MonitorInfo, with
 /// <c>BackendKey = "0x" + hMonitor.ToString("X")</c> and <c>Scale = dpiX / 96.0</c>. Never throws
 /// for a single bad monitor entry — logs to stderr and omits it. Returns empty list only if
 /// enumeration itself fails entirely.</summary>
@@ -20,7 +20,7 @@ public static class MonitorEnumerator
 {
     /// <summary>Recovers the HMONITOR that <see cref="Enumerate"/> encoded into
     /// <see cref="MonitorInfo.BackendKey"/> ("0x{hex}"). Only valid for MonitorInfo values produced
-    /// by this backend — BackendKey is opaque across backends (PLAN-XPLAT.md §2.1).</summary>
+    /// by this backend - BackendKey is opaque across backends.</summary>
     public static nint ParseHMonitor(MonitorInfo monitor)
     {
         string key = monitor.BackendKey;

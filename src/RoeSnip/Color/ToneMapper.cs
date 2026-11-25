@@ -16,8 +16,8 @@ public readonly record struct ToneMapOptions(
     double Epsilon = 1e-3           // M <= 1.0 + Epsilon => exact SDR pass-through, no shoulder, no dither
 );
 
-/// <summary>The tone-map pipeline. See DESIGN.md "Tone-map pipeline" for the full spec; the exact
-/// Hermite shoulder formula is pinned in PLAN.md §3.1 so all implementers (and tests) agree on it.
+/// <summary>The tone-map pipeline. See docs/architecture.md "Tone-map pipeline" for the full spec; the exact
+/// Hermite shoulder formula is pinned here so the code and the tests agree on it.
 /// Only accepts Fp16ScRgb frames — Bgra8Srgb frames must go through SdrImage.FromCapturedFrame's
 /// passthrough branch instead (do not call MapToSdr on a Bgra8Srgb frame; it throws).
 ///

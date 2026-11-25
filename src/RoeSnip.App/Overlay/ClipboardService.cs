@@ -10,8 +10,7 @@ using RoeSnip.Core.Imaging;
 
 namespace RoeSnip.App.Overlay;
 
-/// <summary>Per-OS clipboard adapters in one file with runtime OS branches (PLAN-XPLAT.md §3.3,
-/// DESIGN-XPLAT.md "Clipboard adapters"):
+/// <summary>Per-OS clipboard adapters in one file with runtime OS branches:
 ///   - Windows: the exact P/Invoke PNG+CF_DIBV5 transaction ported from the frozen WPF app's
 ///     src/RoeSnip/Imaging/ClipboardService.cs — both "paste as PNG" and "paste as bitmap"
 ///     consumers work from one copy. The DllImport declarations compile on every host OS; only
@@ -413,7 +412,7 @@ public static class ClipboardService
 
     // ================================ macOS (objc runtime) ================================
     // Compiles on every host OS; only ever called at runtime on macOS. Cannot be runtime-verified
-    // on this machine (PLAN-XPLAT.md §4 step 6 — macOS is compile-only this cycle).
+    // on this machine (macOS is compile-only here).
 
     private static class MacPasteboard
     {

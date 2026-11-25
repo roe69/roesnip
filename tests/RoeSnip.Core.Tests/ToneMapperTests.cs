@@ -5,11 +5,11 @@ using Xunit;
 
 namespace RoeSnip.Core.Tests;
 
-/// <summary>Ported from tests/RoeSnip.Tests/ToneMapperTests.cs (PLAN-XPLAT.md §3.1). One mechanical
+/// <summary>Ported from tests/RoeSnip.Tests/ToneMapperTests.cs. One mechanical
 /// update: every synthetic CapturedFrame now also supplies
 /// <c>sdrWhiteInBufferUnits: sdrWhiteNits / 80.0</c> (the Windows scRGB convention), which keeps
-/// every golden numeric assertion valid unchanged per the algebraic identity in PLAN-XPLAT.md
-/// §2.2/§2.5. Plus one NEW test exercising the macOS-EDR-style convention
+/// every golden numeric assertion valid unchanged per the algebraic identity of the
+/// SdrWhiteInBufferUnits scale. Plus one NEW test exercising the macOS-EDR-style convention
 /// (SdrWhiteInBufferUnits == 1.0).</summary>
 public class ToneMapperTests
 {
@@ -371,10 +371,10 @@ public class ToneMapperTests
     [Fact]
     public void EdrConvention_SdrWhiteInBufferUnitsOne_ShouldersAndPassesThroughCorrectly()
     {
-        // NEW in the Core port (PLAN-XPLAT.md §3.1): the macOS-EDR-style convention, where 1.0
+        // NEW in the Core port: the macOS-EDR-style convention, where 1.0
         // buffer unit IS SDR white (SdrWhiteInBufferUnits = 1.0) rather than Windows scRGB's
         // 80-nits-per-unit rule. A raw buffer value of 2.5 is 2.5x SDR white; a raw 0.5 is plain
-        // SDR mid-bright. Per the algebraic identity in PLAN-XPLAT.md §2.2, this frame must be
+        // SDR mid-bright. Per the algebraic identity, this frame must be
         // byte-identical to a Windows-convention frame carrying the same post-scale values
         // (SdrWhiteNits=240 => SdrWhiteInBufferUnits=3.0; raw values 7.5 and 1.5) on the same
         // monitor — proving the generalized 1/SdrWhiteInBufferUnits scale step, not just the
@@ -400,7 +400,7 @@ public class ToneMapperTests
         Assert.Equal(255, rEdr0);
         Assert.Equal(255, gEdr0);
         Assert.Equal(255, bEdr0);
-        // 0.5 (below knee) is a pass-through pixel: the DESIGN.md golden pair linear 0.5 -> byte 188.
+        // 0.5 (below knee) is a pass-through pixel: the docs/architecture.md golden pair linear 0.5 -> byte 188.
         Assert.Equal(188, rEdr1);
         Assert.Equal(188, gEdr1);
         Assert.Equal(188, bEdr1);
@@ -424,7 +424,7 @@ public class ToneMapperTests
     [Fact]
     public void ReadPixelNits_Bgra8Srgb_WhiteReadsAsMonitorSdrWhite_NotSquared()
     {
-        // PLAN-XPLAT.md §2.2's documented Bgra8Srgb rule: the sRGB branch keeps the WPF app's exact
+        // The documented Bgra8Srgb rule: the sRGB branch keeps the WPF app's exact
         // constant-*80.0 math (ReadPixelScRgb already bakes SdrWhiteNits/80 into the decode), so a
         // pure-white byte reads back as exactly Monitor.SdrWhiteNits — NOT SdrWhiteNits²/80, which
         // is what naively routing this format through SdrWhiteInBufferUnits would produce.

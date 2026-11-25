@@ -14,11 +14,11 @@ using Windows.Graphics.DirectX.Direct3D11;
 
 namespace RoeSnip.Platform.Windows;
 
-/// <summary>Fallback capture path per DESIGN.md: Windows.Graphics.Capture via
+/// <summary>Fallback capture path per docs/architecture.md: Windows.Graphics.Capture via
 /// IGraphicsCaptureItemInterop.CreateForMonitor, using Direct3D11CaptureFramePool.CreateFreeThreaded
 /// (NOT plain Create, which needs a DispatcherQueue and throws from CLI/console contexts). Covers
 /// RDP and other Desktop-Duplication-denied contexts. The yellow capture border may appear
-/// (unpackaged apps lack the graphicsCaptureWithoutBorder capability) — accepted per DESIGN.md,
+/// (unpackaged apps lack the graphicsCaptureWithoutBorder capability) - accepted per docs/architecture.md,
 /// since Desktop Duplication (the primary path) is borderless.
 /// Ported from src/RoeSnip/Capture/WgcCapturer.cs (item 10, r5-latency pre-provisioning
 /// architecture) with the same two mechanical changes as DesktopDuplicationCapturer: HMONITOR via
@@ -513,7 +513,7 @@ public sealed class WgcCapturer : IScreenCapturer
         try
         {
             // WGC doesn't expose a "delivered format" the way Desktop Duplication does — request
-            // FP16 for advanced-color displays, BGRA8 otherwise (DESIGN.md's one legitimate use of
+            // FP16 for advanced-color displays, BGRA8 otherwise (docs/architecture.md's one legitimate use of
             // AdvancedColorActive for branching).
             DirectXPixelFormat pixelFormat = monitor.AdvancedColorActive
                 ? DirectXPixelFormat.R16G16B16A16Float
@@ -524,7 +524,7 @@ public sealed class WgcCapturer : IScreenCapturer
             session = framePool.CreateCaptureSession(resources.Item);
             // Screenshots deliberately never include the OS cursor (contrast RegionRecorder's video
             // path, which explicitly turns cursor capture ON) — this is a shipped product decision,
-            // not a bug. See CAPTURE-FIDELITY-SPEC.md item 2 for the full "why doesn't my screenshot
+            // not a bug. See docs/architecture.md "Capture" for the full "why doesn't my screenshot
             // show the cursor" answer, which is unrelated to the tooltip-ordering fix in item 1.
             session.IsCursorCaptureEnabled = false;
             try { session.IsBorderRequired = false; }
@@ -696,7 +696,7 @@ public sealed class WgcCapturer : IScreenCapturer
 
     /// <summary>The default-interface IID of GraphicsCaptureItem (IGraphicsCaptureItem), resolved
     /// from the projection assembly at runtime; falls back to the well-known published GUID if the
-    /// internal ABI type can't be found (projection implementation detail, per PLAN.md flag on
+    /// internal ABI type can't be found (projection implementation detail, a known
     /// IGraphicsCaptureItemInterop's stability).</summary>
     private static Guid ResolveGraphicsCaptureItemIid()
     {

@@ -7,14 +7,14 @@ using Vortice.DXGI;
 
 namespace RoeSnip.Capture;
 
-/// <summary>Primary capture path per DESIGN.md: IDXGIOutput5.DuplicateOutput1, requesting both
+/// <summary>Primary capture path per docs/architecture.md: IDXGIOutput5.DuplicateOutput1, requesting both
 /// FP16 scRGB and BGRA8 sRGB as supported formats and branching on whichever format is actually
 /// delivered (DXGI_OUTDUPL_DESC.ModeDesc.Format) — never on AdvancedColorActive.
 ///
 /// Deliberate, not a gap: this class never reads DXGI_OUTDUPL_FRAME_INFO's separate pointer-shape
 /// buffer, so screenshots taken via this path never include the OS cursor (contrast
 /// Recording/WindowsRegionCaptureSource.cs / RegionRecorder.cs, which explicitly enable cursor
-/// capture for recordings — see CAPTURE-FIDELITY-SPEC.md item 2). A "cursor missing from my
+/// capture for recordings - see docs/architecture.md "Capture"). A "cursor missing from my
 /// screenshot" report is this, not a bug.</summary>
 public sealed class DesktopDuplicationCapturer : IScreenCapturer
 {
@@ -60,7 +60,7 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
 
                 if (acquireResult == Vortice.DXGI.ResultCode.WaitTimeout)
                 {
-                    continue; // static screen — retry, per DESIGN.md's retry loop.
+                    continue; // static screen - retry, per docs/architecture.md's retry loop.
                 }
 
                 if (acquireResult == Vortice.DXGI.ResultCode.AccessLost)
@@ -103,7 +103,7 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
             };
             staging = device.CreateTexture2D(stagingDesc);
 
-            // Copy BEFORE ReleaseFrame, per DESIGN.md.
+            // Copy BEFORE ReleaseFrame, per docs/architecture.md.
             device.ImmediateContext.CopyResource(staging, acquiredTexture);
             duplication.ReleaseFrame();
             frameAcquired = false; // frame handed back to the duplication object; no longer ours to release again.
@@ -121,7 +121,7 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
                 device.ImmediateContext.Unmap(staging, 0);
             }
 
-            // DD black-frame quirk (DESIGN.md "Failure modes", observed on NVIDIA RTX + HDR):
+            // DD black-frame quirk (docs/architecture.md "Failure modes", observed on NVIDIA RTX + HDR):
             // a structurally-successful capture can still deliver an all-zero buffer. A real
             // desktop frame always has nonzero alpha, so all-zero == unusable output, and the
             // IScreenCapturer contract says unusable output throws CaptureException (which lets

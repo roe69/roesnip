@@ -5,12 +5,12 @@ using RoeSnip.Interop;
 namespace RoeSnip.App;
 
 /// <summary>Registers the global capture hotkey on a message-only window (HWND_MESSAGE, per
-/// DESIGN.md) and dispatches WM_HOTKEY to a caller-supplied callback (wired by TrayApp to
+/// docs/architecture.md) and dispatches WM_HOTKEY to a caller-supplied callback (wired by TrayApp to
 /// <see cref="AppComposition.RunCaptureFlowAsync"/>).
 ///
 /// This class is deliberately prompt-free: the one-time PrintScreen/Snipping-Tool consent flow
 /// (the dialog around <c>HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled</c>,
-/// DESIGN.md §2) lives in <see cref="TrayApp.ResolvePrintScreenConsent"/>, which owns the settings
+/// docs/architecture.md) lives in <see cref="TrayApp.ResolvePrintScreenConsent"/>, which owns the settings
 /// and can persist the user's answer. The settings handed to <see cref="Register"/> are expected
 /// to already be consent-resolved — keeping the (modal) prompt out of this class means merely
 /// registering a hotkey can never block the tray app's startup.</summary>

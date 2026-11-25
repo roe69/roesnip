@@ -19,7 +19,7 @@ namespace RoeSnip.Core.Recording;
 /// see that record's own doc comment). The two types are therefore genuinely different shapes, not
 /// just a namespace rename, so this class cannot be a literal move-and-retarget of the WPF one
 /// without first unifying WPF's monitor-enumeration/capture layer onto the portable shape — out of
-/// scope for the Core-extraction item that added this file (see docs/PARITY.md's 04-recording-core-
+/// scope for the Core-extraction item that added this file (see docs/parity.md's 04-recording-core-
 /// extraction entry). Both copies implement the exact same geometry and are independently
 /// unit-tested; this is the one deliberate duplication in that extraction.</summary>
 public static class MultiMonitorRecording

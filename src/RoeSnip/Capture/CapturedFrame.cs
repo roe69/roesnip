@@ -58,7 +58,7 @@ public sealed class CapturedFrame : IDisposable
     /// <summary>Reads pixel (x,y) as linear scRGB (1.0 = 80 nits), regardless of source format.
     /// For Bgra8Srgb frames this decodes the sRGB EOTF and rescales so that byte 255 (linear 1.0)
     /// corresponds to Monitor.SdrWhiteNits, i.e. scRGB = srgbLinear01 * (Monitor.SdrWhiteNits / 80.0).
-    /// Used by the magnifier's nits readout — the "killer HDR feature" (DESIGN.md).</summary>
+    /// Used by the magnifier's nits readout - the "killer HDR feature" (docs/architecture.md).</summary>
     public Vector4 ReadPixelScRgb(int x, int y)
     {
         var row = Row(y);
