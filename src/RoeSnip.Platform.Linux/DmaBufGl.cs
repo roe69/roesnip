@@ -36,6 +36,10 @@ internal sealed unsafe class DmaBufGl : IDisposable
 
     /// <summary>DRM_FORMAT_ABGR16161616F: memory order R,G,B,A half floats (SPA RGBA_F16).</summary>
     public const uint FourccAbgr16161616F = 0x48344241;
+
+    /// <summary>DRM_FORMAT_XRGB8888 / ARGB8888: memory order B,G,R,x/A (SPA BGRx / BGRA).</summary>
+    public const uint FourccXrgb8888 = 0x34325258, FourccArgb8888 = 0x34325241;
+    private const int Rgba8 = 0x8058, UnsignedByte = 0x1401;
     public const ulong ModifierInvalid = 0x00FFFFFFFFFFFFFFUL;
 
     private readonly BlockingCollection<Job> _jobs = new();
@@ -298,7 +302,7 @@ internal sealed unsafe class DmaBufGl : IDisposable
     }
 
     /// <summary>Creates a target of the given size, or throws with the reason. GL thread only.</summary>
-    public Target CreateTarget(int width, int height)
+    public Target CreateTarget(int width, int height, bool eightBit = false)
     {
         Target? t = null;
         Invoke(() =>
@@ -311,7 +315,8 @@ internal sealed unsafe class DmaBufGl : IDisposable
             glTexParameteri(Texture2D, TextureMagFilter, Nearest);
             glTexParameteri(Texture2D, TextureWrapS, ClampToEdge);
             glTexParameteri(Texture2D, TextureWrapT, ClampToEdge);
-            glTexImage2D(Texture2D, 0, Rgba16F, width, height, 0, Rgba, HalfFloat, IntPtr.Zero);
+            if (eightBit) glTexImage2D(Texture2D, 0, Rgba8, width, height, 0, Rgba, UnsignedByte, IntPtr.Zero);
+            else glTexImage2D(Texture2D, 0, Rgba16F, width, height, 0, Rgba, HalfFloat, IntPtr.Zero);
             glGenFramebuffers(1, &fbo);
             glBindFramebuffer(Framebuffer, fbo);
             glFramebufferTexture2D(Framebuffer, ColorAttachment0, Texture2D, tex, 0);
@@ -328,10 +333,13 @@ internal sealed unsafe class DmaBufGl : IDisposable
             glTexParameteri(Texture2D, TextureMagFilter, Nearest);
             glTexParameteri(Texture2D, TextureWrapS, ClampToEdge);
             glTexParameteri(Texture2D, TextureWrapT, ClampToEdge);
-            int fmt, type;
-            glGetIntegerv(ReadFormat, &fmt);
-            glGetIntegerv(ReadType, &type);
-            _readHalf = fmt == Rgba && type == HalfFloat;
+            if (!eightBit)
+            {
+                int fmt, type;
+                glGetIntegerv(ReadFormat, &fmt);
+                glGetIntegerv(ReadType, &type);
+                _readHalf = fmt == Rgba && type == HalfFloat;
+            }
             target.Texture = tex;
             target.Fbo = fbo;
             target.SrcTexture = src;
@@ -358,20 +366,20 @@ internal sealed unsafe class DmaBufGl : IDisposable
 
     /// <summary>Copies a DMA-BUF frame (R,G,B,A half floats) into <paramref name="t"/>. Returns null
     /// on success, otherwise the reason.</summary>
-    public string? CopyFrame(Target t, int fd, int offset, int stride, ulong modifier)
+    public string? CopyFrame(Target t, int fd, int offset, int stride, ulong modifier, uint fourcc = FourccAbgr16161616F)
     {
         string? error = null;
-        Invoke(() => error = CopyFrameOnThread(t, fd, offset, stride, modifier));
+        Invoke(() => error = CopyFrameOnThread(t, fd, offset, stride, modifier, fourcc));
         return error;
     }
 
-    private string? CopyFrameOnThread(Target t, int fd, int offset, int stride, ulong modifier)
+    private string? CopyFrameOnThread(Target t, int fd, int offset, int stride, ulong modifier, uint fourcc)
     {
         int* attrs = stackalloc int[24];
         int i = 0;
         attrs[i++] = EglWidth; attrs[i++] = t.Width;
         attrs[i++] = EglHeight; attrs[i++] = t.Height;
-        attrs[i++] = EglFourcc; attrs[i++] = (int)FourccAbgr16161616F;
+        attrs[i++] = EglFourcc; attrs[i++] = (int)fourcc;
         attrs[i++] = EglPlane0Fd; attrs[i++] = fd;
         attrs[i++] = EglPlane0Offset; attrs[i++] = offset;
         attrs[i++] = EglPlane0Pitch; attrs[i++] = stride;
@@ -405,6 +413,22 @@ internal sealed unsafe class DmaBufGl : IDisposable
         {
             ((delegate* unmanaged[Cdecl]<IntPtr, IntPtr, int>)_fnDestroyImage)(_display, image);
         }
+    }
+
+    /// <summary>Reads the block at (x, y) of an 8-bit target as tight R,G,B,A bytes into
+    /// <paramref name="dest"/>. Null on success, else the reason.</summary>
+    public string? ReadBytes(Target t, int x, int y, int width, int height, byte[] dest)
+    {
+        string? error = null;
+        Invoke(() =>
+        {
+            glBindFramebuffer(Framebuffer, t.Fbo);
+            glPixelStorei(0x0D05, 1); // GL_PACK_ALIGNMENT
+            fixed (byte* d = dest) glReadPixels(x, y, width, height, Rgba, UnsignedByte, (IntPtr)d);
+            int err = glGetError();
+            if (err != 0) error = $"GL error 0x{err:X} reading the frame back";
+        });
+        return error;
     }
 
     /// <summary>Reads the <paramref name="width"/> x <paramref name="height"/> block at (x, y) of the

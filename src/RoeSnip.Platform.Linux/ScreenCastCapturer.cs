@@ -18,7 +18,6 @@ public sealed class ScreenCastCapturer : IScreenCapturer
     private static readonly TimeSpan WaitWithToken = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan WaitForDialog = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan FirstFrameWait = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan FreshFrameWait = TimeSpan.FromMilliseconds(400);
     private static readonly TimeSpan CaptureLinger = TimeSpan.FromMilliseconds(1500);
     private static int s_sizeNoteLogged;
 
@@ -36,10 +35,18 @@ public sealed class ScreenCastCapturer : IScreenCapturer
         var watch = System.Diagnostics.Stopwatch.StartNew();
         long baseline = live.Wake(nodeId, CaptureLinger);
         if (baseline < 0) return; // already running
-        bool fresh = stream.WaitForFrameAfter(baseline, FreshFrameWait);
-        FileLog.Write(fresh
-            ? $"RoeSnip: screencast node {nodeId} woke, fresh frame in {watch.ElapsedMilliseconds} ms"
-            : $"RoeSnip: screencast node {nodeId} woke, no fresh frame in {watch.ElapsedMilliseconds} ms; using the last frame");
+        // A silent stream is kicked (off, on) and waited on again; the old buffer is never used.
+        bool fresh = FreshFrameWait.Await(baseline, FreshFrameWait.DefaultSteps, stream.WaitForFrameAfter, () =>
+        {
+            FileLog.Write($"RoeSnip: screencast node {nodeId} sent no frame after the wake; re-activating");
+            live.Reactivate(nodeId);
+        }, out int kicks);
+        if (!fresh)
+        {
+            throw new CaptureException($"screencast node {nodeId} sent no fresh frame in {watch.ElapsedMilliseconds} ms");
+        }
+        FileLog.Write($"RoeSnip: screencast node {nodeId} woke, fresh frame in {watch.ElapsedMilliseconds} ms" +
+            (kicks > 0 ? $" ({kicks} re-activations)" : ""));
     }
 
     public CapturedFrame Capture(MonitorInfo monitor)
@@ -75,7 +82,7 @@ public sealed class ScreenCastCapturer : IScreenCapturer
         }
         WaitForFreshFrame(live, stream, geometry.Value.NodeId);
 
-        if (stream is HdrScreenCastStream hdr)
+        if (stream is HdrScreenCastStream { Is8Bit: false } hdr)
         {
             var frame = hdr.ReadFrame(monitor, HdrDisplayProbe.PeakNits(monitor.DeviceName), out string why, out string timing);
             if (frame is not null)
