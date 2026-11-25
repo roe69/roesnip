@@ -7,11 +7,11 @@ namespace RoeSnip.Platform.Linux;
 
 /// <summary>Raw X11 <c>XGetImage</c> fallback capturer for portal-less X sessions (docs/architecture.md).
 /// Also hosts the RandR monitor-enumeration path (<see cref="EnumerateMonitorsViaRandR"/>)
-/// that <see cref="LinuxCaptureBackend"/> uses regardless of which capturer ultimately succeeds —
+/// that <see cref="LinuxCaptureBackend"/> uses regardless of which capturer ultimately succeeds -
 /// both the portal slicer and this capturer need the same monitor-bounds list, and keeping the
 /// enumeration on RandR (not Avalonia's Screens) keeps this project independent of RoeSnip.App.
 ///
-/// All Xlib/XRandR functions are local <c>DllImport</c>s per the plan — they compile on any host OS
+/// All Xlib/XRandR functions are local <c>DllImport</c>s per the plan - they compile on any host OS
 /// and only need <c>libX11.so.6</c>/<c>libXrandr.so.2</c> to exist at runtime on a real Linux box.
 /// Output frames are always <see cref="FrameFormat.Bgra8Srgb"/> (X11 pixmaps are SDR by definition;
 /// an X11 session has no HDR path; Wayland HDR is the screencast's, docs/architecture.md).
@@ -25,7 +25,7 @@ namespace RoeSnip.Platform.Linux;
 /// <c>XInitThreads</c> exactly once per process (in the static constructor, before ANY other Xlib
 /// call), install the silent error handler ONCE for the lifetime of the process (never restored),
 /// and additionally serialize every Xlib/XRandR call (capture AND enumeration) behind one static
-/// lock — Xlib's own thread-safety story is not trusted further than that.</summary>
+/// lock - Xlib's own thread-safety story is not trusted further than that.</summary>
 public sealed class X11Capturer : IScreenCapturer
 {
     private const string LibX11 = "libX11.so.6";
@@ -40,13 +40,13 @@ public sealed class X11Capturer : IScreenCapturer
     private static readonly XErrorHandlerDelegate SilentErrorHandler = static (_, _) => 0;
 
     /// <summary>Guards every Xlib/XRandR call made anywhere in this class (Capture and
-    /// EnumerateMonitorsViaRandR alike) — see the class doc comment's thread-safety note.</summary>
+    /// EnumerateMonitorsViaRandR alike) - see the class doc comment's thread-safety note.</summary>
     private static readonly object XlibLock = new();
 
     static X11Capturer()
     {
         // Must run before any other Xlib call in the process (Xlib's own contract for
-        // XInitThreads). The error handler is installed once here and never restored — Xlib's
+        // XInitThreads). The error handler is installed once here and never restored - Xlib's
         // default handler terminates the process on any X error (e.g. a BadMatch if monitor
         // bounds raced a resolution change), so leaving the silent handler in place permanently
         // is strictly safer than any per-call install/restore dance could be made to be.
@@ -64,7 +64,7 @@ public sealed class X11Capturer : IScreenCapturer
             if (display == IntPtr.Zero)
             {
                 throw new CaptureException(
-                    "XOpenDisplay failed — no X11 (or XWayland) server reachable via DISPLAY.");
+                    "XOpenDisplay failed - no X11 (or XWayland) server reachable via DISPLAY.");
             }
 
             try
@@ -88,7 +88,7 @@ public sealed class X11Capturer : IScreenCapturer
                         throw new CaptureException(
                             $"Monitor {monitor.Index} ({monitor.DeviceName}) at {bounds.Left},{bounds.Top} " +
                             $"{bounds.Width}x{bounds.Height} lies entirely outside the X root window " +
-                            $"({rootW}x{rootH}) — nothing to capture.");
+                            $"({rootW}x{rootH}) - nothing to capture.");
                     }
                     if (clamped != bounds)
                     {
@@ -125,18 +125,18 @@ public sealed class X11Capturer : IScreenCapturer
                 // P3 audit fix: on an XWayland session, XGetImage can "succeed" while returning
                 // black/stale non-desktop content instead of failing outright. Without this check
                 // that false success gets treated by FallbackCaptureBackend as proof the portal
-                // capturer (priority slot 0) is safe to memoize as permanently broken — see
+                // capturer (priority slot 0) is safe to memoize as permanently broken - see
                 // EnsureNotWaylandSession's doc comment for the full failure chain this guards
                 // against. A real, all-zero desktop frame is never legitimate (docs/architecture.md's DD
                 // black-frame precedent), so this mirrors DesktopDuplicationCapturer's own check.
                 // Alpha is excluded from the check: ConvertZPixmapToBgra above unconditionally
                 // forces every alpha byte to 255 (root windows have no alpha), so IsAllZero would
-                // never fire here — IsAllZeroColor ignores those forced bytes and checks B/G/R only.
+                // never fire here - IsAllZeroColor ignores those forced bytes and checks B/G/R only.
                 if (FrameSanity.IsAllZeroColor(pixels))
                 {
                     throw new CaptureException(
                         $"XGetImage delivered an all-zero (black) frame for monitor {monitor.Index} " +
-                        $"({monitor.DeviceName}) — likely XWayland returning stale/non-desktop content.");
+                        $"({monitor.DeviceName}) - likely XWayland returning stale/non-desktop content.");
                 }
 
                 return new CapturedFrame(
@@ -156,7 +156,7 @@ public sealed class X11Capturer : IScreenCapturer
     /// unchecked, that false success feeds straight into FallbackCaptureBackend's fallback-succeeded
     /// memoization: portal (slot 0) fails once, X11 (the last-resort slot) "succeeds" with garbage,
     /// so the portal gets memoized broken FOREVER and every future capture goes straight to the
-    /// permanently-black X11 path — self-healing never fires because X11 keeps "succeeding".
+    /// permanently-black X11 path - self-healing never fires because X11 keeps "succeeding".
     /// Throwing here instead means both capturers genuinely fail on a portal-less Wayland session,
     /// which FallbackCaptureBackend's stale-memo self-heal already handles safely (no permanent
     /// poisoning either way). <c>ROESNIP_FORCE_X11=1</c> overrides this for anyone who explicitly
@@ -175,7 +175,7 @@ public sealed class X11Capturer : IScreenCapturer
         {
             throw new CaptureException(
                 "refusing XGetImage on a Wayland session (XDG_SESSION_TYPE and/or WAYLAND_DISPLAY " +
-                "indicate Wayland) — XWayland XGetImage can 'succeed' with black/stale non-desktop " +
+                "indicate Wayland) - XWayland XGetImage can 'succeed' with black/stale non-desktop " +
                 "content, which would otherwise permanently memoize the portal capturer as broken. " +
                 "Set ROESNIP_FORCE_X11=1 to force XGetImage capture on Wayland anyway.");
         }
@@ -216,7 +216,7 @@ public sealed class X11Capturer : IScreenCapturer
     /// <summary>Enumerates active monitors via XRandR (connected outputs with an active CRTC).
     /// Contract per ICaptureBackend.EnumerateMonitors: never throws for a single bad entry (logs
     /// and omits it); returns an empty list only if enumeration itself fails entirely (e.g. no X
-    /// server at all — a pure-Wayland session without XWayland).</summary>
+    /// server at all - a pure-Wayland session without XWayland).</summary>
     internal static IReadOnlyList<MonitorInfo> EnumerateMonitorsViaRandR()
     {
         lock (XlibLock)
@@ -226,7 +226,7 @@ public sealed class X11Capturer : IScreenCapturer
             if (display == IntPtr.Zero)
             {
                 FileLog.Write(
-                    "RoeSnip: XOpenDisplay failed (no X11/XWayland DISPLAY?) — cannot enumerate monitors.");
+                    "RoeSnip: XOpenDisplay failed (no X11/XWayland DISPLAY?) - cannot enumerate monitors.");
                 return result;
             }
 
@@ -236,7 +236,7 @@ public sealed class X11Capturer : IScreenCapturer
                 IntPtr resourcesPtr = XRRGetScreenResources(display, root);
                 if (resourcesPtr == IntPtr.Zero)
                 {
-                    FileLog.Write("RoeSnip: XRRGetScreenResources failed — is the RandR extension available?");
+                    FileLog.Write("RoeSnip: XRRGetScreenResources failed - is the RandR extension available?");
                     return result;
                 }
 
@@ -269,7 +269,7 @@ public sealed class X11Capturer : IScreenCapturer
                 }
 
                 // RRGetOutputPrimary may legitimately be None (0); the app still needs exactly one
-                // primary for its own ordering conventions — promote the first monitor in that case.
+                // primary for its own ordering conventions - promote the first monitor in that case.
                 if (result.Count > 0 && !result.Any(m => m.IsPrimary))
                 {
                     result[0] = result[0] with { IsPrimary = true };
@@ -324,7 +324,7 @@ public sealed class X11Capturer : IScreenCapturer
                     : $"output-{output}";
 
                 // RandR reports physical pixels on real X11; DPI/scale have no reliable per-monitor
-                // X11 story, so report the neutral 96/1.0 — the portal capturer independently
+                // X11 story, so report the neutral 96/1.0 - the portal capturer independently
                 // verifies the actual pixel scale at capture time (docs/architecture.md), and
                 // SdrWhiteNits/AdvancedColorActive are the pinned Linux v1 constants.
                 return new MonitorInfo(
@@ -361,7 +361,7 @@ public sealed class X11Capturer : IScreenCapturer
         {
             throw new CaptureException(
                 $"unsupported ZPixmap bits_per_pixel={image.BitsPerPixel} (depth {image.Depth}) for monitor " +
-                $"{monitor.Index} ({monitor.DeviceName}) — only 24/32bpp are supported.");
+                $"{monitor.Index} ({monitor.DeviceName}) - only 24/32bpp are supported.");
         }
         if (image.Width < width || image.Height < height)
         {
@@ -376,7 +376,7 @@ public sealed class X11Capturer : IScreenCapturer
         var output = new byte[width * height * 4];
 
         // The overwhelmingly common case on x86 X servers: 32bpp LSBFirst with the standard
-        // 0xFF0000/0xFF00/0xFF masks is already B,G,R,X in memory — copy rows and force alpha.
+        // 0xFF0000/0xFF00/0xFF masks is already B,G,R,X in memory - copy rows and force alpha.
         bool fastPath = image.BitsPerPixel == 32
             && image.ByteOrder == LsbFirst
             && (uint)image.RedMask == 0x00FF0000u
@@ -397,7 +397,7 @@ public sealed class X11Capturer : IScreenCapturer
                 Buffer.BlockCopy(row, 0, output, dst, srcRowBytes);
                 for (int x = 0; x < width; x++)
                 {
-                    output[dst + x * 4 + 3] = 255; // root windows have no alpha — force opaque
+                    output[dst + x * 4 + 3] = 255; // root windows have no alpha - force opaque
                 }
             }
             else
@@ -460,7 +460,7 @@ public sealed class X11Capturer : IScreenCapturer
         }
         catch (EntryPointNotFoundException)
         {
-            // Ancient libX11 builds export XDestroyImage only as a macro — fall back to the
+            // Ancient libX11 builds export XDestroyImage only as a macro - fall back to the
             // image's own destroy_image function pointer (offset-stable in the XImage funcs vtable).
             var image = Marshal.PtrToStructure<XImage>(imagePtr);
             if (image.DestroyImageFn != IntPtr.Zero)
@@ -532,7 +532,7 @@ public sealed class X11Capturer : IScreenCapturer
 
 #pragma warning disable CS0169, CS0649 // interop layout structs: fields assigned by marshalling, some present only for layout
 
-    /// <summary>LP64 layout of Xlib's XImage (fields through the first two funcs vtable slots —
+    /// <summary>LP64 layout of Xlib's XImage (fields through the first two funcs vtable slots -
     /// PtrToStructure only reads the declared prefix, which is all we need).</summary>
     [StructLayout(LayoutKind.Sequential)]
     private struct XImage

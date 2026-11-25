@@ -8,7 +8,7 @@ namespace RoeSnip.Core.Color;
 /// <c>%Xx</c> parameters substituted per pixel. No UI-framework dependency. Ported verbatim from
 /// the frozen WPF app's own src/RoeSnip/Overlay/ColorFormatTemplate.cs (item 22).
 ///
-/// Parameters: %Re red, %Gr green, %Bl blue, %Al alpha (always 255 — RoeSnip samples are opaque),
+/// Parameters: %Re red, %Gr green, %Bl blue, %Al alpha (always 255 - RoeSnip samples are opaque),
 /// %Cy cyan, %Ma magenta, %Ye yellow, %Bk black key (CMYK, 0-100), %Hu hue (0-360),
 /// %Hn natural hue ("R64"), %Si saturation HSI, %Sl saturation HSL, %Sb saturation HSB/HSV,
 /// %Br brightness, %Va value, %In intensity, %Ll lightness (HSL), %Wh whiteness, %Bn blackness
@@ -17,7 +17,7 @@ namespace RoeSnip.Core.Color;
 /// %Dv decimal (BGR), %Dr decimal (RGB), %Na nearest CSS color name, %Nt nits (needs a live HDR
 /// sample; renders "n/a" when unavailable).
 ///
-/// Format suffixes — %Re/%Gr/%Bl/%Al accept one of: b byte (default), h/H hex one digit
+/// Format suffixes - %Re/%Gr/%Bl/%Al accept one of: b byte (default), h/H hex one digit
 /// (low/uppercase), x/X hex two digits, f float 0-1 with leading zero, F float without leading
 /// zero (e.g. "%ReX" = red as uppercase two-digit hex). %Lc/%Ca/%Cb accept i (round to integer).
 /// Anything that isn't a recognized parameter passes through verbatim.</summary>
@@ -130,7 +130,7 @@ public static class ColorFormatTemplate
         }
     }
 
-    /// <summary>Channel as 0-1 float, two decimals with trailing zeros trimmed ("1", "0.89") —
+    /// <summary>Channel as 0-1 float, two decimals with trailing zeros trimmed ("1", "0.89") -
     /// pairs with a literal "f" in a template (e.g. VEC4's "%Reff") to render "0.89f"/"1f".</summary>
     private static string Float01(byte value, bool leadingZero)
     {

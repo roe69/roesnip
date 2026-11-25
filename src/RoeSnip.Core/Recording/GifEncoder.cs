@@ -10,43 +10,43 @@ namespace RoeSnip.Core.Recording;
 
 /// <summary>Streams frames straight to a temp file as an animated GIF, building the LZW-compressed
 /// bytes itself instead of round-tripping every frame through WPF's <c>GifBitmapEncoder</c> (the old
-/// design — see git history for what that cost: a fresh managed byte[] per frame, routinely over the
+/// design - see git history for what that cost: a fresh managed byte[] per frame, routinely over the
 /// 85,000-byte LOH threshold, at recording cadence). The whole delta/palette pipeline lives in
 /// <c>RoeSnip.Core.Recording.Gif</c> (<see cref="GifOctreeQuantizer"/>, <see cref="GifNearestColorLut"/>,
-/// <see cref="GifDelta"/>, <see cref="GifLzwEncoder"/>) — this class is orchestration only: it owns
+/// <see cref="GifDelta"/>, <see cref="GifLzwEncoder"/>) - this class is orchestration only: it owns
 /// the frame-to-frame state (the diff baseline, the current palette, the reusable scratch buffers)
 /// and assembles each frame's GCE + Image Descriptor + Local Color Table + LZW data directly onto the
 /// output stream.
 ///
 /// PORTABLE CORE ENGINE: this class holds the entire from-scratch GIF pipeline (no WPF/PresentationCore
-/// dependency anywhere — this file never used WPF's GifBitmapEncoder in the first place; that
+/// dependency anywhere - this file never used WPF's GifBitmapEncoder in the first place; that
 /// reference in this doc comment and GifLzwEncoder's own is purely historical, describing the design
 /// this pipeline replaced). The WPF app's own <c>RoeSnip.Recording.GifEncoder</c> is a thin wrapper
 /// around this class: it exists only so the WPF-side <c>RoeSnip.Imaging.SdrImage</c> type (which
 /// carries a WPF-only <c>ToBitmapSource()</c> plus a recording-cadence <c>reuseOutput</c> allocation
 /// optimization this class doesn't need) can keep flowing through the WPF recording pipeline
-/// unchanged — see that wrapper's own class doc comment for the adapter shape.
+/// unchanged - see that wrapper's own class doc comment for the adapter shape.
 ///
-/// Size/quality scheme (the timestamped <see cref="AddFrame(SdrImage, long)"/> overload — the
+/// Size/quality scheme (the timestamped <see cref="AddFrame(SdrImage, long)"/> overload - the
 /// recording path): a "last painted" canvas-sized BGRA8 buffer (allocated once, in <see cref="_lastPaintedPixelsBgra"/>)
 /// tracks what a viewer's screen would actually show. Every incoming frame is diffed against it with a
 /// per-channel tolerance (<see cref="GifEncoderOptions.ChannelTolerance"/>, Chebyshev) via
 /// <see cref="TryGetChangedBounds"/> to find a tight changed bounding box; pixels inside that box that
 /// are still within tolerance map to a reserved transparent palette index (disposal is already "do not
 /// dispose", so untouched canvas pixels keep showing through) rather than being repainted, which is
-/// exactly why the baseline must hold SOURCE pixel values, not palette-quantized ones — a pixel sitting
+/// exactly why the baseline must hold SOURCE pixel values, not palette-quantized ones - a pixel sitting
 /// just inside tolerance has to keep comparing against the same reference every frame, or constant
 /// quantization noise above tolerance would repaint "static" content forever. Per emitted frame, the
 /// palette is an up-to-255-color octree built ONLY from the newly-painted pixels (plus one further
 /// slot reserved for the transparent index), with a reuse-first fast path: if the existing palette
 /// still fits the new painted set within <see cref="GifEncoderOptions.PaletteReuseErrorThreshold"/>,
-/// it is kept byte-for-byte (no octree rebuild, no LUT invalidation) — an unavoidable per-frame LCT
+/// it is kept byte-for-byte (no octree rebuild, no LUT invalidation) - an unavoidable per-frame LCT
 /// write either way, since this file carries no Global Color Table for any frame to fall back on.
 /// Frame delays are exact-by-construction via a patch-behind scheme: a frame is written with a
 /// provisional delay and PATCHED to its real display duration once the next frame's timestamp is
-/// known (2cs floor — browsers clamp 0/1cs to 10cs). Every 15 media-clock seconds
+/// known (2cs floor - browsers clamp 0/1cs to 10cs). Every 15 media-clock seconds
 /// (<see cref="GifEncoderOptions.EffectiveKeyframeInterval"/>), a frame that would emit anyway
-/// instead re-baselines the WHOLE canvas opaquely (fresh palette, no transparency, baseline reset) —
+/// instead re-baselines the WHOLE canvas opaquely (fresh palette, no transparency, baseline reset) -
 /// keyframes only ever piggyback on an emit that was already happening, so a take that never changes
 /// emits nothing and never drifts, by construction. The raw <see cref="AddFrame(SdrImage, ushort)"/>
 /// primitive is the same full-canvas opaque quantize+encode path with a caller-supplied fixed delay
@@ -54,7 +54,7 @@ namespace RoeSnip.Core.Recording;
 /// the two overloads on one instance.
 ///
 /// RATE CONTROL LIVES AT CAPTURE CADENCE, NOT HERE (quality/framerate decoupling workstream): this
-/// class used to also shape emit rate itself — a candidate frame whose changed bbox covered a large
+/// class used to also shape emit rate itself - a candidate frame whose changed bbox covered a large
 /// enough fraction of the canvas was held back behind a minimum delay floor, so a GIF's effective
 /// framerate on motion-heavy content was an accidental side effect of whichever size/quality tier was
 /// picked. That coupling is gone. Every candidate frame that clears the tolerance test above emits
@@ -66,13 +66,13 @@ namespace RoeSnip.Core.Recording;
 /// diff baseline, the canvas-sized index buffer, the box-sized packed-index buffer, the dense
 /// painted-pixel buffer fed to the octree, the palette array, the octree's node arena, the LUT's
 /// bucket/version arrays, the LZW encoder's hash table and bit buffers) is a fixed-size field
-/// allocated once in <see cref="Create"/> and reused frame to frame — nothing here allocates at
+/// allocated once in <see cref="Create"/> and reused frame to frame - nothing here allocates at
 /// recording cadence. That is not a style preference: a Gen2/LOH collection stops every managed
 /// thread, including the UI thread, which is what made RegionOutline's WM_NCHITTEST hit-testing (and
 /// so click-through into the app being recorded) intermittently unresponsive specifically during GIF
 /// takes under the old per-frame-allocating design.
 ///
-/// Encoder thread only for <see cref="AddFrame(SdrImage, long)"/> and <see cref="FinalizeAndClose"/> — <see cref="Create"/>
+/// Encoder thread only for <see cref="AddFrame(SdrImage, long)"/> and <see cref="FinalizeAndClose"/> - <see cref="Create"/>
 /// runs on the UI thread before the encoder thread starts, and <see cref="Dispose"/> runs on the UI
 /// thread after the encoder thread has joined, matching Mp4Encoder's documented discipline. No
 /// locking: the two threads never touch the instance concurrently.</summary>
@@ -85,7 +85,7 @@ public sealed class GifEncoder : IDisposable
     private const ushort ProvisionalDelayCs = 3;
     /// <summary>Browsers treat 0-1cs as "broken" and clamp to 10cs; 2cs (50fps) is the floor.</summary>
     private const int MinDelayCs = 2;
-    /// <summary>GIF disposal method 1 = "do not dispose" — a frame's own pixels stay as the
+    /// <summary>GIF disposal method 1 = "do not dispose" - a frame's own pixels stay as the
     /// background for the next one, which is what the transparent-index delta scheme needs.</summary>
     private const byte DisposalDoNotDispose = 0x04; // bits 2-4 of the GCE packed byte
 
@@ -165,16 +165,16 @@ public sealed class GifEncoder : IDisposable
         return new GifEncoder(stream, width, height, timestampTicksPerSecond, options ?? new GifEncoderOptions());
     }
 
-    /// <summary>Encoder thread only — the recording path. The first call establishes the baseline as
+    /// <summary>Encoder thread only - the recording path. The first call establishes the baseline as
     /// an opaque full-canvas keyframe. Every later call diffs <paramref name="frame"/> against the
-    /// last-painted baseline (tolerance-gated — see the class doc); no change means no emit. A change
-    /// always emits (no emit-rate shaping here — see the class doc's "rate control lives at capture
+    /// last-painted baseline (tolerance-gated - see the class doc); no change means no emit. A change
+    /// always emits (no emit-rate shaping here - see the class doc's "rate control lives at capture
     /// cadence" note) and, once 15 media-clock seconds have passed since the last keyframe, is
     /// promoted to a full-canvas re-baseline instead of a changed-region delta.
     ///
     /// Returns true when the frame was EMITTED. Unlike the old design this method no longer retains a
-    /// reference to <paramref name="frame"/>.Pixels — the diff baseline is this instance's own
-    /// internal buffer, updated pixel-by-pixel for whatever was actually painted — so a double-
+    /// reference to <paramref name="frame"/>.Pixels - the diff baseline is this instance's own
+    /// internal buffer, updated pixel-by-pixel for whatever was actually painted - so a double-
     /// buffering caller is free to reuse/overwrite <paramref name="frame"/>.Pixels immediately after
     /// this call returns, on either outcome.</summary>
     public bool AddFrame(SdrImage frame, long timestampTicks)
@@ -205,7 +205,7 @@ public sealed class GifEncoder : IDisposable
         }
         if (!changed)
         {
-            return false; // nothing changed beyond tolerance — the previous frame just keeps displaying
+            return false; // nothing changed beyond tolerance - the previous frame just keeps displaying
         }
 
         bool isKeyframe = (timestampTicks - _lastKeyframeTimestampTicks) >= (long)(_options.EffectiveKeyframeInterval.TotalSeconds * _timestampTicksPerSecond);
@@ -226,7 +226,7 @@ public sealed class GifEncoder : IDisposable
     }
 
     /// <summary>Raw primitive: quantizes and LZW-encodes <paramref name="frame"/> (must be
-    /// full-canvas) as a single opaque frame with a fixed delay — no diffing against the baseline, no
+    /// full-canvas) as a single opaque frame with a fixed delay - no diffing against the baseline, no
     /// delay patching, no keyframe/emit-rate logic. Kept for tests; the recording path uses the
     /// timestamped overload, and the two must not be interleaved on one instance.</summary>
     public void AddFrame(SdrImage frame, ushort delayCentiseconds)
@@ -272,8 +272,8 @@ public sealed class GifEncoder : IDisposable
     }
 
     /// <summary>The one place that turns a frame + box into on-disk bytes: gathers the pixels this
-    /// frame actually paints (the whole box when <paramref name="allowTransparency"/> is false — the
-    /// keyframe/first-frame/raw-primitive shape, where box is always the full canvas — or a
+    /// frame actually paints (the whole box when <paramref name="allowTransparency"/> is false - the
+    /// keyframe/first-frame/raw-primitive shape, where box is always the full canvas - or a
     /// tolerance-filtered subset of it otherwise), resolves the palette (reuse-first fast path unless
     /// <paramref name="forceRebuild"/>), runs <see cref="GifDelta.ClassifyAndPaint"/> to both classify
     /// and index every pixel in the box in one pass, packs the box's indices out of the canvas-strided
@@ -377,12 +377,12 @@ public sealed class GifEncoder : IDisposable
 
         // ---- Local Color Table: real colors, then the reserved (arbitrary) transparent slot, then
         // zero padding up to the physical power-of-two size the descriptor's size bits declare.
-        // GIF89a mandates each entry as Red, Green, Blue in that order — but every internal palette
+        // GIF89a mandates each entry as Red, Green, Blue in that order - but every internal palette
         // buffer (_paletteBgr, the quantizer, the nearest-color LUT) deliberately stores B,G,R to
         // match the app's own BGRA pixel convention throughout, so the swap happens right here, at
         // the one place bytes actually leave the process. Writing _paletteBgr's B,G,R bytes straight
         // through (as this used to) is spec-invalid: every real decoder renders such a file with red
-        // and blue swapped — confirmed against WPF's GifBitmapDecoder, whose composited pixel output
+        // and blue swapped - confirmed against WPF's GifBitmapDecoder, whose composited pixel output
         // came back with R/B exchanged for a known, asymmetric source color. ----
         for (int i = 0; i < _paletteColorCount; i++)
         {
@@ -416,10 +416,10 @@ public sealed class GifEncoder : IDisposable
 
     /// <summary>Preliminary tolerance-only scan over <paramref name="box"/> that gathers the dense
     /// BGRA quads of pixels NOT within <see cref="GifEncoderOptions.ChannelTolerance"/> of the
-    /// baseline, into <see cref="_paintedPixelScratch"/> — exactly the "newly-painted pixels" set the
+    /// baseline, into <see cref="_paintedPixelScratch"/> - exactly the "newly-painted pixels" set the
     /// octree quantizer is built from. Kept separate from <see cref="GifDelta.ClassifyAndPaint"/>
     /// (which does the same tolerance test) because the palette must exist BEFORE that method can map
-    /// any pixel through the nearest-color LUT — this pass runs first and only re-does the cheap
+    /// any pixel through the nearest-color LUT - this pass runs first and only re-does the cheap
     /// tolerance compare, never the LUT lookup.</summary>
     private int CollectPaintedPixels(ReadOnlySpan<byte> currentPixels, RectPhysical box)
     {
@@ -454,7 +454,7 @@ public sealed class GifEncoder : IDisposable
         _stream.WriteByte((byte)(value >> 8));
     }
 
-    /// <summary>Smallest power of two, at least 2, that is &gt;= <paramref name="n"/> — the GIF color
+    /// <summary>Smallest power of two, at least 2, that is &gt;= <paramref name="n"/> - the GIF color
     /// table's physical size is always a power of two from 2 to 256.</summary>
     private static int NextPowerOfTwoAtLeastTwo(int n)
     {
@@ -479,7 +479,7 @@ public sealed class GifEncoder : IDisposable
     }
 
     /// <summary>Finds the tight bounding box of pixels that differ between two same-sized BGRA8
-    /// canvases by more than <paramref name="tolerance"/> in ANY channel (Chebyshev/max-channel — the
+    /// canvases by more than <paramref name="tolerance"/> in ANY channel (Chebyshev/max-channel - the
     /// same test <see cref="GifDelta"/> uses for its own per-pixel classification, kept consistent so
     /// the bbox this returns and the transparent-pixel decisions made inside it agree). Returns false
     /// when no pixel differs beyond tolerance. Tolerance 0 (the default, matching every pre-existing
@@ -606,9 +606,9 @@ public sealed class GifEncoder : IDisposable
     }
 
     /// <summary>Recording-path finalize: patches the LAST frame's delay to its real remaining display
-    /// time (last emit to <paramref name="endTimestampTicks"/>, the take's stop moment) — without
+    /// time (last emit to <paramref name="endTimestampTicks"/>, the take's stop moment) - without
     /// this, a recording that ends on a static tail (the common "hold the result, then Stop" flow)
-    /// would snap off its final frame after the provisional delay on every loop — then writes the
+    /// would snap off its final frame after the provisional delay on every loop - then writes the
     /// trailer and closes.</summary>
     public void FinalizeAndClose(long endTimestampTicks)
     {
@@ -619,7 +619,7 @@ public sealed class GifEncoder : IDisposable
         FinalizeAndClose();
     }
 
-    /// <summary>Writes the trailer byte and flushes/closes the output stream. Idempotent — safe to
+    /// <summary>Writes the trailer byte and flushes/closes the output stream. Idempotent - safe to
     /// call even if a prior call (or <see cref="Dispose"/>) already closed the stream, since Stop()
     /// paths and exception-cleanup paths can both reach this.</summary>
     public void FinalizeAndClose()
@@ -636,7 +636,7 @@ public sealed class GifEncoder : IDisposable
 
     /// <summary>UI thread, after the encoder thread has joined. Idempotent and safe to call after
     /// <see cref="FinalizeAndClose"/> already ran (e.g. a failed Start() cleanup path that disposes
-    /// unconditionally) — closing an already-closed stream is a no-op.</summary>
+    /// unconditionally) - closing an already-closed stream is a no-op.</summary>
     public void Dispose()
     {
         if (_closed)

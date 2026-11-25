@@ -250,9 +250,9 @@ public partial class ShareResultWindow : Window
         {
             return text;
         }
-        int head = (maxLength - 1) / 2;
-        int tail = maxLength - 1 - head;
-        return string.Concat(text.AsSpan(0, head), "…", text.AsSpan(text.Length - tail, tail));
+        int head = (maxLength - 3) / 2;
+        int tail = maxLength - 3 - head;
+        return string.Concat(text.AsSpan(0, head), "...", text.AsSpan(text.Length - tail, tail));
     }
 
     /// <summary>Positions this window next to the mouse cursor (ToastAnchor), in physical pixels,

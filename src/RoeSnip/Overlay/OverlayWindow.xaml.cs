@@ -18,8 +18,8 @@ using RoeSnip.Interop;
 namespace RoeSnip.Overlay;
 
 // RoeSnip.csproj enables both UseWPF and UseWindowsForms, so System.Windows.Forms/System.Drawing
-// are in scope alongside System.Windows/System.Windows.Media/.Input/.Controls — alias the
-// colliding names to WPF's. (Declared after the namespace line — see AnnotationLayer.cs for why:
+// are in scope alongside System.Windows/System.Windows.Media/.Input/.Controls - alias the
+// colliding names to WPF's. (Declared after the namespace line - see AnnotationLayer.cs for why:
 // RoeSnip.Color, a sibling WP-A namespace, would otherwise shadow an outer-scope alias for "Color".)
 using OverlayShortcuts = RoeSnip.Core.Settings.OverlayShortcuts;
 using Point = System.Windows.Point;
@@ -43,22 +43,22 @@ using Cursor = System.Windows.Input.Cursor;
 public partial class OverlayWindow : Window
 {
     // SelectedMove/SelectedResize/SelectedEndpoint (Feature B, additive) are the Select-tool drags
-    // on a picked annotation itself — distinct from NewSelection/Resize/Move (the CROP selection)
+    // on a picked annotation itself - distinct from NewSelection/Resize/Move (the CROP selection)
     // and from Annotation (drawing a brand-new shape with a tool active). SelectedEndpoint (item 2
     // of the second editing round) is Line/Arrow's analogue of SelectedResize: there's no rect to
     // grow/shrink, so dragging repositions one endpoint (see _dragEndpointIndex) instead.
     // SpanningResize/SpanningMove (cross-monitor selection, resize-after-place): the spanning-aware
-    // twins of Resize/Move — used only while IsSpanningSelection is true, and unlike Resize/Move
+    // twins of Resize/Move - used only while IsSpanningSelection is true, and unlike Resize/Move
     // they never touch _dragStartRect/SetSelection directly. Every candidate they compute is a
     // VIRTUAL-desktop rect fed through _onSpanningCandidate, the exact same distribute primitive a
-    // NewSelection drag uses — see OnPreviewMouseLeftButtonDown's spanning branch and
+    // NewSelection drag uses - see OnPreviewMouseLeftButtonDown's spanning branch and
     // docs/architecture.md.
     private enum DragMode
     {
         None, NewSelection, Resize, Move, Annotation, SelectedMove, SelectedResize, SelectedEndpoint,
         SpanningResize, SpanningMove,
         // Dragging the whole toolbar panel to a new spot by an empty part of its chrome (see
-        // OnPreviewMouseLeftButtonDown's toolbar branch). Not an area/selected drag — it changes
+        // OnPreviewMouseLeftButtonDown's toolbar branch). Not an area/selected drag - it changes
         // neither the selection nor any annotation, only Canvas.Left/Top of the toolbar.
         ToolbarMove,
     }
@@ -66,7 +66,7 @@ public partial class OverlayWindow : Window
     // r5-latency overlay pool (D1/D2): these were `readonly`, set once by the (previously only)
     // constructor. A pooled/parked window (see the MonitorInfo-only constructor and Initialize()
     // below) constructs with placeholder content and inert no-op callbacks, then receives its real
-    // session content later — so they can no longer be readonly. The full (fallback) constructor
+    // session content later - so they can no longer be readonly. The full (fallback) constructor
     // still sets them exactly once, up front, exactly as before; only the parked path defers the
     // "real" set to Initialize().
     private CapturedFrame _frame;
@@ -75,15 +75,15 @@ public partial class OverlayWindow : Window
     private Action<OverlayWindow> _onActivatedByMouse;
     private Action<OverlayWindow> _onSelectionStarted;
     // Cross-monitor selection: the two callbacks every SPANNING drag uses instead of calling
-    // SetSelection directly — see OverlaySession.OnSpanningCandidate/FinalizeNewSelectionDrag in
+    // SetSelection directly - see OverlaySession.OnSpanningCandidate/FinalizeNewSelectionDrag in
     // OverlayController.cs for what they do. Originally (v1) only NewSelection routed through these;
-    // SpanningResize/SpanningMove (resize-after-place) now do too, for exactly the same reason —
+    // SpanningResize/SpanningMove (resize-after-place) now do too, for exactly the same reason -
     // see docs/architecture.md. The plain single-monitor Move/Resize/annotation drag
     // modes are untouched and still call SetSelection locally; they never run while
     // IsSpanningSelection is true (see OnPreviewMouseLeftButtonDown's spanning branch). The trailing
     // bool is preserveSize: true only for a SpanningMove candidate, so OnSpanningCandidate can slide
     // the rect back into the virtual desktop's bounds instead of clamping each edge independently
-    // (which would shrink it) — see SpanningSelectionMath.SlideToBounds's own doc comment. NewSelection
+    // (which would shrink it) - see SpanningSelectionMath.SlideToBounds's own doc comment. NewSelection
     // and SpanningResize both pass false: only one or two edges move per gesture there, so stopping
     // just that edge at the boundary (the existing per-edge clamp) is the correct, expected result.
     private Action<OverlayWindow, RectPhysical, bool> _onSpanningCandidate;
@@ -91,42 +91,42 @@ public partial class OverlayWindow : Window
     private Action<OverlayCommand> _onCommand;
     private Action<PickedColorInfo> _onColorPicked;
     // Sharing/* subsystem (senior-review fix): the dropdown's per-provider picker needs a payload
-    // (which provider was clicked) that OverlayCommand's own parameterless enum can't carry — same
+    // (which provider was clicked) that OverlayCommand's own parameterless enum can't carry - same
     // reason onColorPicked exists as its own callback instead of another OverlayCommand member.
     private Action<string> _onShareToProvider;
     private bool _pickOnlyMode;
 
     // Mutable working copy of settings for changes made live during the session (custom colors from
-    // the toolbar's "+" swatch) — persisted immediately via App.SettingsStore so they survive even
+    // the toolbar's "+" swatch) - persisted immediately via App.SettingsStore so they survive even
     // though the immutable _settings snapshot handed in at session start does not change in place.
     private RoeSnipSettings _liveSettings;
 
     /// <summary>Sharing/* subsystem (senior-review fix, doc-honesty finding): the SAME settings
-    /// snapshot ShowToolbar's own SetShareProviders call populates the provider picker from —
+    /// snapshot ShowToolbar's own SetShareProviders call populates the provider picker from -
     /// exposed so OverlaySession.ShareCurrentSelection/ShareToSpecificProvider resolve an actual
     /// upload target from this identical source instead of the session's own separately-snapshotted
     /// _settings field. Before this fix the two could diverge (a provider toggled off via a
-    /// PaletteReplaceRequested-style in-session edit — hypothetically, nothing today actually edits
-    /// ShareProviders live — would show one picture in the dropdown and another in what a plain
+    /// PaletteReplaceRequested-style in-session edit - hypothetically, nothing today actually edits
+    /// ShareProviders live - would show one picture in the dropdown and another in what a plain
     /// Share click resolved to); unifying to one source makes that impossible by construction.</summary>
     internal RoeSnipSettings LiveSettings => _liveSettings;
 
-    /// <summary>True for a window built by the MonitorInfo-only (parked-pool) constructor — see
+    /// <summary>True for a window built by the MonitorInfo-only (parked-pool) constructor - see
     /// OverlayWindowPool. False for one built by the normal full constructor (the always-available
     /// fallback path). Read by OnFirstContentRendered (to skip its on-screen move for a pool
-    /// window's own first, placeholder-content render — see that method) and by Initialize (to
+    /// window's own first, placeholder-content render - see that method) and by Initialize (to
     /// refuse being called on a non-pooled window).</summary>
     internal bool IsPooled { get; }
 
     /// <summary>Armed by the full constructor immediately, or by Initialize() once a pooled window
-    /// has received real session content — see IsTextInputFocused's sibling doc comments for the
+    /// has received real session content - see IsTextInputFocused's sibling doc comments for the
     /// general pattern. Belt-and-braces guard (D2) at the top of every Preview* input handler: a
     /// parked pool window is never on-screen/activated and so should never receive real input, but
     /// this makes that invariant explicit rather than assumed.</summary>
     private bool _initialized;
 
     /// <summary>The throwaway placeholder CapturedFrame a parked (IsPooled) window builds for
-    /// itself so every field this class touches during construction/first-render stays non-null —
+    /// itself so every field this class touches during construction/first-render stays non-null -
     /// nothing else references it, so this window itself owns disposing it, either when Initialize
     /// swaps in the session's real frame or, if this window is closed while still parked (pool
     /// teardown/rebuild), from OnClosed. Null for a non-pooled window and for a pooled window that
@@ -137,7 +137,7 @@ public partial class OverlayWindow : Window
     private RectPhysical? _selectionPx;
 
     /// <summary>A mouse-down that would start a new selection is treated as a *click* (color pick)
-    /// until the cursor has travelled at least this many physical pixels — only then does it become
+    /// until the cursor has travelled at least this many physical pixels - only then does it become
     /// a selection drag.</summary>
     private const double ClickDragThresholdPx = 4.0;
 
@@ -149,19 +149,19 @@ public partial class OverlayWindow : Window
     private RectPhysical _dragStartRect;
 
     // Cross-monitor selection (resize-after-place): the shared virtual rect at the moment a
-    // SpanningResize/SpanningMove drag started, in virtual-desktop physical pixels — the frame of
+    // SpanningResize/SpanningMove drag started, in virtual-desktop physical pixels - the frame of
     // reference EVERY subsequent mouse-move of that drag computes its candidate against (see
     // ApplyResize's own doc comment on why a plain delta/handle-replace works identically whether
     // "start" is a window-local rect or a virtual one). Meaningless outside those two drag modes.
     private RectPhysical _dragStartVirtualRect;
 
-    // Feature B: the selected Pixelate's own rect at the start of a SelectedResize drag — the
+    // Feature B: the selected Pixelate's own rect at the start of a SelectedResize drag - the
     // ApplyResize/ClampToFrame math below is reused verbatim from the crop-selection resize, just
     // fed this rect instead of _dragStartRect.
     private RectPhysical _dragStartShapeRect;
 
     // Item 2 (second editing round): which endpoint (0 = P0, 1 = P1) a DragMode.SelectedEndpoint
-    // drag is repositioning — set once at mouse-down from AnnotationLayer.HitTestSelectedEndpoint,
+    // drag is repositioning - set once at mouse-down from AnnotationLayer.HitTestSelectedEndpoint,
     // read on every subsequent mouse-move until mouse-up ends the gesture.
     private int _dragEndpointIndex;
 
@@ -202,7 +202,7 @@ public partial class OverlayWindow : Window
     private TextBox? _activeTextEditor;
     private Point _activeTextEditorOriginPx;
 
-    // Tool-indicating cursor (item 1, UX round 3) — one small custom cursor bitmap per
+    // Tool-indicating cursor (item 1, UX round 3) - one small custom cursor bitmap per
     // (tool, color, strokeWidth) combination, cached and disposed for this window's lifetime.
     private readonly ToolCursorCache _toolCursorCache = new();
 
@@ -211,13 +211,13 @@ public partial class OverlayWindow : Window
     internal RectPhysical? SelectionPx => _selectionPx;
 
     /// <summary>Cross-monitor selection (multimon-selection): the already-tone-mapped preview,
-    /// exposed so OverlaySession.RenderSpanningSelection can crop it directly — the SAME per-monitor
+    /// exposed so OverlaySession.RenderSpanningSelection can crop it directly - the SAME per-monitor
     /// bytes the local (non-spanning) render path (RenderSelectionWithAnnotations) already crops
     /// from, never a re-tone-map.</summary>
     internal SdrImage Preview => _preview;
 
     /// <summary>Cross-monitor selection: true while the CURRENT selection (this window's own local
-    /// slice included) touches more than one monitor — set only by SetSpanningLocalSelection, never
+    /// slice included) touches more than one monitor - set only by SetSpanningLocalSelection, never
     /// by the plain SetSelection path Move/Resize/annotation drags still use. Read by
     /// OnPreviewMouseLeftButtonDown to refuse starting a Resize/Move drag against a spanning
     /// selection (see docs/architecture.md) and by UpdateToolbarPlacement/ShowToolbar
@@ -228,11 +228,11 @@ public partial class OverlayWindow : Window
     private bool _isSpanningPrimary;
 
     // A SpanningResize/SpanningMove (or NewSelection) drag redistributes its candidate to EVERY
-    // window on EVERY mouse-move (see OverlaySession.OnSpanningCandidate) — including windows that
+    // window on EVERY mouse-move (see OverlaySession.OnSpanningCandidate) - including windows that
     // are not the drag owner and so have _dragMode == None throughout. UpdateToolbarPlacement's
     // mid-drag suppression was keyed only on the local _dragMode, which correctly hides the toolbar
     // on the owner but does nothing for a non-owner window whose candidate slice just appeared (or
-    // changed) via SetSpanningLocalSelection — that window would call ShowToolbar() on every
+    // changed) via SetSpanningLocalSelection - that window would call ShowToolbar() on every
     // mouse-move and the toolbar would visibly slide around under the live drag. This flag is set
     // whenever SetSpanningLocalSelection runs as part of an in-progress drag (regardless of which
     // window owns it) and cleared only by NotifySpanningDragEnded, which OverlaySession calls on
@@ -242,20 +242,20 @@ public partial class OverlayWindow : Window
     /// <summary>Cross-monitor selection (resize-after-place): the shared virtual-desktop rect from
     /// the most recent SetSpanningLocalSelection call, or null when not spanning. Every window gets
     /// the SAME value (OverlaySession.OnSpanningCandidate passes it to every window, not just the
-    /// primary — see that method), so a SpanningResize/SpanningMove drag can start from ANY window
+    /// primary - see that method), so a SpanningResize/SpanningMove drag can start from ANY window
     /// whose own local slice offers a real handle/body, not just the primary one; whichever window
-    /// the drag starts on becomes primary for its duration (and after — same rule a NewSelection
+    /// the drag starts on becomes primary for its duration (and after - same rule a NewSelection
     /// drag already follows).</summary>
     private RectPhysical? _spanningVirtualRectPx;
 
     /// <summary>True while this window has anything worth cancelling short of closing the whole
-    /// overlay — used by OverlayController's two-stage Esc (stage: clear snip, stay open).</summary>
+    /// overlay - used by OverlayController's two-stage Esc (stage: clear snip, stay open).</summary>
     internal bool HasSnipInProgress =>
         _selectionPx is not null || Annotations.HasAnnotations || _dragMode != DragMode.None
         || Annotations.SelectedShape is not null;
 
     /// <summary>True while a placed Pixelate/Text annotation is selected via the Select tool
-    /// (Feature B) — read by SessionKeyboardHook so it only treats Delete/Back as a session key
+    /// (Feature B) - read by SessionKeyboardHook so it only treats Delete/Back as a session key
     /// (swallowed globally, dispatched to ProcessKeyCommand) when there's actually something for
     /// them to delete; otherwise they must pass through untouched to whatever app really has focus,
     /// exactly like every other non-session key.</summary>
@@ -264,7 +264,7 @@ public partial class OverlayWindow : Window
     /// <summary>True while an inline text annotation TextBox is being edited. Read by the
     /// session-scoped low-level keyboard hook (SessionKeyboardHook) to decide whether to swallow
     /// session keys globally (normal case) or let everything except Esc reach the real focused
-    /// control through the normal WPF pipeline (text-editing case) — see OverlayInputInterop.cs.</summary>
+    /// control through the normal WPF pipeline (text-editing case) - see OverlayInputInterop.cs.</summary>
     internal bool IsTextEditingActive => _activeTextEditor is not null;
 
     /// <summary>Volatile mirror of "the in-progress text editor holds WPF keyboard focus",
@@ -275,17 +275,17 @@ public partial class OverlayWindow : Window
 
     private volatile bool _textEditorHasKeyboardFocus;
 
-    /// <summary>The in-progress text annotation editor, if any — read by TextEditKeyForwarder (item
+    /// <summary>The in-progress text annotation editor, if any - read by TextEditKeyForwarder (item
     /// 3b's guaranteed fallback tier) to apply keystrokes directly when the window doesn't hold real
     /// OS focus. Null whenever <see cref="IsTextEditingActive"/> is false.</summary>
     internal TextBox? ActiveTextEditor => _activeTextEditor;
 
     /// <summary>Volatile "some text input inside this window holds WPF keyboard focus" flag (UX
-    /// round 5, item 2) — the generalization of <see cref="TextEditorHasKeyboardFocus"/> to ANY
+    /// round 5, item 2) - the generalization of <see cref="TextEditorHasKeyboardFocus"/> to ANY
     /// TextBoxBase in the window, today the toolbar size ComboBox's editable TextBox (and the
     /// annotation editor, which the more specific IsTextEditingActive machinery checks first).
     /// Maintained by window-level Got/LostKeyboardFocus class handlers; read by SessionKeyboardHook
-    /// from its own thread to pass ALL keys through (Enter included — the ComboBox commits it
+    /// from its own thread to pass ALL keys through (Enter included - the ComboBox commits it
     /// locally) instead of swallowing them as session commands while the user is typing a size.</summary>
     internal bool IsTextInputFocused => _textInputFocused;
 
@@ -294,12 +294,12 @@ public partial class OverlayWindow : Window
     /// <summary>True while the magnifier loupe (item 4, UX round 3; lifecycle fixed in UX round 4)
     /// should track the cursor: pick-only mode always shows it (it's the point of that mode);
     /// otherwise it's visible only while this window owns no selection AND no drag of any kind is
-    /// in progress. The moment a drag starts — including a brand-new selection drag, still inside
-    /// the click-threshold-pending phase — this goes false and the magnifier is hidden immediately
+    /// in progress. The moment a drag starts - including a brand-new selection drag, still inside
+    /// the click-threshold-pending phase - this goes false and the magnifier is hidden immediately
     /// (see the explicit MagnifierControl.Hide() calls at each drag-start site in
     /// OnPreviewMouseLeftButtonDown/BeginTextEditor), rather than staying visible until the drag
     /// finishes. Independently of this, MouseLeave/Deactivated always hide the magnifier outright
-    /// (even in pick-only mode) so it can never freeze on a monitor the cursor has left — see
+    /// (even in pick-only mode) so it can never freeze on a monitor the cursor has left - see
     /// OnMouseLeave/OnDeactivated.</summary>
     private bool IsMagnifierActive => _pickOnlyMode
         || (_selectionPx is null && _dragMode == DragMode.None)
@@ -363,12 +363,12 @@ public partial class OverlayWindow : Window
         _initialized = true;
     }
 
-    /// <summary>Parked-pool constructor (r5-latency, D1/D2 — see OverlayWindowPool): knows only its
-    /// target MONITOR (bounds/DPI — everything OnSourceInitialized needs to park itself off-screen
+    /// <summary>Parked-pool constructor (r5-latency, D1/D2 - see OverlayWindowPool): knows only its
+    /// target MONITOR (bounds/DPI - everything OnSourceInitialized needs to park itself off-screen
     /// and compute _scaleX/_scaleY) plus a throwaway 1x1 placeholder frame/preview, so every field
     /// this class touches during construction/first-render stays non-null. The caller
     /// (OverlayWindowPool.EnsureBuilt) still Show()s this window and flushes its first render itself
-    /// — exactly like the full constructor's caller does — so the pooled window's first paint (the
+    /// - exactly like the full constructor's caller does - so the pooled window's first paint (the
     /// expensive part this whole design exists to move off the hot path) happens at pool-build time,
     /// against the placeholder. Input/keyboard handlers stay inert (see _initialized) until a real
     /// session claims this window via Initialize().</summary>
@@ -386,17 +386,17 @@ public partial class OverlayWindow : Window
             static _ => { }, static _ => { }, static (_, _, _) => { }, static _ => { }, static _ => { },
             static _ => { }, static _ => { }, pickOnlyMode: false);
         WireInputHandlers();
-        // _initialized deliberately stays false — armed by Initialize() once a real session claims
+        // _initialized deliberately stays false - armed by Initialize() once a real session claims
         // this window (see that method).
     }
 
-    /// <summary>Common field-assignment shared by both constructors — see IsPooled's doc comment for
+    /// <summary>Common field-assignment shared by both constructors - see IsPooled's doc comment for
     /// why the fields it sets can no longer be readonly. Also reused by Initialize() (the parked-pool
     /// hot path), so this is the SINGLE place that maps (frame, preview, settings, callbacks,
-    /// pickOnlyMode) onto this window's fields — the full constructor, the parked constructor, and
+    /// pickOnlyMode) onto this window's fields - the full constructor, the parked constructor, and
     /// Initialize can never disagree about what "assigning session content" means.
     /// [MemberNotNull] tells the nullable analyzer these fields are non-null after this call
-    /// returns — without it, every non-readonly field set only through this indirection (rather
+    /// returns - without it, every non-readonly field set only through this indirection (rather
     /// than directly in the constructor body) would warn CS8618 at both constructors' closing
     /// brace, since flow analysis doesn't follow through an ordinary method call.</summary>
     [System.Diagnostics.CodeAnalysis.MemberNotNull(
@@ -441,7 +441,7 @@ public partial class OverlayWindow : Window
         MagnifierControl.Formats = settings;
     }
 
-    /// <summary>Event wiring shared by both constructors — extracted verbatim from the (formerly
+    /// <summary>Event wiring shared by both constructors - extracted verbatim from the (formerly
     /// single) constructor so the parked-pool path wires the exact same handlers the full
     /// constructor always has, with no behavioral difference between the two beyond IsPooled/
     /// _initialized.</summary>
@@ -454,7 +454,7 @@ public partial class OverlayWindow : Window
         PreviewMouseWheel += OnPreviewMouseWheel;
         PreviewKeyDown += OnPreviewKeyDown;
         // Pressing/releasing Shift or Ctrl must refresh the cursor immediately (the modifier-grab
-        // Hand appears over outline interiors while held) — a mouse-move alone would leave the
+        // Hand appears over outline interiors while held) - a mouse-move alone would leave the
         // cursor stale until the pointer jitters.
         PreviewKeyUp += (_, ke) =>
         {
@@ -469,7 +469,7 @@ public partial class OverlayWindow : Window
         Deactivated += OnDeactivated;
 
         // Track whether ANY text input in this window holds keyboard focus (see IsTextInputFocused)
-        // — handledEventsToo because TextBoxBase marks these focus events handled internally.
+        // - handledEventsToo because TextBoxBase marks these focus events handled internally.
         AddHandler(Keyboard.GotKeyboardFocusEvent,
             new KeyboardFocusChangedEventHandler(OnAnyKeyboardFocusChanged), handledEventsToo: true);
         AddHandler(Keyboard.LostKeyboardFocusEvent,
@@ -481,17 +481,17 @@ public partial class OverlayWindow : Window
         };
     }
 
-    /// <summary>Hands a parked pool window (see IsPooled) its real per-session content — the D1/D2
+    /// <summary>Hands a parked pool window (see IsPooled) its real per-session content - the D1/D2
     /// hot-path replacement for the full constructor, called by OverlayController.OverlaySession
     /// instead of `new OverlayWindow(...)` whenever OverlayWindowPool has a matching parked window
     /// already built, Show()n and first-rendered for this exact monitor. Deliberately does NOT
     /// touch anything OnSourceInitialized already computed off the (unchanging, since the pool is
-    /// keyed by exact monitor) monitor — _scaleX/_scaleY, the Annotations/Adorner/MagnifierControl
+    /// keyed by exact monitor) monitor - _scaleX/_scaleY, the Annotations/Adorner/MagnifierControl
     /// DeviceScale*, or ActualWidth/Height-derived chrome sizing all stay exactly as they were set
     /// during pool-build. Only the content that differs per-session is refreshed here: the preview
     /// bitmap (PreviewImage/Background/Annotations.PreviewSource), the dim geometry (a fresh window
     /// starts with no selection), and the callback/settings/text-style fields AssignSessionFields
-    /// sets. No selection/annotation/toolbar state exists to reset — this window has never been
+    /// sets. No selection/annotation/toolbar state exists to reset - this window has never been
     /// shown to a user or received real input (see _initialized), so there is nothing to clear
     /// (D1's "single-use, no state-reset path" design).</summary>
     internal void Initialize(
@@ -526,7 +526,7 @@ public partial class OverlayWindow : Window
         UpdateDimGeometry();
 
         // Session-claimed pool windows should be behaviorally indistinguishable from a freshly
-        // constructed one — clear the WS_EX_TOOLWINDOW style OverlayWindowPool applies to keep idle
+        // constructed one - clear the WS_EX_TOOLWINDOW style OverlayWindowPool applies to keep idle
         // parked windows out of Alt+Tab (see OnSourceInitialized), since a full-constructor window
         // never has it in the first place.
         var hwnd = new WindowInteropHelper(this).Handle;
@@ -540,7 +540,7 @@ public partial class OverlayWindow : Window
         _initialized = true;
     }
 
-    /// <summary>Moves an Initialize()'d pooled window onto its real monitor bounds — the pooled
+    /// <summary>Moves an Initialize()'d pooled window onto its real monitor bounds - the pooled
     /// path's own equivalent of OnFirstContentRendered's on-screen move (see that method), called
     /// directly by OverlaySession once it has flushed Initialize's new content through a render
     /// pass, since ContentRendered itself already fired once for this window back at pool-build
@@ -587,21 +587,21 @@ public partial class OverlayWindow : Window
         Annotations.PreviewSource = previewBitmap; // Pixelate tool mosaics these pixels
 
         // Paint the frozen preview into the window Background too, so even a background-only first
-        // compositor frame already shows the correct pixels (not the XAML black) — kills the black
+        // compositor frame already shows the correct pixels (not the XAML black) - kills the black
         // first-frame blink the luma sampler caught on cold captures.
         Background = new ImageBrush(previewBitmap) { Stretch = Stretch.Fill };
 
         UpdateDimGeometry();
 
-        // D6 (overlay latency pool): exclude every overlay window from screen capture — belt-and-
+        // D6 (overlay latency pool): exclude every overlay window from screen capture - belt-and-
         // braces for parked pool windows (already invisible to a per-monitor-bounds capture purely
-        // by being off the virtual desktop — see OffScreenX below), and applied to every overlay
+        // by being off the virtual desktop - see OffScreenX below), and applied to every overlay
         // window rather than just parked ones because no code path in this app ever captures the
         // screen while ANY overlay window (pooled or on-demand) is on it: the main capture flow
         // (Program.cs's RunCaptureFlowAsync), pick-mode's re-capture (OverlayController.
         // RunPickModeCaptureAsync), and the startup warmup capture (TrayApp.WarmupCaptureSessions)
         // all run CaptureService.CaptureAll to completion strictly BEFORE any overlay window is ever
-        // constructed or shown — there is no "overlay up, then capture again" path anywhere in this
+        // constructed or shown - there is no "overlay up, then capture again" path anywhere in this
         // codebase. Given that invariant, excluding every overlay window permanently is simpler and
         // safer than toggling the affinity on/off per window kind (there's no case where clearing it
         // would ever matter). Same API and same ROESNIP_DIAG_NOEXCLUDE=1 escape hatch as
@@ -617,7 +617,7 @@ public partial class OverlayWindow : Window
         if (IsPooled)
         {
             // Parked pool windows sit around for the app's whole idle lifetime (D4) exactly like
-            // FlashDimmer's flash windows — WS_EX_TOOLWINDOW keeps them out of Alt+Tab the same way
+            // FlashDimmer's flash windows - WS_EX_TOOLWINDOW keeps them out of Alt+Tab the same way
             // (ShowInTaskbar=False alone only hides the taskbar entry, not Alt+Tab). Cleared again in
             // Initialize() once a session actually claims this window, so a live overlay behaves
             // exactly like one built by the full constructor (which never sets this style).
@@ -628,14 +628,14 @@ public partial class OverlayWindow : Window
 
         // Cold-start black-frame elimination (measured with a luma sampler): on the first capture
         // after launch, WPF clears the window's surface to black and DWM shows that for one frame
-        // before the render thread produces the first composited frame — a visible black blink,
+        // before the render thread produces the first composited frame - a visible black blink,
         // independent of Background or content-set ordering (both were tried and measured to not
         // help). Fix: show the window at its correct SIZE but positioned fully OFF the virtual
         // desktop, so that unavoidable cold black frame happens where nobody can see it, then move
         // it onto the target monitor in ContentRendered once it has genuinely painted. On warm
         // captures ContentRendered fires almost immediately, so the on-screen appearance is instant
         // and already-dimmed. For a pooled window this first ContentRendered fires against the
-        // PLACEHOLDER content at pool-build time — OnFirstContentRendered below deliberately skips
+        // PLACEHOLDER content at pool-build time - OnFirstContentRendered below deliberately skips
         // its on-screen move in that case; the real move happens later, explicitly, via
         // MoveOnScreen() once a session has Initialize()'d this window with real content.
         ContentRendered += OnFirstContentRendered;
@@ -673,18 +673,18 @@ public partial class OverlayWindow : Window
         ContentRendered -= OnFirstContentRendered;
         if (IsPooled && !_initialized)
         {
-            // This is a parked pool window's OWN first render (see OverlayWindowPool.EnsureBuilt) —
+            // This is a parked pool window's OWN first render (see OverlayWindowPool.EnsureBuilt) -
             // its content right now is the throwaway placeholder, not anything a user should ever
             // see. Stay parked; the session that eventually claims this window (Initialize) moves it
-            // on-screen explicitly via MoveOnScreen once it has real content, since this event —
-            // having already fired once and unsubscribed itself above — will never fire again.
+            // on-screen explicitly via MoveOnScreen once it has real content, since this event -
+            // having already fired once and unsubscribed itself above - will never fire again.
             return;
         }
         MoveOnScreenCore();
     }
 
     /// <summary>The actual on-screen SetWindowPos, shared by the fallback path's own first-render
-    /// handoff (OnFirstContentRendered) and the pooled path's explicit MoveOnScreen — see both call
+    /// handoff (OnFirstContentRendered) and the pooled path's explicit MoveOnScreen - see both call
     /// sites' doc comments for why each is on-screen "for real" at the moment it calls this.</summary>
     private void MoveOnScreenCore()
     {
@@ -701,7 +701,7 @@ public partial class OverlayWindow : Window
     {
         base.OnClosed(e);
         _toolCursorCache.Dispose();
-        // Only ever non-null for a pooled window that was closed (pool teardown/rebuild — see
+        // Only ever non-null for a pooled window that was closed (pool teardown/rebuild - see
         // OverlayWindowPool) before a session ever claimed it via Initialize(); a claimed window
         // already disposed and nulled this in Initialize itself. CapturedFrame.Dispose() is a plain
         // idempotent field-null, so there is no double-dispose hazard either way.
@@ -710,12 +710,12 @@ public partial class OverlayWindow : Window
 
         // Deterministic release of the session's big pixel buffers (idle-memory audit, 2026-07):
         // per monitor this window references the ~14.75 MB SdrImage preview AND the ~14.75 MB
-        // frozen BitmapSource copy WPF made of it (BitmapSource.Create copies, it does not wrap —
+        // frozen BitmapSource copy WPF made of it (BitmapSource.Create copies, it does not wrap -
         // see SdrImage.ToBitmapSource), and the magnifier may still reference both the preview and
         // the ~28 MB FP16 frame. A closed WPF window can stay reachable well past Close() (pending
         // dispatcher work, input state), so drop every heavy reference here instead of riding the
         // window graph's own collection. The frame's pixel buffer itself is disposed by the flow
-        // that owns it (Program.cs / pick-mode finally) — nulling _frame here just decouples this
+        // that owns it (Program.cs / pick-mode finally) - nulling _frame here just decouples this
         // window from that object graph. Nothing reads Frame/Monitor after OnClosed (verified: the
         // controller reads them strictly before CloseOverlay; the pool only touches parked, never
         // closed, windows), so the null!-suppressions cannot surface as NREs.
@@ -729,7 +729,7 @@ public partial class OverlayWindow : Window
         _activeTextEditor = null;
         _sizeIndicator = null;
         // A still-running indicator timer is rooted by the Dispatcher and its Tick closure roots
-        // this whole window (with everything above) for up to its 600 ms interval — stop it now.
+        // this whole window (with everything above) for up to its 600 ms interval - stop it now.
         _sizeIndicatorTimer?.Stop();
         _sizeIndicatorTimer = null;
     }
@@ -763,13 +763,13 @@ public partial class OverlayWindow : Window
 
     private void OnMouseEnter(object sender, MouseEventArgs e)
     {
-        if (!_initialized) return; // D2 belt-and-braces — see _initialized's doc comment
+        if (!_initialized) return; // D2 belt-and-braces - see _initialized's doc comment
         _onActivatedByMouse(this);
     }
 
     /// <summary>Lifecycle fix (UX round 4, item 1b): without this, a window that last rendered the
     /// magnifier at some position never gets another PreviewMouseMove once the cursor crosses onto a
-    /// different monitor's window — so its magnifier visual just sits there frozen ("stuck") at the
+    /// different monitor's window - so its magnifier visual just sits there frozen ("stuck") at the
     /// last sampled point instead of disappearing. Unconditional (ignores IsMagnifierActive/
     /// _pickOnlyMode): the cursor leaving this window is reason enough to hide regardless of mode.</summary>
     private void OnMouseLeave(object sender, MouseEventArgs e) => MagnifierControl.Hide();
@@ -782,12 +782,12 @@ public partial class OverlayWindow : Window
 
     private void OnPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (!_initialized) return; // D2 belt-and-braces — see _initialized's doc comment
+        if (!_initialized) return; // D2 belt-and-braces - see _initialized's doc comment
         if (IsWithinToolbar(e.OriginalSource as DependencyObject))
         {
             // Clicking any toolbar control OTHER than the size box while the size box holds
             // keyboard focus hands focus back to the window (every other toolbar control is
-            // Focusable=false and would never take it) — otherwise the box would keep focus
+            // Focusable=false and would never take it) - otherwise the box would keep focus
             // forever and Enter would keep committing the size instead of confirming the snip.
             if (_textInputFocused && _activeTextEditor is null
                 && _toolbar?.IsWithinSizeInput(e.OriginalSource as DependencyObject) != true)
@@ -796,7 +796,7 @@ public partial class OverlayWindow : Window
             }
             // Drag-to-move: a press on an empty part of the toolbar chrome (not a button/combo/
             // swatch) grabs the whole panel and moves it. Only while a selection exists (the toolbar
-            // is only shown then) and only for chrome — IsDraggableChrome returns false for every
+            // is only shown then) and only for chrome - IsDraggableChrome returns false for every
             // interactive control, so their own clicks are untouched.
             if (_selectionPx is not null && _toolbar is { } dragToolbar
                 && dragToolbar.IsDraggableChrome(e.OriginalSource as DependencyObject))
@@ -826,7 +826,7 @@ public partial class OverlayWindow : Window
         if (_pickOnlyMode)
         {
             // Pick-only mode (ColorPickerWindow's "Pick" button): no selection/toolbar/annotation
-            // concept at all — every click immediately picks the color under the cursor and closes
+            // concept at all - every click immediately picks the color under the cursor and closes
             // this ad-hoc overlay session. No drag-threshold gating (unlike normal mode's plain
             // click), since there's nothing else a click could mean here.
             _onActivatedByMouse(this);
@@ -844,7 +844,7 @@ public partial class OverlayWindow : Window
 
         // Feature B item 4 (extended twice since: to the Text tool, then to EVERY tool once placed
         // shapes became always-clickable): double-clicking a placed TEXT annotation reopens its
-        // inline editor, prefilled — and this must win over the confirm-snip double-click check
+        // inline editor, prefilled - and this must win over the confirm-snip double-click check
         // right below, or a double-click meant to re-edit text would just confirm the whole snip
         // instead. A SINGLE click on the same text is handled further down (selects + starts a
         // move drag); this ClickCount>=2 branch only ever fires on the second click of a
@@ -868,7 +868,7 @@ public partial class OverlayWindow : Window
         // Modifier-grab: Shift/Ctrl + click is an explicit "grab whatever drawn object is under
         // the cursor" that beats every tool behavior. Crucially it hit-tests GENEROUSLY
         // (interiorGrab): the middle of a rectangle/ellipse counts, not just the stroke ring the
-        // plain click rules use — so a box drawn around content can be repositioned from anywhere
+        // plain click rules use - so a box drawn around content can be repositioned from anywhere
         // inside it without hunting for its outline, while plain clicks keep falling through to
         // draw/select/color-pick as before. The grab is always a move; handles/endpoints still
         // resize via plain clicks once the shape is selected.
@@ -897,17 +897,17 @@ public partial class OverlayWindow : Window
         // interiors / off-segment space don't hit-test at all; filled kinds by starting the drag
         // outside them).
         // Cross-monitor selection (resize-after-place): a spanning selection's handle/body hit-test
-        // goes through the SAME Adorner every ordinary selection uses — Adorner.RealEdges (set per
+        // goes through the SAME Adorner every ordinary selection uses - Adorner.RealEdges (set per
         // window by OverlaySession.OnSpanningCandidate/SpanningSelectionMath.Distribute) already
         // refuses to report a handle on an edge that's merely this monitor's own screen boundary
         // clipping the true rect, so a handle is only ever offered here where dragging it actually
         // means something. Both branches below compute their candidate as a VIRTUAL-desktop rect and
-        // hand it to _onSpanningCandidate — the exact same distribute primitive a NewSelection drag
-        // uses — rather than ever treating this window's own local (possibly-clipped) rect as ground
+        // hand it to _onSpanningCandidate - the exact same distribute primitive a NewSelection drag
+        // uses - rather than ever treating this window's own local (possibly-clipped) rect as ground
         // truth; that "never trust a local slice as the true rect" rule is exactly what made v1's
         // naive (any-mouse-down-replaces-the-selection) version necessary, and is why this is safe
         // now that resize/move go through the shared distribute step instead. Annotations stay
-        // deselected/disabled either way — see SetSpanningLocalSelection.
+        // deselected/disabled either way - see SetSpanningLocalSelection.
         if (_isSpanningSelection)
         {
             var spanningHandle = Adorner.HitTestHandle(px);
@@ -938,7 +938,7 @@ public partial class OverlayWindow : Window
                 return;
             }
 
-            // Outside the current spanning selection (or nothing usable was hit — e.g.
+            // Outside the current spanning selection (or nothing usable was hit - e.g.
             // _spanningVirtualRectPx was somehow null, which should never happen while
             // _isSpanningSelection is true, but this keeps the fallback total): replace it wholesale
             // with a brand-new drag, same as v1. This is still a perfectly good way to reshape a
@@ -989,7 +989,7 @@ public partial class OverlayWindow : Window
             ? Annotations.HitTestSelectedHandle(px)
             : SelectionHandle.None;
         // Item 2 (second editing round): Line/Arrow's endpoint handles are this predicate's
-        // Line/Arrow analogue — mutually exclusive with selectedHandle in practice (a selected
+        // Line/Arrow analogue - mutually exclusive with selectedHandle in practice (a selected
         // shape is one Tool, and only rect-resizable kinds ever produce a non-None selectedHandle),
         // but checked as its own branch, ABOVE the plain body-move hit test below, so grabbing an
         // endpoint always resizes rather than moving the whole segment.
@@ -1031,13 +1031,13 @@ public partial class OverlayWindow : Window
                 var hitShape = HitEditableForTool(px);
                 if (hitShape is not null)
                 {
-                    // Click-selects AND immediately starts a drag in the same gesture — the common
+                    // Click-selects AND immediately starts a drag in the same gesture - the common
                     // "click and drag a shape" UX, rather than requiring a separate click to select
                     // before a drag can act on it. After selecting, re-run the handle/endpoint hit
                     // tests (they only answer for the CURRENT selection, which just changed): a
                     // first click landing exactly on what is now a corner handle or a segment
                     // endpoint starts that resize directly instead of degrading to a whole-shape
-                    // move — without this, resizing a deselected shape always cost a throwaway
+                    // move - without this, resizing a deselected shape always cost a throwaway
                     // select-click first.
                     Annotations.Select(hitShape);
                     var freshHandle = Annotations.HitTestSelectedHandle(px);
@@ -1089,7 +1089,7 @@ public partial class OverlayWindow : Window
         }
 
         CaptureMouse();
-        // Item 1a: hide immediately on drag-start state entry — covers Move/Resize (which always
+        // Item 1a: hide immediately on drag-start state entry - covers Move/Resize (which always
         // already own a selection, so IsMagnifierActive was already false) and, crucially,
         // NewSelection: previously the magnifier stayed visible for the entire drag and only hid
         // once the mouse was released. It still doesn't know yet whether this will resolve into a
@@ -1102,15 +1102,15 @@ public partial class OverlayWindow : Window
 
     /// <summary>Right-click exits (item 5, UX round 3): outside the current selection (or when
     /// there is no selection anywhere) it cancels the whole overlay session, exactly like Esc's
-    /// final stage — never the staged CancelStage semantics, since a right-click is an explicit
+    /// final stage - never the staged CancelStage semantics, since a right-click is an explicit
     /// "get me out of here" gesture rather than "undo one step". Right-click *inside* the current
     /// selection is reserved (a no-op) rather than exiting. Suppressed while a text edit is active,
-    /// where it instead cancels just the edit (mirroring Esc's innermost stage) — and it never opens
+    /// where it instead cancels just the edit (mirroring Esc's innermost stage) - and it never opens
     /// the color-picker window, which is exclusively a left-click concern (TriggerColorPick), so
     /// there's nothing here that could conflict with it.</summary>
     private void OnPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (!_initialized) return; // D2 belt-and-braces — see _initialized's doc comment
+        if (!_initialized) return; // D2 belt-and-braces - see _initialized's doc comment
         if (IsWithinToolbar(e.OriginalSource as DependencyObject))
         {
             return; // right-clicking a toolbar button is not an "exit the overlay" gesture
@@ -1125,7 +1125,7 @@ public partial class OverlayWindow : Window
 
         if (_pickOnlyMode)
         {
-            // Deferred like TriggerColorPick's own Cancel dispatch — Cancel synchronously closes
+            // Deferred like TriggerColorPick's own Cancel dispatch - Cancel synchronously closes
             // every window in the session (including this one, from inside its own mouse-event
             // handler); BeginInvoke avoids touching a window that's already mid-teardown.
             Dispatcher.BeginInvoke(new Action(() => _onCommand(OverlayCommand.Cancel)));
@@ -1135,7 +1135,7 @@ public partial class OverlayWindow : Window
         var px = ToPhysical(e.GetPosition(this));
         if (_selectionPx is { } sel && RectContains(sel, px))
         {
-            return; // inside the current selection — reserved, no-op
+            return; // inside the current selection - reserved, no-op
         }
 
         Dispatcher.BeginInvoke(new Action(() => _onCommand(OverlayCommand.Cancel)));
@@ -1143,7 +1143,7 @@ public partial class OverlayWindow : Window
 
     private void OnPreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (!_initialized) return; // D2 belt-and-braces — see _initialized's doc comment
+        if (!_initialized) return; // D2 belt-and-braces - see _initialized's doc comment
         var dip = e.GetPosition(this);
         var px = ToPhysical(dip);
 
@@ -1179,7 +1179,7 @@ public partial class OverlayWindow : Window
         }
 
         // Select-tool cursor tracks hover (body/handle/elsewhere) and, while a Move/Resize/
-        // NewSelection drag is in progress, the drag kind itself — see UpdateToolCursor. Every
+        // NewSelection drag is in progress, the drag kind itself - see UpdateToolCursor. Every
         // drawing tool now needs the same per-move tracking too: any placed editable shape is
         // click-editable regardless of the active tool, so the cursor flips between the tool
         // brush and hand/arrows/SizeAll as it crosses shapes.
@@ -1192,7 +1192,7 @@ public partial class OverlayWindow : Window
                 {
                     if ((px - _dragAnchorPx).LengthSquared < ClickDragThresholdPx * ClickDragThresholdPx)
                     {
-                        break; // still a click candidate, not a drag — don't disturb any selection
+                        break; // still a click candidate, not a drag - don't disturb any selection
                     }
                     _newSelectionPending = false;
                     _onSelectionStarted(this); // clears other monitors' selections, per docs/architecture.md
@@ -1204,7 +1204,7 @@ public partial class OverlayWindow : Window
                 // (HWND-level, not client-area-level). Translate to virtual-desktop coordinates
                 // (this window's own monitor origin folded in) before handing it to the session,
                 // which distributes each monitor's own intersection back out via
-                // SetSpanningLocalSelection — which is also what sets THIS window's own _selectionPx
+                // SetSpanningLocalSelection - which is also what sets THIS window's own _selectionPx
                 // now, replacing the old direct SetSelection call here.
                 var localCandidate = RectPhysical.FromSize(
                     (int)Math.Min(_dragAnchorPx.X, px.X),
@@ -1237,12 +1237,12 @@ public partial class OverlayWindow : Window
             case DragMode.SpanningResize:
             {
                 // Same translation-to-virtual-coordinates the NewSelection case above uses: px is
-                // THIS window's own local physical pixels (never clamped mid-drag, per SetCapture —
+                // THIS window's own local physical pixels (never clamped mid-drag, per SetCapture -
                 // see that case's own doc comment), so folding in this window's monitor origin gives
                 // the cursor's true virtual-desktop position even once it's visually left this
                 // monitor. ApplyResize then replaces just the dragged handle's edge(s) on the
                 // VIRTUAL start rect, and the result goes through the exact same distribute step a
-                // NewSelection drag uses — never this window's own local rect.
+                // NewSelection drag uses - never this window's own local rect.
                 var spanningMonitorOrigin = Monitor.BoundsPx;
                 var virtualPx = new Point(spanningMonitorOrigin.Left + px.X, spanningMonitorOrigin.Top + px.Y);
                 // false: only the dragged handle's edge(s) move; stopping at the boundary is correct.
@@ -1254,7 +1254,7 @@ public partial class OverlayWindow : Window
             case DragMode.SpanningMove:
             {
                 // A plain pixel delta is monitor-independent (px and _dragAnchorPx are both THIS
-                // window's own local pixels throughout the whole drag — mouse capture guarantees
+                // window's own local pixels throughout the whole drag - mouse capture guarantees
                 // that), so it can be applied directly to the virtual start rect with no origin
                 // translation needed, unlike the resize case above (which needs px's ABSOLUTE
                 // position, not just its delta).
@@ -1262,9 +1262,9 @@ public partial class OverlayWindow : Window
                 var movedVirtual = new RectPhysical(
                     (int)(_dragStartVirtualRect.Left + delta.X), (int)(_dragStartVirtualRect.Top + delta.Y),
                     (int)(_dragStartVirtualRect.Right + delta.X), (int)(_dragStartVirtualRect.Bottom + delta.Y));
-                // true — both edges moved by the same delta, so if the result needs to be pulled back
+                // true - both edges moved by the same delta, so if the result needs to be pulled back
                 // into the virtual desktop's bounds, it must SLIDE (keep its size), not get clamped
-                // edge-by-edge (which would shrink it) — see OnSpanningCandidate /
+                // edge-by-edge (which would shrink it) - see OnSpanningCandidate /
                 // SpanningSelectionMath.SlideToBounds.
                 _onSpanningCandidate(this, movedVirtual, true);
                 break;
@@ -1300,7 +1300,7 @@ public partial class OverlayWindow : Window
 
         // Loupe selection-border preview: gate strictly to an in-progress NewSelection drag past
         // the click threshold (_newSelectionPending false means _selectionPx has actually been
-        // replaced by this drag — see the NewSelection case above). Deliberately computed here,
+        // replaced by this drag - see the NewSelection case above). Deliberately computed here,
         // AFTER the switch, rather than folded into the MagnifierControl.Update(...) call earlier
         // in this method: SetSelection() above may have just replaced MagnifierControl.SelectionPx
         // with a stale-vs-this-frame or not-yet-set value depending on drag kind, and OnRender only
@@ -1312,13 +1312,13 @@ public partial class OverlayWindow : Window
 
     private void OnPreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (!_initialized) return; // D2 belt-and-braces — see _initialized's doc comment
+        if (!_initialized) return; // D2 belt-and-braces - see _initialized's doc comment
         switch (_dragMode)
         {
             case DragMode.NewSelection:
                 if (_newSelectionPending)
                 {
-                    // Mouse never travelled far enough to become a drag: this is a plain click —
+                    // Mouse never travelled far enough to become a drag: this is a plain click -
                     // per the round-2 spec this now cancels the whole snip (like Esc) and opens the
                     // standalone ColorPickerWindow with the clicked pixel's color, replacing the old
                     // inline click panel.
@@ -1335,7 +1335,7 @@ public partial class OverlayWindow : Window
                 {
                     // Cross-monitor selection: the too-small-cancel rule must be judged against the
                     // TRUE selection (the shared virtual rect while spanning), not just this window's
-                    // own local slice — a spanning selection whose slice on THIS monitor happens to
+                    // own local slice - a spanning selection whose slice on THIS monitor happens to
                     // be a couple of pixels wide (e.g. the drag ended right at the seam) is not "too
                     // small" overall. See OverlaySession.FinalizeNewSelectionDrag.
                     _onFinalizeNewSelection(this);
@@ -1354,7 +1354,7 @@ public partial class OverlayWindow : Window
             case DragMode.SpanningMove:
                 // Cross-monitor selection: every mouse-move of this drag already redistributed its
                 // candidate through _onSpanningCandidate (see OnPreviewMouseMove), which is also what
-                // set every window's own _selectionPx as it went — there's no window-local rect left
+                // set every window's own _selectionPx as it went - there's no window-local rect left
                 // to clamp here. Just apply the same "<2px on either axis = cancel" rule
                 // FinalizeNewSelectionDrag already applies to a NewSelection drag's result (judged
                 // against the true virtual size, not this window's own local slice).
@@ -1402,15 +1402,15 @@ public partial class OverlayWindow : Window
         {
             // The NewSelection/Move/Resize finalize branches above call SetSelection() while _dragMode
             // still holds the drag value (so UpdateToolbarPlacement's suppression check fired and kept
-            // the toolbar hidden) — now that the drag has genuinely ended, re-run placement so the
+            // the toolbar hidden) - now that the drag has genuinely ended, re-run placement so the
             // toolbar (re)appears at the final rect. If the selection was cleared/invalid instead (e.g.
             // the click-to-pick path, or a too-small drag), _selectionPx is null and this just routes to
-            // HideToolbar() as usual — never a spurious flash. Gated to area drags: an Annotation
+            // HideToolbar() as usual - never a spurious flash. Gated to area drags: an Annotation
             // mouse-up never hid the toolbar, and re-running ShowToolbar() there would rebuild the
             // palette panel after every single stroke for nothing.
             UpdateToolbarPlacement();
             // The release point of a NewSelection drag is, by construction, a corner of the fresh
-            // selection — re-evaluate now so the cursor shows that handle's resize arrow immediately
+            // selection - re-evaluate now so the cursor shows that handle's resize arrow immediately
             // instead of keeping the drag's crosshair until the next pointer jitter.
             UpdateToolCursor();
         }
@@ -1421,7 +1421,7 @@ public partial class OverlayWindow : Window
         if (!IsMagnifierActive)
         {
             // The NewSelection-finalize path above calls SetSelection while _dragMode is still
-            // NewSelection (so its own IsMagnifierActive check didn't hide it) — re-check now that
+            // NewSelection (so its own IsMagnifierActive check didn't hide it) - re-check now that
             // _dragMode has actually settled to None.
             MagnifierControl.Hide();
         }
@@ -1443,7 +1443,7 @@ public partial class OverlayWindow : Window
         return RectPhysical.FromSize(left, top, w, h);
     }
 
-    /// <summary>True when the event source belongs to the toolbar's UI — including content hosted
+    /// <summary>True when the event source belongs to the toolbar's UI - including content hosted
     /// in a Popup (the size/font ComboBox dropdowns, right-click context menus). Popup content
     /// renders in its own PopupRoot visual tree, so a pure visual-parent walk never reaches the
     /// toolbar from a dropdown row and its clicks/scrolls fell through to the overlay's own
@@ -1451,7 +1451,7 @@ public partial class OverlayWindow : Window
     /// popup's subtree back to the ComboBox/element that owns it) and falls back to the visual
     /// parent for template-generated elements that have no logical parent. A walk that dead-ends
     /// without reaching this window is popup chrome by definition (nothing inside the overlay's
-    /// own tree dead-ends before the window), so it counts as toolbar UI too — that covers
+    /// own tree dead-ends before the window), so it counts as toolbar UI too - that covers
     /// popup-rooted elements with no logical bridge, e.g. context-menu internals.</summary>
     private bool IsWithinToolbar(DependencyObject? source)
     {
@@ -1464,7 +1464,7 @@ public partial class OverlayWindow : Window
             }
             if (ReferenceEquals(current, this))
             {
-                return false; // reached the overlay window itself — a genuine overlay-surface event
+                return false; // reached the overlay window itself - a genuine overlay-surface event
             }
             current = (current as FrameworkElement)?.Parent
                 ?? (current is Visual ? VisualTreeHelper.GetParent(current) : LogicalTreeHelper.GetParent(current));
@@ -1482,14 +1482,14 @@ public partial class OverlayWindow : Window
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (!_initialized) return; // D2 belt-and-braces — see _initialized's doc comment
+        if (!_initialized) return; // D2 belt-and-braces - see _initialized's doc comment
         if (e.Key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl)
         {
-            UpdateToolCursor(); // modifier-grab affordance — see the PreviewKeyUp twin
+            UpdateToolCursor(); // modifier-grab affordance - see the PreviewKeyUp twin
         }
         if (_textInputFocused && _activeTextEditor is null)
         {
-            // A toolbar text input (the size ComboBox) holds focus: every key — Enter included —
+            // A toolbar text input (the size ComboBox) holds focus: every key - Enter included -
             // must tunnel on to it rather than be treated as a session command; the ComboBox's own
             // Enter/Esc handling commits/reverts and hands focus back (ToolbarControl). The
             // annotation editor case stays with ProcessKeyCommand, whose first branch implements
@@ -1507,7 +1507,7 @@ public partial class OverlayWindow : Window
     /// <summary>The single implementation of what each session key means, shared by two callers:
     /// this window's own WPF PreviewKeyDown (used whenever the overlay genuinely has OS focus) and
     /// SessionKeyboardHook's low-level keyboard hook (used unconditionally, since a background tray
-    /// process cannot reliably steal foreground focus — see OverlayInputInterop.cs for the full
+    /// process cannot reliably steal foreground focus - see OverlayInputInterop.cs for the full
     /// root-cause writeup). Keeping one implementation guarantees the two paths can never disagree.
     /// Returns whether the key was consumed.</summary>
     internal bool ProcessKeyCommand(Key key, ModifierKeys modifiers)
@@ -1525,13 +1525,13 @@ public partial class OverlayWindow : Window
                 return true;
             }
             // Everything else (typing, Ctrl+C/paste within the box, etc.) must reach the real
-            // focused TextBox through the normal WPF pipeline — not handled here, and the
+            // focused TextBox through the normal WPF pipeline - not handled here, and the
             // low-level hook deliberately doesn't swallow these while text-editing either.
             return false;
         }
 
         // Feature B items 5/6: Delete/Back removes a selected annotation; Esc deselects it. Both are
-        // a new stage strictly INNER than the session's CancelStage escalation below — an active
+        // a new stage strictly INNER than the session's CancelStage escalation below - an active
         // text edit (the only other local stage) was already consumed above, and this must run
         // before it so Esc never eats a whole snip-clear just because a leftover selection happened
         // to still be checked.
@@ -1552,7 +1552,7 @@ public partial class OverlayWindow : Window
         {
             // The session's cross-monitor two-stage Esc (clear an in-progress snip on whichever
             // monitor holds it, else close the whole overlay) needs the session's view, so it
-            // always escalates to CancelStage — an active text edit and a selected annotation (the
+            // always escalates to CancelStage - an active text edit and a selected annotation (the
             // only other local Esc stages) were already consumed above.
             _onCommand(OverlayCommand.CancelStage);
             return true;
@@ -1598,14 +1598,14 @@ public partial class OverlayWindow : Window
             // Starting a new selection deselects any selected annotation, same as every other
             // new-gesture entry point (mouse-drag selection, switching to a drawing tool).
             Annotations.Deselect();
-            _onSelectionStarted(this); // selection lives on exactly one monitor — clear the others
+            _onSelectionStarted(this); // selection lives on exactly one monitor - clear the others
             SetSelection(RectPhysical.FromSize(0, 0, _frame.Width, _frame.Height));
             return true;
         }
 
         // Arrow keys fine-tune an existing selection without touching the mouse: move by 1 px
         // (Shift: 10 px), or with Ctrl held resize by moving the right/bottom edge instead.
-        // Only when a selection exists and no drag owns the rect — mid-drag arrows would fight
+        // Only when a selection exists and no drag owns the rect - mid-drag arrows would fight
         // the mouse's SetSelection stream.
         if (key is Key.Left or Key.Right or Key.Up or Key.Down
             && _selectionPx is { } arrowSel && _dragMode == DragMode.None)
@@ -1671,7 +1671,7 @@ public partial class OverlayWindow : Window
         }
     }
 
-    /// <summary>Clears this window's selection/annotations — called by OverlayController when a
+    /// <summary>Clears this window's selection/annotations - called by OverlayController when a
     /// new drag starts on a different monitor (selection lives on exactly one monitor at a time).</summary>
     internal void ClearSelection()
     {
@@ -1691,17 +1691,17 @@ public partial class OverlayWindow : Window
     }
 
     /// <summary>Cross-monitor selection (multimon-selection): the per-window half of
-    /// OverlaySession.OnSpanningCandidate's distribute step — sets THIS window's own local slice of
+    /// OverlaySession.OnSpanningCandidate's distribute step - sets THIS window's own local slice of
     /// the current selection (monitor-relative physical pixels, or null if the shared virtual rect
     /// doesn't intersect this monitor at all) and the two flags that change how it renders/behaves:
     /// <paramref name="isSpanning"/> (the OVERALL selection, not just this window's slice, touches
-    /// ≥2 monitors) and <paramref name="isPrimary"/> (this is the one window that owns the toolbar/
-    /// interaction — the window whose drag produced the current candidate). Reuses the existing
-    /// SetSelection pipeline verbatim (dim mask, adorner, toolbar placement) — a spanning selection's
+    /// >=2 monitors) and <paramref name="isPrimary"/> (this is the one window that owns the toolbar/
+    /// interaction - the window whose drag produced the current candidate). Reuses the existing
+    /// SetSelection pipeline verbatim (dim mask, adorner, toolbar placement) - a spanning selection's
     /// per-window rendering is the SAME code path as an ordinary one, just fed a different rect; see
     /// docs/architecture.md. <paramref name="dragInProgress"/> is true only when this
     /// call came from OnSpanningCandidate mid-drag (every other call site is a "drag has ended /
-    /// selection cleared" moment) — see _suppressToolbarForSpanningDrag's own doc comment for why a
+    /// selection cleared" moment) - see _suppressToolbarForSpanningDrag's own doc comment for why a
     /// non-owner window needs this to suppress its toolbar too.</summary>
     internal void SetSpanningLocalSelection(
         RectPhysical? monitorRelativeRect, bool isSpanning, bool isPrimary, RectPhysical? virtualRectForLabel,
@@ -1718,7 +1718,7 @@ public partial class OverlayWindow : Window
             : null;
         if (isSpanning)
         {
-            // Belt-and-braces (the toolbar already hides every drawing tool while spanning — see
+            // Belt-and-braces (the toolbar already hides every drawing tool while spanning - see
             // ShowToolbar): no annotation shape can exist to select/edit on a spanning selection, so
             // there is nothing for the stitcher (RenderSpanningSelection) to burn in.
             _currentTool = AnnotationTool.None;
@@ -1729,7 +1729,7 @@ public partial class OverlayWindow : Window
 
     /// <summary>Cross-monitor selection: called by OverlaySession on EVERY window once
     /// FinalizeNewSelectionDrag has settled a NewSelection/SpanningResize/SpanningMove drag for
-    /// good (mouse-up, or the `select` automation command) — the counterpart to the
+    /// good (mouse-up, or the `select` automation command) - the counterpart to the
     /// dragInProgress:true SetSpanningLocalSelection calls that ran on every mouse-move of that
     /// drag. Only the drag-owning window gets its own belt-and-braces re-placement from
     /// OnPreviewMouseLeftButtonUp once _dragMode settles back to None; every OTHER window that took
@@ -1773,7 +1773,7 @@ public partial class OverlayWindow : Window
         }
 
         // Cross-monitor selection: only the PRIMARY window of a spanning selection ever shows a
-        // toolbar — a secondary window's own local slice is real selection state (for rendering/
+        // toolbar - a secondary window's own local slice is real selection state (for rendering/
         // hit-testing) but never gets its own toolbar instance. See docs/architecture.md.
         if (_isSpanningSelection && !_isSpanningPrimary)
         {
@@ -1782,15 +1782,15 @@ public partial class OverlayWindow : Window
         }
 
         // Suppress the toolbar for the duration of a drag that creates/moves/resizes the selection
-        // area — SetSelection() runs on every mouse-move of such a drag, and showing the toolbar mid
+        // area - SetSelection() runs on every mouse-move of such a drag, and showing the toolbar mid
         // -drag (then having it slide around under the cursor as the rect changes) is the bug this
         // guards against. Deliberately NOT HideToolbar(): that's the "selection cleared" teardown
-        // (resets _currentTool + the toolbar's checked-tool state) — here the toolbar instance and
+        // (resets _currentTool + the toolbar's checked-tool state) - here the toolbar instance and
         // _currentTool must survive untouched, just visually collapsed until the drag ends (see the
         // extra UpdateToolbarPlacement() call in OnPreviewMouseLeftButtonUp once _dragMode settles
         // back to None). Annotation drags are deliberately excluded: they draw inside the selection
         // rather than changing it, so the toolbar should stay put. _dragMode alone only catches the
-        // window that OWNS the drag (has mouse capture) — a SpanningResize/SpanningMove candidate is
+        // window that OWNS the drag (has mouse capture) - a SpanningResize/SpanningMove candidate is
         // redistributed to every OTHER window too (see OnSpanningCandidate), and one of those can
         // pick up a non-null local slice while its own _dragMode is still None; that window needs
         // _suppressToolbarForSpanningDrag (see its own doc comment) to stay suppressed too.
@@ -1879,18 +1879,18 @@ public partial class OverlayWindow : Window
                 // commit-on-click (OnPreviewMouseLeftButtonDown), so without this an editor left open
                 // across a tool switch has nothing selected yet at switch time (the mismatch check is
                 // a no-op against a null SelectedShape) and only gets auto-selected LATER when it
-                // finally commits (Enter, or a canvas click) — by which point this handler has already
+                // finally commits (Enter, or a canvas click) - by which point this handler has already
                 // run and can't re-check it, leaking a tool-mismatched selection (S4 violation; e.g.
                 // Delete would silently remove the text with a totally different tool's icon showing
                 // as active). Committing here means the mismatch check that follows always sees the
                 // FINAL post-commit selection.
                 CommitActiveTextEditor();
                 _currentTool = tool;
-                // Item 4 (second editing round): selection is tool-scoped — switching to a
+                // Item 4 (second editing round): selection is tool-scoped - switching to a
                 // DIFFERENT drawing tool than the currently selected shape's own kind must drop
                 // that selection (chrome/handles disappear, nothing stays grabbable), e.g. picking
                 // Rectangle must not leave a selected Pixelate's handles live. Switching TO the
-                // Select tool (None) is exempt — that's the tool selections are FOR, so it always
+                // Select tool (None) is exempt - that's the tool selections are FOR, so it always
                 // keeps whatever is selected. Deselect() commits any pending wheel gesture first
                 // (CommitPendingDrag), so a mid-resize wheel tweak is never silently dropped by a
                 // tool switch.
@@ -1901,7 +1901,7 @@ public partial class OverlayWindow : Window
                 }
                 UpdateToolCursor();
                 // The text-style group appears/disappears with the Text tool, changing the
-                // toolbar's width — re-clamp its placement once the new layout has measured
+                // toolbar's width - re-clamp its placement once the new layout has measured
                 // (ActualWidth is stale until then), so it can't hang off the screen edge.
                 Dispatcher.BeginInvoke(new Action(UpdateToolbarPlacement),
                     System.Windows.Threading.DispatcherPriority.Loaded);
@@ -1922,16 +1922,16 @@ public partial class OverlayWindow : Window
             // Sharing/* subsystem: plain click is the default-provider upload, routed through
             // OverlayCommand.Share (payload-free, like every other command here). The dropdown's
             // per-provider picker needs a payload the enum can't carry, so it goes through its own
-            // dedicated _onShareToProvider callback instead — same reason onColorPicked bypasses
+            // dedicated _onShareToProvider callback instead - same reason onColorPicked bypasses
             // OverlayCommand entirely. ManageProvidersRequested (raised only when the menu would
-            // otherwise be empty — see ToolbarControl.SetShareProviders) has no reachable "open
+            // otherwise be empty - see ToolbarControl.SetShareProviders) has no reachable "open
             // Settings" entry point from inside an overlay session, so it is deliberately left
             // unwired: ToolbarControl now disables the chevron itself whenever there are zero
             // providers, which is exactly the case that would have raised this event, so it can
-            // never fire from a live click — no clickable-but-dead UI results.
+            // never fire from a live click - no clickable-but-dead UI results.
             _toolbar.ShareClicked += () => _onCommand(OverlayCommand.Share);
             _toolbar.ShareToProviderRequested += providerId => _onShareToProvider(providerId);
-            // The toolbar's X button always closes the whole overlay outright — deliberately NOT
+            // The toolbar's X button always closes the whole overlay outright - deliberately NOT
             // the staged CancelStage semantics Esc has.
             _toolbar.CancelClicked += () => _onCommand(OverlayCommand.Cancel);
 
@@ -1977,9 +1977,9 @@ public partial class OverlayWindow : Window
         _toolbar.SetStrokeWidth(_currentStrokeWidth);
         _toolbar.SetHistoryState(Annotations.CanUndo, Annotations.CanRedo);
         // Sharing/* subsystem (doc fix, senior review): re-populated on every show (not just once)
-        // — but the real reason is POOLED-WINDOW REUSE (OverlayWindowPool/Initialize), not a live
+        // - but the real reason is POOLED-WINDOW REUSE (OverlayWindowPool/Initialize), not a live
         // mid-session settings refresh. _liveSettings is a snapshot taken once, either at this
-        // window's construction or the last in-session edit IT made (palette/audio toggles) — it is
+        // window's construction or the last in-session edit IT made (palette/audio toggles) - it is
         // never re-read from disk while the overlay stays open, so a share provider added or removed
         // via the tray's separate Settings window WHILE this overlay is up will NOT be reflected
         // here until the next capture starts a fresh session. What re-running this call on every
@@ -1989,11 +1989,11 @@ public partial class OverlayWindow : Window
         // ShareToSpecificProvider (Overlay/OverlayController.cs) resolve the actual upload target
         // from this exact same _liveSettings (via the LiveSettings property below), not the
         // session's own separately-snapshotted _settings field, so the dropdown's own choices can
-        // never disagree with what a click actually uploads to — even though neither one is disk-
+        // never disagree with what a click actually uploads to - even though neither one is disk-
         // fresh mid-session (contrast RecordingController.RequestShare's Reviewing-state Share
-        // button, which deliberately DOES do a fresh SettingsStore.Load() on every click — see that
+        // button, which deliberately DOES do a fresh SettingsStore.Load() on every click - see that
         // method's own doc comment for why a resumable in-progress take needs that guarantee and a
-        // still-open overlay selection does not). Only ENABLED configs are offered — a built-in the
+        // still-open overlay selection does not). Only ENABLED configs are offered - a built-in the
         // user has never filled in a credential for is seeded disabled
         // (ShareProviderCatalog.DefaultConfigFor) and must not appear as a clickable-but-broken
         // picker entry.
@@ -2016,7 +2016,7 @@ public partial class OverlayWindow : Window
 
     /// <summary>Pushes the current effective palette (persisted PaletteColors, or the migration
     /// seed of defaults + legacy CustomColors on a pre-round-5 settings file) into the toolbar,
-    /// first snapping <see cref="_currentColor"/> onto the palette if it isn't in it — the checked
+    /// first snapping <see cref="_currentColor"/> onto the palette if it isn't in it - the checked
     /// swatch must never lie about the actual draw color.</summary>
     private void RefreshToolbarPalette()
     {
@@ -2047,7 +2047,7 @@ public partial class OverlayWindow : Window
         if (_toolbar is not null)
         {
             _toolbar.Visibility = Visibility.Collapsed;
-            // Keep the visible checked state in sync with _currentTool being reset below — the
+            // Keep the visible checked state in sync with _currentTool being reset below - the
             // toolbar instance is reused the next time a selection is made.
             _toolbar.ResetToolSelection();
         }
@@ -2057,11 +2057,11 @@ public partial class OverlayWindow : Window
 
     /// <summary>Tool-indicating cursor (item 1, UX round 3): every drawing tool gets a small custom
     /// cursor rendered from the current tool/color/strokeWidth via <see cref="ToolCursorCache"/>.
-    /// Called on every change to tool, color, or stroke width — including scroll-wheel width changes
-    /// — so a toolbar click back to the Select tool lands here too.
+    /// Called on every change to tool, color, or stroke width - including scroll-wheel width changes
+    /// - so a toolbar click back to the Select tool lands here too.
     /// For the Select tool (AnnotationTool.None), the cursor instead reflects what's currently under
-    /// (or being dragged from) the cursor — grab hand over the selection body, a directional resize
-    /// cursor over a handle, crosshair everywhere else including a NewSelection drag — via
+    /// (or being dragged from) the cursor - grab hand over the selection body, a directional resize
+    /// cursor over a handle, crosshair everywhere else including a NewSelection drag - via
     /// <see cref="CursorForHandle"/>. Re-hit-tests the live mouse position (via Mouse.GetPosition)
     /// rather than assuming nothing is hovered, since this can run right after a toolbar click with
     /// no intervening mouse-move. Pick-only mode has no selection/handle concept at all, so it always
@@ -2072,7 +2072,7 @@ public partial class OverlayWindow : Window
         {
             // Every drawing tool: an already-placed shape of THAT SAME TOOL is click-editable (see
             // the editsExistingShape branch in OnPreviewMouseLeftButtonDown and HitEditableForTool),
-            // so the cursor must advertise that instead of showing the draw-a-new-one brush over it —
+            // so the cursor must advertise that instead of showing the draw-a-new-one brush over it -
             // hidden affordances aren't affordances. Same hand/arrow/SizeAll vocabulary as the Select
             // tool. Shapes of a different tool are not editable here, so they get no Hand cursor.
             if (!_pickOnlyMode)
@@ -2146,11 +2146,11 @@ public partial class OverlayWindow : Window
     }
 
     /// <summary>Directional resize cursor for a Line/Arrow endpoint, chosen by the segment's own
-    /// angle — dragging an endpoint stretches ALONG the segment, so the pointer should say
+    /// angle - dragging an endpoint stretches ALONG the segment, so the pointer should say
     /// "resize this way" (a diagonal double-arrow on a diagonal line, WE/NS near the axes), not
-    /// SizeAll's four-way move arrows, which read as "move the whole thing" — the grabbing hand
-    /// already means that. Buckets at ~22.5° off each axis (tan 67.5° ≈ 2.414); screen Y grows
-    /// downward, so same-sign dx/dy is the NW–SE diagonal.</summary>
+    /// SizeAll's four-way move arrows, which read as "move the whole thing" - the grabbing hand
+    /// already means that. Buckets at ~22.5 deg off each axis (tan 67.5 deg ~= 2.414); screen Y grows
+    /// downward, so same-sign dx/dy is the NW-SE diagonal.</summary>
     private static Cursor CursorForSegmentEndpoint(AnnotationShape? shape)
     {
         if (shape is null || shape.PointsPx.Count < 2)
@@ -2183,9 +2183,9 @@ public partial class OverlayWindow : Window
         _ => Cursors.Cross,
     };
 
-    /// <summary>Static (non-drag) Select-tool hover cursor — mirrors the click priority in
+    /// <summary>Static (non-drag) Select-tool hover cursor - mirrors the click priority in
     /// OnPreviewMouseLeftButtonDown (item 8): the selected annotation's own handles/endpoints beat
-    /// the crop selection's handles, which beat hovering an editable annotation body (Hand — item
+    /// the crop selection's handles, which beat hovering an editable annotation body (Hand - item
     /// "hovering an editable annotation body -> Hand"), which beat the crop's own body/handle
     /// mapping.</summary>
     private Cursor CursorForHover(Point px)
@@ -2197,7 +2197,7 @@ public partial class OverlayWindow : Window
             {
                 return CursorForHandle(selectedHandle);
             }
-            // Item 2: Line/Arrow's endpoint handles — a directional resize pointer along the
+            // Item 2: Line/Arrow's endpoint handles - a directional resize pointer along the
             // segment's own angle, distinct from the plain Hand a body hover gets a few lines
             // below (an endpoint drag stretches the segment; the hand means "move the whole thing").
             if (Annotations.HitTestSelectedEndpoint(px) >= 0)
@@ -2220,7 +2220,7 @@ public partial class OverlayWindow : Window
         return CursorForHandle(cropHandle); // Body -> Hand, None -> Cross
     }
 
-    /// <summary>True while Shift or Ctrl is down — the modifier-grab chord (see the mouse-down
+    /// <summary>True while Shift or Ctrl is down - the modifier-grab chord (see the mouse-down
     /// branch): a click grabs the drawn object under the cursor, hit-testing outline interiors
     /// too, regardless of the active tool.</summary>
     private static bool IsGrabModifierHeld =>
@@ -2232,7 +2232,7 @@ public partial class OverlayWindow : Window
     /// pixel's color from the tone-mapped preview (what the user sees) and its HDR nits value from
     /// the raw FP16 CapturedFrame, auto-copies the hex to the clipboard (existing behavior, kept),
     /// hands the snapshot up to OverlayController's standalone ColorPickerWindow singleton, and
-    /// cancels this session — the whole overlay closes, exactly like Esc. The Cancel is dispatched
+    /// cancels this session - the whole overlay closes, exactly like Esc. The Cancel is dispatched
     /// via BeginInvoke rather than called inline: Cancel synchronously closes every window in the
     /// session (including this one, from inside its own mouse-event handler), and deferring it to
     /// the next dispatcher cycle avoids touching a window that's already mid-teardown.</summary>
@@ -2266,7 +2266,7 @@ public partial class OverlayWindow : Window
         }
         catch (System.Runtime.InteropServices.COMException)
         {
-            // Clipboard transiently locked by another process — the panel reports the failure;
+            // Clipboard transiently locked by another process - the panel reports the failure;
             // color inspection is a convenience, never worth crashing the overlay over.
             return false;
         }
@@ -2275,7 +2275,7 @@ public partial class OverlayWindow : Window
     // ---------- Inline text annotation ----------
 
     /// <summary>Feature B item 4: double-click on a placed Text annotation (Select tool) reopens
-    /// this SAME inline editor at the shape's own position, prefilled with its text/styling — reuses
+    /// this SAME inline editor at the shape's own position, prefilled with its text/styling - reuses
     /// BeginTextEditor's machinery wholesale rather than a second editor implementation. The original
     /// shape is suppressed from AnnotationLayer's normal render for the duration (see
     /// SuppressedFromRender) so the floating editor doesn't show doubled text.</summary>
@@ -2334,12 +2334,12 @@ public partial class OverlayWindow : Window
         editor.Focus();
         Keyboard.Focus(editor);
 
-        // Reliability layer (b, item 3a of UX round 3): best-effort — a background tray process may
+        // Reliability layer (b, item 3a of UX round 3): best-effort - a background tray process may
         // not hold the actual OS foreground grant (see OverlayInputInterop.cs), which normally
         // doesn't matter because the session-scoped WH_KEYBOARD_LL hook (layer a) handles
         // Esc/Enter/Ctrl+C/Ctrl+S/Ctrl+Z regardless of focus. Typing into this TextBox (and IME
         // composition) is different: it needs *real* keyboard/text-services focus, which the hook
-        // deliberately does not fake there. So try hard via the full three-tier activation ladder —
+        // deliberately does not fake there. So try hard via the full three-tier activation ladder -
         // but never let a failure be fatal: if every tier fails, TextEditKeyForwarder (item 3b, the
         // session hook's guaranteed fallback tier) still guarantees typing is never dead.
         ForegroundActivator.Activate(this, "text-edit");
@@ -2375,7 +2375,7 @@ public partial class OverlayWindow : Window
 
         if (replacing is not null)
         {
-            // Feature B item 4: a re-edit commit REPLACES the original shape, never adds a new one —
+            // Feature B item 4: a re-edit commit REPLACES the original shape, never adds a new one -
             // an empty result is treated exactly like the new-text path's degenerate-text guard
             // below (silently no-op, leaving the original untouched) rather than deleting it; the
             // user asked to edit the text, not to remove the annotation.
@@ -2404,7 +2404,7 @@ public partial class OverlayWindow : Window
         if (!string.IsNullOrWhiteSpace(text))
         {
             // Item 1 (second editing round): auto-select the newly committed text exactly like a
-            // just-placed Pixelate/Rectangle/etc — its chrome shows up immediately so it reads as
+            // just-placed Pixelate/Rectangle/etc - its chrome shows up immediately so it reads as
             // grabbable/editable like every other kind, without a trip through the Select tool.
             var committed = Annotations.CommitText(
                 _activeTextEditorOriginPx, text, _currentColor, fontSize, _textFontFamily, _textBold, _textItalic);
@@ -2437,10 +2437,10 @@ public partial class OverlayWindow : Window
     /// <summary>A live text editor (new placement OR a re-edit) owns the wheel first, ahead of
     /// everything else: it's the visible source of truth for the font the user sees, so the wheel
     /// must drive IT directly (SetTextFontSize, which live-updates the TextBox) rather than the
-    /// selected shape underneath it — which, during a re-edit, is render-suppressed (see
+    /// selected shape underneath it - which, during a re-edit, is render-suppressed (see
     /// AnnotationLayer.SuppressedFromRender), so mutating its font instead would silently desync it
     /// from what's actually on screen. Otherwise: a selected rect-resizable/segment/text shape owns
-    /// it — under the Select tool AND under the shape's own drawing tool (a just-placed shape is
+    /// it - under the Select tool AND under the shape's own drawing tool (a just-placed shape is
     /// auto-selected, so "place, then scroll to tune it" works in one flow): Pixelate scrolls its
     /// mosaic block size, Rectangle/Ellipse/Line/Arrow their stroke width, Text its font size. This
     /// deliberately beats the drawing tool's default wheel action (next-shape stroke/font) while a
@@ -2450,7 +2450,7 @@ public partial class OverlayWindow : Window
     /// indicator shows the new size for ~600ms.</summary>
     private void OnPreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
-        if (!_initialized) return; // D2 belt-and-braces — see _initialized's doc comment
+        if (!_initialized) return; // D2 belt-and-braces - see _initialized's doc comment
         if (IsWithinToolbar(e.OriginalSource as DependencyObject))
         {
             return; // scrolling the toolbar or one of its dropdowns (size presets, font list) must
@@ -2486,11 +2486,11 @@ public partial class OverlayWindow : Window
             return;
         }
 
-        // A selected rect-resizable/segment/text shape owns the wheel — under the Select tool AND
+        // A selected rect-resizable/segment/text shape owns the wheel - under the Select tool AND
         // under the shape's own drawing tool (a just-placed shape is auto-selected, so "place, then
         // scroll to tune it" works in one flow): Pixelate scrolls its mosaic block size,
         // Rectangle/Ellipse/Line/Arrow their stroke width, Text its own font size (item 1 of the
-        // second editing round moved Text in here from its own separate Select-tool-only branch —
+        // second editing round moved Text in here from its own separate Select-tool-only branch -
         // it now works the same way under either the Select tool OR the Text tool, matching every
         // other click-editable kind).
         if (Annotations.SelectedShape is { } selectedShape
@@ -2499,7 +2499,7 @@ public partial class OverlayWindow : Window
             // Each branch ALSO adopts the dialed size as the CURRENT tool size (SetStrokeWidth /
             // SetTextFontSize instead of a bare indicator): the tool's brush cursor visibly grows
             // and shrinks with the wheel (it renders from _currentStrokeWidth, which a
-            // selected-shape-only mutation left stale — user-reported), the toolbar's size box
+            // selected-shape-only mutation left stale - user-reported), the toolbar's size box
             // stays honest, and the next shape drawn inherits the size just dialed in.
             if (selectedShape.Tool == AnnotationTool.Pixelate)
             {
@@ -2525,7 +2525,7 @@ public partial class OverlayWindow : Window
             if (selectedShape.Tool == AnnotationTool.Text)
             {
                 // _activeTextEditor is null here (handled and returned above already), so the
-                // selected shape is the live, on-screen text — safe to mutate directly.
+                // selected shape is the live, on-screen text - safe to mutate directly.
                 Annotations.BeginDragSelected(); // no-op if a gesture from an earlier notch is still open
                 double resizedFont = SizeInput.ClampFont(selectedShape.StrokeWidthPx + notches * 2.0);
                 Annotations.SetSelectedFontSize(resizedFont);
@@ -2623,7 +2623,7 @@ public partial class OverlayWindow : Window
         var content = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 5, 8, 5) };
         if (circleDiameterDip is { } d)
         {
-            // Exact 1:1 with the brush at the low end — the dot IS the brush size preview (user
+            // Exact 1:1 with the brush at the low end - the dot IS the brush size preview (user
             // feedback: "it should always be the same size as whatever we'll be drawing"). Only
             // capped at 40 to keep the popup compact; the numeric label carries the truth there.
             double clamped = Math.Clamp(d, 1.0, 40.0);
@@ -2673,7 +2673,7 @@ public partial class OverlayWindow : Window
 
     /// <summary>Opens System.Windows.Forms.ColorDialog (FullOpen so the full custom-color editor is
     /// visible immediately) owned by this window's HWND so it stacks correctly above the topmost
-    /// overlay — shared by the "+" swatch and every swatch's right-click "Replace...".</summary>
+    /// overlay - shared by the "+" swatch and every swatch's right-click "Replace...".</summary>
     private bool TryPickColorFromDialog(out Color color)
     {
         color = default;
@@ -2697,7 +2697,7 @@ public partial class OverlayWindow : Window
     }
 
     /// <summary>The current palette as displayed: the persisted list, or (pre-round-5 settings
-    /// file) the migration seed — every mutation below starts from this so the first edit
+    /// file) the migration seed - every mutation below starts from this so the first edit
     /// materializes the migrated list into PaletteColors.</summary>
     private List<string> CurrentEffectivePalette() =>
         SwatchPalette.EffectivePalette(_liveSettings.PaletteColors, _liveSettings.CustomColors);
@@ -2770,7 +2770,7 @@ public partial class OverlayWindow : Window
     // ---------- Export / feedback ----------
 
     /// <summary>Renders the current selection's crop with all committed annotations burned in, at
-    /// 1:1 physical-pixel scale (96 DPI both axes — see SdrImage.ToBitmapSource's contract).</summary>
+    /// 1:1 physical-pixel scale (96 DPI both axes - see SdrImage.ToBitmapSource's contract).</summary>
     internal SdrImage RenderSelectionWithAnnotations()
     {
         if (_selectionPx is not { } sel)
@@ -2819,11 +2819,11 @@ public partial class OverlayWindow : Window
         flash.BeginAnimation(OpacityProperty, animation);
     }
 
-    /// <summary>Forwards to the toolbar's own busy/disabled state during a Share upload — see
+    /// <summary>Forwards to the toolbar's own busy/disabled state during a Share upload - see
     /// OverlaySession.ShareCurrentSelection's own doc comment for the full flow. A no-op if this
     /// window's toolbar was never created (Share cannot be clicked without one already existing,
     /// but a detached upload's completion callback can in principle race a session teardown that
-    /// never got as far as ShowToolbar — see UploadShareAsync's own try/catch around this call for
+    /// never got as far as ShowToolbar - see UploadShareAsync's own try/catch around this call for
     /// the belt-and-braces half of that same guard).</summary>
     internal void SetShareBusy(bool busy) => _toolbar?.SetShareBusy(busy);
 

@@ -200,16 +200,16 @@ public static class NativeMethods
     public const uint MONITOR_DEFAULTTOPRIMARY = 0x00000001;
     public const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
 
-    // Raw HWND foreground-activation call (no WPF dispatcher-thread affinity — unlike
+    // Raw HWND foreground-activation call (no WPF dispatcher-thread affinity - unlike
     // Window.Activate(), this can be called from ANY thread with just the target HWND). Used by
-    // FlashDimmer.ShowAll to negotiate foreground off the UI thread — see its doc comment.
+    // FlashDimmer.ShowAll to negotiate foreground off the UI thread - see its doc comment.
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
     // ---------- Extended window styles ----------
 
-    // win-x64-only build (see RoeSnip.csproj's RuntimeIdentifiers) — GetWindowLongPtr/
+    // win-x64-only build (see RoeSnip.csproj's RuntimeIdentifiers) - GetWindowLongPtr/
     // SetWindowLongPtr are real user32.dll exports on 64-bit Windows (unlike the 32-bit build,
     // where they're header-only macros aliasing GetWindowLong/SetWindowLong), so declaring them
     // directly is safe without a 32-bit fallback.
@@ -227,7 +227,7 @@ public static class NativeMethods
     // ---------- Capture exclusion ----------
 
     // Shared by FlashDimmer's flash windows (which declare their own copy locally, per the
-    // OverlayInputInterop convention of one small local P/Invoke per file — kept as-is there to
+    // OverlayInputInterop convention of one small local P/Invoke per file - kept as-is there to
     // avoid an unrelated churn) and OverlayWindow's own overlay windows (see OverlayWindow.
     // OnSourceInitialized), which use this shared declaration since two independent files now need
     // the exact same API.
@@ -235,7 +235,7 @@ public static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint dwAffinity);
 
-    // The read side of the pair above — used only by AutomationServer's `includeExcluded`
+    // The read side of the pair above - used only by AutomationServer's `includeExcluded`
     // screenshot path (App/AutomationServer.cs) to discover which of the app's own windows are
     // currently WDA_EXCLUDEFROMCAPTURE before temporarily clearing it, so it can restore exactly
     // those windows afterward rather than guessing/forcing every window back to excluded.

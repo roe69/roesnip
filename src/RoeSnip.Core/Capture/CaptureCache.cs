@@ -13,10 +13,10 @@ namespace RoeSnip.Core.Capture;
 /// process-lifetime static, so every fresh app launch re-paid the doomed DD attempt (device
 /// creation + the AcquireNextFrame retry budget, per monitor) before falling back to WGC. This
 /// cache lives in its own small JSON file at <c>capture-cache.json</c> in the portable config
-/// directory (deliberately NOT settings.json — it's derived machine state, not user preference) so
+/// directory (deliberately NOT settings.json - it's derived machine state, not user preference) so
 /// the very first capture after a relaunch goes straight to WGC for known-broken monitors.
 /// Contract: loaded lazily on first query, saved on first change; a missing or corrupt file means
-/// an empty memo — reading or writing this cache must never crash or block a capture.</summary>
+/// an empty memo - reading or writing this cache must never crash or block a capture.</summary>
 public sealed class CaptureCache
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
@@ -32,17 +32,17 @@ public sealed class CaptureCache
     private HashSet<string>? _ddBrokenDeviceNames; // null until first use (lazy load)
 
     // Post-resume grace (sleep-stall fix, ported from the WPF app's own CaptureCache): 0 = never
-    // resumed. Static, not per-instance — the resume event is machine state and CaptureService
+    // resumed. Static, not per-instance - the resume event is machine state and CaptureService
     // creates a fresh backend (and with it fresh cache queries) per capture.
     private static long s_lastResumeTick;
     private static readonly long PostResumeGraceMs = 30_000;
 
-    /// <summary>Called by the App shell when the machine resumes from sleep (Windows only today —
+    /// <summary>Called by the App shell when the machine resumes from sleep (Windows only today -
     /// no other platform wires a power event). For the next ~30 s,
     /// <see cref="MarkDesktopDuplicationBroken"/> is a no-op: the wake transition produces
     /// TRANSIENT capture failures (ghost "WinDisc" displays mid-topology-settle, secure-desktop
     /// access denials, DXGI outputs that don't exist yet) that used to poison the persisted
-    /// "DD is broken here" memo FOREVER — this cache is meant to memoize the permanent
+    /// "DD is broken here" memo FOREVER - this cache is meant to memoize the permanent
     /// NVIDIA+HDR black-frame quirk, not a driver that hasn't finished waking. A capture during
     /// the window still falls back to the next capturer normally; it just isn't memoized.</summary>
     public static void NotePowerResume() =>
@@ -61,7 +61,7 @@ public sealed class CaptureCache
         _path = path;
     }
 
-    /// <summary>True if Desktop Duplication was previously observed broken for this monitor —
+    /// <summary>True if Desktop Duplication was previously observed broken for this monitor -
     /// callers should skip DD entirely and go straight to WGC.</summary>
     public bool IsDesktopDuplicationBroken(string deviceName)
     {
@@ -89,7 +89,7 @@ public sealed class CaptureCache
             EnsureLoaded();
             if (!_ddBrokenDeviceNames!.Add(deviceName))
             {
-                return; // already known — nothing changed, no rewrite
+                return; // already known - nothing changed, no rewrite
             }
             SaveBestEffort();
         }
@@ -149,7 +149,7 @@ public sealed class CaptureCache
         catch (Exception ex)
         {
             // Corrupt/unreadable cache = empty memo; a capture must never fail because of this
-            // file. (Broader catch than SettingsStore on purpose — this file is disposable derived
+            // file. (Broader catch than SettingsStore on purpose - this file is disposable derived
             // state, not user data.)
             FileLog.Write($"RoeSnip: capture cache unreadable/corrupt, starting empty: {ex.Message}");
             return;
@@ -163,12 +163,12 @@ public sealed class CaptureCache
     /// <c>DeviceName</c> entries with no <c>"::{capturerIndex}"</c> suffix.
     /// <see cref="FallbackCaptureBackend"/> now keys per-capturer-slot as
     /// <c>"{DeviceName}::{i}"</c>, so a bare entry never matches anything and is silently dead
-    /// weight — meaning an upgrading NVIDIA+HDR user would re-pay the doomed Desktop Duplication
+    /// weight - meaning an upgrading NVIDIA+HDR user would re-pay the doomed Desktop Duplication
     /// attempt once per monitor after upgrading, exactly the cold-start cost this cache exists to
-    /// avoid. Migrate bare entries to <c>"{DeviceName}::0"</c> (slot 0 == the primary capturer —
+    /// avoid. Migrate bare entries to <c>"{DeviceName}::0"</c> (slot 0 == the primary capturer -
     /// Desktop Duplication on Windows, the portal on Linux) once, on load, and drop the bare form.
     /// This is the cache loader's job regardless of whether anything currently produces a bare
-    /// entry — with P5's config-directory split this only matters again once the two apps
+    /// entry - with P5's config-directory split this only matters again once the two apps
     /// converge onto one shared cache file.</summary>
     private void MigrateBareDeviceNameEntries()
     {

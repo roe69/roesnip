@@ -6,8 +6,8 @@ namespace RoeSnip.App.Overlay;
 /// verbatim from the frozen WPF app's src/RoeSnip/Overlay/SizeInput.cs (UX round 5, item 2), which
 /// replaced a fixed small/medium/big stroke-dot row: one editable box that shows "Npx" (stroke
 /// width, drawing tools) or "Npt" (font size, Text tool). This is the single home of the size clamp
-/// ranges — the same 1-32 px stroke and 6-96 pt font limits the scroll-wheel resize in OverlayWindow
-/// has always enforced. No Avalonia dependency — unit-testable in isolation.</summary>
+/// ranges - the same 1-32 px stroke and 6-96 pt font limits the scroll-wheel resize in OverlayWindow
+/// has always enforced. No Avalonia dependency - unit-testable in isolation.</summary>
 public static class SizeInput
 {
     public const double MinStrokePx = 1.0;

@@ -17,25 +17,25 @@ namespace RoeSnip;
 public enum RecordingFormat { Mp4, Gif }
 
 /// <summary>Data-only "the user asked to record" marker packaged onto <see cref="OverlayResult"/>
-/// by OverlayController.Record — see that method's doc comment for why it's a payload record
+/// by OverlayController.Record - see that method's doc comment for why it's a payload record
 /// rather than a bare bool+enum pair (keeps OverlayResult's constructor call sites readable).</summary>
 public sealed record RecordingRequest(RecordingFormat Format);
 
 /// <summary>Cross-monitor selection HDR save: one contributing monitor's own RAW CapturedFrame
 /// (untouched, no tone-mapping) plus the crop-local rect (relative to that frame's own (0,0)) and
 /// the destination offset (relative to the spanning selection's own composite canvas origin) that
-/// place its pixels correctly in the stitched output. A list of these — one per monitor the
-/// selection actually touches — is what <see cref="OverlayResult.SpanningFrameCrops"/> carries, and
+/// place its pixels correctly in the stitched output. A list of these - one per monitor the
+/// selection actually touches - is what <see cref="OverlayResult.SpanningFrameCrops"/> carries, and
 /// what AppComposition.WriteJxrSpanning (Imaging/JxrWriter.cs, WP-C) consumes: see that hook's own
 /// doc comment for why stitching raw scRGB crops from different monitors is well-defined (unlike
-/// stitching already-tone-mapped ones would be) — every field here uses only WP-A leaf types
+/// stitching already-tone-mapped ones would be) - every field here uses only WP-A leaf types
 /// (Capture.CapturedFrame, Capture.RectPhysical), same discipline as OverlayResult itself, so
 /// Overlay (WP-B, which populates this) never has to reference WP-C's JxrWriter directly.</summary>
 public sealed record SpanningFrameCrop(Capture.CapturedFrame Frame, Capture.RectPhysical LocalCropPx, int DestX, int DestY);
 
 /// <summary>Data-only result of one overlay session. The Overlay package (WP-B) produces this;
 /// it performs Copy (clipboard) and Save (PNG dialog + file write) itself before returning, using
-/// only WP-A leaf APIs (PngWriter) and its own ClipboardService — so those two actions need no
+/// only WP-A leaf APIs (PngWriter) and its own ClipboardService - so those two actions need no
 /// hook. Only the cross-cutting bits (HDR export, "saved" tray balloon, recording) are threaded
 /// back through AppComposition, because they need WP-C/WP-D types (JxrWriter, ITrayNotifier,
 /// RecordingController) that Overlay must not reference directly.</summary>
@@ -43,15 +43,15 @@ public sealed record OverlayResult(
     Capture.MonitorInfo Monitor,
     Capture.RectPhysical SelectionPx,      // selection rect, relative to Monitor.BoundsPx origin
     Imaging.SdrImage RenderedImage,         // tone-mapped crop with annotations burned in
-    Capture.CapturedFrame SourceFrame,       // original (uncropped) frame for this monitor — for HDR export
+    Capture.CapturedFrame SourceFrame,       // original (uncropped) frame for this monitor - for HDR export
     bool CopyPerformed,                      // true if Overlay already wrote PNG+CF_DIBV5 to the clipboard
     string? SavedPngPath,                    // non-null if the user used Save and it succeeded
     bool SaveHdrRequested,                   // true if the user clicked "Save HDR" (independent of settings.AutoSaveHdrCopy)
-    RecordingRequest? RecordingRequested = null, // non-null if the user clicked Record MP4/GIF — trailing optional param, non-breaking
+    RecordingRequest? RecordingRequested = null, // non-null if the user clicked Record MP4/GIF - trailing optional param, non-breaking
     // Cross-monitor selection (multimon-selection): non-null when RenderedImage is a byte composite
     // stitched from multiple monitors' own already-tone-mapped crops (OverlaySession.
     // RenderSpanningSelection), in which case Monitor/SelectionPx/SourceFrame above describe only
-    // the PRIMARY monitor (whichever held the drag-end cursor) — they exist purely to satisfy this
+    // the PRIMARY monitor (whichever held the drag-end cursor) - they exist purely to satisfy this
     // record's non-nullable shape and must not be used for anything beyond that when this is set.
     // This is what RunCaptureFlowAsync's HDR-export branch checks to route to WriteJxrSpanning
     // (using SpanningFrameCrops below) instead of the single-monitor WriteJxr(SourceFrame,
@@ -59,7 +59,7 @@ public sealed record OverlayResult(
     Capture.RectPhysical? SpanningVirtualSelectionPx = null,
     // Cross-monitor selection HDR save: every contributing monitor's own raw-frame crop geometry
     // (see SpanningFrameCrop's own doc comment), non-null exactly when SpanningVirtualSelectionPx
-    // is — populated unconditionally on a spanning result (not just when SaveHdrRequested is true),
+    // is - populated unconditionally on a spanning result (not just when SaveHdrRequested is true),
     // mirroring how SourceFrame/SelectionPx above are always populated regardless of what the user
     // clicked, so settings.AutoSaveHdrCopy works the same way for a spanning result as for a plain
     // one. SaveHdrRequested (above) still reflects what the user actually asked for on THIS
@@ -102,8 +102,8 @@ public sealed record RoeSnipSettings
 
     /// <summary>LEGACY (superseded by <see cref="ColorFormats"/>, the ordered/editable format
     /// list): the original four per-format visibility toggles plus the short-lived HSV/CMYK pair.
-    /// Kept — read once as the migration seed by ColorFormatCatalog.EffectiveFormats, never
-    /// written or displayed separately — so a downgrade to an older build still sees its
+    /// Kept - read once as the migration seed by ColorFormatCatalog.EffectiveFormats, never
+    /// written or displayed separately - so a downgrade to an older build still sees its
     /// choices, mirroring the CustomColors -> PaletteColors migration pattern below.</summary>
     public bool ColorFormatShowHex { get; init; } = true;
     public bool ColorFormatShowRgb { get; init; } = true;
@@ -115,7 +115,7 @@ public sealed record RoeSnipSettings
     /// <summary>The ordered color-format list shown by BOTH readout surfaces (the
     /// ColorPickerWindow's rows and the magnifier loupe's value lines), managed from the picker's
     /// gear popover: toggle, reorder, and add/edit/delete custom entries. Each entry's Format is a
-    /// ColorFormatTemplate string ("%Re"/"%Hu"/... parameters — see that class). Empty (the
+    /// ColorFormatTemplate string ("%Re"/"%Hu"/... parameters - see that class). Empty (the
     /// default) means "not migrated yet": consumers seed from ColorFormatCatalog.BuiltIns with the
     /// legacy ColorFormatShow* bools applied, and only persist the list once the user first edits
     /// it (same contract as <see cref="PaletteColors"/>).</summary>
@@ -129,10 +129,10 @@ public sealed record RoeSnipSettings
     public bool TextItalic { get; init; } = false;
 
     /// <summary>Custom colors chosen via the toolbar's "+" swatch (System.Windows.Forms.ColorDialog),
-    /// stored as "#RRGGBB", newest first, capped at 8 (LRU — see Overlay/BoundedColorList.Push),
+    /// stored as "#RRGGBB", newest first, capped at 8 (LRU - see Overlay/BoundedColorList.Push),
     /// rendered as extra swatches in the toolbar after the built-in presets.
     /// LEGACY as of UX round 5: superseded by <see cref="PaletteColors"/> (the whole palette is
-    /// editable now); kept — read once as migration seed, never written or displayed separately —
+    /// editable now); kept - read once as migration seed, never written or displayed separately -
     /// so a downgrade to an older build still sees its custom colors.</summary>
     public List<string> CustomColors { get; init; } = new();
 
@@ -154,37 +154,37 @@ public sealed record RoeSnipSettings
     /// <summary>GIF recording size/quality tier, chosen from the recording chrome's Setup-only GIF
     /// row and persisted immediately (same SettingsStore.Save best-effort pattern as the audio
     /// toggles above). A plain string, not the <see cref="RoeSnip.Core.Recording.Gif.GifSizePreset"/> enum
-    /// itself — this record's JSON persistence style keeps every field JSON-primitive so the file
+    /// itself - this record's JSON persistence style keeps every field JSON-primitive so the file
     /// stays human-editable and forward/backward compatible across builds that add or reorder enum
     /// members. Parsed via <see cref="RoeSnip.Core.Recording.Gif.GifSizePresets.Parse"/>, which fails safe to
     /// "Quality" (this default) for any unknown or corrupt value rather than throwing.</summary>
     public string GifSizePreset { get; init; } = "Quality";
 
-    /// <summary>MP4 recording size/quality tier — the same recording-chrome size row as
+    /// <summary>MP4 recording size/quality tier - the same recording-chrome size row as
     /// <see cref="GifSizePreset"/> above, but format's own separate memory: switching between GIF
     /// and MP4 takes must not clobber the other format's last-picked tier. Same plain-string,
     /// same <see cref="RoeSnip.Core.Recording.Gif.GifSizePresets.Parse"/> fail-safe-to-"Quality" convention,
-    /// and (despite the "Gif"-namespaced parser/enum — see that enum's own doc comment for why it
+    /// and (despite the "Gif"-namespaced parser/enum - see that enum's own doc comment for why it
     /// wasn't moved) the SAME <see cref="RoeSnip.Core.Recording.Gif.GifSizePreset"/> enum, not a parallel
     /// MP4-only one.</summary>
     public string Mp4SizePreset { get; init; } = "Quality";
 
     /// <summary>GIF recording framerate (quality/framerate decoupling workstream, stage 3;
     /// widened from four fixed choices to a free integer slider by the quality/fps expansion
-    /// workstream — see RecordingChrome's FPS row): the chrome's FPS slider persists here,
-    /// independent of <see cref="GifSizePreset"/> — the two axes are orthogonal user choices now
+    /// workstream - see RecordingChrome's FPS row): the chrome's FPS slider persists here,
+    /// independent of <see cref="GifSizePreset"/> - the two axes are orthogonal user choices now
     /// (see RoeSnip.Core's Recording/RecordingSizeEstimator.cs own doc comment for why). A plain int, not
     /// validated at load time: an old build, a hand-edited settings file, or a future build's
     /// differently-shaped range could all leave a value here that falls outside today's
     /// <see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.GifMinFps"/>..<see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.GifMaxFps"/>
-    /// range — rather than throw or silently keep an invalid capture rate, every USE site clamps
+    /// range - rather than throw or silently keep an invalid capture rate, every USE site clamps
     /// this through <see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.ClampFps"/> against those live
     /// bounds (same fail-safe-at-use-time convention <see cref="GifSizePreset"/>'s own
     /// <see cref="RoeSnip.Core.Recording.Gif.GifSizePresets.Parse"/> already uses). Default matches
     /// <see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.GifDefaultFps"/>.</summary>
     public int GifFps { get; init; } = 25;
 
-    /// <summary>MP4 recording framerate — same fail-safe-at-use-time contract as
+    /// <summary>MP4 recording framerate - same fail-safe-at-use-time contract as
     /// <see cref="GifFps"/> above, clamped against
     /// <see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.Mp4MinFps"/>..<see cref="RoeSnip.Core.Recording.RecordingSizeEstimator.Mp4MaxFps"/>
     /// instead, and its own independent settings key (format-specific memory, same split as
@@ -341,7 +341,7 @@ public static class AppComposition
 
     // Set by Overlay/OverlayController.cs (WP-B). The trailing ITrayNotifier? (Sharing/* subsystem
     // addition) is what OverlaySession.ShareCurrentSelection uses to surface the toolbar Share
-    // button's result (URL-copied balloon / honest error balloon) — added here rather than
+    // button's result (URL-copied balloon / honest error balloon) - added here rather than
     // threaded through some separate hook because it has to be in hand for the WHOLE overlay
     // session (Share can be clicked at any point while a selection exists), not just once at the
     // very end the way StartRecording's own notifier only matters after the overlay already closed.
@@ -356,17 +356,17 @@ public static class AppComposition
 
     // Set by Imaging/JxrWriter.cs (WP-C). Cross-monitor selection HDR save: stitches every
     // contributing monitor's own raw-frame crop (SpanningFrameCrop) into one canvas sized to the
-    // virtual selection rect and writes it as .jxr to path — see JxrWriter.WriteSpanning's own doc
+    // virtual selection rect and writes it as .jxr to path - see JxrWriter.WriteSpanning's own doc
     // comment for why this is well-defined (raw scRGB is one absolute linear space regardless of
     // which monitor a pixel came from) where stitching already-tone-mapped SDR crops would not be.
     public static Action<string, Capture.RectPhysical, IReadOnlyList<SpanningFrameCrop>>? WriteJxrSpanning { get; set; }
 
     // Set by Recording/RecordingController.cs. Starts a recording session for the given monitor/
     // selection/format. The returned Task completes once the recording has STARTED (chrome shown,
-    // capture loop running) — NOT once it finishes. On success, CaptureGate ownership transfers to
+    // capture loop running) - NOT once it finishes. On success, CaptureGate ownership transfers to
     // RecordingController, which calls CaptureGate.Exit() exactly once when the recording ends
     // (Stop or Cancel). On failure (the Task throws), RecordingController must NOT have taken gate
-    // ownership — RunCaptureFlowAsync's own finally still releases it.
+    // ownership - RunCaptureFlowAsync's own finally still releases it.
     public static Func<Capture.MonitorInfo, Capture.RectPhysical, RecordingFormat, RoeSnipSettings, ITrayNotifier?, Task>? StartRecording { get; set; }
 
     // Set by App/TrayApp.cs (WP-C). Runs the tray message loop; returns process exit code on quit.
@@ -374,7 +374,7 @@ public static class AppComposition
 
     // Set by Overlay/OverlayController.cs (WP-B). Review fix (r5-latency S2): TrayApp's
     // MarkTriggerTimestamp call stamps a pending trigger BEFORE RunCaptureFlowAsync is invoked, so
-    // every dead-end exit path below that never reaches RunOverlay must discard it here — otherwise
+    // every dead-end exit path below that never reaches RunOverlay must discard it here - otherwise
     // it sits stale until whatever OverlaySession runs next (which may be an entirely unrelated
     // pick-mode session, or a much-later hotkey press) silently inherits it. Routed through this hook
     // rather than a direct RoeSnip.Overlay.OverlayController reference so Program.cs (WP-A) stays
@@ -382,7 +382,7 @@ public static class AppComposition
     public static Action? ClearPendingOverlayTrigger { get; set; }
 
     // Set by App/ElevationManager.cs (WP-C). Hidden CLI verbs used only for the UAC round-trip when
-    // SettingsWindow's "Run as administrator" checkbox is toggled from a non-elevated process — see
+    // SettingsWindow's "Run as administrator" checkbox is toggled from a non-elevated process - see
     // Program.Main. Both require the process to already be elevated (Verb=runas got it there) and
     // print a result instead of showing any UI.
     public static Func<int>? RunEnableElevatedStartupCli { get; set; }
@@ -412,7 +412,7 @@ public static class AppComposition
 
     /// <summary>WP-A only for the PNG path. If cli.Jxr and WriteJxr is null, prints a warning to
     /// stderr but still writes the PNG and returns 0 (graceful degrade, so this method is fully
-    /// testable before WP-C exists) — a bare `--capture --jxr` with WriteJxr unavailable is NOT
+    /// testable before WP-C exists) - a bare `--capture --jxr` with WriteJxr unavailable is NOT
     /// treated as a hard failure.</summary>
     public static int RunCaptureCli(CliOptions cli)
     {
@@ -517,24 +517,24 @@ public static class AppComposition
     // Reentrancy guard (audit finding B): TriggerCapture can be invoked from the hotkey, the tray
     // menu, icon double-click, and the second-instance pipe. All four funnel into this one method.
     // The gate is shared with OverlayController's pick-mode capture (CaptureGate) so a hotkey press
-    // can't stack an overlay set over a pick-mode session or vice versa — two overlay stacks must
+    // can't stack an overlay set over a pick-mode session or vice versa - two overlay stacks must
     // never coexist (one would screenshot the other's UI).
 
     /// <summary>Upper bound on how long a trigger waits for CaptureAll before abandoning it (see
     /// the deadline block inside RunCaptureFlowAsync). Chosen well above the worst LEGITIMATE case
     /// (every capture-internal timeout on every monitor, serialized on a cold threadpool, is still
-    /// single-digit seconds) so it only ever fires on a genuinely wedged driver call — which has no
+    /// single-digit seconds) so it only ever fires on a genuinely wedged driver call - which has no
     /// native timeout of its own and would otherwise hold the flash dim and CaptureGate forever.</summary>
     internal static readonly TimeSpan CaptureDeadline = TimeSpan.FromSeconds(15);
 
-    // Rate limit for the "capture already in progress" balloon (UI thread only — every caller of
+    // Rate limit for the "capture already in progress" balloon (UI thread only - every caller of
     // RunCaptureFlowAsync starts it there and the drop branch runs before any await).
     private static long s_lastBusyNoticeTick;
 
     // Diagnosability (2026-08 idle-latency investigation): Environment.TickCount64 timestamp of the
     // last trigger that actually won CaptureGate (0 = none yet this process). See
     // RoeSnip.Core.Diagnostics.IdleGapLog's doc comment for why this exists and why the gap is
-    // logged. TickCount64 (not DateTime/UtcNow) deliberately — monotonic and immune to the
+    // logged. TickCount64 (not DateTime/UtcNow) deliberately - monotonic and immune to the
     // wall-clock jumps a system RTC can exhibit around sleep/resume (observed once in the field log).
     private static long s_lastTriggerStartTicks;
 
@@ -547,7 +547,7 @@ public static class AppComposition
         if (RunOverlay is null)
         {
             notifier?.ShowError("Overlay unavailable in this build (Overlay package not present).");
-            // Review fix: this trigger will never reach RunOverlay/OverlaySession — discard its
+            // Review fix: this trigger will never reach RunOverlay/OverlaySession - discard its
             // timestamp rather than leaving it for some later, unrelated session to inherit.
             ClearPendingOverlayTrigger?.Invoke();
             return;
@@ -555,12 +555,12 @@ public static class AppComposition
 
         // Cold-start CaptureGate race fix (r5-latency, S5): if the startup warmup thread is still
         // running its Warmup* steps but hasn't reached WarmupCaptureSessions' TryEnter yet, the gate
-        // itself is still free — a trigger landing in exactly that window would WIN CaptureGate
+        // itself is still free - a trigger landing in exactly that window would WIN CaptureGate
         // against the warmup and then pay first-time D3D/WGC device init itself (measured: 292-1003
         // ms for the real capture) instead of riding the warmup's own init (measured: ~20 ms once the
         // warmup has actually provisioned everything). Waiting here is strictly better: the flash
         // (S1, now on by default) has already dimmed the screen by this point, so the wait is
-        // invisible, and a wedged/slow warmup still can't brick the hotkey — the poll gives up after
+        // invisible, and a wedged/slow warmup still can't brick the hotkey - the poll gives up after
         // 5 seconds and proceeds regardless.
         if (CaptureGate.WarmupPending)
         {
@@ -575,7 +575,7 @@ public static class AppComposition
         if (!entered && CaptureGate.HeldByWarmup)
         {
             // The gate is held by the sub-second startup warmup capture, not a real session. A
-            // PrtScr press landing in that window is a deliberate user action — wait the warmup
+            // PrtScr press landing in that window is a deliberate user action - wait the warmup
             // out (bounded) instead of silently dropping the press, which made an early press
             // right after app launch do nothing at all.
             var wait = System.Diagnostics.Stopwatch.StartNew();
@@ -588,12 +588,12 @@ public static class AppComposition
         if (!entered)
         {
             FileLog.Write("RoeSnip: capture already in progress; ignoring trigger.");
-            // Review fix: same reasoning as the RunOverlay-null branch above — this trigger is being
+            // Review fix: same reasoning as the RunOverlay-null branch above - this trigger is being
             // dropped and will never construct an OverlaySession.
             ClearPendingOverlayTrigger?.Invoke();
             // Diagnosability (post-sleep stall fix): a silently swallowed trigger reads as "the
-            // hotkey does nothing" — say why, rate-limited so hotkey auto-repeat can't spam
-            // balloons. (A trigger during a RECORDING never reaches here — TrayApp routes that to
+            // hotkey does nothing" - say why, rate-limited so hotkey auto-repeat can't spam
+            // balloons. (A trigger during a RECORDING never reaches here - TrayApp routes that to
             // stop-and-save before this method is called.)
             long now = Environment.TickCount64;
             if (now - s_lastBusyNoticeTick >= 5_000)
@@ -614,7 +614,7 @@ public static class AppComposition
         {
             // Idle-gap diagnosability (see s_lastTriggerStartTicks doc comment): -1 means this is
             // the first trigger to win the gate since the process started, otherwise the ms since
-            // the previous trigger started — logged alongside this trigger's own timings below.
+            // the previous trigger started - logged alongside this trigger's own timings below.
             long nowTicks = Environment.TickCount64;
             long idleMs = s_lastTriggerStartTicks == 0 ? -1 : nowTicks - s_lastTriggerStartTicks;
             s_lastTriggerStartTicks = nowTicks;
@@ -627,7 +627,7 @@ public static class AppComposition
             // Off the UI thread (post-sleep stall fix): this used to run CaptureAll() inline on the
             // dispatcher thread, so a slow capture (stale post-resume D3D/WGC state can burn multiple
             // 1200 ms frame-wait timeouts per monitor; a wedged driver call has no timeout at all)
-            // froze the whole pump — flash stuck on screen with every hide path queued behind the
+            // froze the whole pump - flash stuck on screen with every hide path queued behind the
             // block, Esc undeliverable, tray menu stuck open. The capture stack is thread-agnostic
             // (warmup has always run this exact CaptureAll on its own background thread; the WGC
             // frame pool is CreateFreeThreaded), so hop it to the pool and keep the UI thread
@@ -637,8 +637,8 @@ public static class AppComposition
 
             // Deadline, not a cancel (native driver calls aren't cancellable): a capture still
             // running after this long is wedged (post-resume worst case of every real timeout in the
-            // stack is well under it). Give the user their screen back — the flash hides via
-            // ObserveCaptureTask's ReleaseFlash the moment this method returns — and let the
+            // stack is well under it). Give the user their screen back - the flash hides via
+            // ObserveCaptureTask's ReleaseFlash the moment this method returns - and let the
             // abandoned task's continuation below dispose whatever frames eventually arrive. The
             // gate is released by the finally on this same early return; the abandoned task never
             // touches the gate, so a later trigger can't have its gate freed out from under it.
@@ -673,14 +673,14 @@ public static class AppComposition
             {
                 FileLog.Write($"RoeSnip: capture failed on every monitor.{IdleGapLog.FormatSuffix(idleMs)}");
                 notifier?.ShowError("Capture failed on every monitor.");
-                // Review fix: same reasoning as above — no OverlaySession will ever be constructed
+                // Review fix: same reasoning as above - no OverlaySession will ever be constructed
                 // for this trigger.
                 ClearPendingOverlayTrigger?.Invoke();
                 return;
             }
 
             // Frames must stay alive (undisposed) through the HDR-export branch below, which reads
-            // result.SourceFrame — only dispose them once every post-overlay action (HDR export,
+            // result.SourceFrame - only dispose them once every post-overlay action (HDR export,
             // "saved" balloon) has completed, on every path (cancel, exception).
             try
             {
@@ -688,7 +688,7 @@ public static class AppComposition
                     Knee: settings.ToneMapKneeOverride ?? 0.90,
                     PeakOverride: settings.ToneMapPeakOverride);
 
-                // Tone-map the per-monitor previews in parallel — each frame is independent, and
+                // Tone-map the per-monitor previews in parallel - each frame is independent, and
                 // even though ToneMapper already parallelizes over rows internally, overlapping
                 // the frames still shaves the per-frame scan/setup serialization on a
                 // multi-monitor machine. Fixed slots keep preview order == frame order. Same
@@ -722,7 +722,7 @@ public static class AppComposition
                 if (result.RecordingRequested is { } recordingRequest)
                 {
                     FileLog.Write($"RoeSnip: recording requested ({recordingRequest.Format})");
-                    // Recording has its own save/balloon path (RecordingController.Stop) — skip the
+                    // Recording has its own save/balloon path (RecordingController.Stop) - skip the
                     // SaveHdr/SavedPngPath handling below entirely; this branch is the terminal one
                     // for a Record command.
                     if (StartRecording is null)
@@ -738,12 +738,12 @@ public static class AppComposition
                             // this very session, and those edits persist through SettingsStore.
                             var recordingSettings = LoadSettings?.Invoke() ?? settings;
                             await StartRecording(result.Monitor, result.SelectionPx, recordingRequest.Format, recordingSettings, notifier);
-                            gateTransferred = true; // RecordingController now owns CaptureGate — see hook doc comment
+                            gateTransferred = true; // RecordingController now owns CaptureGate - see hook doc comment
                         }
                         catch (Exception ex)
                         {
                             notifier?.ShowError($"Failed to start recording: {ex.Message}");
-                            // gateTransferred stays false — outer finally releases the gate normally.
+                            // gateTransferred stays false - outer finally releases the gate normally.
                         }
                     }
                     return;
@@ -762,7 +762,7 @@ public static class AppComposition
                 if (result.SpanningVirtualSelectionPx is { } spanningVirtualPx)
                 {
                     // Cross-monitor selection HDR save: stitching raw scRGB crops from multiple
-                    // monitors IS well-defined (see JxrWriter.WriteSpanning's own doc comment) — the
+                    // monitors IS well-defined (see JxrWriter.WriteSpanning's own doc comment) - the
                     // original "no defined operation" reasoning only ever applied to combining
                     // already-TONE-MAPPED crops, which is a different, unrelated code path
                     // (RenderSpanningSelection, used for Copy/Save-PNG) that this never touches.
@@ -831,7 +831,7 @@ public static class AppComposition
             // topmost overlay windows and silently drop the failure (audit finding C).
             notifier?.ShowError($"Capture failed: {ex.Message}");
             // Review fix: covers an exception thrown before RunOverlay was ever reached (e.g. inside
-            // CaptureAll/tonemap) — idempotent no-op if a session already consumed the timestamp.
+            // CaptureAll/tonemap) - idempotent no-op if a session already consumed the timestamp.
             ClearPendingOverlayTrigger?.Invoke();
         }
         finally
@@ -840,7 +840,7 @@ public static class AppComposition
             // Cancel} must call CaptureGate.Exit() for a given trigger. CaptureGate.Exit() itself
             // is idempotent, but calling it EARLY while a recording is still running would free the
             // gate for an unrelated concurrent trigger to start a second overlay/capture stack
-            // while the recording's own WGC session is still live on that monitor — exactly the
+            // while the recording's own WGC session is still live on that monitor - exactly the
             // two-stacks-screenshot-each-other bug CaptureGate's own doc comment exists to prevent.
             if (!gateTransferred)
             {
@@ -900,7 +900,7 @@ public static class AppComposition
         return count == 0 ? (0, 0, 0) : (min, max, sum / count);
     }
 
-    // Pure CLI help text, not a diagnostic — only ever printed to a terminal the user is actively
+    // Pure CLI help text, not a diagnostic - only ever printed to a terminal the user is actively
     // looking at, so it stays plain Console.Error (no point cluttering roesnip.log with it).
     private static void PrintUsage()
     {
@@ -916,7 +916,7 @@ public static class AppComposition
 
 /// <summary>Single process-wide capture gate shared by the hotkey/tray/pipe flow
 /// (AppComposition.RunCaptureFlowAsync) AND the color picker's pick-mode capture
-/// (OverlayController.TriggerPickModeCapture) — any overlay session in progress blocks every
+/// (OverlayController.TriggerPickModeCapture) - any overlay session in progress blocks every
 /// other trigger, so two overlay stacks can never coexist.</summary>
 internal static class CaptureGate
 {
@@ -924,7 +924,7 @@ internal static class CaptureGate
 
     /// <summary>True from just before TrayApp.StartWarmup launches the warmup thread until
     /// RunWarmup's finally clears it on every exit path (success, exception, or a benign
-    /// zero-monitors return) — a wider window than <see cref="HeldByWarmup"/>, which only covers
+    /// zero-monitors return) - a wider window than <see cref="HeldByWarmup"/>, which only covers
     /// the sub-second stretch WarmupCaptureSessions actually holds the gate for. RunCaptureFlowAsync
     /// polls this BEFORE its TryEnter to close the race where a trigger lands after StartWarmup but
     /// before WarmupCaptureSessions has entered the gate (see the poll loop below for the
@@ -941,7 +941,7 @@ internal static class CaptureGate
     public static bool TryEnter() => Interlocked.CompareExchange(ref s_busy, 1, 0) == 0;
     public static void Exit() => Interlocked.Exchange(ref s_busy, 0);
 
-    /// <summary>Peek for IdleMemoryTrimmer's am-I-actually-idle check — never used for entry
+    /// <summary>Peek for IdleMemoryTrimmer's am-I-actually-idle check - never used for entry
     /// decisions (that's TryEnter's compare-exchange), so a stale read is harmless: the trimmer
     /// skipping or running against a just-changed gate is safe either way.</summary>
     public static bool IsBusy => Volatile.Read(ref s_busy) != 0;
@@ -953,14 +953,14 @@ public static class Program
     public static int Main(string[] args)
     {
         // RoeSnip.csproj is WinExe, so CLI verbs (--diag/--capture) print into a void unless a
-        // console is explicitly reattached — mirrors the Avalonia app's own TryAttachParentConsole
+        // console is explicitly reattached - mirrors the Avalonia app's own TryAttachParentConsole
         // (App/Program.cs there), which this is a direct port of. Must run before any Console
         // output, including FileLog.Write below (it also writes to Console.Error).
         TryAttachParentConsole();
 
         // Field-visible diagnostics (filelog-sink): as early as possible, before anything else in
         // this method could log. %APPDATA%\RoeSnip is the settings directory (App/Settings.cs),
-        // never the install dir — the install dir gets replaced wholesale by the self-updater.
+        // never the install dir - the install dir gets replaced wholesale by the self-updater.
         FileLog.Initialize(App.SettingsStore.SettingsDirectory);
 
         // Top-level unhandled-exception handlers (hardening item 6): registered before the WinForms
@@ -970,15 +970,15 @@ public static class Program
         // behind instead of the tray icon just vanishing with zero trace.
         RegisterUnhandledExceptionHandlers();
 
-        // `--auto` (dev-gated automation client — App/AutomationServer.cs): handled here, before
+        // `--auto` (dev-gated automation client - App/AutomationServer.cs): handled here, before
         // ANY of the mutex/single-instance machinery below, so a client invocation can never trigger
         // the "normal launch replaces the running instance" takeover the way a bare `RoeSnip.exe`
-        // does — it only ever talks to the automation pipe of whatever instance is already running.
+        // does - it only ever talks to the automation pipe of whatever instance is already running.
         if (args.Length > 0 && args[0] == "--auto")
         {
             if (args.Length != 2)
             {
-                // Pure CLI usage text, not a diagnostic — see PrintUsage's own doc comment.
+                // Pure CLI usage text, not a diagnostic - see PrintUsage's own doc comment.
                 Console.Error.WriteLine(
                     "Usage: RoeSnip.exe --auto '<json>'   (or --auto <command> for a zero-arg command, e.g. --auto state)");
                 return 1;
@@ -986,7 +986,7 @@ public static class Program
             return App.AutomationClient.Run(args[1]);
         }
 
-        // Hidden verbs (deliberately undocumented — not in CliOptions/PrintUsage): the target of the
+        // Hidden verbs (deliberately undocumented - not in CliOptions/PrintUsage): the target of the
         // single UAC round-trip SettingsWindow performs when the "Run as administrator" checkbox is
         // toggled from a non-elevated process. Never invoked unattended.
         if (args.Length == 1 && args[0] == "--enable-elevated-startup")
@@ -1003,7 +1003,7 @@ public static class Program
         {
             CliMode.Diag => AppComposition.RunDiagCli(),
             CliMode.Capture => AppComposition.RunCaptureCli(cli),
-            _ => AppComposition.RunTray(args), // includes single-instance signalling, see §3.3
+            _ => AppComposition.RunTray(args), // includes single-instance signalling, see sec 3.3
         };
     }
 
@@ -1035,7 +1035,7 @@ public static class Program
     /// - Application.ThreadException fires for exceptions the WinForms message loop itself catches
     ///   (SetUnhandledExceptionMode(CatchException) routes them here instead of a blocking WinForms
     ///   "Continue/Quit" dialog or an immediate process-level crash). WinForms would otherwise just
-    ///   swallow the exception and keep pumping messages once this event returns — that risks
+    ///   swallow the exception and keep pumping messages once this event returns - that risks
     ///   continuing on corrupt capture/UI state, so the handler force-terminates itself rather than
     ///   letting the loop carry on (never-destabilize rule: die cleanly, don't limp on). Dying is not
     ///   the same as disappearing, though: on the installed copy, <see cref="TryRelaunchInstalledCopy"/>
@@ -1045,7 +1045,7 @@ public static class Program
     /// - AppDomain.CurrentDomain.UnhandledException covers every other thread (background Tasks
     ///   awaited without try/catch, ThreadPool work, the pipe-listener loop, etc.). The CLR
     ///   terminates the process right after this handler returns (IsTerminating is always true for
-    ///   this event on .NET 8) — nothing more to do than log.
+    ///   this event on .NET 8) - nothing more to do than log.
     /// - TaskScheduler.UnobservedTaskException does NOT crash the process on .NET 8 (unlike .NET
     ///   Framework's default); a faulted Task nobody awaited would otherwise vanish without a trace
     ///   the next time it's finalized. Log only.</summary>

@@ -42,7 +42,7 @@ public sealed class TrayApp : ITrayNotifier
     // hide them when there is nothing kept - see BuildKeptCaptureItems.
     private ToolStripMenuItem? _copyAgainItem;
     private ToolStripMenuItem? _saveLastItem;
-    // Trailing-edge coalescer for DisplaySettingsChanged bursts — see the subscription in
+    // Trailing-edge coalescer for DisplaySettingsChanged bursts - see the subscription in
     // StartWarmup. Created lazily on the first event, restarted on every later one; disposed in
     // the post-Run teardown so it can't fire against torn-down state.
     private System.Threading.Timer? _displayChangeDebounce;
@@ -52,7 +52,7 @@ public sealed class TrayApp : ITrayNotifier
     private EventHandler? _displaySettingsChangedHandler;
     private Microsoft.Win32.PowerModeChangedEventHandler? _powerModeChangedHandler;
     // Dedup for OnSystemResumed: it can now fire from TWO sources for one wake (the
-    // PowerRegisterSuspendResumeNotification callback — see SuspendResumeNotifications — and the
+    // PowerRegisterSuspendResumeNotification callback - see SuspendResumeNotifications - and the
     // SystemEvents belt, which on some machines delivers PBT_APMRESUMESUSPEND shortly after
     // PBT_APMRESUMEAUTOMATIC). Environment.TickCount64 of the last handled resume; 0 = never.
     private long _lastResumeHandledTick;
@@ -347,7 +347,7 @@ public sealed class TrayApp : ITrayNotifier
 
         // The consent resolution below can show a MODAL MessageBox (first launch on a machine
         // where Windows intercepts PrtScr for Snipping Tool), so it must come AFTER the NotifyIcon
-        // and pipe listener are live — otherwise an unanswered dialog on an auto-start-at-login app
+        // and pipe listener are live - otherwise an unanswered dialog on an auto-start-at-login app
         // leaves it with no tray icon and second-instance signals going nowhere until answered.
         _settings = ResolvePrintScreenConsent(_settings);
 
@@ -355,7 +355,7 @@ public sealed class TrayApp : ITrayNotifier
         _hotkeyManager.Register(_settings);
         WarnIfPrintScreenConflict();
 
-        // Bridge WinForms' message pump into WPF's keyboard stack — without this every WPF window
+        // Bridge WinForms' message pump into WPF's keyboard stack - without this every WPF window
         // on this thread (overlay, settings, color picker) is keyboard-deaf even with real OS
         // focus, which is the root cause behind rounds 1-3's key/typing complaints. See
         // WpfKeyboardBridge's doc comment.
@@ -388,7 +388,7 @@ public sealed class TrayApp : ITrayNotifier
     private void TriggerCapture()
     {
         // A recording is live: PrtScr stops+saves it instead of starting a new capture flow. Direct
-        // reference (not an AppComposition hook) — this file already calls
+        // reference (not an AppComposition hook) - this file already calls
         // RoeSnip.Overlay.OverlayController's own statics the same way (MarkTriggerTimestamp,
         // TryShowFlash, ReleaseFlash below); the hook discipline in Program.cs exists to keep
         // Program.cs itself decoupled from Overlay/App/Recording, not between App and Recording.
@@ -401,7 +401,7 @@ public sealed class TrayApp : ITrayNotifier
         }
 
         // Honest trigger-based latency instrumentation (r5-latency, S2): stamp the moment the
-        // ACTUAL trigger happened — before the flash, before capture, before anything else — so
+        // ACTUAL trigger happened - before the flash, before capture, before anything else - so
         // every downstream latency log (hotkey-to-dim, first-overlay-visible, all-overlays-visible)
         // measures from what the user really experienced, not from whenever the flash happened to
         // start (or didn't, if it's disabled/fails). Must be the first statement in this method.
@@ -409,7 +409,7 @@ public sealed class TrayApp : ITrayNotifier
 
         // Instant-response flash (r5-latency): dim every monitor within milliseconds of the
         // trigger, BEFORE RunCaptureFlowAsync starts the pool-side capture (the pump stays live
-        // during it — post-sleep stall fix; the flash covers the capture latency visually).
+        // during it - post-sleep stall fix; the flash covers the capture latency visually).
         // The frozen preview the real overlay later shows equals the live screen, so the
         // flash-to-overlay swap is visually seamless; OverlayController hides each monitor's flash
         // as that monitor's real overlay window renders. The ReleaseFlash in ObserveCaptureTask's
@@ -417,11 +417,11 @@ public sealed class TrayApp : ITrayNotifier
         // path (capture failed on every monitor, CaptureGate busy, RunOverlay unavailable,
         // unexpected exception).
         // Capture-fidelity fix (2026-08-02): the flash no longer touches OS foreground/activation
-        // at all (see FlashDimmer.ShowAll's own comment at the removed SetForegroundWindow call) —
+        // at all (see FlashDimmer.ShowAll's own comment at the removed SetForegroundWindow call) -
         // it dims and swallows input purely via topmost + non-click-through hit-testing. This closes
         // the ACTIVATION-triggered dismissal path only: a tooltip/hover-popup that self-dismisses on
         // WM_ACTIVATE/WM_ACTIVATEAPP now survives, because nothing here claims foreground anymore.
-        // It does NOT guarantee every tooltip survives — placing any topmost window over an already-
+        // It does NOT guarantee every tooltip survives - placing any topmost window over an already-
         // hovering tooltip can still make that tooltip's own hover-tracking (TrackMouseEvent) resolve
         // WindowFromPoint(cursor) to the new flash window and self-dismiss via WM_MOUSELEAVE, with no
         // dependency on foreground/activation at all. See docs/architecture.md "Capture" for
@@ -439,13 +439,13 @@ public sealed class TrayApp : ITrayNotifier
         }
         catch (Exception ex)
         {
-            // The flash is a pure perceived-latency optimization — its failure must never block
+            // The flash is a pure perceived-latency optimization - its failure must never block
             // the actual capture.
             FileLog.Write($"RoeSnip: flash dimmer failed (non-fatal): {ex.Message}");
         }
 
         // Fire-and-forget from a UI event handler: RunCaptureFlowAsync reports its own failures
-        // via ITrayNotifier (this) internally, but that's belt-and-braces, not a guarantee — the
+        // via ITrayNotifier (this) internally, but that's belt-and-braces, not a guarantee - the
         // task itself must still be observed so an unexpected exception (e.g. thrown before its own
         // try/catch is entered) can't become an unobserved-task-exception crash later on the
         // finalizer thread. Route anything that slips through to the same error balloon.
@@ -458,7 +458,7 @@ public sealed class TrayApp : ITrayNotifier
         {
             // Deliberately NOT ConfigureAwait(false): ShowError touches the NotifyIcon, which this
             // class otherwise only ever touches from the UI/message-loop thread that's running
-            // Application.Run — stay on the captured (WinForms) SynchronizationContext.
+            // Application.Run - stay on the captured (WinForms) SynchronizationContext.
             await captureTask;
         }
         catch (Exception ex)
@@ -469,7 +469,7 @@ public sealed class TrayApp : ITrayNotifier
         {
             if (flashShown)
             {
-                // Still on the WinForms SynchronizationContext (UI thread) — see the await above.
+                // Still on the WinForms SynchronizationContext (UI thread) - see the await above.
                 RoeSnip.Overlay.OverlayController.ReleaseFlash();
             }
             // Re-enumerate for the NEXT trigger's flash placement off the hot path (monitors may
@@ -477,8 +477,8 @@ public sealed class TrayApp : ITrayNotifier
             RefreshMonitorCacheInBackground(prewarmFlash: false);
 
             // Give the snip's burst allocations (~127 MB of LOH frame/preview buffers on this
-            // class of machine) back to the OS once everything above — including the ContextIdle
-            // pool reprovision — has run. If this flow handed the gate to a recording,
+            // class of machine) back to the OS once everything above - including the ContextIdle
+            // pool reprovision - has run. If this flow handed the gate to a recording,
             // TrimNow's busy-check skips and RecordingSession.Stop schedules the trim instead.
             RoeSnip.IdleMemoryTrimmer.Schedule(System.Windows.Threading.Dispatcher.CurrentDispatcher);
         }
@@ -493,7 +493,7 @@ public sealed class TrayApp : ITrayNotifier
         }
 
         // Bugs 2 & 5: SettingsWindow suspends the global hotkey only for the (brief) span it is
-        // actively capturing a new key combination — RegisterHotKey has first claim on a
+        // actively capturing a new key combination - RegisterHotKey has first claim on a
         // registered combo, so leaving it registered during capture is why re-binding PrintScreen
         // never reached the window's own key events (bug 2). The rest of the time this window is
         // open, the hotkey stays registered against _settings (whatever is currently saved), so
@@ -505,7 +505,7 @@ public sealed class TrayApp : ITrayNotifier
                 // Same resolved path as startup: if the saved hotkey is bare PrintScreen, run it
                 // through the consent resolution before registering. PrintScreenPromptAnswered will
                 // already be true after the first-ever resolution, so this cannot re-trigger the
-                // prompt then — it only fires the one-time dialog in the edge case where the user
+                // prompt then - it only fires the one-time dialog in the edge case where the user
                 // never had bare PrtScr configured before (prompt never applied) and just switched
                 // to it now.
                 _settings = ResolvePrintScreenConsent(updated);
@@ -598,7 +598,7 @@ public sealed class TrayApp : ITrayNotifier
     /// In that case, unless the user has already answered the prompt once
     /// (<see cref="RoeSnipSettings.PrintScreenPromptAnswered"/>, persisted), ask via a blocking
     /// dialog: Yes writes 0 to that registry value (the write happens ONLY as the direct result of
-    /// that interactive click — never unattended; no unit test exercises this path) and keeps bare
+    /// that interactive click - never unattended; no unit test exercises this path) and keeps bare
     /// PrtScr; No switches the hotkey to Ctrl+PrintScreen. Either answer is persisted with
     /// PrintScreenPromptAnswered=true so the dialog truly happens once ever. Any registry or dialog
     /// failure logs and returns the settings unchanged (fail open on the UX, not silently register
@@ -619,7 +619,7 @@ public sealed class TrayApp : ITrayNotifier
                 {
                     int i => i == 0,
                     string s when int.TryParse(s, out int parsed) => parsed == 0,
-                    // Missing key/value (or unparseable) — Win11 default is "intercept ON", so
+                    // Missing key/value (or unparseable) - Win11 default is "intercept ON", so
                     // this must NOT be treated as "no conflict".
                     _ => false,
                 };
@@ -633,7 +633,7 @@ public sealed class TrayApp : ITrayNotifier
             if (settings.PrintScreenPromptAnswered)
             {
                 // Asked once before; honor whatever the persisted answer produced (a previous "No"
-                // saved HotkeyModifiers=MOD_CONTROL, a previous "Yes" wrote the registry value —
+                // saved HotkeyModifiers=MOD_CONTROL, a previous "Yes" wrote the registry value -
                 // which the user has since re-enabled if we got here; don't nag again).
                 return settings;
             }
@@ -1267,11 +1267,11 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Pre-pays the heavy first-capture costs off the UI thread (r5-latency): JIT of the
     /// tonemap/encode path, monitor enumeration (cached for the flash), pre-creation of the
-    /// per-monitor flash dimmer windows (marshalled to the UI thread — they are WPF windows), and
+    /// per-monitor flash dimmer windows (marshalled to the UI thread - they are WPF windows), and
     /// one REAL throwaway capture per monitor through the exact CaptureService path a hotkey press
     /// takes. That throwaway capture may briefly show the OS capture border on WGC-fallback
-    /// monitors — accepted at tray startup per the r5-latency brief (no session is left running,
-    /// so no border persists). Fully try/caught and never fatal — a warmup failure just means the
+    /// monitors - accepted at tray startup per the r5-latency brief (no session is left running,
+    /// so no border persists). Fully try/caught and never fatal - a warmup failure just means the
     /// first real hotkey press is as slow as it always was, not a crash.</summary>
     private void StartWarmup()
     {
@@ -1279,7 +1279,7 @@ public sealed class TrayApp : ITrayNotifier
         // flash windows, via the prewarm) in sync with docking/undocking/resolution changes.
         // Trailing-edge debounced (post-sleep stall fix): resume/dock transitions fire this in
         // BURSTS (one event per link retrain/mode set), and each refresh used to queue a wholesale
-        // flash+overlay-pool rebuild (~100 ms + ~80-103 ms per monitor) on the UI thread — several
+        // flash+overlay-pool rebuild (~100 ms + ~80-103 ms per monitor) on the UI thread - several
         // seconds of serialized rebuild work landing exactly as the user returns to the machine.
         // Coalescing to one refresh 1 s after the LAST event rebuilds once, against the settled
         // topology; the single-event case (resolution change, docking) gains at most 1 s of the
@@ -1295,7 +1295,7 @@ public sealed class TrayApp : ITrayNotifier
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += _displaySettingsChangedHandler;
 
         // Sleep/resume invalidation (post-sleep stall fix): nothing else in the process knows the
-        // machine slept — the WGC keepalive only catches DeviceRemovedReason (a resume-stale capture
+        // machine slept - the WGC keepalive only catches DeviceRemovedReason (a resume-stale capture
         // stack usually reports healthy), so the first post-wake hotkey used to pay the whole
         // staleness discovery (1200 ms frame waits, re-provisions, ghost-display enumeration) on
         // the hot path. Handler stays tiny: SystemEvents delivers on its own broadcast thread.
@@ -1310,7 +1310,7 @@ public sealed class TrayApp : ITrayNotifier
 
         // SystemEvents alone is NOT a working resume signal on this class of machine: it never maps
         // PBT_APMRESUMEAUTOMATIC (the broadcast modern wakes actually deliver), and a 2026-07-23
-        // log audit found 10 wakes with ZERO PowerModeChanged(Resume) deliveries — the re-warm
+        // log audit found 10 wakes with ZERO PowerModeChanged(Resume) deliveries - the re-warm
         // below had never run once. The callback-based power registration hears every wake; the
         // SystemEvents subscription above stays as a belt, deduped inside OnSystemResumed.
         RoeSnip.Interop.SuspendResumeNotifications.Register(OnSystemResumed);
@@ -1321,8 +1321,8 @@ public sealed class TrayApp : ITrayNotifier
         // StartWarmup returning and RunWarmup's first CaptureGate.TryEnter (WarmupCaptureSessions)
         // still sees WarmupPending=true and waits rather than racing straight past the not-yet-busy
         // gate into paying first-time D3D/WGC init itself (measured: winning that race cost the real
-        // capture 292-1003 ms; losing it — i.e. waiting — cost ~20 ms). RunWarmup clears this in a
-        // finally on every exit path (success, exception, zero monitors) — see RunWarmup below.
+        // capture 292-1003 ms; losing it - i.e. waiting - cost ~20 ms). RunWarmup clears this in a
+        // finally on every exit path (success, exception, zero monitors) - see RunWarmup below.
         RoeSnip.CaptureGate.WarmupPending = true;
 
         var thread = new Thread(RunWarmup)
@@ -1339,12 +1339,12 @@ public sealed class TrayApp : ITrayNotifier
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            // Ordering (r5-latency, S4): the flash windows ARE the instant (<20 ms) response — every
+            // Ordering (r5-latency, S4): the flash windows ARE the instant (<20 ms) response - every
             // other warmup step is slower and only matters once the flash is already up, so it comes
             // first. Monitor enumeration seeds s_cachedMonitors, which TriggerCapture's flash needs
             // before it can position itself, so it has to run before WarmupFlashWindows. Tonemap/
             // encode and the OverlayWindow type warmup both want a WPF Application to exist (the
-            // latter for pack-URI resolution — see WarmupOverlayWindowType), which WarmupFlashWindows
+            // latter for pack-URI resolution - see WarmupOverlayWindowType), which WarmupFlashWindows
             // is what creates (via PrewarmFlash -> EnsureApplication), so they're scheduled after it.
             // The real throwaway capture session warmup is last: it's the slowest step and holds the
             // process-wide CaptureGate, so it should delay everything above it as little as possible.
@@ -1357,11 +1357,11 @@ public sealed class TrayApp : ITrayNotifier
             stopwatch.Stop();
             FileLog.Write($"RoeSnip: warmup completed in {stopwatch.ElapsedMilliseconds} ms");
 
-            // Warmup itself is a full-scale burst (throwaway full-res captures + tonemaps) — sweep
+            // Warmup itself is a full-scale burst (throwaway full-res captures + tonemaps) - sweep
             // its garbage so the app starts its resident life at the small footprint, not at the
             // warmup high-water mark. NOT run inline here (review finding): a blocking collect on
             // this thread would fire at the exact moment the app becomes hotkey-armed and suspend
-            // every managed thread — including the UI thread's 3-7 ms hotkey-to-dim path — for the
+            // every managed thread - including the UI thread's 3-7 ms hotkey-to-dim path - for the
             // collect's duration. Marshal to the UI thread and take the same ApplicationIdle-
             // deferred Schedule() route as every other call site instead.
             _uiThreadMarshal?.BeginInvoke(new Action(() =>
@@ -1370,13 +1370,13 @@ public sealed class TrayApp : ITrayNotifier
         catch (Exception ex)
         {
             // Never let a warmup failure be visible as anything other than "the first real capture
-            // is exactly as cold as before" — this is a pure optimization, not a requirement.
+            // is exactly as cold as before" - this is a pure optimization, not a requirement.
             FileLog.Write($"RoeSnip: warmup failed (non-fatal): {ex.Message}");
         }
         finally
         {
             // S5: unblock any RunCaptureFlowAsync call currently polling WarmupPending, on every
-            // possible exit from this method — success, an exception caught above, or a benign
+            // possible exit from this method - success, an exception caught above, or a benign
             // zero-monitors early return inside one of the Warmup* steps. A stuck WarmupPending=true
             // would otherwise make every hotkey press wait out the full 5-second poll deadline for
             // nothing.
@@ -1395,7 +1395,7 @@ public sealed class TrayApp : ITrayNotifier
     /// WarmupCaptureSessions already documents for its own gate hold, just wider in scope than
     /// intended; PrewarmFlash's own "flash dimmer windows ready in N ms" log line (below) is the
     /// existing observability hook for measuring it. Not restructured into a chained/yielding
-    /// per-monitor sequence here — that would meaningfully change EnsureCreated's atomic
+    /// per-monitor sequence here - that would meaningfully change EnsureCreated's atomic
     /// "does the monitor set match" semantics for comparatively low measured benefit.</summary>
     private void WarmupFlashWindows(IReadOnlyList<RoeSnip.Capture.MonitorInfo> monitors)
     {
@@ -1414,21 +1414,21 @@ public sealed class TrayApp : ITrayNotifier
         }
     }
 
-    /// <summary>Pre-builds the overlay window POOL (r5-latency round 2, D1/D4 — see
+    /// <summary>Pre-builds the overlay window POOL (r5-latency round 2, D1/D4 - see
     /// OverlayWindowPool's own doc comment), scheduled right after the flash windows via a second,
     /// separately-queued _uiThreadMarshal.BeginInvoke (see RunWarmup's own comment for why flash
     /// comes first). "Scheduled after" rather than "guaranteed to run after": WarmupFlashWindows'
     /// own FlashWindow.PrepareHidden calls Dispatcher.Invoke(Loaded) per window, and that's a nested
-    /// message pump on this same thread — exactly the reentrancy FlashDimmer's s_ensuringCreated
-    /// guards against (see its doc comment) — so this callback can end up DISPATCHED (and even
+    /// message pump on this same thread - exactly the reentrancy FlashDimmer's s_ensuringCreated
+    /// guards against (see its doc comment) - so this callback can end up DISPATCHED (and even
     /// finish building) WHILE PrewarmFlash's own loop is still mid-flight, observed as this method's
     /// "overlay pool built" log line sometimes printing before "flash dimmer windows ready". Safe
     /// either way: OverlayWindowPool.EnsureBuilt has its own independent reentrancy guard and never
-    /// touches FlashDimmer's state (or vice versa) — this note exists purely so a future reader
+    /// touches FlashDimmer's state (or vice versa) - this note exists purely so a future reader
     /// isn't surprised by the interleaved log ordering. Same known trade-off as WarmupFlashWindows
     /// above: building one parked window per monitor costs real UI-thread time (each pays the same
     /// ~80-103 ms construction/Show/first-render this whole pool exists to move off the hotkey path
-    /// — see this method's own "overlay pool built in N ms" log line), so a trigger landing during
+    /// - see this method's own "overlay pool built in N ms" log line), so a trigger landing during
     /// this stretch is delayed until it returns; accepted for the same reason WarmupFlashWindows
     /// accepts it.</summary>
     private void WarmupOverlayPool(IReadOnlyList<RoeSnip.Capture.MonitorInfo> monitors)
@@ -1455,7 +1455,7 @@ public sealed class TrayApp : ITrayNotifier
     /// real frame sizes. Holds the process-wide CaptureGate: a concurrent real capture could
     /// otherwise race this one duplicating the same output and spuriously poison the persisted
     /// DD-broken memo. (A hotkey press inside this sub-second window logs "capture already in
-    /// progress" and is dropped — the lesser evil.)</summary>
+    /// progress" and is dropped - the lesser evil.)</summary>
     private static void WarmupCaptureSessions(IReadOnlyList<RoeSnip.Capture.MonitorInfo> monitors)
     {
         if (monitors.Count == 0)
@@ -1478,7 +1478,7 @@ public sealed class TrayApp : ITrayNotifier
             try
             {
                 // Fixed-slot Parallel.For mirrors AppComposition.RunCaptureFlowAsync's real tonemap
-                // step exactly (r5-latency, S7) — a plain sequential foreach only warms ToneMapper's
+                // step exactly (r5-latency, S7) - a plain sequential foreach only warms ToneMapper's
                 // single-threaded internals, not the nested Parallel.For threadpool ramp + full-size
                 // LUT/SIMD path a real hotkey press actually exercises. Measured: with the old
                 // sequential warmup, the first REAL tonemap after launch still cost ~112 ms
@@ -1487,10 +1487,10 @@ public sealed class TrayApp : ITrayNotifier
                 // Trigger-1/2 latency investigation (r5-latency): a single pass here still left
                 // ToneMapper.ComputeGlobalMax's AVX2 max-scan running ~60-105 ms on the first TWO
                 // real hotkey presses after launch (vs. ~1 ms steady-state) despite already running
-                // here — repeating this loop more times did NOT fix it (tried 3 passes; measured no
+                // here - repeating this loop more times did NOT fix it (tried 3 passes; measured no
                 // change), ruling out a simple call-count/OSR promotion gap. A controlled
                 // DOTNET_TieredCompilation=0 run collapsed the same trigger's scan time to 1-4 ms
-                // immediately, isolating ordinary tiered-JIT promotion timing as the cause — fixed
+                // immediately, isolating ordinary tiered-JIT promotion timing as the cause - fixed
                 // process-wide via TieredCompilation=false in RoeSnip.csproj instead (see that
                 // file's comment).
                 var previews = new RoeSnip.Imaging.SdrImage[frames.Count];
@@ -1508,8 +1508,8 @@ public sealed class TrayApp : ITrayNotifier
             }
 
             // Monitors whose capture above went through (borderless) Desktop Duplication never
-            // touched WGC — pre-provision WgcCapturer's cached item/device for them too (cheap,
-            // and sessionless, so no border), covering the cost of a first-ever DD→WGC fallback.
+            // touched WGC - pre-provision WgcCapturer's cached item/device for them too (cheap,
+            // and sessionless, so no border), covering the cost of a first-ever DD->WGC fallback.
             foreach (var monitor in monitors)
             {
                 if (!RoeSnip.Capture.CaptureCache.Default.IsDesktopDuplicationBroken(monitor.DeviceName))
@@ -1539,17 +1539,17 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Resume-from-sleep recovery (see the PowerModeChanged subscription in StartWarmup).
     /// Everything here is proactive re-warming so the FIRST post-wake hotkey is as fast as any
-    /// other: note the resume for CaptureCache's DD-memo grace window immediately, then — after a
+    /// other: note the resume for CaptureCache's DD-memo grace window immediately, then - after a
     /// short settle delay so the display topology and driver have finished waking (resume fires
-    /// before DP links retrain; enumerating instantly sees ghost displays like "WinDisc") — drop
+    /// before DP links retrain; enumerating instantly sees ghost displays like "WinDisc") - drop
     /// every cached WGC device/item/framepool and re-provision fresh ones per current monitor,
     /// and refresh the monitor cache + flash/pool windows against the settled topology. All on a
     /// background thread; the per-monitor re-prewarm takes the same slot gates a real capture
-    /// takes, so it can never corrupt a capture the user managed to start first — worst case that
+    /// takes, so it can never corrupt a capture the user managed to start first - worst case that
     /// capture pays the old-style staleness discovery and this pass then cleans up after it.</summary>
     private void OnSystemResumed(string source)
     {
-        // One wake can now signal twice (power callback + SystemEvents belt) — handle the first,
+        // One wake can now signal twice (power callback + SystemEvents belt) - handle the first,
         // skip the echo. Exchange-then-compare is race-safe: of two concurrent callers exactly one
         // observes the stale tick.
         long now = Environment.TickCount64;
@@ -1576,7 +1576,7 @@ public sealed class TrayApp : ITrayNotifier
                 FileLog.Write($"RoeSnip: post-resume re-warm failed (non-fatal): {ex.Message}");
             }
             // Settled-topology refresh for the flash/pool windows + cached monitor list (outside
-            // the try: even a failed re-warm should not skip this). No reprovisionWgc here — the
+            // the try: even a failed re-warm should not skip this). No reprovisionWgc here - the
             // pass above just did it, and monitors that re-attach AFTER this point (DP links
             // routinely retrain one by one for seconds after resume) raise DisplaySettingsChanged,
             // whose debounced refresh DOES re-provision (see StartWarmup's subscription).
@@ -1645,7 +1645,7 @@ public sealed class TrayApp : ITrayNotifier
     /// parallelism). Parallel matters here: post-wake the Windows capture broker can be sick in a
     /// way that makes item creation block on COM server activation for up to its full 120 s
     /// timeout (observed live 2026-07-22: CO_E_SERVER_EXEC_FAILURE surfacing exactly 120 s after
-    /// the call) — sequential prewarm would serialize that worst case per monitor.</summary>
+    /// the call) - sequential prewarm would serialize that worst case per monitor.</summary>
     private static void ReprovisionWgcSlots(
         System.Collections.Generic.IReadOnlyList<RoeSnip.Capture.MonitorInfo> monitors, bool force = false)
     {
@@ -1665,10 +1665,10 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>Background monitor re-enumeration for <see cref="s_cachedMonitors"/>; optionally
-    /// re-prewarns the flash windows on the UI thread (display-change path — PrewarmFlash itself
+    /// re-prewarns the flash windows on the UI thread (display-change path - PrewarmFlash itself
     /// refuses to touch windows while a flash/session is live). With
     /// <paramref name="reprovisionWgc"/> it also re-provisions WgcCapturer's cached per-monitor
-    /// resources — the display-change path needs this because after a wake the monitors re-attach
+    /// resources - the display-change path needs this because after a wake the monitors re-attach
     /// STAGGERED (observed on every wake in the log: 1 monitor, then all 3 about 4 s later), so
     /// the post-resume re-warm's own pass misses the late arrivals; without this, their stale/empty
     /// slots got discovered on the hotkey hot path, where a post-sleep-sick capture broker turned
@@ -1696,7 +1696,7 @@ public sealed class TrayApp : ITrayNotifier
                     {
                         RoeSnip.Overlay.OverlayController.PrewarmFlash(monitors);
                         // D4: a real monitor-set change invalidates the pool the same way it
-                        // invalidates the flash windows — EnsureBuilt's own set-comparison (see
+                        // invalidates the flash windows - EnsureBuilt's own set-comparison (see
                         // OverlayWindowPool.Matches) detects the mismatch and rebuilds wholesale.
                         RoeSnip.Overlay.OverlayController.PrewarmOverlayPool(monitors);
                     }));
@@ -1711,7 +1711,7 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Exercises the exact code path a real capture's tone-map/encode stretch runs
     /// (SdrImage.FromCapturedFrame -> ToneMapper -> ToBitmapSource -> PngWriter.Encode) against a
-    /// small synthetic frame with a fake MonitorInfo — no real WGC/duplication session, so nothing
+    /// small synthetic frame with a fake MonitorInfo - no real WGC/duplication session, so nothing
     /// ever flashes.</summary>
     private static void WarmupToneMapAndEncode()
     {
@@ -1724,7 +1724,7 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>Builds the small synthetic Fp16 scRGB frame shared by <see
-    /// cref="WarmupToneMapAndEncode"/> and <see cref="WarmupOverlayWindowType"/> — a fake MonitorInfo
+    /// cref="WarmupToneMapAndEncode"/> and <see cref="WarmupOverlayWindowType"/> - a fake MonitorInfo
     /// plus <paramref name="size"/>x<paramref name="size"/> pixel data alternating a plain-SDR value
     /// and an HDR-highlight value per column, so ToneMapper's pass-through AND shoulder/dither
     /// branches both actually execute (a uniform frame would only ever hit whichever single branch
@@ -1732,7 +1732,7 @@ public sealed class TrayApp : ITrayNotifier
     private static RoeSnip.Capture.CapturedFrame CreateSyntheticWarmupFrame(int size)
     {
         // Fully qualified deliberately (matching OverlayController.RunPickModeCaptureAsync's own
-        // ToneMapOptions construction) — RoeSnip.Color is a sibling namespace whose "Color" type
+        // ToneMapOptions construction) - RoeSnip.Color is a sibling namespace whose "Color" type
         // would collide with System.Drawing.Color (already in scope via this file's own
         // NotifyIcon/Bitmap usage below) if brought in with a bare "using RoeSnip.Color;".
         var monitor = new RoeSnip.Capture.MonitorInfo(
@@ -1743,8 +1743,8 @@ public sealed class TrayApp : ITrayNotifier
 
         Span<byte> dim = stackalloc byte[2];
         Span<byte> bright = stackalloc byte[2];
-        BitConverter.TryWriteBytes(dim, (Half)0.5f);   // plain SDR gray — exercises the pass-through branch
-        BitConverter.TryWriteBytes(bright, (Half)2.5f); // 200 nits — exercises the shoulder/dither branch
+        BitConverter.TryWriteBytes(dim, (Half)0.5f);   // plain SDR gray - exercises the pass-through branch
+        BitConverter.TryWriteBytes(bright, (Half)2.5f); // 200 nits - exercises the shoulder/dither branch
 
         var pixels = new byte[size * size * 8]; // Fp16ScRgb: 8 bytes/pixel (4 x Half)
         for (int y = 0; y < size; y++)
@@ -1768,11 +1768,11 @@ public sealed class TrayApp : ITrayNotifier
 
     /// <summary>Warms the real OverlayWindow type (r5-latency, S6): the first-ever
     /// InitializeComponent for OverlayWindow.xaml pays BAML load for it AND its nested
-    /// ToolbarControl.xaml (733 lines) plus custom-control JIT — measured as a large share of the
+    /// ToolbarControl.xaml (733 lines) plus custom-control JIT - measured as a large share of the
     /// 447 ms first flash-mode overlay. Must run on the UI thread (marshalled like
     /// WarmupFlashWindows), and deliberately NEVER Show()s the window: with no HWND,
     /// OnSourceInitialized never runs, so nothing built here can become visible or touch any real
-    /// monitor/CaptureGate state — Measure+Arrange alone is enough to force the XAML visual tree to
+    /// monitor/CaptureGate state - Measure+Arrange alone is enough to force the XAML visual tree to
     /// build and lay out for real, which is where the BAML/JIT cost actually lands.</summary>
     private void WarmupOverlayWindowType()
     {
@@ -1786,10 +1786,10 @@ public sealed class TrayApp : ITrayNotifier
                 {
                     // Pack-URI resolution dependency: InitializeComponent below needs a live WPF
                     // Application to resolve pack://application:,,,/RoeSnip;component/... URIs, but
-                    // this method doesn't call OverlayController.EnsureApplication itself — S4's
+                    // this method doesn't call OverlayController.EnsureApplication itself - S4's
                     // RunWarmup ordering schedules WarmupFlashWindows (whose PrewarmFlash calls
                     // EnsureApplication) BEFORE this method, both marshalled onto the SAME
-                    // _uiThreadMarshal queue via BeginInvoke, which dispatches in FIFO order — so the
+                    // _uiThreadMarshal queue via BeginInvoke, which dispatches in FIFO order - so the
                     // Application this callback needs already exists by the time it runs. If that
                     // scheduling were ever to fail (e.g. BeginInvoke itself throwing), InitializeComponent
                     // throws here and the catch below swallows it non-fatally, same as any other
@@ -1804,7 +1804,7 @@ public sealed class TrayApp : ITrayNotifier
                         pickOnlyMode: false);
                     window.Measure(new System.Windows.Size(size, size));
                     window.Arrange(new System.Windows.Rect(0, 0, size, size));
-                    window.Close(); // never Show()n — see method doc.
+                    window.Close(); // never Show()n - see method doc.
                 }
                 catch (Exception ex)
                 {
@@ -1823,8 +1823,8 @@ public sealed class TrayApp : ITrayNotifier
     }
 
     /// <summary>Pre-creates the DXGI factory/adapter/output walk MonitorEnumerator does for the
-    /// AdvancedColor/MaxLuminance/SDR-white-level lookups — otherwise-shared setup cost that's paid
-    /// on the very first hotkey press — and seeds the cached monitor list the instant-response
+    /// AdvancedColor/MaxLuminance/SDR-white-level lookups - otherwise-shared setup cost that's paid
+    /// on the very first hotkey press - and seeds the cached monitor list the instant-response
     /// flash positions itself with (r5-latency).</summary>
     private static IReadOnlyList<RoeSnip.Capture.MonitorInfo> WarmupCaptureBackendInit()
     {

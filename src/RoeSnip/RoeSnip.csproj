@@ -21,11 +21,11 @@
     <!-- Trigger-1 latency investigation (r5-latency): ToneMapper.ComputeGlobalMax's AVX2 max-scan
          (called via the exact same warmup-then-real path StartWarmup/RunWarmup already primes)
          measured 60-105 ms on the first two real hotkey presses after launch vs. ~1 ms steady-state,
-         even after 3+ prior warmup calls on real full-size frames — a controlled
+         even after 3+ prior warmup calls on real full-size frames - a controlled
          DOTNET_TieredCompilation=0 run collapsed it to 1-4 ms immediately, isolating ordinary tiered
          JIT promotion timing (not warmup coverage) as the cause. Disabling tiered compilation forces
          every method to its fully-optimized tier on first call instead of a cheap tier-0 JIT followed
-         by a background re-JIT once "hot enough" — the right trade for this app specifically, since
+         by a background re-JIT once "hot enough" - the right trade for this app specifically, since
          its whole architecture already exists to pay JIT/init costs upfront on a background warmup
          thread (TrayApp.RunWarmup) rather than gradually on the hotkey path; the extra full-opt JIT
          time at first call now lands there instead of on the second real screenshot a user takes. -->
@@ -33,7 +33,7 @@
   </PropertyGroup>
 
   <!-- Idle-memory note (2026-07): footprint is reclaimed by IdleMemoryTrimmer's explicit post-burst
-       Aggressive collect, NOT by a global System.GC.ConserveMemory knob — that setting is
+       Aggressive collect, NOT by a global System.GC.ConserveMemory knob - that setting is
        process-wide and un-scopeable, so it would also bias the automatic collections firing inside
        the timed capture burst (the 51-60 ms first-overlay-visible budget). Reviewed and rejected. -->
 
@@ -53,12 +53,12 @@
 
   <ItemGroup>
     <!-- Pinned 2026-07: verified on nuget.org. WIC bindings live in Vortice.Direct2D1, NOT a
-         standalone "Vortice.WIC" package — see Plan-time flags. -->
+         standalone "Vortice.WIC" package - see Plan-time flags. -->
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
     <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
     <!-- Recording feature (MP4 export via IMFSinkWriter/H.264). Same 3.8.3 line + identical
-         Vortice.DirectX/SharpGen.Runtime dependency versions as the three references above — no
+         Vortice.DirectX/SharpGen.Runtime dependency versions as the three references above - no
          version conflict, no downgrade warnings. -->
     <PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
   </ItemGroup>
@@ -68,7 +68,7 @@
          recording-size math now live in RoeSnip.Core so RoeSnip.App (Avalonia) can share them; this
          WPF app keeps its own thin GifEncoder wrapper (see Recording/GifEncoder.cs) plus its own
          MultiMonitorRecording copy (its MonitorInfo carries a live HMONITOR the portable one has no
-         equivalent for — see that file's own doc comment) but retargets everything else onto Core. -->
+         equivalent for - see that file's own doc comment) but retargets everything else onto Core. -->
     <ProjectReference Include="..\RoeSnip.Core\RoeSnip.Core.csproj" />
   </ItemGroup>
 

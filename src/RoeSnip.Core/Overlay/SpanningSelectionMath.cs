@@ -20,11 +20,11 @@ public enum SelectionHandle
 
 /// <summary>Which of a spanning selection's LOCAL (per-monitor) edges are also edges of the TRUE
 /// virtual-desktop rect, versus merely where that monitor's own screen boundary happened to cut the
-/// selection off. A corner/side resize handle only ever makes sense on a real edge — dragging a
+/// selection off. A corner/side resize handle only ever makes sense on a real edge - dragging a
 /// "handle" that's actually just a monitor-boundary clip would silently be dragging the wrong thing
 /// (see <see cref="SpanningSelectionMath.Distribute"/>'s doc comment for how these are computed).
 /// A SelectionAdorner's own RealEdges property defaults to <see cref="All"/>, which is exactly every
-/// ordinary (non-spanning) selection's answer — this type only ever varies while spanning. Ported
+/// ordinary (non-spanning) selection's answer - this type only ever varies while spanning. Ported
 /// from the frozen WPF app's src/RoeSnip/Overlay/SpanningSelectionMath.cs.</summary>
 [Flags]
 public enum SelectionEdges
@@ -49,17 +49,17 @@ public readonly record struct SpanningHit(int MonitorIndex, RectPhysical LocalRe
 public readonly record struct SpanningDistribution(
     RectPhysical ClampedVirtual, IReadOnlyList<SpanningHit> Hits, bool IsSpanning);
 
-/// <summary>Pure geometry for the cross-monitor ("spanning") selection feature — no UI-framework
+/// <summary>Pure geometry for the cross-monitor ("spanning") selection feature - no UI-framework
 /// Window/Point type, no mutable session/window state, nothing here touches pixels. Ported verbatim
 /// (semantics unchanged) from the frozen WPF app's src/RoeSnip/Overlay/SpanningSelectionMath.cs so it
 /// can be shared by both ports and unit-tested directly without spinning up any window. The only
 /// deviation from the WPF original is that <see cref="ApplyResize"/> takes plain (double x, double y)
-/// instead of a WPF/Avalonia Point — this project has no UI-framework dependency at all (see
+/// instead of a WPF/Avalonia Point - this project has no UI-framework dependency at all (see
 /// RoeSnip.Core.Overlay.AnnotationGeometry for the same "plain doubles, not a framework Point"
 /// convention already established for the annotation math). See docs/architecture.md.</summary>
 public static class SpanningSelectionMath
 {
-    /// <summary>The union of every monitor's own bounds — the outer box a spanning drag candidate
+    /// <summary>The union of every monitor's own bounds - the outer box a spanning drag candidate
     /// gets clamped to before being distributed (a drag can't select space with no monitor at all,
     /// e.g. the gap between two non-adjacent displays, even though it CAN span the monitors on
     /// either side of that gap).</summary>
@@ -96,7 +96,7 @@ public static class SpanningSelectionMath
     /// opposite edges that are both out of bounds by different amounts shrinks the rect, which reads
     /// as the selection silently losing size mid-drag instead of sliding to a stop at the edge, like
     /// every other drag in this app already does. Only shrinks the rect (down to `bounds`' own size)
-    /// in the degenerate case where it doesn't even fit — never grows it.</summary>
+    /// in the degenerate case where it doesn't even fit - never grows it.</summary>
     public static RectPhysical SlideToBounds(RectPhysical r, RectPhysical bounds)
     {
         var n = r.Normalized();
@@ -118,7 +118,7 @@ public static class SpanningSelectionMath
     /// box, intersects the result against every monitor in <paramref name="monitorBounds"/>, and for
     /// each non-empty intersection also works out which of that monitor's own 4 local edges are REAL
     /// edges of the (clamped) candidate rather than just where this monitor's screen happened to cut
-    /// it off — an edge is real iff the intersection didn't have to move it inward from the clamped
+    /// it off - an edge is real iff the intersection didn't have to move it inward from the clamped
     /// candidate's own edge, i.e. <c>intersection.Left == clamped.Left</c> and so on for the other 3.
     /// This is exactly the same comparison <see cref="IntersectRects"/> makes internally, just
     /// surfaced so the caller (and the Adorner, transitively) knows which handles are meaningful to
@@ -158,7 +158,7 @@ public static class SpanningSelectionMath
     }
 
     /// <summary>Applies one resize handle's delta to <paramref name="start"/>, replacing the edge(s)
-    /// that handle owns with (<paramref name="x"/>, <paramref name="y"/>)'s coordinates — a pure
+    /// that handle owns with (<paramref name="x"/>, <paramref name="y"/>)'s coordinates - a pure
     /// function of (start rect, handle, pointer position), so it works identically whether "pointer
     /// position" is a window's own local physical pixels (the plain single-monitor Resize drag) or a
     /// virtual-desktop physical position (SpanningResize). Normalizes the result so a handle dragged

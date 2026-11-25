@@ -9,7 +9,7 @@ namespace RoeSnip.Imaging;
 /// browsers, Discord, Paint.NET) and a CF_DIBV5 (BITMAPV5HEADER, 32bpp BGRA with an explicit
 /// alpha mask, recognized by Word/Paint/most legacy GDI consumers) to the clipboard in one
 /// OpenClipboard/EmptyClipboard/SetClipboardData(x2)/CloseClipboard transaction
-/// §3.2 — so both "paste as PNG" and "paste as bitmap" consumers work from a single copy.</summary>
+/// sec 3.2 - so both "paste as PNG" and "paste as bitmap" consumers work from a single copy.</summary>
 public static class ClipboardService
 {
     private const uint BI_BITFIELDS = 3;
@@ -42,7 +42,7 @@ public static class ClipboardService
         public uint bV5AlphaMask;
         public uint bV5CSType;
         // CIEXYZTRIPLE bV5Endpoints: 3 x CIEXYZ, each 3 x FXPT2DOT30(=int) = 36 bytes. Unused when
-        // bV5CSType == LCS_sRGB (consumers ignore these per the sRGB profile) — zero-filled.
+        // bV5CSType == LCS_sRGB (consumers ignore these per the sRGB profile) - zero-filled.
         public int bV5Endpoint0X, bV5Endpoint0Y, bV5Endpoint0Z;
         public int bV5Endpoint1X, bV5Endpoint1Y, bV5Endpoint1Z;
         public int bV5Endpoint2X, bV5Endpoint2Y, bV5Endpoint2Z;
@@ -136,7 +136,7 @@ public static class ClipboardService
         }
 
         // On success, ownership of hGlobal transfers to the system (SetClipboardData's documented
-        // contract) — we must NOT free it in that case, only on failure.
+        // contract) - we must NOT free it in that case, only on failure.
         if (NativeMethods.SetClipboardData(format, hGlobal) == IntPtr.Zero)
         {
             GlobalFree(hGlobal);

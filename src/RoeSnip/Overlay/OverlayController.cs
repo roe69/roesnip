@@ -8,22 +8,22 @@ using RoeSnip.Capture;
 using RoeSnip.Core.Diagnostics;
 using RoeSnip.Imaging;
 // RoeSnip.csproj enables both UseWPF and UseWindowsForms, so System.Windows.Forms is in scope
-// alongside System.Windows — alias the colliding name to WPF's Application.
+// alongside System.Windows - alias the colliding name to WPF's Application.
 using Application = System.Windows.Application;
 
 namespace RoeSnip.Overlay;
 
 /// <summary>Commands that can be raised from any monitor's OverlayWindow (keyboard) or from the
-/// toolbar attached to the monitor that currently holds the selection — OverlayController treats
+/// toolbar attached to the monitor that currently holds the selection - OverlayController treats
 /// both sources identically. Cancel closes the whole overlay unconditionally (toolbar X button).
 /// CancelStage is Esc's two-stage semantics: if any monitor has a snip in progress (selection /
 /// annotations / drag), clear it and stay open; only with nothing active does it close the
-/// overlay. (Esc's innermost stage — an active inline text edit — is consumed locally by
+/// overlay. (Esc's innermost stage - an active inline text edit - is consumed locally by
 /// OverlayWindow.ProcessKeyCommand before CancelStage is ever raised.) ConfirmPlain is
 /// Enter/double-click; Copy/Save/SaveHdr are the explicit Ctrl+C/Ctrl+S/toolbar-button requests.
 /// Undo (Ctrl+Z) is handled locally inside OverlayWindow against its own AnnotationLayer and
 /// never reaches the controller, since only the OS-focused window can receive it in the first
-/// place — there's no cross-monitor ambiguity to resolve for it.</summary>
+/// place - there's no cross-monitor ambiguity to resolve for it.</summary>
 public enum OverlayCommand
 {
     Cancel,
@@ -36,10 +36,10 @@ public enum OverlayCommand
     RecordGif,
     // Sharing/* subsystem: the toolbar's plain Share button (default-provider upload). The
     // dropdown's per-provider picker is wired separately, through OverlayWindow's own
-    // _onShareToProvider callback rather than through this enum — OverlayCommand is deliberately
+    // _onShareToProvider callback rather than through this enum - OverlayCommand is deliberately
     // payload-free (see e.g. onColorPicked's own analogous callback), and a provider id is a
     // payload. Handling this hands the render off to ShareFlowPresenter and then calls Finish()
-    // immediately, exactly like every other command above — see OverlaySession.ShareCurrentSelection's
+    // immediately, exactly like every other command above - see OverlaySession.ShareCurrentSelection's
     // own doc comment (OverlaySession.ShareToSpecificProvider, the dropdown's own handler, follows
     // the identical close-immediately contract).
     Share,
@@ -52,7 +52,7 @@ public static class OverlayController
     /// Copy/Save side effects itself (clipboard + PNG dialog) per docs/architecture.md, then returns a
     /// populated OverlayResult. Matches the AppComposition.RunOverlay hook signature exactly.
     /// <paramref name="notifier"/> (Sharing/* subsystem addition) is the same ITrayNotifier
-    /// RunCaptureFlowAsync already threads into StartRecording — the toolbar's Share button needs
+    /// RunCaptureFlowAsync already threads into StartRecording - the toolbar's Share button needs
     /// it too (clipboard-copy-the-URL balloon / honest error balloon), and this is the earliest
     /// point that reference is available to an OverlaySession; every OTHER caller of this hook
     /// (there is only one, Program.cs's RunCaptureFlowAsync) already has a notifier in hand for
@@ -76,7 +76,7 @@ public static class OverlayController
     // ---------- Instant-response flash dimmer (r5-latency) ----------
     //
     // The flash API lives here (not in Program.cs's capture flow) because RunCaptureFlowAsync
-    // only hands this package already-captured frames — far too late for an instant response.
+    // only hands this package already-captured frames - far too late for an instant response.
     // TrayApp.TriggerCapture (the actual hotkey/tray/pipe entry point) calls TryShowFlash BEFORE
     // kicking off AppComposition.RunCaptureFlowAsync; each monitor's flash is then hidden as its
     // real overlay window renders (OverlaySession.OnOverlayContentRendered), and TrayApp's
@@ -85,14 +85,14 @@ public static class OverlayController
     // CaptureGate busy, RunOverlay unavailable, unexpected exception).
 
     private static OverlaySession? s_activeSession;   // UI thread only
-    private static int s_flashUsers;                  // UI thread only — capture flows that showed the flash
+    private static int s_flashUsers;                  // UI thread only - capture flows that showed the flash
     private static volatile bool s_flashCancelRequested;
     private static long s_responseStartTimestamp;     // Stopwatch timestamp of the last real trigger
 
     /// <summary>True while a capture session is actually on screen and interactive. Review fix:
     /// exposed so OverlayWindowPool.ScheduleReprovision's deferred (ContextIdle) callback can apply
     /// the exact same "never rebuild while a session is live" guard PrewarmOverlayPool already
-    /// enforces at every OTHER pool-mutating entry point — a reprovision scheduled by one session's
+    /// enforces at every OTHER pool-mutating entry point - a reprovision scheduled by one session's
     /// Finish() can otherwise still be pending when a rapid re-trigger opens the NEXT session, and
     /// firing a full pool rebuild (CloseAllParked + N re-constructions) mid-session would steal
     /// UI-thread time from live user interaction. UI thread only.</summary>
@@ -103,7 +103,7 @@ public static class OverlayController
     /// whether the flash dimmer ends up showing anything. Previously TryShowFlash itself stamped
     /// this timestamp, which meant a flash failure (or the flash being disabled) silently measured
     /// "hotkey-to-overlay" latency from whenever the flash WOULD have started rather than from the
-    /// real trigger — call this as the very first statement of TrayApp.TriggerCapture instead, so
+    /// real trigger - call this as the very first statement of TrayApp.TriggerCapture instead, so
     /// every latency log downstream (first-overlay-visible / all-overlays-visible) is honest about
     /// what the user actually experienced.</summary>
     internal static void MarkTriggerTimestamp() =>
@@ -115,11 +115,11 @@ public static class OverlayController
     /// an OverlaySession. Several of its exit paths (RunOverlay unavailable, CaptureGate exhausted
     /// after both wait loops, capture failed on every monitor, an exception before the overlay is
     /// reached) never construct one, so s_responseStartTimestamp would otherwise sit there stale
-    /// until whatever OverlaySession runs NEXT silently inherits it — including an unrelated
+    /// until whatever OverlaySession runs NEXT silently inherits it - including an unrelated
     /// pick-mode session, which must never attribute its latency to a hotkey trigger it didn't own.
     /// Wired to AppComposition.ClearPendingOverlayTrigger (see the ModuleInitializer below) so
     /// Program.cs (WP-A) can call it from those dead-end paths without taking a direct WP-B
-    /// dependency. Idempotent — safe to call even when nothing is pending.</summary>
+    /// dependency. Idempotent - safe to call even when nothing is pending.</summary>
     internal static void ClearPendingTrigger() => s_responseStartTimestamp = 0;
 
     /// <summary>Pre-creates the per-monitor flash windows (TrayApp warmup / display-change hook;
@@ -149,27 +149,27 @@ public static class OverlayController
         }
     }
 
-    /// <summary>Pre-builds the per-monitor overlay window POOL (r5-latency round 2, D1/D4 — see
-    /// OverlayWindowPool's own doc comment) — the single-use, already-first-rendered windows
+    /// <summary>Pre-builds the per-monitor overlay window POOL (r5-latency round 2, D1/D4 - see
+    /// OverlayWindowPool's own doc comment) - the single-use, already-first-rendered windows
     /// OverlaySession.RunAsync claims instead of paying construction/Show/first-render on the hot
     /// path. Called right after PrewarmFlash from the same TrayApp warmup step (and again from the
     /// DisplaySettingsChanged path), matching that method's own ordering/thread-marshalling
     /// contract. Guarded the same way: never rebuilds while a session is actually live, since a
     /// rebuild would otherwise spend UI-thread time that session needs, even though it could never
-    /// touch that session's own windows (those were already removed from the pool when it started —
+    /// touch that session's own windows (those were already removed from the pool when it started -
     /// see OverlayWindowPool.TryTake).</summary>
     public static void PrewarmOverlayPool(IReadOnlyList<MonitorInfo> monitors)
     {
         // In-flight-flow guard (post-sleep stall fix): with the capture on the thread pool this UI
         // thread pumps during the flash phase, so a display-change/post-resume refresh can dispatch
-        // BETWEEN flash-show and overlay-show — a wholesale pool rebuild there would insert
+        // BETWEEN flash-show and overlay-show - a wholesale pool rebuild there would insert
         // ~80-103 ms/monitor of UI-thread work into the hot path, and its nested Loaded pumps could
         // even resume the capture continuation INSIDE the rebuild (session-inside-rebuild
         // reentrancy). AnyVisible covers flash-up flows; CaptureGate.IsBusy covers ROESNIP_NO_FLASH
         // and flash-show-failed flows. Bailing is safe: after a session the pool is rebuilt via
         // Finish's ScheduleReprovision anyway, and a stale pool merely degrades to the designed
         // construct-on-demand fallback. A RECORDING also holds the gate (transferred, for minutes)
-        // but never touches the overlay hot path — rebuilding during one is the long-standing
+        // but never touches the overlay hot path - rebuilding during one is the long-standing
         // behavior and stays allowed, hence the IsActive exemption.
         if (monitors.Count == 0 || s_activeSession is not null
             || FlashDimmer.AnyVisible
@@ -189,7 +189,7 @@ public static class OverlayController
     }
 
     /// <summary>Shows the flash dim on every monitor. Returns false (and shows nothing) when an
-    /// overlay session is already on screen — dimming over a live overlay would be wrong — or when
+    /// overlay session is already on screen - dimming over a live overlay would be wrong - or when
     /// showing failed; the caller must call <see cref="ReleaseFlash"/> exactly once iff this
     /// returned true. UI thread only.</summary>
     public static bool TryShowFlash(IReadOnlyList<MonitorInfo> monitors)
@@ -200,14 +200,14 @@ public static class OverlayController
         }
         // Flash dimmer ENABLED by default (r5-latency). It was previously disabled-by-default
         // (opt-in via ROESNIP_USE_FLASH=1) because a luma-sampler trace of the flash-to-overlay
-        // handoff showed bright -> dim -> BLACK(0) -> bright — a visible black frame plus a broken
+        // handoff showed bright -> dim -> BLACK(0) -> bright - a visible black frame plus a broken
         // final state. That black frame was NOT caused by the two-window handoff itself: it was
         // WPF's own cold-start behavior of clearing a new window's surface to black and letting DWM
         // present that before the render thread produces the first real composited frame. d6b5ec7
         // root-caused and fixed exactly this, independently of the flash (see OverlayWindow's
         // OnSourceInitialized: the window is shown off-screen at its real size first, and the frozen
         // preview is painted into Background as well as PreviewImage, so even a background-only
-        // first compositor frame already shows correct pixels — only once ContentRendered fires
+        // first compositor frame already shows correct pixels - only once ContentRendered fires
         // does OnFirstContentRendered snap it onto the real monitor). With that fix in place the
         // flash-to-overlay swap is a clean monotonic dim -> dim (the overlay's first real frame is
         // opaque and pixel-identical to the flash underneath it), so the flash is re-enabled here.
@@ -217,7 +217,7 @@ public static class OverlayController
         // OverlaySession subscribes to window.ContentRendered before window.Show(), while
         // OverlayWindow's own on-screen-move handler subscribes second (from OnSourceInitialized,
         // which Show() runs), so hiding the flash from the FIRST multicast handler fired while the
-        // real window was still parked off-screen — a luma-measured ~18-30 ms bright flash of the
+        // real window was still parked off-screen - a luma-measured ~18-30 ms bright flash of the
         // real (still-dim, but uncovered) desktop. Fixed by deferring the flash-hide to
         // DispatcherPriority.Background from OnOverlayContentRendered (see that method's doc
         // comment) so it always runs after the window's own on-screen move. Luma-verified clean
@@ -254,7 +254,7 @@ public static class OverlayController
 
     /// <summary>Flash-phase Esc hook lifetime (UI thread only): installed by TryShowFlash, removed
     /// on whichever comes first of flow end (ReleaseFlash), flash-phase cancel (OnFlashEscape), or
-    /// the OverlaySession opening (hand-off to its full SessionKeyboardHook — the ctor calls this
+    /// the OverlaySession opening (hand-off to its full SessionKeyboardHook - the ctor calls this
     /// so there is never a double-hook window).</summary>
     private static FlashEscapeHook? s_flashEscapeHook;
     private static FlashMouseSwallowHook? s_flashMouseHook;
@@ -284,14 +284,14 @@ public static class OverlayController
         {
             DisposeFlashEscapeHook();
             // A flash flow that died WITHOUT constructing a session (deadline, zero frames, gate
-            // bounce) must not leak a pending flash-Esc into whatever session runs next — before
+            // bounce) must not leak a pending flash-Esc into whatever session runs next - before
             // this, a stale flag silently insta-cancelled the next pick-mode overlay. Safe on
             // success paths: a real session consumed the flag before this finally-side call runs.
             s_flashCancelRequested = false;
             try { FlashDimmer.HideAll(); }
             catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
             // No-op safety net as of 2026-08-02 (ShowAll no longer stakes a foreground claim at
-            // all — see FlashDimmer.s_foregroundClaimEpoch's doc comment): kept in case some future
+            // all - see FlashDimmer.s_foregroundClaimEpoch's doc comment): kept in case some future
             // change reintroduces a claim without reintroducing this restore alongside it.
             FlashDimmer.TryRestoreForegroundFromFlash();
         }
@@ -312,7 +312,7 @@ public static class OverlayController
         DisposeFlashEscapeHook();
         try { FlashDimmer.HideAll(); }
         catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
-        // No-op safety net as of 2026-08-02 — see ReleaseFlash's identical comment above.
+        // No-op safety net as of 2026-08-02 - see ReleaseFlash's identical comment above.
         FlashDimmer.TryRestoreForegroundFromFlash();
     }
 
@@ -395,12 +395,12 @@ public static class OverlayController
     /// completed drag would leave them. Null on success, else an error string.
     ///
     /// Reads s_activeSession into a local once and branches on IT rather than using
-    /// "s_activeSession?.Method(...) ?? "no active overlay session"" — see the identical fix and
+    /// "s_activeSession?.Method(...) ?? "no active overlay session"" - see the identical fix and
     /// its doc comment on RecordingController's own automation wrappers (commit d56ad19). Every
     /// method here returns "null on success, else an error string", so "?." simply FORWARDS
     /// whatever the underlying call returns, including a legitimate null success; "??" then can't
     /// tell "the receiver was null" apart from "the receiver was NOT null and its method returned
-    /// null to mean success" — both look like a null left-hand side, so the fallback string fired
+    /// null to mean success" - both look like a null left-hand side, so the fallback string fired
     /// on every successful call too, reporting ok:false while the mutation landed anyway.</summary>
     internal static string? SetSelectionForAutomation(RectPhysical virtualDesktopPx)
     {
@@ -419,7 +419,7 @@ public static class OverlayController
 
     /// <summary>Invokes the same OverlayCommand.Cancel the toolbar's X button raises. See
     /// SetSelectionForAutomation's doc comment for why this reads s_activeSession into a local and
-    /// branches on it instead of "?." + "??" — CancelForAutomation always returns null on success,
+    /// branches on it instead of "?." + "??" - CancelForAutomation always returns null on success,
     /// so the old pattern reported ok:false on literally every successful cancel.</summary>
     internal static string? CancelForAutomation()
     {
@@ -428,13 +428,13 @@ public static class OverlayController
     }
 
     /// <summary>Cross-monitor selection (multimon-selection): Copy/Save had no automation entry
-    /// point at all before this — the toolbar's Copy button raises OverlayCommand.Copy exactly like
+    /// point at all before this - the toolbar's Copy button raises OverlayCommand.Copy exactly like
     /// this does, but Save's real path (TryShowSaveDialog) pops a modal SaveFileDialog, which must
     /// never happen from a headless automation call (it would hang the pipe waiting for a human).
     /// "save" therefore REQUIRES an explicit path and writes directly via PngWriter, skipping the
-    /// dialog entirely — same production render/write calls Confirm/ConfirmSpanning already use,
+    /// dialog entirely - same production render/write calls Confirm/ConfirmSpanning already use,
     /// just without the interactive picker. Added specifically so a spanning selection's Copy/Save
-    /// path — the one place this feature has no other test lever — can be driven and verified
+    /// path - the one place this feature has no other test lever - can be driven and verified
     /// end-to-end; see docs/architecture.md. See SetSelectionForAutomation's doc
     /// comment for why this reads s_activeSession into a local and branches on it instead of "?."
     /// + "??".</summary>
@@ -450,7 +450,7 @@ public static class OverlayController
 
     /// <summary>A plain click on the overlay (not a drag, not on the toolbar/handles/selection)
     /// cancels the whole snip and opens/updates this singleton window with the picked color,
-    /// per the round-2 spec. Recreated on demand — its Closed handler nulls this out — rather than
+    /// per the round-2 spec. Recreated on demand - its Closed handler nulls this out - rather than
     /// Hide()-and-reuse, since its own persisted state (recents, format visibility) already lives in
     /// settings, so a fresh instance picks up exactly where the old one left off.</summary>
     private static void OnColorPicked(PickedColorInfo info)
@@ -481,7 +481,7 @@ public static class OverlayController
 
     // Reentrancy: pick-mode shares the single process-wide CaptureGate with the hotkey/tray/pipe
     // capture flow, so a hotkey press can't stack an overlay set over a pick-mode session (or
-    // vice versa) — two overlay stacks would screenshot each other's UI.
+    // vice versa) - two overlay stacks would screenshot each other's UI.
 
     /// <summary>Re-launches the capture overlay in pick-only mode so the user's next click picks a
     /// new color into the same ColorPickerWindow. Deliberately implemented here rather than reused
@@ -489,7 +489,7 @@ public static class OverlayController
     /// (Func&lt;..., RoeSnipSettings, Task&lt;OverlayResult?&gt;&gt;) is fixed (Program.cs is
     /// additive-only for the settings record per the round-2 brief) and has no notion of pick-only
     /// mode, and pick mode never produces a Copy/Save/HDR-export OverlayResult to route back through
-    /// it anyway — it only ever ends via OnColorPicked (a pick) or a plain cancel (Esc).</summary>
+    /// it anyway - it only ever ends via OnColorPicked (a pick) or a plain cancel (Esc).</summary>
     private static void TriggerPickModeCapture()
     {
         if (!CaptureGate.TryEnter())
@@ -508,7 +508,7 @@ public static class OverlayController
             var settings = AppComposition.LoadSettings?.Invoke() ?? RoeSnipSettings.Default;
 
             // Same off-the-UI-thread hop + deadline as RunCaptureFlowAsync's capture (post-sleep
-            // stall fix — see the doc there): pick mode shares the identical CaptureAll stretch and
+            // stall fix - see the doc there): pick mode shares the identical CaptureAll stretch and
             // previously froze the pump the identical way when a post-resume capture stalled.
             var captureService = new CaptureService();
             var captureTask = Task.Run(() => captureService.CaptureAll());
@@ -543,7 +543,7 @@ public static class OverlayController
 
             try
             {
-                // Fully qualified (rather than a "using RoeSnip.Color;") deliberately — several
+                // Fully qualified (rather than a "using RoeSnip.Color;") deliberately - several
                 // sibling Overlay/* files alias the unrelated System.Windows.Media.Color as "Color"
                 // and a bare namespace import here would create exactly that ambiguity risk.
                 var toneMapOpts = new RoeSnip.Color.ToneMapOptions(
@@ -551,7 +551,7 @@ public static class OverlayController
                     PeakOverride: settings.ToneMapPeakOverride);
 
                 var monitorsWithPreview = new List<(CapturedFrame Frame, SdrImage Preview)>(frames.Count);
-                // Off the UI thread like the capture above — full-res tonemaps are pure compute.
+                // Off the UI thread like the capture above - full-res tonemaps are pure compute.
                 await Task.Run(() =>
                 {
                     foreach (var frame in frames)
@@ -580,7 +580,7 @@ public static class OverlayController
         {
             CaptureGate.Exit();
             // Pick-mode never goes through TrayApp.ObserveCaptureTask, so it schedules its own
-            // post-flow memory trim (same ApplicationIdle deferral — see IdleMemoryTrimmer).
+            // post-flow memory trim (same ApplicationIdle deferral - see IdleMemoryTrimmer).
             IdleMemoryTrimmer.Schedule(System.Windows.Threading.Dispatcher.CurrentDispatcher);
         }
     }
@@ -588,12 +588,12 @@ public static class OverlayController
     /// <summary>RunAsync is invoked from the tray app's own STA thread, which pumps Win32 messages
     /// via its WinForms Application.Run() message loop. That pump is sufficient to dispatch input
     /// to our HWNDs and to the WPF Dispatcher's own message-only window even without a running
-    /// System.Windows.Application — but several WPF facilities (pack URI / component resource
+    /// System.Windows.Application - but several WPF facilities (pack URI / component resource
     /// resolution used by InitializeComponent, Application.Current-based resource lookups) expect
     /// one to exist. If the host has already created one (e.g. a future all-WPF host, or a test
     /// harness), we must not create a second one or touch its ShutdownMode. We deliberately never
-    /// call Application.Run() here — there is no need to; the ambient message pump already
-    /// dispatches to our windows — and OnExplicitShutdown ensures closing all overlay windows
+    /// call Application.Run() here - there is no need to; the ambient message pump already
+    /// dispatches to our windows - and OnExplicitShutdown ensures closing all overlay windows
     /// doesn't implicitly tear down a process-wide Application we created just for this session.</summary>
     private static void EnsureApplication()
     {
@@ -611,17 +611,17 @@ public static class OverlayController
         private readonly IReadOnlyList<(CapturedFrame Frame, SdrImage Preview)> _monitors;
         private readonly Action<PickedColorInfo> _onColorPicked;
         private readonly bool _pickOnlyMode;
-        // Sharing/* subsystem: null for pick-mode (TriggerPickModeCapture never passes one — that
+        // Sharing/* subsystem: null for pick-mode (TriggerPickModeCapture never passes one - that
         // flow has no toolbar/Share button at all) and for any other future direct OverlaySession
         // caller that doesn't pass one; ShareCurrentSelection treats a null notifier the same way
-        // every other ITrayNotifier consumer in this codebase does ("?." — the upload still runs,
+        // every other ITrayNotifier consumer in this codebase does ("?." - the upload still runs,
         // it just can't show a balloon for the result).
         private readonly ITrayNotifier? _notifier;
         private readonly List<OverlayWindow> _windows = new();
         private readonly TaskCompletionSource<OverlayResult?> _completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // Session-scoped reliability layer (a) — see OverlayInputInterop.cs's SessionKeyboardHook
+        // Session-scoped reliability layer (a) - see OverlayInputInterop.cs's SessionKeyboardHook
         // doc comment for the full root-cause writeup. Installed here ("when the session opens"),
         // disposed exactly once from Finish() ("removed unconditionally... all paths").
         private readonly SessionKeyboardHook _keyboardHook;
@@ -633,11 +633,11 @@ public static class OverlayController
 
         // ---------- Cross-monitor selection (multimon-selection) ----------
         //
-        // Both null for every ordinary, single-monitor selection — the pre-existing per-window
+        // Both null for every ordinary, single-monitor selection - the pre-existing per-window
         // _selectionPx-based code paths (Confirm/Record/GetSelectionForAutomation's own
         // _windows.FirstOrDefault(w => w.SelectionPx is not null)) are what run in that case,
         // completely unchanged. These two fields are only ever non-null while a NewSelection,
-        // SpanningResize, or SpanningMove drag's candidate rect has been distributed across ≥2
+        // SpanningResize, or SpanningMove drag's candidate rect has been distributed across >=2
         // monitors - see OnSpanningCandidate. See docs/architecture.md for the full
         // design.
         private RectPhysical? _spanningVirtual;
@@ -664,8 +664,8 @@ public static class OverlayController
             DisposeFlashEscapeHook();
 
             // Installed before any window is constructed/shown/receives input, so session keys are
-            // covered for the session's entire visible lifetime. Every path out of RunAsync —
-            // including an exception constructing or showing any window — funnels through Finish(),
+            // covered for the session's entire visible lifetime. Every path out of RunAsync -
+            // including an exception constructing or showing any window - funnels through Finish(),
             // which disposes this hook unconditionally.
             _keyboardHook = new SessionKeyboardHook(() => _activeWindow);
 
@@ -721,7 +721,7 @@ public static class OverlayController
             _responseBaseTimestamp = TakeResponseBaseTimestamp(_pickOnlyMode);
 
             // Esc pressed while only the flash dimmer was up: the user already cancelled this
-            // capture before the overlay could appear — honor it instead of flashing a full
+            // capture before the overlay could appear - honor it instead of flashing a full
             // overlay set for a frame. Pick-mode sessions never had a flash phase, so they never
             // consume the flag (same isolation reasoning as TakeResponseBaseTimestamp below).
             if (!_pickOnlyMode && ConsumeFlashCancelRequest())
@@ -733,12 +733,12 @@ public static class OverlayController
             // Show-as-ready (r5-latency): construct+show the cursor monitor's window FIRST and
             // flush its layout/render before even constructing the remaining windows, so the
             // monitor the user is looking at swaps from flash dim to the real overlay as early as
-            // possible (previously: construct all, then show all — the first visible overlay paid
+            // possible (previously: construct all, then show all - the first visible overlay paid
             // for every monitor's InitializeComponent/BAML load). Each monitor's flash dimmer is
             // hidden per-monitor from ContentRendered, i.e. only after that monitor's real window
-            // has genuinely rendered — zero-gap replacement.
+            // has genuinely rendered - zero-gap replacement.
             //
-            // The Dispatcher flush below runs a nested message pump, which CAN dispatch input —
+            // The Dispatcher flush below runs a nested message pump, which CAN dispatch input -
             // an Esc there routes through OnFlashEscape/the session keys into Finish(). Hence the
             // _finished checks: the loop must stop constructing/showing windows the moment the
             // session dies under it (windows shown after Finish would be stranded topmost forever).
@@ -755,10 +755,10 @@ public static class OverlayController
                     }
 
                     // r5-latency round 2 (D3): a pool hit skips construction/Show/first-render
-                    // entirely — that window was already built, Show()n and first-rendered (against
+                    // entirely - that window was already built, Show()n and first-rendered (against
                     // a placeholder) back when the pool was provisioned. Initialize() swaps in this
                     // session's real content, a Loaded-priority flush pushes it through one more
-                    // render pass, and MoveOnScreen does the actual on-screen handoff directly —
+                    // render pass, and MoveOnScreen does the actual on-screen handoff directly -
                     // there is no ContentRendered to wait on here (it already fired once, at
                     // pool-build time, and never fires again for this window; see OverlayWindow.
                     // OnFirstContentRendered). OnOverlayContentRendered is called directly instead,
@@ -770,11 +770,11 @@ public static class OverlayController
                         poolHits++;
                         window = pooled;
                         // Review fix: register with Finish()'s cleanup (Closed handler + _windows)
-                        // BEFORE calling Initialize() — Initialize() is not trivial (ToBitmapSource
+                        // BEFORE calling Initialize() - Initialize() is not trivial (ToBitmapSource
                         // plus two Win32 interop calls to clear WS_EX_TOOLWINDOW) and TryTake already
                         // permanently removed this window from the pool above. If Initialize() were
                         // to throw with the window not yet in _windows, it would be neither in the
-                        // pool nor in _windows for Finish()'s cleanup loop to find — a permanently
+                        // pool nor in _windows for Finish()'s cleanup loop to find - a permanently
                         // orphaned, still-parked, topmost/capture-excluded HWND. Adding first means
                         // any such exception still reaches Finish() -> CloseOverlay() on this window
                         // like every other exit path.
@@ -799,20 +799,20 @@ public static class OverlayController
                         window.LoupeRadiusChanged += r => SyncLoupeRadius(window, r);
                         window.ContentRendered += (_, _) => OnOverlayContentRendered(window);
                         // NOTE (anti-flicker): the overlay window is OPAQUE (Background is the frozen
-                        // preview, PreviewImage on top, DimPath dim on top of that) — so once it paints
+                        // preview, PreviewImage on top, DimPath dim on top of that) - so once it paints
                         // AND is on-screen it fully OCCLUDES the flash dimmer beneath it. There is no
                         // dim-stacking to manage: the overlay's first frame already equals the flash
                         // (preview == live screen + matching dim), so it lands seamlessly and the flash
                         // is hidden invisibly from OnOverlayContentRendered. (Earlier crossfade/dim-fade
                         // attempts were wrong: fading the opaque overlay's own dim in made it paint
-                        // BRIGHT first, causing the dim→bright→dim double flicker the user reported.)
-                        // Bright-rebound fix (flicker gate — see OnOverlayContentRendered's own doc
-                        // comment): "paints" and "is on-screen" are NOT the same moment — ContentRendered
+                        // BRIGHT first, causing the dim->bright->dim double flicker the user reported.)
+                        // Bright-rebound fix (flicker gate - see OnOverlayContentRendered's own doc
+                        // comment): "paints" and "is on-screen" are NOT the same moment - ContentRendered
                         // fires while the window is still parked off-screen (OffScreenX), and only
                         // OverlayWindow's own OnFirstContentRendered handler (subscribed second, so it
                         // runs after this session's ContentRendered handler) actually moves it on-screen.
                         // Hiding the flash must therefore be deferred past that on-screen move, or the
-                        // flash disappears a beat before the overlay is there to occlude it — a bright
+                        // flash disappears a beat before the overlay is there to occlude it - a bright
                         // rebound, luma-measured at ~18-30 ms.
                         _windows.Add(window);
                         window.Show();
@@ -824,7 +824,7 @@ public static class OverlayController
                         // Push the first (cursor) window's pending layout/render through before
                         // constructing the rest. Loaded sits just below Render, so this drains
                         // exactly the layout+render queue. (A harmless redundant no-op flush for a
-                        // pool hit, which already flushed once above — kept for uniformity with the
+                        // pool hit, which already flushed once above - kept for uniformity with the
                         // fallback path rather than special-cased away.)
                         window.Dispatcher.Invoke(static () => { }, System.Windows.Threading.DispatcherPriority.Loaded);
                     }
@@ -836,16 +836,16 @@ public static class OverlayController
 
                 if (!_finished && _activeWindow is not null)
                 {
-                    // Session-start activation ladder (item 3a) — the same three-tier escalation
+                    // Session-start activation ladder (item 3a) - the same three-tier escalation
                     // used when a text edit opens, so a hotkey/pipe-triggered session (which never
-                    // had a real OS foreground grant to begin with — see OverlayInputInterop.cs)
+                    // had a real OS foreground grant to begin with - see OverlayInputInterop.cs)
                     // starts out with the best foreground/focus this process can obtain. The
                     // cursor monitor's window (shown first) is the one activated: it's where the
                     // user is about to interact; mouse-enter re-activates others as always.
                     //
                     // Harmless no-op safety net as of 2026-08-02: this used to guard against a
                     // delayed flash-phase SetForegroundWindow call completing AFTER this Activate()
-                    // and stealing focus back — that flash-side claim has since been deleted
+                    // and stealing focus back - that flash-side claim has since been deleted
                     // outright (see FlashDimmer.ShowAll's own comment), so there is nothing left for
                     // this to invalidate in the normal case. Kept as cheap insurance in case some
                     // future change reintroduces a claim there without reintroducing this guard.
@@ -857,7 +857,7 @@ public static class OverlayController
             {
                 // Whatever partially came up must be torn down (windows closed, hook removed,
                 // flash dimmers hidden) rather than left stranded topmost on screen with no way
-                // for the user to dismiss it (audit finding C.3) — Finish is the single terminal
+                // for the user to dismiss it (audit finding C.3) - Finish is the single terminal
                 // point that does all of that, idempotently.
                 Finish(null);
                 throw;
@@ -876,12 +876,12 @@ public static class OverlayController
         /// caller). Consume-on-read (zeroes the field): a stale timestamp left over from a PREVIOUS
         /// trigger must never be attributed to this session, and reading it unconditionally
         /// (formerly gated on FlashDimmer.AnyVisible) means the flash being disabled/failed/absent
-        /// no longer silently falls back to session-start timing for a real hotkey press — S1
+        /// no longer silently falls back to session-start timing for a real hotkey press - S1
         /// re-enabled the flash by default, but this fallback still matters for ROESNIP_NO_FLASH=1
         /// and any flash-show failure.
         ///
         /// Review fix: pickOnlyMode sessions never read the shared field at all, even if one happens
-        /// to be pending — TriggerPickModeCapture never calls MarkTriggerTimestamp by design (see its
+        /// to be pending - TriggerPickModeCapture never calls MarkTriggerTimestamp by design (see its
         /// own doc comment), but the shared s_responseStartTimestamp field has no notion of WHICH
         /// trigger it belongs to, so without this guard a pick-mode session could silently inherit an
         /// unrelated, possibly stale, hotkey-press timestamp (e.g. one left behind by an earlier
@@ -903,19 +903,19 @@ public static class OverlayController
 
         /// <summary>Per-monitor flash-to-overlay handoff. Also the source of the
         /// "first-overlay-visible"/"all-overlays-visible" latency logs, which are stamped HERE
-        /// (ContentRendered — the window's first real render pass) since that's the honest
+        /// (ContentRendered - the window's first real render pass) since that's the honest
         /// "content is ready" moment, even though the actual flash-hide is deferred a beat further
-        /// — see below.
+        /// - see below.
         ///
         /// Flicker-gate fix (bright rebound at the flash-to-overlay handoff): this session
-        /// subscribes to window.ContentRendered at construction time, BEFORE window.Show() — while
+        /// subscribes to window.ContentRendered at construction time, BEFORE window.Show() - while
         /// OverlayWindow's own OnFirstContentRendered subscribes SECOND, from inside
         /// OnSourceInitialized (which Show() runs synchronously). WPF multicast events invoke
         /// subscribers in subscription order, so at the moment THIS method runs, the window is
-        /// still parked off-screen (OverlayWindow.OffScreenX) — its own on-screen SetWindowPos
+        /// still parked off-screen (OverlayWindow.OffScreenX) - its own on-screen SetWindowPos
         /// hasn't happened yet. Hiding the flash right here would uncover the (still-dim, but very
         /// real) desktop underneath for the beat until OnFirstContentRendered moves the window
-        /// on-screen — a luma sampler measured this as a reproducible ~18-30 ms bright rebound
+        /// on-screen - a luma sampler measured this as a reproducible ~18-30 ms bright rebound
         /// exactly at first-overlay-visible. Deferring FlashDimmer.HideForMonitor to
         /// DispatcherPriority.Background pushes it past the REST of this synchronous ContentRendered
         /// dispatch (which runs OnFirstContentRendered's on-screen SetWindowPos right after this
@@ -928,15 +928,15 @@ public static class OverlayController
         /// Torn-down-session NRE guard (found via rapid automated trigger/escape cycling): for a
         /// non-pooled window this method is reached via `window.ContentRendered += (_, _) =>
         /// OnOverlayContentRendered(window)`, subscribed in RunAsync BEFORE window.Show(). WPF does
-        /// not raise ContentRendered synchronously — it's queued and fires on a later dispatcher
+        /// not raise ContentRendered synchronously - it's queued and fires on a later dispatcher
         /// pass once the render thread has actually composited a frame. A fast enough Cancel/
         /// CancelStage-to-empty (Esc arriving before that render pass has run) reaches Finish()
         /// first: Finish sets `_finished = true` and then calls window.CloseOverlay() -> Close(),
         /// whose OnClosed handler (OverlayWindow.xaml.cs) deliberately nulls `_frame` to release the
-        /// session's pixel buffers early — see that method's own doc comment, which assumed (wrongly
+        /// session's pixel buffers early - see that method's own doc comment, which assumed (wrongly
         /// under this race) that "nothing reads Frame/Monitor after OnClosed". The already-queued
         /// ContentRendered then fires anyway on the closed window, invoking this method, which reads
-        /// `window.Monitor` (= `_frame.Monitor`) below — a NullReferenceException on `_frame`, which
+        /// `window.Monitor` (= `_frame.Monitor`) below - a NullReferenceException on `_frame`, which
         /// crashed the whole process since this runs on the dispatcher thread with nothing above it
         /// to catch. `_finished` is exactly the flag Finish() sets before doing any of that teardown,
         /// so bailing out here the moment it's set is both necessary and sufficient: every side
@@ -986,7 +986,7 @@ public static class OverlayController
         }
 
         /// <summary>Flash-phase Esc that arrived (via its queued keydown) after this session
-        /// already opened — treat it exactly like a normal Esc press.</summary>
+        /// already opened - treat it exactly like a normal Esc press.</summary>
         internal void CancelStageFromFlash() => OnCommand(OverlayCommand.CancelStage);
 
         /// <summary>Mouse-enter (or a click) on another overlay activates it, per docs/architecture.md - only
@@ -1034,13 +1034,13 @@ public static class OverlayController
         /// each call site). Delegates the actual clamp/intersect/real-edge math to
         /// SpanningSelectionMath.Distribute (pure, unit-tested) and only does the WINDOW-touching
         /// side effect here: pushing each monitor's own intersection (or null) into that window via
-        /// SetSpanningLocalSelection — which is the SAME dim-mask/adorner/toolbar-placement pipeline
+        /// SetSpanningLocalSelection - which is the SAME dim-mask/adorner/toolbar-placement pipeline
         /// every ordinary single-monitor selection already used, just fed a different rect. Degrades
         /// to exactly the old per-window behavior whenever the candidate only ever touches one
         /// monitor (the common case): <see cref="_spanningVirtual"/> stays null, and that one
         /// window's own SetSpanningLocalSelection call is functionally identical to the old direct
         /// SetSelection call it replaced. <paramref name="preserveSize"/> is true only for a
-        /// SpanningMove candidate (see OverlayWindow's own call sites) — a move drag shifts every
+        /// SpanningMove candidate (see OverlayWindow's own call sites) - a move drag shifts every
         /// edge by the same delta, so a candidate that needs pulling back inside the virtual desktop
         /// must SLIDE (keep its width/height), never get clamped edge-by-edge the way a resize
         /// correctly does (see SpanningSelectionMath.SlideToBounds's own doc comment for why the two
@@ -1060,7 +1060,7 @@ public static class OverlayController
 
             // A Move drag must never delete an already-placed spanning selection out from under the
             // user with no way to undo it via the very gesture that caused it. SlideToBounds only
-            // guarantees the candidate stays inside the virtual desktop's own bounding BOX — with
+            // guarantees the candidate stays inside the virtual desktop's own bounding BOX - with
             // non-adjacent monitors (a gap between them), a same-size rect can still land entirely in
             // that gap and intersect nothing, which would otherwise zero out every window's slice mid
             // -drag. When that happens during a preserveSize (Move) candidate and a spanning selection
@@ -1072,13 +1072,13 @@ public static class OverlayController
             }
 
             // The owner's own monitor can stop intersecting the candidate entirely while the
-            // selection still spans ≥2 OTHER monitors (drag the left edge of a 3-monitor span
-            // rightward past the leftmost monitor's own boundary, for instance) — the owner is who
+            // selection still spans >=2 OTHER monitors (drag the left edge of a 3-monitor span
+            // rightward past the leftmost monitor's own boundary, for instance) - the owner is who
             // most recently drove the drag, but it is no longer guaranteed to hold a slice. Falling
             // back to "no window is primary" in that case would hide the toolbar and the true-size
             // badge on EVERY window (see SetSpanningLocalSelection's SuppressBadge/isPrimary doc
             // comments), even though the selection is perfectly valid and just as reachable as any
-            // other spanning selection — so fall back to the lowest-indexed monitor that still holds
+            // other spanning selection - so fall back to the lowest-indexed monitor that still holds
             // a slice, a deterministic choice that's stable across repeated calls with the same
             // distribution (Hits is built in monitor-index order, so Hits[0] is always that monitor).
             int ownerIndex = _windows.IndexOf(owner);
@@ -1105,7 +1105,7 @@ public static class OverlayController
                     }
                 }
                 bool isPrimary = i == primaryIndex;
-                // dragInProgress: true — this call only ever runs while a NewSelection/SpanningResize/
+                // dragInProgress: true - this call only ever runs while a NewSelection/SpanningResize/
                 // SpanningMove drag's mouse-move is live (see OnSpanningCandidate's own doc comment),
                 // including for every non-owner window; see OverlayWindow's
                 // _suppressToolbarForSpanningDrag doc comment for why that matters.
@@ -1126,14 +1126,14 @@ public static class OverlayController
             }
         }
 
-        /// <summary>Mouse-up (or the `select` automation command) finalizing a NewSelection drag —
+        /// <summary>Mouse-up (or the `select` automation command) finalizing a NewSelection drag -
         /// or, as of resize-after-place, a SpanningResize/SpanningMove drag too; all three feed
         /// OnSpanningCandidate on every move and land here on release, so this method never needed to
         /// change to support the other two. Applies the existing "<2px on either axis = cancel, not a
         /// real selection" rule against the TRUE selection size: the shared virtual rect while
         /// spanning, or else the single owning window's own local rect exactly as the pre-existing
         /// code did. (Judging the rule against just the calling window's own local slice would be
-        /// wrong while spanning — that slice can legitimately be a couple of pixels wide right at a
+        /// wrong while spanning - that slice can legitimately be a couple of pixels wide right at a
         /// monitor seam even though the overall selection is large.) Every window's own
         /// SetSpanningLocalSelection call from the drag's last OnSpanningCandidate already left
         /// correct state in place; this only needs to act when the result must be discarded as too
@@ -1153,7 +1153,7 @@ public static class OverlayController
             }
 
             // Every window took part in the drag's distribute step (see OnSpanningCandidate), not
-            // just the owner or, while spanning, just the primary — each one picked up
+            // just the owner or, while spanning, just the primary - each one picked up
             // dragInProgress:true on every mouse-move and needs it cleared now that the drag has
             // genuinely ended, or a non-owner window's toolbar would stay suppressed forever (see
             // OverlayWindow._suppressToolbarForSpanningDrag's own doc comment). Harmless/no-op for
@@ -1179,7 +1179,7 @@ public static class OverlayController
         /// (monitor-relative) selection rect, and where that slice lands in the composite canvas
         /// (top-left-relative to the virtual selection rect's own origin). Computed once by
         /// <see cref="ComputeSpanningCropGeometry"/> and consumed by BOTH the SDR (BGRA8,
-        /// RenderSpanningSelection) and HDR (raw FP16, BuildSpanningFrameCropsForHdr) composites —
+        /// RenderSpanningSelection) and HDR (raw FP16, BuildSpanningFrameCropsForHdr) composites -
         /// same geometry, two different pixel sources, so the offset math lives in exactly one
         /// place.</summary>
         private readonly record struct SpanningCropGeometry(OverlayWindow Window, RectPhysical CropLocal, int DestX, int DestY);
@@ -1208,12 +1208,12 @@ public static class OverlayController
         }
 
         /// <summary>Byte-composites the final spanning selection (multimon-selection): crops each
-        /// intersecting window's own ALREADY tone-mapped preview (SdrImage.Crop — the same crop every
+        /// intersecting window's own ALREADY tone-mapped preview (SdrImage.Crop - the same crop every
         /// single-monitor render already does) and copies it into a canvas sized to the virtual
         /// selection rect, at that window's own virtual-desktop-relative offset. Never touches
-        /// FP16/tone-mapping — this only ever combines bytes each window's own OverlayWindow.Preview
+        /// FP16/tone-mapping - this only ever combines bytes each window's own OverlayWindow.Preview
         /// already tone-mapped with ITS OWN monitor's photometrics, per the hard constraint. Gaps (no
-        /// captured monitor covers part of the rect) are left OPAQUE BLACK — a deliberate, documented
+        /// captured monitor covers part of the rect) are left OPAQUE BLACK - a deliberate, documented
         /// choice (see docs/architecture.md), not an accidental default. Annotations are
         /// never burned in here: a spanning selection can never have any (see
         /// OverlayWindow.SetSpanningLocalSelection), so this is a plain array composite, not a
@@ -1226,7 +1226,7 @@ public static class OverlayController
             var pixels = new byte[width * 4 * height];
             for (int i = 3; i < pixels.Length; i += 4)
             {
-                pixels[i] = 255; // opaque black canvas — see the doc comment above for why
+                pixels[i] = 255; // opaque black canvas - see the doc comment above for why
             }
 
             foreach (var geo in ComputeSpanningCropGeometry(virtualRect))
@@ -1250,16 +1250,16 @@ public static class OverlayController
         }
 
         /// <summary>HDR save for a spanning selection: packages each contributing window's own RAW
-        /// CapturedFrame (untouched FP16 scRGB, or Bgra8Srgb for a degenerate SDR-only monitor —
+        /// CapturedFrame (untouched FP16 scRGB, or Bgra8Srgb for a degenerate SDR-only monitor -
         /// JxrWriter.WriteSpanning decodes either uniformly via CapturedFrame.ReadPixelScRgb, exactly
         /// like the single-monitor JxrWriter.Write already does) with the SAME crop-local-rect/dest-
-        /// offset geometry ComputeSpanningCropGeometry hands the SDR composite above — the two
+        /// offset geometry ComputeSpanningCropGeometry hands the SDR composite above - the two
         /// composites are geometrically identical, only the pixel source and the sink (BGRA8 canvas
         /// vs. a WIC 128bppRGBAFloat encode) differ. This is what makes the stitch well-defined
         /// despite different monitors' own SDR-white/peak photometrics (see
         /// docs/architecture.md "Cross-monitor selection"): raw scRGB is ONE
         /// absolute linear space (1.0 = 80 nits) for every monitor, so per-monitor photometrics never
-        /// enter into it — they only matter for TONE-MAPPING (SdrImage.FromCapturedFrame), a
+        /// enter into it - they only matter for TONE-MAPPING (SdrImage.FromCapturedFrame), a
         /// completely different code path this never touches. Program.cs (WP-A) calls this via
         /// OverlayResult.SpanningFrameCrops + the AppComposition.WriteJxrSpanning hook, mirroring how
         /// the non-spanning path already threads SourceFrame/SelectionPx through for
@@ -1332,7 +1332,7 @@ public static class OverlayController
                     break;
 
                 case OverlayCommand.SaveHdr:
-                    // Sets SaveHdrRequested=true on the eventual result only — the actual HDR
+                    // Sets SaveHdrRequested=true on the eventual result only - the actual HDR
                     // write happens back in AppComposition.RunCaptureFlowAsync using SourceFrame +
                     // SelectionPx ("does not call any HDR-export API itself").
                     Confirm(copy: _settings.CopyOnSelect, save: false, saveHdr: true);
@@ -1353,7 +1353,7 @@ public static class OverlayController
         }
 
         /// <summary>Record MP4/GIF: unlike Copy/Save/SaveHdr this performs no clipboard/PNG/HDR I/O
-        /// itself — it packages (Monitor, SelectionPx, Format) onto the OverlayResult and closes the
+        /// itself - it packages (Monitor, SelectionPx, Format) onto the OverlayResult and closes the
         /// overlay normally. The actual WGC capture session starts back in
         /// AppComposition.RunCaptureFlowAsync via the StartRecording hook, exactly like SaveHdr's
         /// write happens back there via WriteJxr.</summary>
@@ -1375,7 +1375,7 @@ public static class OverlayController
             try
             {
                 // Still needed: OverlayResult.RenderedImage is non-nullable, and recording ignores
-                // annotations on the video itself — this is a cheap one-time crop+composite of a
+                // annotations on the video itself - this is a cheap one-time crop+composite of a
                 // still frame, not a per-frame cost. Keeps every call site (including this one) able
                 // to rely on RenderedImage always being populated, avoiding a nullability change to
                 // a record every other path already depends on.
@@ -1402,15 +1402,15 @@ public static class OverlayController
         /// <summary>Cross-monitor selection's own Record path (spanning-recording integration): the
         /// GATE that used to sit in the non-spanning Record() above is gone now that a spanning-aware
         /// recorder actually exists (RecordingSession.BeginCapture re-derives the intersected monitor
-        /// set itself and takes the spanning path — SpanningCanvasCompositor / EncoderLoopSpanning —
+        /// set itself and takes the spanning path - SpanningCanvasCompositor / EncoderLoopSpanning -
         /// whenever that set has 2+ monitors; see that method's own doc comment). This method's ONLY
         /// job is producing an OverlayResult whose (Monitor, SelectionPx) round-trips back to the
-        /// correct ABSOLUTE selection rect once it reaches RecordingSession — it does not, and must
+        /// correct ABSOLUTE selection rect once it reaches RecordingSession - it does not, and must
         /// not, know anything about spanning capture itself.
         ///
         /// Mirrors ConfirmSpanning's own anchor-monitor convention: <paramref name="primary"/> (the
         /// window that most recently drove the drag, or the lowest-indexed monitor still holding a
-        /// slice — see OnSpanningCandidate) stands in for OverlayResult.Monitor/SourceFrame, which
+        /// slice - see OnSpanningCandidate) stands in for OverlayResult.Monitor/SourceFrame, which
         /// only need to satisfy that record's non-nullable shape here (recording never reads them for
         /// anything beyond RecordingSession.Start()'s own coordinate conversion below).
         ///
@@ -1419,7 +1419,7 @@ public static class OverlayController
         /// ABSOLUTE rect by adding Monitor.BoundsPx's own origin. So packaging the anchor monitor as
         /// Monitor and the virtual (already-absolute) spanning rect converted to be relative to THAT
         /// monitor's own origin as SelectionPx reproduces the exact same absolute rect on the other
-        /// side — plain RectPhysical arithmetic done inline here (not
+        /// side - plain RectPhysical arithmetic done inline here (not
         /// Recording.MultiMonitorRecording.ToMonitorRelative, which is the WP-D-internal helper
         /// RecordingController.cs itself uses for the identical conversion) because Overlay must not
         /// reference Recording package types directly, per OverlayResult's own doc comment ("Only the
@@ -1431,7 +1431,7 @@ public static class OverlayController
             try
             {
                 // Same "cheap one-time composite, RenderedImage is non-nullable" reasoning as the
-                // non-spanning Record() above — recording never reads this still image once capture
+                // non-spanning Record() above - recording never reads this still image once capture
                 // starts, it only exists to keep OverlayResult's shape uniform across every producer.
                 rendered = RenderSpanningSelection(virtualRect);
             }
@@ -1460,17 +1460,17 @@ public static class OverlayController
             Finish(result);
         }
 
-        /// <summary>Toolbar Share button (Sharing/* subsystem, default-provider path only — see
+        /// <summary>Toolbar Share button (Sharing/* subsystem, default-provider path only - see
         /// OverlayCommand.Share's own doc comment for the per-provider-dropdown scope note). Renders
-        /// the CURRENT selection through the exact same path Copy uses — RenderSelectionWithAnnotations
+        /// the CURRENT selection through the exact same path Copy uses - RenderSelectionWithAnnotations
         /// for a single-monitor selection, RenderSpanningSelection for a spanning one (same
         /// _spanningVirtual/_spanningPrimaryWindow check every other spanning-aware command here
-        /// uses) — so whatever gets shared is pixel-identical to what Ctrl+C would have put on the
+        /// uses) - so whatever gets shared is pixel-identical to what Ctrl+C would have put on the
         /// clipboard.
         ///
         /// Unlike the old stay-open design, this now closes the overlay IMMEDIATELY (Finish(), same
         /// as Copy/Save/Record) once the upload has been handed off to
-        /// <see cref="RoeSnip.Sharing.ShareFlowPresenter"/> — progress/success/failure now live in
+        /// <see cref="RoeSnip.Sharing.ShareFlowPresenter"/> - progress/success/failure now live in
         /// that presenter's own ShareResultWindow, a small always-on-top toast that outlives the
         /// overlay, so there is no longer any reason to keep single-use overlay windows around for
         /// the whole upload. The render (a one-time crop/composite) still happens synchronously here,
@@ -1485,7 +1485,7 @@ public static class OverlayController
             // Sharing/* subsystem (doc-honesty/unify-to-one-source fix): resolved from the SAME
             // settings snapshot ShowToolbar's own SetShareProviders call populates the dropdown
             // from (toolbarWindow.LiveSettings), not this session's own separately-snapshotted
-            // _settings field — see OverlayWindow.LiveSettings' own doc comment for why the two used
+            // _settings field - see OverlayWindow.LiveSettings' own doc comment for why the two used
             // to be able to disagree.
             var config = RoeSnip.Core.Sharing.ShareManager.ResolveDefault(
                 toolbarWindow!.LiveSettings.ShareProviders, toolbarWindow!.LiveSettings.DefaultShareProviderId);
@@ -1503,9 +1503,9 @@ public static class OverlayController
         }
 
         /// <summary>The dropdown's per-provider Share (Sharing/* subsystem, senior-review wiring
-        /// fix — this used to be raised by ToolbarControl and simply discarded, a clickable-but-dead
+        /// fix - this used to be raised by ToolbarControl and simply discarded, a clickable-but-dead
         /// menu item). Renders the current selection exactly like <see cref="ShareCurrentSelection"/>
-        /// does; the only difference is which provider config the render gets uploaded to — resolved
+        /// does; the only difference is which provider config the render gets uploaded to - resolved
         /// by id against the SAME <see cref="OverlayWindow.LiveSettings"/> source the dropdown itself
         /// was populated from, so a choice visible in the menu can never fail to resolve here.</summary>
         private void ShareToSpecificProvider(string providerId)
@@ -1520,7 +1520,7 @@ public static class OverlayController
             if (config is null)
             {
                 // The dropdown (ToolbarControl.SetShareProviders) is only ever populated with
-                // currently-enabled providers, so this should be unreachable in practice — same
+                // currently-enabled providers, so this should be unreachable in practice - same
                 // defensive-honesty stance ShareCurrentSelection's own no-provider branch takes,
                 // kept in case a provider was disabled/removed out from under an already-open menu.
                 _notifier?.ShowError("Share failed: the selected provider is no longer configured.");
@@ -1532,12 +1532,12 @@ public static class OverlayController
         }
 
         /// <summary>Shared render step for both <see cref="ShareCurrentSelection"/> (default
-        /// provider) and <see cref="ShareToSpecificProvider"/> (dropdown pick) — everything the two
+        /// provider) and <see cref="ShareToSpecificProvider"/> (dropdown pick) - everything the two
         /// used to duplicate verbatim except which provider config the render gets uploaded to.
         /// Returns false (all out params default) on any no-op/failure condition, matching
         /// Confirm/Record's own "nothing selected yet" and render-failure guards.
         /// <paramref name="finishResult"/> is the OverlayResult the caller passes straight to
-        /// Finish() right after starting the upload — built the same way Record()/RecordSpanning()
+        /// Finish() right after starting the upload - built the same way Record()/RecordSpanning()
         /// build theirs (RecordingRequested left null here, since sharing has nothing further for
         /// AppComposition to do beyond the settings.AutoSaveHdrCopy check every other Confirm/Record
         /// result already goes through).</summary>
@@ -1569,7 +1569,7 @@ public static class OverlayController
                 var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
                 if (window is null)
                 {
-                    return false; // nothing selected yet — same no-op guard as Confirm/Record
+                    return false; // nothing selected yet - same no-op guard as Confirm/Record
                 }
                 toolbarWindow = window;
                 try
@@ -1607,7 +1607,7 @@ public static class OverlayController
             return true;
         }
 
-        /// <summary>Hands the prepared render off to the shared presenter and returns immediately —
+        /// <summary>Hands the prepared render off to the shared presenter and returns immediately -
         /// the overlay's own Finish() runs right after this, per ShareCurrentSelection/
         /// ShareToSpecificProvider above. SetShareBusy(true) here is now just a momentary double-click
         /// guard (the window is closing anyway), matching that method's own updated doc comment.</summary>
@@ -1624,10 +1624,10 @@ public static class OverlayController
         /// <summary>Esc's two-stage behavior, decided here because only the session can see every
         /// monitor: the selection may live on a different window than the one that has keyboard
         /// focus. Stage 1 clears the in-progress snip (selection + annotations, back to the
-        /// crosshair state); stage 2 — nothing active at all — closes the whole overlay. Each Esc
+        /// crosshair state); stage 2 - nothing active at all - closes the whole overlay. Each Esc
         /// press performs exactly one stage. (An active inline text edit is a third, innermost
         /// stage, but it's consumed locally by OverlayWindow.ProcessKeyCommand before CancelStage is
-        /// ever raised — see OverlayCommand's doc comment.)</summary>
+        /// ever raised - see OverlayCommand's doc comment.)</summary>
         private void CancelStage()
         {
             bool clearedSnip = false;
@@ -1640,7 +1640,7 @@ public static class OverlayController
                 }
             }
             // Cross-monitor selection: the shared spanning state is session-level, not any one
-            // window's — clear it unconditionally alongside every window's own ClearSelection above
+            // window's - clear it unconditionally alongside every window's own ClearSelection above
             // (a harmless no-op when nothing was spanning).
             _spanningVirtual = null;
             _spanningPrimaryWindow = null;
@@ -1661,7 +1661,7 @@ public static class OverlayController
             var window = _windows.FirstOrDefault(w => w.SelectionPx is not null);
             if (window is null)
             {
-                return; // nothing selected yet — Enter/Ctrl+C/Ctrl+S/Save-HDR are no-ops until then
+                return; // nothing selected yet - Enter/Ctrl+C/Ctrl+S/Save-HDR are no-ops until then
             }
 
             SdrImage rendered;
@@ -1730,9 +1730,9 @@ public static class OverlayController
         /// composite instead of a single window's annotated crop, and packages the result with
         /// <see cref="OverlayResult.SpanningVirtualSelectionPx"/>/<see
         /// cref="OverlayResult.SpanningFrameCrops"/> set. Save HDR (<paramref name="saveHdr"/>) is
-        /// genuinely supported now — see BuildSpanningFrameCropsForHdr's own doc comment for why
+        /// genuinely supported now - see BuildSpanningFrameCropsForHdr's own doc comment for why
         /// stitching raw scRGB crops is well-defined where stitching already-tone-mapped ones would
-        /// not be — SpanningFrameCrops is populated unconditionally (not just when saveHdr is true),
+        /// not be - SpanningFrameCrops is populated unconditionally (not just when saveHdr is true),
         /// same as the non-spanning path always carries SourceFrame/SelectionPx regardless of what
         /// the user clicked, so Program.cs's settings.AutoSaveHdrCopy branch works identically for a
         /// spanning result too.</summary>
@@ -1770,7 +1770,7 @@ public static class OverlayController
                 savedPath = TryShowSaveDialog(primary);
                 if (savedPath is null)
                 {
-                    return; // user cancelled the Save dialog — stay open, same as the single-monitor path
+                    return; // user cancelled the Save dialog - stay open, same as the single-monitor path
                 }
 
                 try
@@ -1830,7 +1830,7 @@ public static class OverlayController
             }
             _finished = true;
 
-            // This is the single terminal point every session exit path funnels through — normal
+            // This is the single terminal point every session exit path funnels through - normal
             // Cancel/CancelStage-to-empty/Confirm-Copy-Save-SaveHdr commands call it directly, and
             // an exception partway through RunAsync's construct/show loop reaches it via that
             // loop's catch block (as does an externally-closed window's Closed event, e.g.
@@ -1849,7 +1849,7 @@ public static class OverlayController
                     catch (InvalidOperationException)
                     {
                         // Already closing (e.g. this Finish was triggered by that window's own
-                        // Closed event, such as an external Alt+F4) — nothing further to do for it.
+                        // Closed event, such as an external Alt+F4) - nothing further to do for it.
                     }
                 }
             }
@@ -1863,15 +1863,15 @@ public static class OverlayController
                 }
                 // Harmless no-op safety net, same reasoning as the session-start Activate() call
                 // above (2026-08-02): ShowAll no longer stakes a flash-phase foreground claim, so
-                // there is nothing left for this to invalidate in the normal case — kept as cheap
+                // there is nothing left for this to invalidate in the normal case - kept as cheap
                 // insurance in case some future change reintroduces one.
                 FlashDimmer.InvalidateForegroundClaim();
                 try { FlashDimmer.HideAll(); }
                 catch (Exception ex) { FileLog.Write($"RoeSnip: flash dimmer hide failed: {ex.Message}"); }
 
-                // D4: this session's windows (whichever came from the pool, if any — see
+                // D4: this session's windows (whichever came from the pool, if any - see
                 // OverlayWindowPool.TryTake) are gone now, so re-provision a fresh pool for the NEXT
-                // trigger — deferred to ContextIdle so it never contends with THIS session's own
+                // trigger - deferred to ContextIdle so it never contends with THIS session's own
                 // teardown or, more importantly, a rapid re-trigger's fallback path (G3).
                 try
                 {
@@ -1887,14 +1887,14 @@ public static class OverlayController
             _completion.TrySetResult(result);
         }
 
-        // ---------- Automation hooks (App/AutomationServer.cs) — see OverlayController's own
+        // ---------- Automation hooks (App/AutomationServer.cs) - see OverlayController's own
         // wrapper methods for why these exist on this private nested class instead of being called
         // directly. ----------
 
         internal RectPhysical? GetSelectionForAutomation()
         {
             // Cross-monitor selection: the shared virtual rect IS already virtual-desktop physical
-            // pixels (the wire protocol's own convention), so it's returned as-is — no per-window
+            // pixels (the wire protocol's own convention), so it's returned as-is - no per-window
             // origin math needed, unlike the non-spanning fallback below.
             if (_spanningVirtual is { } v)
             {
@@ -1948,10 +1948,10 @@ public static class OverlayController
         {
             // Spanning-recording integration: the old unconditional refusal here ("recording is not
             // supported for a selection spanning multiple monitors") predates RecordingSession's own
-            // spanning-aware capture path — see Record()/RecordSpanning's own doc comments. A spanning
+            // spanning-aware capture path - see Record()/RecordSpanning's own doc comments. A spanning
             // selection now only needs the same "something is actually selected" guard every other
             // selection shape already gets below (_spanningVirtual is non-null only once a real
-            // spanning selection exists — see that field's own doc comment — so there is no separate
+            // spanning selection exists - see that field's own doc comment - so there is no separate
             // spanning check left to make here).
             if (_spanningVirtual is null && _windows.FirstOrDefault(w => w.SelectionPx is not null) is null)
             {
@@ -1995,7 +1995,7 @@ public static class OverlayController
 
                 case "share":
                     // Sharing/* subsystem: raises the exact OverlayCommand.Share the toolbar's Share
-                    // button raises — hands the render to ShareFlowPresenter and closes the overlay
+                    // button raises - hands the render to ShareFlowPresenter and closes the overlay
                     // immediately, same as copy/save (this response's trailing state snapshot no
                     // longer shows the overlay); the upload's own progress/result now arrives via the
                     // presenter's own ShareResultWindow, entirely outside this response.
@@ -2047,7 +2047,7 @@ public static class OverlayController
                     CopyPerformed: false, SavedPngPath: path, SaveHdrRequested: false,
                     RecordingRequested: null, SpanningVirtualSelectionPx: spanningRect,
                     // Automation's "save" action is PNG-only (see this method's own doc comment /
-                    // ConfirmForAutomation's), same as SaveHdrRequested staying false above — but
+                    // ConfirmForAutomation's), same as SaveHdrRequested staying false above - but
                     // SpanningFrameCrops is still populated so settings.AutoSaveHdrCopy (which is
                     // independent of what this particular call asked for) keeps working for an
                     // automation-driven spanning save exactly like it does for an interactive one.
@@ -2088,10 +2088,10 @@ public static class OverlayController
             Finish(localResult);
         }
 
-        /// <summary>The MonitorInfo for every monitor this session captured — used only to know
+        /// <summary>The MonitorInfo for every monitor this session captured - used only to know
         /// which monitors OverlayWindowPool.ScheduleReprovision should rebuild the pool for.
         /// CapturedFrame.Monitor stays valid even after the frame itself is Dispose()'d (Dispose
-        /// only nulls the pixel buffer — see CapturedFrame), so this is safe to call from Finish()
+        /// only nulls the pixel buffer - see CapturedFrame), so this is safe to call from Finish()
         /// regardless of whether the caller has already disposed these frames.</summary>
         private List<MonitorInfo> SessionMonitorInfos()
         {
@@ -2112,7 +2112,7 @@ file static class ModuleInit
     {
         AppComposition.RunOverlay = OverlayController.RunAsync;
         // Review fix (r5-latency S2): lets Program.cs (WP-A) discard a pending trigger timestamp
-        // from RunCaptureFlowAsync's dead-end paths without taking a direct WP-B dependency — see
+        // from RunCaptureFlowAsync's dead-end paths without taking a direct WP-B dependency - see
         // OverlayController.ClearPendingTrigger's doc comment.
         AppComposition.ClearPendingOverlayTrigger = OverlayController.ClearPendingTrigger;
     }

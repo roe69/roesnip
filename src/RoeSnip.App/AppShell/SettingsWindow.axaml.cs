@@ -40,8 +40,8 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     private readonly Action _resumeGlobalHotkey;
 
     /// <summary>Sharing/* subsystem (item 12): ShareProvidersWindow self-persists (SettingsStore.Save)
-    /// the moment a provider is added/edited/removed — same "writes immediately" precedent this
-    /// window already sets for run-at-startup — rather than waiting for THIS window's own Save
+    /// the moment a provider is added/edited/removed - same "writes immediately" precedent this
+    /// window already sets for run-at-startup - rather than waiting for THIS window's own Save
     /// button. _current tracks that so SaveButton_Click bases its own `with` update off the latest
     /// on-disk ShareProviders/DefaultShareProviderId instead of the possibly-stale _original snapshot
     /// captured when this window was opened; every other field still only takes effect on Save
@@ -61,7 +61,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     private uint _pendingUploadVirtualKey;
 
     // Item 15: the "Restart elevated now" flow needs to exit this WHOLE app (releasing the
-    // single-instance lock) so the elevated task can take over — mirrors the WPF app's own
+    // single-instance lock) so the elevated task can take over - mirrors the WPF app's own
     // RestartElevatedNow exiting its WinForms message loop. TrayApp supplies this the same way it
     // supplies suspendGlobalHotkey/resumeGlobalHotkey above.
     private readonly Action _exitApplication;
@@ -313,7 +313,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     }
 
     // Avalonia's CheckBox (Avalonia.Controls.Primitives.ToggleButton) has no separate Checked/
-    // Unchecked routed events the way WPF's does — one IsCheckedChanged event covers both, so the
+    // Unchecked routed events the way WPF's does - one IsCheckedChanged event covers both, so the
     // WPF app's two handlers (RunElevatedCheckBox_Checked/_Unchecked) collapse into this one.
     private void RunElevatedCheckBox_IsCheckedChanged(object? sender, RoutedEventArgs e) =>
         ToggleElevatedStartup(enable: RunElevatedCheckBox.IsChecked == true);
@@ -585,15 +585,15 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         await window.ShowDialog(this);
 
         // ShareProvidersWindow persists its own edits immediately (see this window's own field-level
-        // doc comment on _current) — reload from disk so this window's combo/eventual Save reflect
+        // doc comment on _current) - reload from disk so this window's combo/eventual Save reflect
         // whatever the user just changed, rather than the snapshot taken when Settings was opened.
-        // Every OTHER field in this window is still only staged locally until Save is clicked — only
+        // Every OTHER field in this window is still only staged locally until Save is clicked - only
         // ShareProviders is meant to have been persisted by the sub-window (which never touches
-        // DefaultShareProviderId — see ShareProvidersWindow.RemoveAndSave for the one exception,
+        // DefaultShareProviderId - see ShareProvidersWindow.RemoveAndSave for the one exception,
         // clearing it when its own current provider is removed, a narrow case
         // ShareManager.ResolveDefault already tolerates by falling back to the first enabled
         // provider), so pull just that one field off the freshly-loaded settings and keep everything
-        // else — INCLUDING DefaultShareProviderId — as this window's own in-progress (possibly
+        // else - INCLUDING DefaultShareProviderId - as this window's own in-progress (possibly
         // unsaved) edits. DefaultShareProviderId is edited by THIS window's own combo
         // (DefaultShareProviderCombo_SelectionChanged, staged onto _current same as every other field
         // below); pulling it from disk here would silently discard a combo selection the user made
@@ -668,7 +668,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         uint? virtualKey = MapKeyToVirtualKey(key);
         if (virtualKey is null)
         {
-            HotkeyDisplay.Text = "Unsupported key — press another combination...";
+            HotkeyDisplay.Text = "Unsupported key - press another combination...";
             return;
         }
 
@@ -781,7 +781,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
 
     /// <summary>Maps an Avalonia <see cref="Key"/> to the Windows virtual-key code the settings
     /// store persists (HotkeyModifiers/HotkeyVirtualKey keep their Windows
-    /// VK/MOD_* shape on every OS). The inverse of HotkeyManager.VirtualKeyToKeyCode's coverage —
+    /// VK/MOD_* shape on every OS). The inverse of HotkeyManager.VirtualKeyToKeyCode's coverage -
     /// the same key set is supported on both ends.</summary>
     internal static uint? MapKeyToVirtualKey(Key key) => key switch
     {
@@ -898,7 +898,7 @@ public partial class SettingsWindow : Avalonia.Controls.Window
         bool runAtStartup = RunAtStartupCheckBox.IsChecked == true;
 
         // Based on _current, not _original: _current already reflects any ShareProviders/
-        // DefaultShareProviderId edits made (and self-persisted) via ManageProvidersButton_Click —
+        // DefaultShareProviderId edits made (and self-persisted) via ManageProvidersButton_Click -
         // see that field's own doc comment. Every other field below is still this window's own
         // normal deferred-until-Save behavior, unchanged.
         var updated = _current with
@@ -966,9 +966,9 @@ public partial class SettingsWindow : Avalonia.Controls.Window
     }
 
     /// <summary>Validates the raw Knee/Peak override text boxes before they're allowed into
-    /// RoeSnipSettings (ported unchanged from the WPF window — audit finding F). ToneMapper also
+    /// RoeSnipSettings (ported unchanged from the WPF window - audit finding F). ToneMapper also
     /// defensively sanitizes bad values at map-time, but bad input must never be SAVED in the
-    /// first place: PeakOverride == Knee divides by zero downstream (NaN → HDR highlights render
+    /// first place: PeakOverride == Knee divides by zero downstream (NaN -> HDR highlights render
     /// as black), and Knee greater than Peak silently hard-clips the entire frame. Blank boxes
     /// mean "no override" (null).</summary>
     private bool TryValidateToneMapOverrides(out double? kneeOverride, out double? peakOverride, out string? error)

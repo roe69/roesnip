@@ -27,11 +27,11 @@ public sealed class CaptureService
     /// if null). Per monitor: try DesktopDuplicationCapturer; on CaptureException, try WgcCapturer;
     /// on CaptureException from both, log to stderr and OMIT that monitor from the result (does not
     /// throw). If <paramref name="onlyMonitorIndex"/> is set, only that monitor is attempted.
-    /// Monitors are captured in PARALLEL — each capture is fully independent (its own D3D device;
+    /// Monitors are captured in PARALLEL - each capture is fully independent (its own D3D device;
     /// the WGC frame pool is CreateFreeThreaded) and on a 3-monitor machine this cuts the hotkey
     /// latency roughly to the slowest single monitor instead of the sum of all three.
     /// Returns frames in the same order as the input monitor list. Empty result means every
-    /// monitor failed — callers (CLI / AppComposition) treat that as a hard failure.</summary>
+    /// monitor failed - callers (CLI / AppComposition) treat that as a hard failure.</summary>
     public IReadOnlyList<CapturedFrame> CaptureAll(
         IReadOnlyList<MonitorInfo>? monitors = null,
         int? onlyMonitorIndex = null)
@@ -60,10 +60,10 @@ public sealed class CaptureService
         return results;
     }
 
-    /// <summary>One monitor's capture with the DD→WGC fallback policy. Returns null (after logging)
+    /// <summary>One monitor's capture with the DD->WGC fallback policy. Returns null (after logging)
     /// if both paths failed. Consults the persisted CaptureCache memo (docs/architecture.md "Failure modes",
-    /// DD black-frame quirk): once DD is deemed broken for a monitor, every later capture — in this
-    /// process AND in future launches — goes straight to WGC instead of paying the doomed DD
+    /// DD black-frame quirk): once DD is deemed broken for a monitor, every later capture - in this
+    /// process AND in future launches - goes straight to WGC instead of paying the doomed DD
     /// attempt (device creation + retry budget) again.</summary>
     private CapturedFrame? CaptureOneOrNull(MonitorInfo monitor)
     {
@@ -76,9 +76,9 @@ public sealed class CaptureService
             catch (CaptureException primaryEx)
             {
                 // Persist the skip memo ONLY for failures that prove DD is permanently broken here
-                // (the all-zero-frame quirk). Transient failures — ghost displays mid-wake, a
+                // (the all-zero-frame quirk). Transient failures - ghost displays mid-wake, a
                 // deadline-abandoned capture still holding the output's one duplication slot,
-                // access lost, timeouts — used to poison the memo forever (field-observed: a
+                // access lost, timeouts - used to poison the memo forever (field-observed: a
                 // "WinDisc" ghost display persisted in capture-cache.json); they now fall back to
                 // WGC for this capture only.
                 if (primaryEx.IndicatesPermanentlyBroken)

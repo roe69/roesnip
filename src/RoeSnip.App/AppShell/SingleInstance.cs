@@ -10,7 +10,7 @@ using RoeSnip.Core.Updates;
 
 namespace RoeSnip.App.AppShell;
 
-/// <summary>The single byte sent over the single-instance pipe — extends the WPF app's fixed
+/// <summary>The single byte sent over the single-instance pipe - extends the WPF app's fixed
 /// single meaning (capture) to a small enum matching the two bare CLI verbs
 /// plus <see cref="Exit"/> (item 13a), which implements replace-on-run: a plain (no-flag) launch
 /// asks the resident instance to exit instead of capturing, mirroring the WPF app's TrayApp.cs:
@@ -30,7 +30,7 @@ public enum InstanceSignal : byte
 /// so this code is OS-conditional only in the names (off Windows they carry
 /// the user name and the mutex is Global\, see PipeName).
 ///
-/// DELIBERATE deviation from §3.2's literal names: the plan reuses the frozen WPF app's exact
+/// DELIBERATE deviation from sec 3.2's literal names: the plan reuses the frozen WPF app's exact
 /// mutex/pipe names ("RoeSnip-SingleInstance"/"RoeSnip-SingleInstance-Capture"), but both apps run
 /// side by side on the verification machine, and
 /// sharing names would make whichever app launches second silently signal the OTHER app's capture
@@ -178,7 +178,7 @@ public sealed class SingleInstance : IDisposable
     /// then wait up to <paramref name="signalWaitTimeout"/> for it to release the mutex so this
     /// process can take over. If it does not go quietly (hung, mid-capture, or the pipe never
     /// landed), force-terminate it as a last resort and wait up to
-    /// <paramref name="killWaitTimeout"/> more — see <see cref="KillOtherInstances"/> for the
+    /// <paramref name="killWaitTimeout"/> more - see <see cref="KillOtherInstances"/> for the
     /// CRITICAL path-based discrimination that keeps this from ever touching the WPF app's own
     /// resident. Returns the acquired lock, or null if takeover could not be completed (the caller
     /// should leave the existing instance in place and exit).</summary>
@@ -224,10 +224,10 @@ public sealed class SingleInstance : IDisposable
     ///
     /// CRITICAL: RoeSnip.App's AssemblyName is also "RoeSnip" (matching the WPF app's), so
     /// <see cref="Process.GetProcessesByName"/>("RoeSnip") returns BOTH products' processes on a
-    /// machine running both. Killing by NAME alone would murder the user's separate WPF resident —
+    /// machine running both. Killing by NAME alone would murder the user's separate WPF resident -
     /// this discriminates by each candidate's own MainModule executable path instead, only killing
     /// a process whose path matches THIS app's own path (a dev/portable copy taking over another
-    /// dev/portable copy) or its install path (<see cref="UpdateManager.InstalledExePath"/> — an
+    /// dev/portable copy) or its install path (<see cref="UpdateManager.InstalledExePath"/> - an
     /// installed resident). A candidate whose path matches neither (the WPF app, or literally any
     /// other same-named binary) is left untouched. Best-effort per process; never throws out.</summary>
     private static void KillOtherInstances()
@@ -235,7 +235,7 @@ public sealed class SingleInstance : IDisposable
         var ownPaths = OwnExecutablePaths();
         if (ownPaths.Count == 0)
         {
-            // Could not resolve even our own path — refuse to guess rather than risk killing the
+            // Could not resolve even our own path - refuse to guess rather than risk killing the
             // wrong process.
             return;
         }
@@ -254,7 +254,7 @@ public sealed class SingleInstance : IDisposable
                 string? path = UpdateManager.ProcessIdentityPath(p, TryGetMainModulePath(p));
                 if (path is null || !ownPaths.Contains(Comparable(path)))
                 {
-                    continue; // not one of THIS app's own exe paths — e.g. the WPF resident.
+                    continue; // not one of THIS app's own exe paths - e.g. the WPF resident.
                 }
 
                 p.Kill();
@@ -292,7 +292,7 @@ public sealed class SingleInstance : IDisposable
         try { paths.Add(Comparable(path)); }
         catch (Exception ex) when (ex is IOException or ArgumentException or NotSupportedException)
         {
-            // Unparseable path — ignore rather than throw out of a best-effort discrimination check.
+            // Unparseable path - ignore rather than throw out of a best-effort discrimination check.
         }
     }
 
@@ -331,7 +331,7 @@ public sealed class SingleInstance : IDisposable
         }
     }
 
-    /// <summary>The resident instance's listener loop — one pipe connection per signal, exactly
+    /// <summary>The resident instance's listener loop - one pipe connection per signal, exactly
     /// like the WPF app's ListenForSignalAsync. Static: the listener only needs the pipe, not the
     /// mutex (which the resident's RunResident frame holds). <paramref name="onSignal"/> is
     /// invoked on a thread pool thread; the caller is responsible for marshalling to its UI
@@ -378,7 +378,7 @@ public sealed class SingleInstance : IDisposable
         }
         catch
         {
-            // Released from a different thread than the acquirer, or already released — the mutex
+            // Released from a different thread than the acquirer, or already released - the mutex
             // is destroyed with the process either way; disposal below is what matters.
         }
         _mutex.Dispose();

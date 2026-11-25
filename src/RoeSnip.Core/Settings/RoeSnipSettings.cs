@@ -47,8 +47,8 @@ public sealed record RoeSnipSettings
 
     /// <summary>LEGACY (superseded by the WPF app's ordered/editable ColorFormats list, not yet
     /// ported to Core): the original four per-format visibility toggles plus the short-lived
-    /// HSV/CMYK pair. Kept — read once as a migration seed once ColorFormats itself lands, never
-    /// written or displayed separately — so a downgrade to an older build still sees its choices,
+    /// HSV/CMYK pair. Kept - read once as a migration seed once ColorFormats itself lands, never
+    /// written or displayed separately - so a downgrade to an older build still sees its choices,
     /// mirroring the CustomColors -> PaletteColors migration pattern below.</summary>
     public bool ColorFormatShowHex { get; init; } = true;
     public bool ColorFormatShowRgb { get; init; } = true;
@@ -77,8 +77,8 @@ public sealed record RoeSnipSettings
     /// <summary>Custom colors chosen via the toolbar's "+" swatch, stored as "#RRGGBB", newest
     /// first, capped at 8 (LRU), rendered as extra swatches in the toolbar after the built-in
     /// presets. LEGACY as of UX round 5: superseded by <see cref="PaletteColors"/> (the whole
-    /// palette is editable now); kept — read once as migration seed, never written or displayed
-    /// separately — so a downgrade to an older build still sees its custom colors.</summary>
+    /// palette is editable now); kept - read once as migration seed, never written or displayed
+    /// separately - so a downgrade to an older build still sees its custom colors.</summary>
     public List<string> CustomColors { get; init; } = new();
 
     /// <summary>The toolbar's entire swatch palette (UX round 5, item 3): "#RRGGBB" strings in
@@ -107,7 +107,7 @@ public sealed record RoeSnipSettings
     /// - see Sharing/ShareManager.ResolveDefault.</summary>
     public string? DefaultShareProviderId { get; init; } = null;
 
-    // ---------- Recording (item 20) — ported verbatim from the WPF app's own RoeSnipSettings ----------
+    // ---------- Recording (item 20) - ported verbatim from the WPF app's own RoeSnipSettings ----------
 
     /// <summary>MP4 recording audio sources, toggled from the recording chrome's Setup panel and
     /// persisted immediately. Both default off: a screen recorder must never capture the user's

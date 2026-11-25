@@ -7,13 +7,13 @@ namespace RoeSnip.App;
 
 /// <summary>Persistent elevation via a Windows Scheduled Task, opt-in from Settings. Why this exists:
 /// when an elevated window has foreground focus, UIPI blocks a non-elevated RoeSnip from receiving
-/// the low-level keyboard hook, taking foreground, or overlaying interaction on top of it — so the
+/// the low-level keyboard hook, taking foreground, or overlaying interaction on top of it - so the
 /// snip hotkey and overlay silently stop working around admin apps. The standard fix for a tray app
 /// is a Scheduled Task with RunLevel=Highest and an onlogon trigger: Windows will start the task
 /// elevated at login with no per-launch UAC prompt, because the user already consented once when the
 /// task itself was created/registered (which does require elevation).
 ///
-/// RoeSnip stays asInvoker by default (see app.manifest) — this is opt-in only, toggled from
+/// RoeSnip stays asInvoker by default (see app.manifest) - this is opt-in only, toggled from
 /// SettingsWindow, which round-trips through exactly one UAC prompt (Program.cs's
 /// --enable-elevated-startup / --disable-elevated-startup hidden verbs) to create or delete the task.
 /// Nothing here ever silently elevates anything.</summary>
@@ -44,7 +44,7 @@ public static class ElevationManager
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr handle);
 
-    /// <summary>True if THIS process is running with an elevated token — distinct from merely being
+    /// <summary>True if THIS process is running with an elevated token - distinct from merely being
     /// a member of the Administrators group (a split admin token under UAC is NOT elevated until the
     /// user actually consents, which is exactly the distinction this feature cares about).</summary>
     public static bool IsProcessElevated()
@@ -97,7 +97,7 @@ public static class ElevationManager
 
     /// <summary>Creates (or replaces, via /f) the "RoeSnip" scheduled task: run <paramref name="exePath"/>
     /// at the current user's logon with the highest available privileges. Registering a task with
-    /// RunLevel=Highest itself requires THIS process to already be elevated — Windows will not let a
+    /// RunLevel=Highest itself requires THIS process to already be elevated - Windows will not let a
     /// non-elevated process silently grant a task admin rights, which is exactly the round-trip
     /// Program.cs's --enable-elevated-startup verb exists to satisfy. The /tr value must carry its
     /// own embedded quotes (schtasks' own parser, not just argv splitting, needs them to tell a
@@ -131,7 +131,7 @@ public static class ElevationManager
     }
 
     /// <summary>Runs the "RoeSnip" task now. Triggering a task you own is a normal-user operation
-    /// even though the task itself runs elevated — no UAC prompt, regardless of whether the calling
+    /// even though the task itself runs elevated - no UAC prompt, regardless of whether the calling
     /// process is elevated.</summary>
     public static void StartViaTask()
     {
@@ -263,7 +263,7 @@ public static class ElevationManager
             // Non-fatal: the task itself was created successfully, which is the operation that
             // matters. A stray Run key entry alongside it just means RoeSnip's second-instance
             // signalling (TrayApp.SignalExistingInstance) hands off to the elevated task's own
-            // capture flow at the next logon — harmless double-launch race, not silent breakage.
+            // capture flow at the next logon - harmless double-launch race, not silent breakage.
             FileLog.Write($"RoeSnip: warning: failed to remove the HKCU Run key: {ex.Message}");
         }
 

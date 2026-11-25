@@ -21,19 +21,19 @@ namespace RoeSnip.App;
 
 /// <summary>Wire contract for the dev-gated automation channel (App/AutomationServer.cs's own doc
 /// comment has the full picture; docs/testing.md's "Driving the WPF app" section is the
-/// user-facing reference). Split out into pure static functions — no live window, no Dispatcher, no
-/// pipe — so the JSON parse/dispatch/serialize logic is unit-testable on its own, same as the rest
+/// user-facing reference). Split out into pure static functions - no live window, no Dispatcher, no
+/// pipe - so the JSON parse/dispatch/serialize logic is unit-testable on its own, same as the rest
 /// of this repo's convention of making the testable slice a plain public class instead of adding an
 /// InternalsVisibleTo edit (see e.g. RecordingSizeEstimator's own doc comment).</summary>
 public static class AutomationProtocol
 {
     /// <summary>Named-pipe name shared by AutomationServer (listens) and AutomationClient
-    /// (connects). Plain name, no session/user prefix — same convention TrayApp's own
+    /// (connects). Plain name, no session/user prefix - same convention TrayApp's own
     /// single-instance pipe ("RoeSnip-SingleInstance-Capture") already uses.</summary>
     public const string PipeName = "RoeSnip-Automation";
 
     /// <summary>Hard cap on one response line (spec: "ONE file write per response, 64k output
-    /// cap") — a response that would exceed this is itself a protocol error, not a truncated line
+    /// cap") - a response that would exceed this is itself a protocol error, not a truncated line
     /// silently sent over the wire.</summary>
     public const int MaxResponseBytes = 64 * 1024;
 
@@ -44,7 +44,7 @@ public static class AutomationProtocol
     };
 
     /// <summary>Parses one line of the wire protocol: must be a JSON object with a non-empty string
-    /// "cmd" field (every other field is command-specific and read directly off this same object —
+    /// "cmd" field (every other field is command-specific and read directly off this same object -
     /// there is no separate "args" wrapper). Never throws; returns null and sets
     /// <paramref name="error"/> on anything else.</summary>
     public static JsonObject? TryParseRequest(string line, out string? error)
@@ -77,7 +77,7 @@ public static class AutomationProtocol
 
     public static string CommandName(JsonObject request) => (string)request["cmd"]!;
 
-    /// <summary>Validates a request's command-specific fields WITHOUT touching any live app state —
+    /// <summary>Validates a request's command-specific fields WITHOUT touching any live app state -
     /// the pure half of "command JSON parse/dispatch". Returns null when the request is well-formed
     /// for its command, else an error string. Unknown commands are rejected here too, so
     /// AutomationServer's live dispatch switch never has to define its own "unknown command"
@@ -107,11 +107,11 @@ public static class AutomationProtocol
                     : "record requires \"format\": \"gif\" or \"mp4\"";
 
             // Cross-monitor selection (multimon-selection): "save" needs an explicit "path" since
-            // automation must never pop the interactive SaveFileDialog — see
+            // automation must never pop the interactive SaveFileDialog - see
             // OverlayController.ConfirmForAutomation's own doc comment.
             case "confirm":
                 // "share" (Sharing/* subsystem) needs no path: it uploads the rendered selection to
-                // the configured default provider — see OverlaySession.ConfirmForAutomation's own
+                // the configured default provider - see OverlaySession.ConfirmForAutomation's own
                 // "share" case for the stay-open/detached-upload semantics.
                 if (!TryGetString(request, "action", out string? confirmAction) || confirmAction is not ("copy" or "save" or "share"))
                 {
@@ -143,12 +143,12 @@ public static class AutomationProtocol
             case "fps":
                 // Quality/fps expansion workstream: fps is a free integer slider now, not four fixed
                 // chips per format, so this pure/format-agnostic layer can only range-check against
-                // the UNION of both formats' ranges (5-60 — GifMinFps==Mp4MinFps==5, Mp4MaxFps==60 is
-                // the broader ceiling since MP4's 5-60 range is a superset of GIF's 5-50) — agents
+                // the UNION of both formats' ranges (5-60 - GifMinFps==Mp4MinFps==5, Mp4MaxFps==60 is
+                // the broader ceiling since MP4's 5-60 range is a superset of GIF's 5-50) - agents
                 // get an immediate error for outright garbage (e.g. "value":0 or "value":999) without
                 // a live session. Whether it's valid for the CURRENT session's own format (e.g. 55
                 // offered while recording GIF, whose own ceiling is 50) needs live state and is
-                // rejected by RecordingSession.SetFpsForAutomation instead — see that method's own
+                // rejected by RecordingSession.SetFpsForAutomation instead - see that method's own
                 // doc comment for the exact split.
                 if (!TryGetNumber(request, "value", out double rawFps))
                 {
@@ -275,7 +275,7 @@ public static class AutomationProtocol
     public readonly record struct MonitorDto(string DeviceName, int Left, int Top, int Right, int Bottom, bool IsPrimary);
 
     /// <summary>Quality/fps expansion workstream: replaces the old fixed `allowedFps` array (four
-    /// per-format choices) now that fps is a free integer slider — see
+    /// per-format choices) now that fps is a free integer slider - see
     /// RecordingSizeEstimator.GifMinFps/GifMaxFps/Mp4MinFps/Mp4MaxFps for where the two numbers
     /// come from.</summary>
     public readonly record struct FpsRangeDto(int Min, int Max);
@@ -293,7 +293,7 @@ public static class AutomationProtocol
         double? PointerScale = null);
 
     /// <summary>Pure DTO-to-JSON step of the `state` response (and the trailing snapshot every
-    /// other command's response ends with) — no live app state read here, just serialization, so
+    /// other command's response ends with) - no live app state read here, just serialization, so
     /// this is unit-testable by constructing a StateSnapshot by hand.</summary>
     public static string SerializeState(StateSnapshot state)
     {
@@ -358,16 +358,16 @@ public static class AutomationProtocol
 
 /// <summary>The dev-gated automation pipe server. ONLY constructed and started by
 /// App/TrayApp.cs's RunInstance when the process was launched with ROESNIP_AUTOMATION=1 or
-/// --automation (see <see cref="IsRequested"/>) — with the gate off, this type is never
+/// --automation (see <see cref="IsRequested"/>) - with the gate off, this type is never
 /// instantiated: no pipe, no listener thread, no behavior change whatsoever for a normal launch.
 ///
 /// Every command below marshals onto the UI thread via <see cref="InvokeOnUi{T}"/> (a
-/// bounded-timeout wrapper around Dispatcher.BeginInvoke, not a plain Dispatcher.Invoke — a wedged
+/// bounded-timeout wrapper around Dispatcher.BeginInvoke, not a plain Dispatcher.Invoke - a wedged
 /// UI thread reports a clean timeout error back over the pipe instead of hanging the automation
 /// client forever) and calls straight into the SAME production code a real click/drag runs:
 /// RecordingChrome's own button Click events (raised via RaiseEvent, so that button's own
 /// state-gating logic still applies), RegionOutline's own drag-finish bookkeeping, OverlayWindow's
-/// own SetSelection/OnCommand. Nothing here re-implements that logic — the small `*ForAutomation`
+/// own SetSelection/OnCommand. Nothing here re-implements that logic - the small `*ForAutomation`
 /// methods this class calls into on OverlayController/OverlayWindow/RegionOutline/
 /// RecordingController/RecordingSession/RecordingChrome are the minimal hooks that were needed
 /// because the real step was private; each carries its own doc comment explaining why it exists.</summary>
@@ -443,7 +443,7 @@ internal sealed class AutomationServer
     }
 
     /// <summary>One client connection: a persistent line-in/line-out session (a script can send many
-    /// commands over one connection) rather than connect-per-command — ends when the client closes
+    /// commands over one connection) rather than connect-per-command - ends when the client closes
     /// its side, at which point the outer loop goes back to accepting the next connection.</summary>
     private async Task ServeConnectionAsync(NamedPipeServerStream server, CancellationToken token)
     {
@@ -525,14 +525,14 @@ internal sealed class AutomationServer
     {
         InvokeOnUi(() => { _triggerCapture(); return true; });
         // TriggerCapture is fire-and-forget internally (RunCaptureFlowAsync starts, then awaits the
-        // overlay) — poll for the overlay to actually be up rather than racing it, so the response
+        // overlay) - poll for the overlay to actually be up rather than racing it, so the response
         // (and thus anything the caller sends right after, e.g. `select`) reflects the real
         // post-trigger state instead of a stale "idle". The predicate is deliberately "!= idle"
         // rather than any positive mode check: every non-idle Mode GetStateSnapshot can report is
-        // derived directly from OverlayController.IsSessionActive / RecordingController.IsActive —
-        // the exact flags a follow-up command depends on — so this can never return ok:true before
+        // derived directly from OverlayController.IsSessionActive / RecordingController.IsActive -
+        // the exact flags a follow-up command depends on - so this can never return ok:true before
         // one of them is actually, observably set. Contrast with HandleRecord's own predicate,
-        // where "idle" is NOT a safe stand-in for "settled" (see that method's doc comment) — this
+        // where "idle" is NOT a safe stand-in for "settled" (see that method's doc comment) - this
         // one has no equivalent gap because a trigger's only possible live end states are "the
         // overlay came up" or "still idle", never a transient hand-off THROUGH idle.
         return AutomationProtocol.SerializeState(PollUntil(s => s.Mode != "idle"));
@@ -577,25 +577,25 @@ internal sealed class AutomationServer
         // OverlaySession.Finish() (called synchronously above, inside the InvokeOnUi that just
         // returned) clears OverlayController.s_activeSession and completes a TaskCompletionSource
         // created with RunContinuationsAsynchronously. The continuation that resumes
-        // RunCaptureFlowAsync past `await RunOverlay(...)` — and that eventually calls
-        // RecordingController.StartAsync, which is what assigns RecordingController.s_active — is
+        // RunCaptureFlowAsync past `await RunOverlay(...)` - and that eventually calls
+        // RecordingController.StartAsync, which is what assigns RecordingController.s_active - is
         // POSTED to the UI dispatcher rather than run inline, so it is not guaranteed to have run
         // yet by the time this method continues. That is a real window where OverlayController.
         // IsSessionActive is already false and RecordingController.IsActive is not yet true, in
         // which GetStateSnapshot reports "idle". The OLD code here treated "idle" as an early-exit
         // success; only "setup" (RecordingController.IsActive, freshly in Setup) is treated as
-        // settled now — a genuine start failure just rides out the full PollTimeout below instead
+        // settled now - a genuine start failure just rides out the full PollTimeout below instead
         // of being guessed at from an ambiguous "idle" snapshot.
         //
-        // (OverlayController.RecordForAutomation used to have its own null-coalescing collapse —
-        // same bug as RecordingController.InvokeChromeAction's wrappers, fixed by d56ad19 — where
+        // (OverlayController.RecordForAutomation used to have its own null-coalescing collapse -
+        // same bug as RecordingController.InvokeChromeAction's wrappers, fixed by d56ad19 - where
         // "s_activeSession?.RecordForAutomation(format) ?? "no active overlay session"" couldn't
         // tell "no session" apart from "the session's own call legitimately returned null for
         // success", so `error` came back non-null on every successful record request. Fixed
         // alongside these automation wrappers by reading s_activeSession into a local and branching
         // on it, the same fix RecordingController's wrappers already got.)
         //
-        // Pure layer: none of this reasoning is testable in AutomationProtocolTests — it depends
+        // Pure layer: none of this reasoning is testable in AutomationProtocolTests - it depends
         // on OverlayController/RecordingController's live static state and the WPF dispatcher's
         // actual continuation scheduling, exactly the "live half" AutomationProtocolTests' own
         // class doc comment says is verified end-to-end against a resident process, not there.
@@ -823,7 +823,7 @@ internal sealed class AutomationServer
     /// this process's own windows for the duration of the capture. That's a real, if small, risk:
     /// the affinity change and the capture are not atomic with whatever the compositor is doing, so
     /// a window mid-repaint at the exact capture instant could show a stale or partially composited
-    /// frame for that one screenshot — acceptable for an automation/E2E screenshot, not something
+    /// frame for that one screenshot - acceptable for an automation/E2E screenshot, not something
     /// this method tries to eliminate.</summary>
     private static (int Width, int Height) CaptureScreenshot(string path, RectPhysical? explicitRect, bool includeExcluded)
     {
@@ -863,7 +863,7 @@ internal sealed class AutomationServer
     }
 
     /// <summary>Clears WDA_EXCLUDEFROMCAPTURE on every one of THIS process's own currently-excluded
-    /// WPF windows (overlay, recording chrome, flash dimmers, color picker, settings — whichever
+    /// WPF windows (overlay, recording chrome, flash dimmers, color picker, settings - whichever
     /// happen to be up) and returns their handles so <see cref="RestoreCaptureExclusion"/> can put
     /// the flag back on exactly those windows, not force it onto ones that were never excluded.</summary>
     private static List<IntPtr> ClearCaptureExclusionOnOwnWindows()
@@ -960,14 +960,14 @@ internal sealed class AutomationServer
 /// <summary>`RoeSnip.exe --auto '<json>'` (or `--auto state` shorthand for a zero-arg command):
 /// connects to the resident's automation pipe, sends one line, prints the response line to STDOUT,
 /// and exits 0 on ok:true / 1 on ok:false or any failure to connect/parse. Called from Program.Main
-/// BEFORE CliOptions.Parse/AppComposition.RunTray — see that call site's own comment — so a client
+/// BEFORE CliOptions.Parse/AppComposition.RunTray - see that call site's own comment - so a client
 /// invocation never touches TrayApp's single-instance mutex/pipe the way a bare launch does.</summary>
 public static class AutomationClient
 {
     public static int Run(string argument) => Run(argument, AutomationProtocol.PipeName);
 
     /// <summary>Pipe-name-parameterized overload. Exists so AutomationClientTests can drive this
-    /// method against a private, per-test pipe instead of the real "RoeSnip-Automation" name — a
+    /// method against a private, per-test pipe instead of the real "RoeSnip-Automation" name - a
     /// resident RoeSnip running with --automation already owns that name with
     /// maxNumberOfServerInstances:1, and squatting on it from a test would both race a real
     /// resident's bind and let a stray real `--auto` invocation talk to the test's fake server
@@ -989,21 +989,21 @@ public static class AutomationClient
         // Root cause of the old "prints the right JSON, then exits 1 with 'Cannot access a closed
         // pipe'" cosmetic bug, and why the fix has two parts:
         //
-        // 1. `leaveOpen: true` on both wrappers below (the SERVER side of this same pipe — see
-        //    AutomationServer's own read loop a few hundred lines up — already does this). Without
+        // 1. `leaveOpen: true` on both wrappers below (the SERVER side of this same pipe - see
+        //    AutomationServer's own read loop a few hundred lines up - already does this). Without
         //    it, StreamReader/StreamWriter each close the shared `client` stream themselves on
         //    Dispose. That made the bug deterministic, not a rare race: with `using var` in
-        //    declaration order client/writer/reader, disposal ran in REVERSE order — reader first,
-        //    which silently closed `client` out from under the still-undisposed writer — then
+        //    declaration order client/writer/reader, disposal ran in REVERSE order - reader first,
+        //    which silently closed `client` out from under the still-undisposed writer - then
         //    writer.Dispose() tried to flush an already-closed pipe and threw. `leaveOpen: true`
         //    means only the explicit `client.Dispose()` below ever actually closes the pipe, so
         //    the two wrappers disposing in either order can never race each other.
         // 2. Even with that fixed, the SERVER can still tear its own end down the instant after
-        //    flushing the response (a fast request/response cycle) — a genuine remote race this
+        //    flushing the response (a fast request/response cycle) - a genuine remote race this
         //    process cannot prevent. `using var` would let a throw from that land inside this
         //    method's try block, get swallowed by the generic `catch (Exception)` below, and stomp
         //    the already-computed, already-printed, genuinely correct exit code with a spurious 1
-        //    plus a misleading "--auto failed: Cannot access a closed pipe" — the response on
+        //    plus a misleading "--auto failed: Cannot access a closed pipe" - the response on
         //    STDOUT was right, only the exit code (and stderr noise) was wrong. So cleanup here is
         //    explicit and best-effort in `finally` instead, never allowed to change `exitCode` once
         //    it has been set from the parsed `ok` field.
@@ -1045,7 +1045,7 @@ public static class AutomationClient
         }
         finally
         {
-            // Reverse acquisition order, each swallowed independently — a failure disposing the
+            // Reverse acquisition order, each swallowed independently - a failure disposing the
             // reader must not skip disposing the writer/client, and none of these are allowed to
             // throw out of a finally (that would still replace exitCode's already-decided value
             // with an unhandled-exception exit, the exact bug this rewrite fixes).

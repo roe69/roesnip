@@ -7,7 +7,7 @@ namespace RoeSnip.Overlay;
 /// (RoeSnipSettings.RecentPickedColors from the ColorPickerWindow's eyedropper, and
 /// RoeSnipSettings.CustomColors from the toolbar's "+" swatch): pushes a value to the front of a
 /// newest-first list, removing any case-insensitive duplicate first, and caps the result at
-/// <paramref name="maxCount"/> entries (LRU eviction of the oldest). No WPF dependency —
+/// <paramref name="maxCount"/> entries (LRU eviction of the oldest). No WPF dependency -
 /// unit-testable in isolation.</summary>
 public static class BoundedColorList
 {

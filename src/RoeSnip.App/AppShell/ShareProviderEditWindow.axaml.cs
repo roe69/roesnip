@@ -17,7 +17,7 @@ namespace RoeSnip.App.AppShell;
 
 /// <summary>Avalonia port of the WPF app's ShareProviderEditWindow (docs/parity.md item 12) - the
 /// per-provider detail form: for a built-in provider, just its ProviderSpec.ConfigFields (e.g.
-/// RoeShare's Server URL + API key) plus Enabled/DisplayName — the request shape itself (which IS
+/// RoeShare's Server URL + API key) plus Enabled/DisplayName - the request shape itself (which IS
 /// the built-in spec) is not editable here, only looked up fresh from ShareProviderCatalog every
 /// time (see ProviderSpec's own doc comment for why). For a "Custom..." provider, the WHOLE
 /// ProviderSpec is editable (endpoint, headers, response extraction, ...), because there is no
@@ -25,7 +25,7 @@ namespace RoeSnip.App.AppShell;
 ///
 /// The Test button exercises the REAL pipeline (ShareManager.UploadAsync -> ProviderSpecShareProvider
 /// -> the actual HTTP endpoint) against a tiny generated PNG (RoeSnip.Core.Sharing.ShareTestImage),
-/// using whatever is currently typed into this form — not yet-saved state — so a user can validate a
+/// using whatever is currently typed into this form - not yet-saved state - so a user can validate a
 /// spec before committing it.
 ///
 /// Avalonia has no PasswordBox (or MessageBox): a secret ConfigField uses a plain TextBox with
@@ -47,7 +47,7 @@ public partial class ShareProviderEditWindow : Window
 
     private CancellationTokenSource? _testCts;
 
-    // Parameterless ctor for the XAML loader/previewer only (AVLN3001) — RoeSnip's own code always
+    // Parameterless ctor for the XAML loader/previewer only (AVLN3001) - RoeSnip's own code always
     // uses the data-taking overload below; a window created this way is inert and must not be shown.
     public ShareProviderEditWindow()
         : this(new ShareProviderConfig(), isNew: true, onSave: _ => { }, onRemove: null)
@@ -121,7 +121,7 @@ public partial class ShareProviderEditWindow : Window
                 var textBox = new TextBox { Text = existingValue ?? "" };
                 if (field.IsSecret)
                 {
-                    textBox.PasswordChar = '●';
+                    textBox.PasswordChar = (char)0x25CF;
                 }
                 control = textBox;
             }
@@ -224,7 +224,7 @@ public partial class ShareProviderEditWindow : Window
     }
 
     /// <summary>Parses "one per line: key=value" / "one per line: Name: value" boxes into a
-    /// dictionary. Blank lines and lines without the separator are silently skipped — a half-typed
+    /// dictionary. Blank lines and lines without the separator are silently skipped - a half-typed
     /// trailing line while editing must never throw or corrupt the rest of the form.</summary>
     private static Dictionary<string, string> ParseKeyValueLines(string text, char separator)
     {
@@ -419,7 +419,7 @@ public partial class ShareProviderEditWindow : Window
     private static readonly IBrush OkBrush = Rl("RlPrimaryGoldBrush");
     private static readonly IBrush ErrorBrush = Rl("RlDangerTextBrush");
 
-    /// <summary>Owned Yes/No dialog for the Remove confirmation — Avalonia has no MessageBox.
+    /// <summary>Owned Yes/No dialog for the Remove confirmation - Avalonia has no MessageBox.
     /// Distinct from TrayApp.ShowYesNoDialogAsync (that one is deliberately ownerless/topmost, for
     /// the tray's own startup-time PrintScreen consent prompt outside any window); this one is a
     /// true owned modal via ShowDialog so it blocks input to THIS window specifically, matching the

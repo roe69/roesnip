@@ -5,19 +5,19 @@ namespace RoeSnip.Core.Recording.Gif;
 
 /// <summary>A from-scratch GIF-flavor LZW compressor (variable 2-12 bit codes, LSB-first bit
 /// packing, 255-byte data sub-blocks) replacing the old design's approach of asking WPF's
-/// <c>GifBitmapEncoder</c> to do this per frame and salvaging the bytes back out — see the removed
+/// <c>GifBitmapEncoder</c> to do this per frame and salvaging the bytes back out - see the removed
 /// <c>EncodeAndWrite</c> on <see cref="RoeSnip.Core.Recording.GifEncoder"/> for why that was ever
 /// necessary in the first place (no incremental multi-Save API) and what it cost.
 ///
 /// One instance is created once and reused for every frame of a recording: the dictionary (an
 /// open-addressing hash table mapping (prefixCode, nextSymbolByte) to a code) and the bit/sub-block
 /// packing buffers are all instance fields sized once and cleared in place between calls, never
-/// reallocated — the same LOH/Gen2 discipline documented on <see cref="RoeSnip.Core.Recording.GifEncoder"/>
+/// reallocated - the same LOH/Gen2 discipline documented on <see cref="RoeSnip.Core.Recording.GifEncoder"/>
 /// applies here: this runs at recording cadence, once per emitted frame.
 ///
 /// <see cref="Encode"/> assumes every value in <c>indices</c> is strictly less than
-/// <c>1 &lt;&lt; minCodeSize</c> (the caller — GifEncoder's orchestration, which knows this frame's
-/// palette size including the reserved transparent index — is responsible for picking a
+/// <c>1 &lt;&lt; minCodeSize</c> (the caller - GifEncoder's orchestration, which knows this frame's
+/// palette size including the reserved transparent index - is responsible for picking a
 /// <c>minCodeSize</c> that fits every index actually used) and throws if it finds one that
 /// doesn't; that would otherwise silently corrupt the bitstream.</summary>
 public sealed class GifLzwEncoder
@@ -29,7 +29,7 @@ public sealed class GifLzwEncoder
     private const int MaxCode = 4096; // 12-bit code space: codes 0..4095
 
     // -1 in _hashCode marks an empty slot. Reset between frames (and on an internal dictionary-full
-    // clear) via a single Array.Fill — the array itself is never reallocated.
+    // clear) via a single Array.Fill - the array itself is never reallocated.
     private readonly int[] _hashCode = new int[TableSize];
     private readonly int[] _hashKey = new int[TableSize];
 
@@ -40,7 +40,7 @@ public sealed class GifLzwEncoder
     private int _bitCount;
 
     /// <summary>Writes the LZW minimum-code-size byte, then the compressed data as a chain of
-    /// 255-byte (or shorter, for the final one) sub-blocks, then the 0x00 block terminator —
+    /// 255-byte (or shorter, for the final one) sub-blocks, then the 0x00 block terminator -
     /// exactly the byte layout a GIF Image Descriptor's data expects, ready to write straight after
     /// it. <paramref name="minCodeSize"/> must be between 2 and 8 inclusive (GIF's own range).</summary>
     public void Encode(Stream output, ReadOnlySpan<byte> indices, int minCodeSize)
@@ -83,7 +83,7 @@ public sealed class GifLzwEncoder
                 {
                     Insert(prefix, symbol, nextCode);
                     nextCode++;
-                    // Width must grow once a just-inserted code no longer fits in codeWidth bits —
+                    // Width must grow once a just-inserted code no longer fits in codeWidth bits -
                     // i.e. once the inserted code (nextCode - 1, since nextCode was already bumped
                     // above) reaches 1<<codeWidth, the first value NOT representable in codeWidth
                     // bits (whose max representable value is (1<<codeWidth)-1). That is

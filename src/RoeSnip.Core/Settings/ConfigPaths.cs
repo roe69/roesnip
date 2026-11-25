@@ -8,7 +8,7 @@ namespace RoeSnip.Core.Settings;
 /// %APPDATA%\RoeSnip this cycle, not a "RoeSnip" convergence with it. Both apps can be resident at
 /// once (they are separate deliverables this cycle - docs/architecture.md, Projects); sharing one
 /// config directory meant they'd load the same settings.json, including the same
-/// HotkeyVirtualKey/HotkeyModifiers — so a single PrintScreen press fired BOTH SharpHook's global
+/// HotkeyVirtualKey/HotkeyModifiers - so a single PrintScreen press fired BOTH SharpHook's global
 /// hook (this app) and RegisterHotKey (the WPF app), producing two overlay stacks plus concurrent
 /// capture-cache.json rewrites from two processes. Splitting the directory removes the collision
 /// entirely. Convergence to one shared config directory is a later cleanup, once the WPF app

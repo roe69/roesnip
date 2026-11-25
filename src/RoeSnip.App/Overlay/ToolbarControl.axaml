@@ -5,12 +5,12 @@
              Cursor="Arrow"
              UseLayoutRounding="True">
     <UserControl.Styles>
-        <!-- All icons are inline vector Path geometries (no image assets) — the same path data
+        <!-- All icons are inline vector Path geometries (no image assets) - the same path data
              mini-language strings as the frozen WPF ToolbarControl.xaml. Uniform stretch into a
              14x14 box; round caps/joins. Stroke is the RL cream body-text color (item 16) rather
-             than a flat white — every icon stays this one color regardless of button state (ghost
+             than a flat white - every icon stays this one color regardless of button state (ghost
              fills/tints do the state signaling instead), except the two buttons whose rest fill is
-             itself bright orange (Copy) or orange-tinted (Save), which override Stroke locally —
+             itself bright orange (Copy) or orange-tinted (Save), which override Stroke locally -
              see those buttons below. -->
         <Style Selector="Path.icon">
             <Setter Property="Stroke" Value="{StaticResource RlTextPrimaryBrush}"/>
@@ -27,12 +27,12 @@
 
         <!-- Focusable=False everywhere: clicking a toolbar button must never move keyboard focus
              off the overlay window, so Esc/Enter/Ctrl+... always reach the window's key handler.
-             The size ComboBox is the one deliberate exception (see its own comment below) — typing
+             The size ComboBox is the one deliberate exception (see its own comment below) - typing
              a value needs real keyboard focus, exactly like WPF's SizeComboBox.
 
              Quiet-until-hovered (transparent rest state), matching WPF ToolButtonStyle: hover/press
              is a flat neutral tint (v_ghost), the active tool gets a flat orange tint PLUS a solid
-             2px inset bar along the bottom edge — structure, not a color-washed fill, carries the
+             2px inset bar along the bottom edge - structure, not a color-washed fill, carries the
              selected state (design-no-fading-glow-accents: no gradients/glows here either). -->
         <Style Selector="ToggleButton.tool">
             <Setter Property="Width" Value="34"/>
@@ -73,8 +73,8 @@
             <Setter Property="IsVisible" Value="True"/>
         </Style>
 
-        <!-- Quiet action (WPF QuietActionButtonStyle): the same v_ghost look as the tool buttons —
-             transparent at rest, a flat orange tint on hover/press — used for Undo/Redo/SaveHdr/
+        <!-- Quiet action (WPF QuietActionButtonStyle): the same v_ghost look as the tool buttons -
+             transparent at rest, a flat orange tint on hover/press - used for Undo/Redo/SaveHdr/
              Share/ShareMenu, none of which is THE one primary action of the row. -->
         <Style Selector="Button.action">
             <Setter Property="Width" Value="34"/>
@@ -105,7 +105,7 @@
         </Style>
 
         <!-- Primary action (WPF ActionButtonStyle): solid orange fill, dark-on-primary text/icon, a
-             solid primary-dark edge. Flat color swaps only on hover/press — no gradient, no glow.
+             solid primary-dark edge. Flat color swaps only on hover/press - no gradient, no glow.
              Used for Copy, the single most common terminal action. -->
         <Style Selector="Button.action-primary">
             <Setter Property="Width" Value="34"/>
@@ -135,14 +135,14 @@
         <Style Selector="Button.action-primary:pressed /template/ Border#Bg">
             <Setter Property="Background" Value="{StaticResource RlGoldBorderSolidBrush}"/>
         </Style>
-        <!-- Disabled opacity matches Button.action's icon-button 0.4, not a full-button 0.5 — Copy
+        <!-- Disabled opacity matches Button.action's icon-button 0.4, not a full-button 0.5 - Copy
              never actually goes disabled today, but keep it consistent if that changes. -->
         <Style Selector="Button.action-primary:disabled">
             <Setter Property="Opacity" Value="0.5"/>
         </Style>
 
         <!-- Secondary action (WPF SecondaryActionButtonStyle): translucent orange fill + orange
-             text/icon, warming up further on hover. One weight quieter than action-primary — used
+             text/icon, warming up further on hover. One weight quieter than action-primary - used
              for Save. -->
         <Style Selector="Button.action-secondary">
             <Setter Property="Width" Value="34"/>
@@ -177,9 +177,9 @@
             <Setter Property="Opacity" Value="0.5"/>
         </Style>
 
-        <!-- The Cancel X: quiet until hovered, then unmistakably red — the admonition-danger
+        <!-- The Cancel X: quiet until hovered, then unmistakably red - the admonition-danger
              literal (RlDangerHoverBrush, #DC2626), not a softer approximation. Always fully closes
-             the overlay (never a staged Esc behavior). Always visible — no hover-only reveal. -->
+             the overlay (never a staged Esc behavior). Always visible - no hover-only reveal. -->
         <Style Selector="Button.cancel">
             <Setter Property="Width" Value="34"/>
             <Setter Property="Height" Value="28"/>
@@ -240,7 +240,7 @@
             Cursor="SizeAll">
         <StackPanel Margin="6">
             <!-- Row 1: tools + size (left) | Undo/Redo (right), an Auto|*|Auto Grid so both rows
-                 span the same width and the panel reads symmetrically — mirrors WPF's own Row 1
+                 span the same width and the panel reads symmetrically - mirrors WPF's own Row 1
                  layout (ToolbarControl.xaml:558-637). -->
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -285,7 +285,7 @@
 
                     <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
-                    <!-- Numeric size input (item 08 — replaced the fixed small/medium/big stroke
+                    <!-- Numeric size input (item 08 - replaced the fixed small/medium/big stroke
                          dots): shows "Npx" (stroke width) for the drawing tools and "Npt" (font
                          size) while the Text tool is active; dropdown offers preset jumps, typed
                          values are clamped by SizeInput. Enter commits and returns focus to the
@@ -315,7 +315,7 @@
 
             <Border Height="1" Margin="1,4" Background="{StaticResource RlBorderStrongBrush}"/>
 
-            <!-- Row 2: the editable palette (bottom-left) | terminal actions (bottom-right) —
+            <!-- Row 2: the editable palette (bottom-left) | terminal actions (bottom-right) -
                  mirrors WPF's own Row 2 layout (ToolbarControl.xaml:641-770). -->
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -325,7 +325,7 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- Every swatch is built in code from the persisted RoeSnipSettings.PaletteColors
-                     list (via SwatchPalette) and carries a right-click "Replace..." context menu —
+                     list (via SwatchPalette) and carries a right-click "Replace..." context menu -
                      the only palette edit: the row's slot count never changes. -->
                 <StackPanel x:Name="ColorSwatchPanel" Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center"/>
 
@@ -333,7 +333,7 @@
                     <Border Width="1" Margin="8,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
                     <Button x:Name="CopyButton" Classes="action-primary" ToolTip.Tip="Copy (Ctrl+C)">
-                        <!-- Two overlapping squares. Stroke overridden to the on-primary dark ink —
+                        <!-- Two overlapping squares. Stroke overridden to the on-primary dark ink -
                              this button's fill is bright orange, so the shared cream Path.icon
                              default would read poorly here. -->
                         <Path Classes="icon" Stroke="{StaticResource RlTextOnPrimaryBrush}"
@@ -381,13 +381,13 @@
                          (one click, mirrors Copy/Save), while ShareMenuButton is a SEPARATE,
                          always-visible chevron affordance (no-hidden-controls: a control that opens
                          a menu must show it can, never rely on hover) opening a menu to pick a
-                         specific configured provider instead. Both start disabled — the owning
+                         specific configured provider instead. Both start disabled - the owning
                          window enables them via SetShareProviders once at least one provider is
                          configured (see that method's own doc comment for why this control never
                          enables itself). Mirrors the WPF app's own ShareGroupPanel. -->
                     <StackPanel x:Name="ShareGroupPanel" Orientation="Horizontal" VerticalAlignment="Center">
                         <Button x:Name="ShareButton" Classes="action" Width="30" Margin="2,2,0,2" IsEnabled="False"
-                                ToolTip.Tip="Share: no provider configured yet — set one up in Settings"
+                                ToolTip.Tip="Share: no provider configured yet - set one up in Settings"
                                 ToolTip.ShowOnDisabled="True">
                             <!-- Inverse of Save's down-arrow-into-tray: an up-arrow out of the tray. -->
                             <Path Classes="icon" Data="M8,9 V1 M4.5,4.5 L8,1 L11.5,4.5 M1.5,11 V14.5 H14.5 V11"/>
@@ -401,13 +401,13 @@
 
                     <Border Width="1" Margin="4,3" Background="{StaticResource RlBorderStrongBrush}"/>
 
-                    <Button x:Name="CancelButton" Classes="cancel" ToolTip.Tip="Cancel — close without capturing">
+                    <Button x:Name="CancelButton" Classes="cancel" ToolTip.Tip="Cancel - close without capturing">
                         <Path Classes="icon" Width="11" Height="11" Data="M2,2 L14,14 M14,2 L2,14"/>
                     </Button>
                 </StackPanel>
             </Grid>
 
-            <!-- Row 3: text style (item 08; mirrors WPF's ToolbarControl.xaml:772-793) — only ever
+            <!-- Row 3: text style (item 08; mirrors WPF's ToolbarControl.xaml:772-793) - only ever
                  visible while the Text tool is active. A separate bottom row (leading hairline
                  inside, so it collapses with the panel) so the panel grows downward instead of
                  stretching Row 1 sideways. The font list is every installed system family (see

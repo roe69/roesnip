@@ -11,7 +11,7 @@ namespace RoeSnip.App.AppShell;
 /// - the settings' HotkeyModifiers/HotkeyVirtualKey keep their Windows
 /// VK/MOD_* shapes; this class translates them to SharpHook's OS-independent
 /// key codes, so the same stored combination works on Windows, macOS (Accessibility permission
-/// required — surfaced by the failed-start log, not assumed) and X11 Linux. On Wayland the hook is
+/// required - surfaced by the failed-start log, not assumed) and X11 Linux. On Wayland the hook is
 /// never started (libuiohook is X11-only): <c>LinuxGlobalShortcuts</c> binds the hotkey
 /// through the GlobalShortcuts portal, or a GNOME custom keybinding running <c>RoeSnip capture</c>.
 ///
@@ -49,7 +49,7 @@ public sealed class HotkeyManager : IDisposable
     }
 
     /// <summary>Best-effort "the hook is up and a combination is armed". Same caveat as the WPF
-    /// version's IsRegistered, but weaker still — see the class doc comment.</summary>
+    /// version's IsRegistered, but weaker still - see the class doc comment.</summary>
     public bool IsRegistered => _armed && (_hookRunning == true || IsWaylandShortcutActive);
 
     /// <summary>True on a Wayland session where no shortcut reaches RoeSnip (no GlobalShortcuts
@@ -238,8 +238,8 @@ public sealed class HotkeyManager : IDisposable
                             "remains operable via the tray menu and `RoeSnip capture`.");
 
                         // P7 audit fix: dispose the dead hook and reset _hookRunning to null (not
-                        // false) so the NEXT Register() call — e.g. after the user re-saves
-                        // Settings once Accessibility has been granted — tries a FRESH
+                        // false) so the NEXT Register() call - e.g. after the user re-saves
+                        // Settings once Accessibility has been granted - tries a FRESH
                         // TaskPoolGlobalHook instead of EnsureHookRunning's "already decided" fast
                         // path permanently short-circuiting to false for the rest of the process.
                         _hook?.Dispose();

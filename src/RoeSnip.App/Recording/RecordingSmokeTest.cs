@@ -23,7 +23,7 @@ internal static class RecordingSmokeTest
     {
         if (args.Length is < 2 or > 3 || (args[1] != "gif" && args[1] != "mp4"))
         {
-            // Pure CLI usage text, not a diagnostic — see Program.PrintUsage's own doc comment.
+            // Pure CLI usage text, not a diagnostic - see Program.PrintUsage's own doc comment.
             Console.Error.WriteLine("Usage: RoeSnip --record-smoketest gif|mp4 [seconds]");
             return 1;
         }

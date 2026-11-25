@@ -4,7 +4,7 @@ namespace RoeSnip.Overlay;
 
 /// <summary>Nearest-match color naming for the %Na template parameter: the 140 CSS/W3C extended
 /// color keywords, matched by squared RGB distance. An exact keyword color returns its exact name
-/// (distance 0); anything else returns the closest keyword — deterministic (first win on ties, and
+/// (distance 0); anything else returns the closest keyword - deterministic (first win on ties, and
 /// the table order is fixed). No WPF dependency.</summary>
 public static class ColorNames
 {

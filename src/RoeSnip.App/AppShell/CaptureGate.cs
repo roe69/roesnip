@@ -4,7 +4,7 @@ namespace RoeSnip.App.AppShell;
 
 /// <summary>Single process-wide capture gate for the hotkey/tray/pipe flow
 /// (AppComposition.RunCaptureFlowAsync in Program.cs). Ported from the WPF app's identical
-/// CaptureGate (src/RoeSnip/Program.cs:816-847) — kept internal (not folded into AppComposition)
+/// CaptureGate (src/RoeSnip/Program.cs:816-847) - kept internal (not folded into AppComposition)
 /// so a future color-picker pick-mode capture or Recording subsystem can share it the same way the
 /// WPF app's OverlayController/RecordingController do, without AppComposition itself growing more
 /// gate-shaped state than the one flow it already owns.</summary>
@@ -14,7 +14,7 @@ internal static class CaptureGate
 
     /// <summary>True from just before TrayApp.StartWarmup launches the warmup thread until
     /// RunWarmup's finally clears it on every exit path (success, exception, or a benign
-    /// zero-monitors return) — a wider window than <see cref="HeldByWarmup"/>, which only covers
+    /// zero-monitors return) - a wider window than <see cref="HeldByWarmup"/>, which only covers
     /// the sub-second stretch WarmupCaptureSessions actually holds the gate for.
     /// RunCaptureFlowAsync polls this BEFORE its TryEnter to close the race where a trigger lands
     /// after StartWarmup but before WarmupCaptureSessions has entered the gate: winning that race
@@ -32,7 +32,7 @@ internal static class CaptureGate
     public static bool TryEnter() => Interlocked.CompareExchange(ref s_busy, 1, 0) == 0;
     public static void Exit() => Interlocked.Exchange(ref s_busy, 0);
 
-    /// <summary>Peek for IdleMemoryTrimmer's am-I-actually-idle check — never used for entry
+    /// <summary>Peek for IdleMemoryTrimmer's am-I-actually-idle check - never used for entry
     /// decisions (that's TryEnter's compare-exchange), so a stale read is harmless: the trimmer
     /// skipping or running against a just-changed gate is safe either way.</summary>
     public static bool IsBusy => Volatile.Read(ref s_busy) != 0;

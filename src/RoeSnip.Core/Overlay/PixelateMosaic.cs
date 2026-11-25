@@ -11,7 +11,7 @@ namespace RoeSnip.Core.Overlay;
 /// drawing it back with BitmapScalingMode.NearestNeighbor; Avalonia has no CroppedBitmap/
 /// TransformedBitmap equivalent, so this computes the shrink-then-nearest-neighbor-upscale result
 /// directly as a list of flat-colored block rectangles, which both WPF-equivalent behavior AND
-/// on-screen rendering AND export can draw identically with a single DrawRectangle per block — and
+/// on-screen rendering AND export can draw identically with a single DrawRectangle per block - and
 /// which is unit-testable without any UI framework at all (RoeSnip.Core has zero display
 /// dependency). The shrunk grid dimension is round(size/block) (never zero, per WPF's own
 /// TransformedBitmap(1/block) scale), and each grid cell spans a proportional slice of the region
@@ -20,7 +20,7 @@ namespace RoeSnip.Core.Overlay;
 public static class PixelateMosaic
 {
     /// <summary>One mosaic tile: <see cref="X"/>/<see cref="Y"/>/<see cref="Width"/>/<see cref="Height"/>
-    /// are in the SAME coordinate space as the source image (physical pixels, image-local) — the
+    /// are in the SAME coordinate space as the source image (physical pixels, image-local) - the
     /// caller translates to screen/export space same as every other annotation shape.</summary>
     public readonly record struct Block(int X, int Y, int Width, int Height, byte R, byte G, byte B);
 
@@ -28,7 +28,7 @@ public static class PixelateMosaic
     /// must have already intersected <paramref name="x"/>/<paramref name="y"/>/<paramref name="w"/>/
     /// <paramref name="h"/> with the preview's own bounds (same contract as WPF's DrawPixelate,
     /// which intersects before calling this). Returns an empty list for a degenerate region (matches
-    /// WPF's <c>w &lt; 4 || h &lt; 4</c> early return — too small to usefully censor).
+    /// WPF's <c>w &lt; 4 || h &lt; 4</c> early return - too small to usefully censor).
     /// <paramref name="blockSize"/> is clamped to [3, min(w, h)] exactly like WPF's StrokeWidthPx-as-
     /// block-size clamp, so a whole-region block just averages everything into one tile rather than
     /// rounding to zero grid cells.</summary>

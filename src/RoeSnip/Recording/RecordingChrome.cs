@@ -16,7 +16,7 @@ using RoeSnip.Core.Recording.Gif;
 // Recording-core-extraction: RecordingSizeEstimator moved to RoeSnip.Core.Recording. A plain
 // `using RoeSnip.Core.Recording;` would also pull in that namespace's own MultiMonitorRecording,
 // which collides with this file's enclosing RoeSnip.Recording.MultiMonitorRecording (the WPF app's
-// own copy, kept separate — see that class's doc comment) — an alias avoids the ambiguity.
+// own copy, kept separate - see that class's doc comment) - an alias avoids the ambiguity.
 using RecordingSizeEstimator = RoeSnip.Core.Recording.RecordingSizeEstimator;
 
 namespace RoeSnip.Recording;
@@ -31,7 +31,7 @@ using Cursors = System.Windows.Input.Cursors;
 using FontFamily = System.Windows.Media.FontFamily;
 using Orientation = System.Windows.Controls.Orientation;
 // RecordingChrome derives from Window (: FrameworkElement), which itself declares INSTANCE
-// HorizontalAlignment/VerticalAlignment properties — a bare "HorizontalAlignment.Center" inside a
+// HorizontalAlignment/VerticalAlignment properties - a bare "HorizontalAlignment.Center" inside a
 // member of this class can resolve to that inherited property instead of the enum type. Aliased
 // under different names to sidestep the shadowing entirely rather than fully-qualifying every use.
 using HAlign = System.Windows.HorizontalAlignment;
@@ -67,7 +67,7 @@ using VAlign = System.Windows.VerticalAlignment;
 /// Not pooled/parked like FlashDimmer's windows - one instance per recording, created at Start,
 /// closed at the end. Recording start is not on the hotkey-to-dim latency path.
 ///
-/// Built entirely in code (no XAML/InitializeComponent) — same choice FlashWindow already makes for
+/// Built entirely in code (no XAML/InitializeComponent) - same choice FlashWindow already makes for
 /// a small, code-owned chrome window.</summary>
 internal sealed class RecordingChrome : Window
 {
@@ -86,16 +86,16 @@ internal sealed class RecordingChrome : Window
     private static readonly Color DangerFill = Color.FromArgb(0x26, 0xDC, 0x26, 0x26);
     private static readonly Color DangerSolid = Color.FromRgb(0xDC, 0x26, 0x26);
 
-    // Whichever monitor the HUD's anchor corner currently sits on — NOT necessarily the monitor the
+    // Whichever monitor the HUD's anchor corner currently sits on - NOT necessarily the monitor the
     // recording take is on (that's RecordingSession/RegionRecorder's own concern). Multi-monitor
-    // recording, phase 1 (PLAN-MULTIMON-RECORDING.md §4): the HUD itself never spans monitors (it's
+    // recording, phase 1 (PLAN-MULTIMON-RECORDING.md sec 4): the HUD itself never spans monitors (it's
     // small; no reason to), it just needs "which monitor's DPI/bounds apply to THIS HUD instance
-    // right now" — recomputed in UpdateSelection from the region's current absolute position via
+    // right now" - recomputed in UpdateSelection from the region's current absolute position via
     // MultiMonitorRecording.FindOwningMonitor, so it tracks a cross-monitor drag automatically
     // without RecordingSession needing to tell it about a handoff explicitly.
     private MonitorInfo _monitor;
     private readonly IReadOnlyList<MonitorInfo> _monitors;
-    private RectPhysical _selectionPx; // re-anchored when the user drags the region (RegionOutline) — virtual-desktop-absolute
+    private RectPhysical _selectionPx; // re-anchored when the user drags the region (RegionOutline) - virtual-desktop-absolute
     private readonly RecordingFormat _format;
     private ChromeState _state = ChromeState.Setup;
     private bool _showingRestartConfirm;
@@ -115,17 +115,17 @@ internal sealed class RecordingChrome : Window
     private readonly ToggleButton _sizeMinimalChip;
     private readonly StackPanel _sizeRow;
     // FPS row (quality/fps expansion workstream): a free-integer WPF Slider replaces the old
-    // four-chip row — see the ctor's own comment (where the slider is built) for why a slider fits
+    // four-chip row - see the ctor's own comment (where the slider is built) for why a slider fits
     // a wide, mostly-continuous range better than a fixed chip set.
     private readonly Slider _fpsSlider;
     private readonly TextBlock _fpsValueLabel;
     private readonly StackPanel _fpsRow;
     private readonly TextBlock _qualityHeader;
     private readonly TextBlock _fpsHeader;
-    // Debounces FpsChanged/SettingsStore.Save while the slider is actively being dragged — see
+    // Debounces FpsChanged/SettingsStore.Save while the slider is actively being dragged - see
     // RestartFpsDebounce's own doc comment.
     private readonly DispatcherTimer _fpsDebounceTimer;
-    private int _lastPersistedFps; // last value FpsChanged actually fired for — suppresses a redundant persist
+    private int _lastPersistedFps; // last value FpsChanged actually fired for - suppresses a redundant persist
     private readonly TextBlock _estimateText;
     private GifSizePreset _sizePreset; // mirrors whichever size chip is currently checked
     private int _fps; // mirrors the FPS slider's current value - drives the MP4/GIF estimate
@@ -135,7 +135,7 @@ internal sealed class RecordingChrome : Window
     private readonly Button _saveButton;
     private readonly Button _shareButton;
     // Senior-review fix (Finding 1c): whether an enabled share provider actually resolves right now
-    // — set by RecordingSession.StopCaptureToReview from a fresh disk read every time Reviewing is
+    // - set by RecordingSession.StopCaptureToReview from a fresh disk read every time Reviewing is
     // (re-)entered (see SetShareAvailable's own doc comment), NOT just "does anything subscribe to
     // ShareRequested" (Start() always subscribes unconditionally, so that old check was always true
     // and never reflected whether a click could actually succeed).
@@ -344,7 +344,7 @@ internal sealed class RecordingChrome : Window
         // decoupling workstream, stage 3). Quality/fps expansion workstream, stage 2: the old
         // four-chip row (one fixed choice per format) is REPLACED by a free-integer slider now that
         // RecordingSizeEstimator exposes a continuous Min/MaxFps range per format instead of an
-        // allowed set — a slider reads naturally over a ~45-value range where four discrete chips
+        // allowed set - a slider reads naturally over a ~45-value range where four discrete chips
         // never could, and the patch-behind carry (GifEncoder.PatchLastDelay) makes every integer
         // fps in range legal, not just the four old divisors of 100.
         (int minFps, int maxFps) = _format == RecordingFormat.Gif
@@ -863,7 +863,7 @@ internal sealed class RecordingChrome : Window
     }
 
     /// <summary>Applies a new fps value to the slider's own visible state (mirror field, value
-    /// label, live estimate) — called from every ValueChanged tick during a drag AND from
+    /// label, live estimate) - called from every ValueChanged tick during a drag AND from
     /// <see cref="InvokeFps"/>, so both a live drag and an automation-driven set go through the
     /// exact same "what does this fps value look like" logic. Deliberately does NOT touch
     /// persistence/<see cref="FpsChanged"/> - see <see cref="RestartFpsDebounce"/>/
@@ -879,7 +879,7 @@ internal sealed class RecordingChrome : Window
     /// <see cref="_fpsDebounceTimer"/>'s Tick only ever fires once the value has sat still for its
     /// whole interval, so a continuous drag across the full range writes to
     /// <see cref="RoeSnip.App.SettingsStore"/> exactly once (at drag-end, or after the same short
-    /// pause), not once per tick — "best-effort save must not spam disk per tick" per this
+    /// pause), not once per tick - "best-effort save must not spam disk per tick" per this
     /// workstream's own rule. <see cref="PersistFpsNow"/> is the eventual landing point either way,
     /// whether reached by this timer or by an immediate automation set.</summary>
     private void RestartFpsDebounce()
@@ -971,11 +971,11 @@ internal sealed class RecordingChrome : Window
     /// have different content sizes) so the panel stays anchored to the selection instead of
     /// drifting as SizeToContent grows or shrinks it from a fixed top-left corner.
     ///
-    /// TODO (deferred, senior review Finding 7 — pre-existing, not fixed by this pass): every clamp
+    /// TODO (deferred, senior review Finding 7 - pre-existing, not fixed by this pass): every clamp
     /// below is computed purely against <see cref="_monitor"/>'s own bounds, even for a SPANNING
     /// selection whose _selectionPx can extend well past that one monitor's edges. The HUD only ever
     /// gets clamped/anchored within the anchor monitor, so a spanning take's far edge (on some OTHER
-    /// monitor) gets no placement coverage of its own — a gap in the spanning-anchor story, not
+    /// monitor) gets no placement coverage of its own - a gap in the spanning-anchor story, not
     /// addressed here.</summary>
     private void PositionNearSelection(IntPtr hwnd)
     {
@@ -983,7 +983,7 @@ internal sealed class RecordingChrome : Window
         int barWidthPx = Math.Max(1, (int)Math.Ceiling(ActualWidth * scale));
         int barHeightPx = Math.Max(1, (int)Math.Ceiling(ActualHeight * scale));
 
-        // _selectionPx is already virtual-desktop-absolute — no monitor origin to fold in anymore
+        // _selectionPx is already virtual-desktop-absolute - no monitor origin to fold in anymore
         // (used to be "bounds.Left + _selectionPx.Left"; see the class/UpdateSelection doc for the
         // migration). _monitor itself is still used below purely to decide which monitor's bounds
         // the HUD is clamped/anchored within.
@@ -1006,10 +1006,10 @@ internal sealed class RecordingChrome : Window
         if (!fitsBelow && !fitsAbove)
         {
             // Neither below nor above the selection leaves room for the HUD on this monitor (e.g. a
-            // near-full-height selection) — anchor beside it instead. Clamping y into monitor bounds
+            // near-full-height selection) - anchor beside it instead. Clamping y into monitor bounds
             // here like the below/above cases do would land the HUD's own WDA_EXCLUDEFROMCAPTURE
             // rect INSIDE [selTop, selBottom], and because that affinity applies to ANY capture of
-            // this monitor — including the WGC session actively recording this exact region — the
+            // this monitor - including the WGC session actively recording this exact region - the
             // compositor renders nothing there for the recording either: a black hole for the HUD's
             // entire lifetime, not just a visual overlap.
             y = Math.Clamp(selTop, bounds.Top, Math.Max(bounds.Top, bounds.Bottom - barHeightPx));
@@ -1030,7 +1030,7 @@ internal sealed class RecordingChrome : Window
     public void UpdateSelection(RectPhysical selectionPx)
     {
         _selectionPx = selectionPx;
-        // Re-derive which monitor the HUD should anchor/clamp against — a drag (or a cross-monitor
+        // Re-derive which monitor the HUD should anchor/clamp against - a drag (or a cross-monitor
         // recording handoff) may have moved the region onto a different monitor than the one this
         // chrome was built for. Keeps the LAST known monitor if the region is momentarily over a
         // dead gap between non-adjacent monitors (FindOwningMonitor returns null there) rather than
@@ -1041,7 +1041,7 @@ internal sealed class RecordingChrome : Window
     }
 
     /// <summary>Re-anchors once the pending layout pass from a content/state change has actually
-    /// measured the new size — mirrors OverlayWindow's own toolbar-reflow-after-layout pattern.</summary>
+    /// measured the new size - mirrors OverlayWindow's own toolbar-reflow-after-layout pattern.</summary>
     private void RequestReposition()
     {
         Dispatcher.BeginInvoke(new Action(() =>
@@ -1059,7 +1059,7 @@ internal sealed class RecordingChrome : Window
     {
         _state = ChromeState.Setup;
         _showingRestartConfirm = false;
-        _elapsedText.Text = "00:00"; // no take yet — clear a previous take's frozen clock
+        _elapsedText.Text = "00:00"; // no take yet - clear a previous take's frozen clock
         ApplyState();
     }
 
@@ -1080,13 +1080,13 @@ internal sealed class RecordingChrome : Window
 
     /// <summary>Senior-review fix (Finding 1c): called by RecordingSession.StopCaptureToReview,
     /// immediately before <see cref="EnterReviewing"/> (whose own ApplyState call is what actually
-    /// applies this to the button — deliberately not called again here, since _state is still the
+    /// applies this to the button - deliberately not called again here, since _state is still the
     /// PREVIOUS phase at this point), with a FRESH (not this session's own stale settings snapshot)
-    /// answer to "does an enabled share provider exist right now" — see that call site's own doc
+    /// answer to "does an enabled share provider exist right now" - see that call site's own doc
     /// comment. ApplyState reads this flag instead of checking whether anything subscribes to
     /// <see cref="ShareRequested"/>, which used to always be true in practice (RecordingSession.
     /// Start() subscribes unconditionally) and so never actually gated on whether a click could
-    /// succeed — the same "no clickable-but-broken button" rule ToolbarControl.SetShareProviders
+    /// succeed - the same "no clickable-but-broken button" rule ToolbarControl.SetShareProviders
     /// already applies to its own sibling Share button.</summary>
     internal void SetShareAvailable(bool available) => _shareAvailable = available;
 
@@ -1311,9 +1311,9 @@ internal sealed class RecordingChrome : Window
     /// expansion workstream). RecordingSession.SetFpsForAutomation already rejects a value outside
     /// the current format's own Min/MaxFps range before ever calling this, so the range check below
     /// is a belt-and-braces invariant check, not a normal error path. Unlike a real drag, this must
-    /// take effect (and persist) IMMEDIATELY rather than waiting out the debounce window — an
+    /// take effect (and persist) IMMEDIATELY rather than waiting out the debounce window - an
     /// automation caller has no way to "wait for the drag to settle", and the old chip-click
-    /// contract this replaces always persisted synchronously — so this sets the slider's value
+    /// contract this replaces always persisted synchronously - so this sets the slider's value
     /// (which raises ValueChanged when it actually differs), then unconditionally re-applies and
     /// force-persists rather than relying on that event alone, since WPF does not raise ValueChanged
     /// for a same-value set and a same-value automation call must still behave like a real

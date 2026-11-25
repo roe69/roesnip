@@ -11,7 +11,7 @@ using RoeSnip.Core.Diagnostics;
 namespace RoeSnip.App.Overlay;
 
 /// <summary>Identifies one cached cursor bitmap: which tool is selected, what color it's drawn in,
-/// and (for the stroke-width-sensitive tools) the current stroke width — the plain Select tool
+/// and (for the stroke-width-sensitive tools) the current stroke width - the plain Select tool
 /// never reaches <see cref="ToolCursorCache"/> at all (OverlayWindow keeps the system crosshair for
 /// it), and the Text tool ignores stroke width entirely, so its key always normalizes width to 0 to
 /// avoid needlessly growing the cache every time a scroll-wheel changes a width that tool doesn't
@@ -40,7 +40,7 @@ public readonly record struct CursorKey(AnnotationTool Tool, Color Color, double
 /// rounded-to-nearest-pixel) stroke width. Ported verbatim from the WPF reference's
 /// Overlay/ToolCursorCache.cs: every drawing tool's cursor is a plain circle outline whose diameter
 /// equals the stroke width, so scrolling the width visibly grows/shrinks the cursor itself. The
-/// diameter always equals the stroke width 1:1 — never scaled down to fit — except once it would
+/// diameter always equals the stroke width 1:1 - never scaled down to fit - except once it would
 /// need a canvas bigger than <see cref="MaxCanvasSize"/>: past that point the bitmap is capped at
 /// 64x64, the circle is drawn at the largest diameter that still fits, and <see cref="ShowLabel"/>
 /// switches on so the actual numeric width is drawn inside it instead of silently lying about the
@@ -49,7 +49,7 @@ public readonly record struct CircleSpec(int CanvasSize, double Diameter, bool S
 {
     public const int MaxCanvasSize = 64;
 
-    // The circle is ALWAYS exactly the stroke width — no legibility clamp. At 1-2px the ring is
+    // The circle is ALWAYS exactly the stroke width - no legibility clamp. At 1-2px the ring is
     // tiny, but the dark halo keeps it findable, and a cursor bigger than the brush lies about
     // what will be drawn. Kept as a floor of 1 purely to guard against zero/negative widths.
     public const double MinDiameter = 1.0;
@@ -74,7 +74,7 @@ public readonly record struct CircleSpec(int CanvasSize, double Diameter, bool S
 }
 
 /// <summary>A tiny detached <see cref="Control"/> whose sole job is running a caller-supplied
-/// <see cref="DrawingContext"/> callback — Avalonia's equivalent of WPF's
+/// <see cref="DrawingContext"/> callback - Avalonia's equivalent of WPF's
 /// <c>DrawingVisual</c>/<c>RenderOpen()</c> pair, needed because <see cref="RenderTargetBitmap"/>
 /// can only rasterize an actual <see cref="Visual"/>, and Avalonia (unlike WPF) has no
 /// visual-tree-free DrawingVisual type to hand it directly.</summary>
@@ -93,17 +93,17 @@ file sealed class CursorGlyphControl : Control
 }
 
 /// <summary>Builds and caches a small custom cursor bitmap per (tool, color, strokeWidth)
-/// combination — the Avalonia port of the WPF reference's ToolCursorCache. Every drawing tool
+/// combination - the Avalonia port of the WPF reference's ToolCursorCache. Every drawing tool
 /// (Rectangle/Ellipse/Arrow/Line/Freehand/Highlight) gets a plain circle outline whose diameter
 /// *is* the current stroke width, so scrolling the width visibly grows/shrinks the cursor itself;
 /// the Text tool gets a small I-beam-with-T icon. AnnotationTool.None (the Select tool) and
-/// AnnotationTool.Pixelate (a fixed crosshair, per user feedback — the block-size ring would grow
+/// AnnotationTool.Pixelate (a fixed crosshair, per user feedback - the block-size ring would grow
 /// far past the actual pixelated region) are never looked up here; OverlayWindow keeps the plain
 /// system cursor for both.
 ///
 /// Built via a detached <see cref="CursorGlyphControl"/> measured/arranged off-screen and
 /// rasterized through <see cref="RenderTargetBitmap"/>, then wrapped as an Avalonia
-/// <see cref="Cursor"/> with an explicit hotspot — Avalonia's <c>Cursor(IBitmap, PixelPoint)</c>
+/// <see cref="Cursor"/> with an explicit hotspot - Avalonia's <c>Cursor(IBitmap, PixelPoint)</c>
 /// constructor does the platform cursor-handle plumbing WPF's own P/Invoke
 /// CreateIconIndirect/DestroyIcon dance had to do by hand, so this port needs none of that
 /// interop. Entries are cached per <see cref="CursorKey"/> (scroll-wheel resizing revisits the
@@ -111,7 +111,7 @@ file sealed class CursorGlyphControl : Control
 /// immediately, and <see cref="Dispose"/> tears down every entry still cached.
 ///
 /// Bitmap cursors are a platform capability, not guaranteed on every backend Avalonia might run
-/// on — <see cref="Build"/> is wrapped in try/catch and, on first failure, this cache permanently
+/// on - <see cref="Build"/> is wrapped in try/catch and, on first failure, this cache permanently
 /// falls back to the plain system cursor for the rest of the process's life (logged once, never
 /// spammed per scroll-wheel tick).</summary>
 public sealed class ToolCursorCache : IDisposable
@@ -147,7 +147,7 @@ public sealed class ToolCursorCache : IDisposable
         }
         catch (Exception ex)
         {
-            // Custom bitmap cursors aren't guaranteed on every desktop backend — degrade to the
+            // Custom bitmap cursors aren't guaranteed on every desktop backend - degrade to the
             // system cursor for the rest of this session rather than re-attempting (and re-logging)
             // on every subsequent tool/color/width change.
             _bitmapCursorsUnsupported = true;
@@ -209,7 +209,7 @@ public sealed class ToolCursorCache : IDisposable
         else
         {
             // Every stroke tool (Rectangle/Ellipse/Arrow/Line/Freehand/Highlight) shares one
-            // design: a plain circle outline the same diameter as the stroke width — see
+            // design: a plain circle outline the same diameter as the stroke width - see
             // CircleSpec.For.
             var spec = CircleSpec.For(normalizedStrokeWidthPx);
             canvasSize = spec.CanvasSize;
@@ -233,7 +233,7 @@ public sealed class ToolCursorCache : IDisposable
     private static readonly IBrush HaloBrush = new SolidColorBrush(HaloColor);
 
     /// <summary>All stroke tools share this one design: a circle outline sized to the current
-    /// stroke width, tinted with the draw color, with a dark halo so it reads on any background —
+    /// stroke width, tinted with the draw color, with a dark halo so it reads on any background -
     /// no per-tool shape glyph (an earlier per-tool arrow/line/etc. glyph read as a visual artifact
     /// rather than a cursor, per the WPF reference's own history).</summary>
     private static void DrawCircleGlyph(DrawingContext dc, Color color, CircleSpec spec)
@@ -257,7 +257,7 @@ public sealed class ToolCursorCache : IDisposable
     /// <summary>Text tool: an I-beam with a small bold "T" beside it (unambiguously "text tool",
     /// not a generic text-select caret), tinted with the draw color and haloed like the circle
     /// cursor. The hotspot (<see cref="TextHotspotX"/>/<see cref="TextHotspotY"/>) sits at the top
-    /// of the I-beam's vertical bar — the point BeginTextEditor treats as the new text's origin
+    /// of the I-beam's vertical bar - the point BeginTextEditor treats as the new text's origin
     /// (top-left of the editor), not the bar's vertical center a normal caret would use.</summary>
     private static void DrawTextGlyph(DrawingContext dc, Color color)
     {
@@ -306,7 +306,7 @@ public sealed class ToolCursorCache : IDisposable
         new(-1, 0), new(1, 0), new(0, -1), new(0, 1),
     };
 
-    // Text-tool cursor geometry: a fixed-size canvas (stroke width plays no part in this glyph —
+    // Text-tool cursor geometry: a fixed-size canvas (stroke width plays no part in this glyph -
     // see CursorKey.For's normalization), with the hotspot at the top of the I-beam bar.
     private const int TextCanvasSize = 28;
     private const double TextBarHeight = 16.0;

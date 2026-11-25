@@ -10,7 +10,7 @@ using TextBox = System.Windows.Controls.TextBox;
 /// <summary>The guaranteed fallback tier (item 3b of UX round 3) for typing into an in-progress
 /// text annotation: SessionKeyboardHook routes every relevant keydown here whenever a text edit is
 /// active AND the overlay window does not currently hold real OS foreground/focus (every tier of
-/// ForegroundActivator failed) — in that state nothing typed would ever reach the TextBox through
+/// ForegroundActivator failed) - in that state nothing typed would ever reach the TextBox through
 /// the normal WPF/IME input pipeline, so this applies the keystroke directly against the TextBox's
 /// Text/CaretIndex/Selection instead. Only ever consulted from that one fallback state; whenever
 /// the window truly has focus, keys reach the TextBox the ordinary way, which supports far more
@@ -20,16 +20,16 @@ using TextBox = System.Windows.Controls.TextBox;
 /// built purely from the Shift/CapsLock flags SessionKeyboardHook already reads off the low-level
 /// hook struct (see <see cref="BuildSyntheticKeyState"/>) rather than the real GetKeyboardState
 /// (whose accuracy for a thread that isn't actually processing the message queue that owns
-/// keyboard focus is unreliable in exactly the scenario this fallback exists for) — deterministic
+/// keyboard focus is unreliable in exactly the scenario this fallback exists for) - deterministic
 /// and independently testable without any live keyboard state.
 ///
 /// Public (rather than internal) purely so its pure classification/translation-support helpers are
 /// unit-testable without an InternalsVisibleTo edit, matching the rest of Overlay/*'s pure-helper
-/// convention (see BoundedColorList) — only SessionKeyboardHook calls <see cref="Forward"/> in
+/// convention (see BoundedColorList) - only SessionKeyboardHook calls <see cref="Forward"/> in
 /// practice.</summary>
 public static class TextEditKeyForwarder
 {
-    /// <summary>Keys this fallback never treats as a text-insertion candidate — pure modifiers,
+    /// <summary>Keys this fallback never treats as a text-insertion candidate - pure modifiers,
     /// function/system keys, and every key it already special-cases in <see cref="Apply"/>
     /// (Enter/Escape/Backspace/Delete/arrows/Home/End) so they can never also fall through into
     /// ToUnicodeEx translation.</summary>
@@ -53,7 +53,7 @@ public static class TextEditKeyForwarder
 
     /// <summary>Builds the 256-byte virtual-key-state array ToUnicodeEx expects, from just the two
     /// modifier flags that actually change what a key produces within this fallback's supported
-    /// range (Shift and Caps Lock — Ctrl+&lt;letter&gt; combos are explicitly out of scope, see
+    /// range (Shift and Caps Lock - Ctrl+&lt;letter&gt; combos are explicitly out of scope, see
     /// <see cref="Apply"/>). Pure and deterministic, independent of any live OS keyboard state.</summary>
     public static byte[] BuildSyntheticKeyState(bool shiftDown, bool capsLockOn)
     {
@@ -69,7 +69,7 @@ public static class TextEditKeyForwarder
         return state;
     }
 
-    /// <summary>Entry point called from SessionKeyboardHook's hook callback — marshals to the UI
+    /// <summary>Entry point called from SessionKeyboardHook's hook callback - marshals to the UI
     /// thread's dispatcher (mirroring the rest of SessionKeyboardHook's dispatching convention; this
     /// runs on the low-level hook's own call stack) and applies the key directly against the active
     /// text editor. A no-op if the edit has already ended by the time the dispatched call runs.</summary>

@@ -10,25 +10,25 @@ namespace RoeSnip.App.AppShell;
 /// <summary>Persistent elevation via a Windows Scheduled Task, opt-in from Settings (item 15, ported
 /// from src/RoeSnip/App/ElevationManager.cs). Why this exists: when an elevated window has
 /// foreground focus, UIPI blocks a non-elevated RoeSnip from receiving the global hotkey, taking
-/// foreground, or overlaying interaction on top of it — so the snip hotkey and overlay silently stop
+/// foreground, or overlaying interaction on top of it - so the snip hotkey and overlay silently stop
 /// working around admin apps. The standard fix for a tray app is a Scheduled Task with
 /// RunLevel=Highest and an onlogon trigger: Windows starts the task elevated at login with no
 /// per-launch UAC prompt, because the user already consented once when the task itself was
 /// created/registered (which does require elevation).
 ///
-/// RoeSnip stays asInvoker by default (app.manifest) — this is opt-in only, toggled from
+/// RoeSnip stays asInvoker by default (app.manifest) - this is opt-in only, toggled from
 /// SettingsWindow, which round-trips through exactly one UAC prompt (Program.cs's
 /// --enable-elevated-startup / --disable-elevated-startup hidden verbs) to create or delete the
 /// task. Nothing here ever silently elevates anything.
 ///
 /// DELIBERATE deviation from the WPF app's task name ("RoeSnip"): both apps may be installed side
 /// by side and each owns its own Scheduled Task, exactly like each owning its own Run-key value
-/// name (StartupManager's "RoeSnip.App" vs the WPF app's "RoeSnip" — see that class's own doc
-/// comment) — sharing a task name would make toggling one app's checkbox silently create/delete/
+/// name (StartupManager's "RoeSnip.App" vs the WPF app's "RoeSnip" - see that class's own doc
+/// comment) - sharing a task name would make toggling one app's checkbox silently create/delete/
 /// replace the OTHER app's task, and worse, whichever app's task ran last at logon would win the
 /// single Run-key-suppression side effect for both.
 ///
-/// Linux/macOS: this whole feature is HIDDEN (not merely disabled) from Settings — see
+/// Linux/macOS: this whole feature is HIDDEN (not merely disabled) from Settings - see
 /// SettingsWindow.axaml's ElevatedStartupSection.IsVisible. UIPI and Scheduled Tasks are both
 /// Windows-only concepts; there is no portable equivalent to degrade to. Accepted limitation,
 /// tracked in docs/parity.md.</summary>
@@ -59,10 +59,10 @@ public static class ElevationManager
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr handle);
 
-    /// <summary>True if THIS process is running with an elevated token — distinct from merely being
+    /// <summary>True if THIS process is running with an elevated token - distinct from merely being
     /// a member of the Administrators group (a split admin token under UAC is NOT elevated until the
     /// user actually consents, which is exactly the distinction this feature cares about). Always
-    /// false on non-Windows — there is no elevated-token concept to report.</summary>
+    /// false on non-Windows - there is no elevated-token concept to report.</summary>
     public static bool IsProcessElevated()
     {
         if (!OperatingSystem.IsWindows())
@@ -129,7 +129,7 @@ public static class ElevationManager
     /// <summary>Creates (or replaces, via /f) the "RoeSnip.App" scheduled task: run
     /// <paramref name="exePath"/> at the current user's logon with the highest available
     /// privileges. Registering a task with RunLevel=Highest itself requires THIS process to already
-    /// be elevated — Windows will not let a non-elevated process silently grant a task admin rights,
+    /// be elevated - Windows will not let a non-elevated process silently grant a task admin rights,
     /// which is exactly the round-trip Program.cs's --enable-elevated-startup verb exists to
     /// satisfy. The /tr value must carry its own embedded quotes (schtasks' own parser, not just
     /// argv splitting, needs them to tell a spaces-containing path apart from trailing
@@ -169,8 +169,8 @@ public static class ElevationManager
 
     /// <summary>Picks the exe path a newly-created/updated elevated task should point at: the
     /// installed copy if item 13's install exists (matching what UpdateManager.InstallExists/
-    /// InstalledExePath report — the task must keep working after this dev/portable process exits),
-    /// else the currently-running process's own path — the same fallback StartupManager.
+    /// InstalledExePath report - the task must keep working after this dev/portable process exits),
+    /// else the currently-running process's own path - the same fallback StartupManager.
     /// SetRunAtStartup uses for the plain Run key. Pure/testable: takes the already-resolved
     /// installed-path info as parameters instead of reaching into UpdateManager/Environment
     /// itself.</summary>
@@ -315,7 +315,7 @@ public static class ElevationManager
             // Non-fatal: the task itself was created successfully, which is the operation that
             // matters. A stray Run key entry alongside it just means the second-instance
             // signalling (SingleInstance) hands off to the elevated task's own capture flow at the
-            // next logon — harmless double-launch race, not silent breakage.
+            // next logon - harmless double-launch race, not silent breakage.
             FileLog.Write($"RoeSnip: warning: failed to remove the HKCU Run key: {ex.Message}");
         }
 
@@ -372,7 +372,7 @@ public static class ElevationManager
 
 file static class ElevationManagerModuleInit
 {
-#pragma warning disable CA2255 // App assembly, not a general-purpose library — the Phase 1 pattern.
+#pragma warning disable CA2255 // App assembly, not a general-purpose library - the Phase 1 pattern.
     [System.Runtime.CompilerServices.ModuleInitializer]
 #pragma warning restore CA2255
     internal static void Init()

@@ -7,7 +7,7 @@ namespace RoeSnip.App.Overlay;
 
 /// <summary>The Core/UI seam: converts the portable BGRA8 SdrImage into an
 /// Avalonia WriteableBitmap for on-screen display. The exact mirror of the WPF app's removed
-/// SdrImage.ToBitmapSource() — it lives here, not in Core, because Core has zero UI deps.</summary>
+/// SdrImage.ToBitmapSource() - it lives here, not in Core, because Core has zero UI deps.</summary>
 public static class SdrImageAvaloniaExtensions
 {
     public static WriteableBitmap ToAvaloniaBitmap(this SdrImage image)

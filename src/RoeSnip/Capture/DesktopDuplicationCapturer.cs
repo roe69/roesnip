@@ -9,7 +9,7 @@ namespace RoeSnip.Capture;
 
 /// <summary>Primary capture path per docs/architecture.md: IDXGIOutput5.DuplicateOutput1, requesting both
 /// FP16 scRGB and BGRA8 sRGB as supported formats and branching on whichever format is actually
-/// delivered (DXGI_OUTDUPL_DESC.ModeDesc.Format) — never on AdvancedColorActive.
+/// delivered (DXGI_OUTDUPL_DESC.ModeDesc.Format) - never on AdvancedColorActive.
 ///
 /// Deliberate, not a gap: this class never reads DXGI_OUTDUPL_FRAME_INFO's separate pointer-shape
 /// buffer, so screenshots taken via this path never include the OS cursor (contrast
@@ -18,10 +18,10 @@ namespace RoeSnip.Capture;
 /// screenshot" report is this, not a bug.</summary>
 public sealed class DesktopDuplicationCapturer : IScreenCapturer
 {
-    // Total first-frame budget ~240 ms (was 5 × 100 ms = 500 ms). AcquireNextFrame normally
+    // Total first-frame budget ~240 ms (was 5 x 100 ms = 500 ms). AcquireNextFrame normally
     // returns the current desktop immediately on the first call; the retry loop only exists for
     // DXGI_ERROR_WAIT_TIMEOUT on static screens, and on monitors with the NVIDIA black-frame
-    // quirk this budget is pure wasted hotkey latency before the WGC fallback engages — keep it
+    // quirk this budget is pure wasted hotkey latency before the WGC fallback engages - keep it
     // tight while still surviving a couple of timeouts on a genuinely static screen.
     private const int MaxAcquireAttempts = 3;
     private const int AcquireTimeoutMs = 80;
@@ -128,7 +128,7 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
             // CaptureService engage the WGC fallback).
             if (FrameSanity.IsAllZero(pixels))
             {
-                // The ONE failure that proves DD is permanently broken here — the memo's whole
+                // The ONE failure that proves DD is permanently broken here - the memo's whole
                 // purpose (see CaptureException.IndicatesPermanentlyBroken).
                 throw new CaptureException(
                     $"Desktop Duplication delivered an all-zero (black) frame for monitor {monitor.DeviceName} " +
@@ -173,7 +173,7 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
     }
 
     /// <summary>Finds the DXGI output matching <paramref name="monitor"/>.HMonitor and creates the
-    /// D3D11 device on the adapter that owns it — never assume the default adapter (hybrid-GPU
+    /// D3D11 device on the adapter that owns it - never assume the default adapter (hybrid-GPU
     /// laptops).</summary>
     private static (IDXGIOutput output, ID3D11Device device) FindOutputAndCreateDevice(MonitorInfo monitor)
     {
@@ -205,7 +205,7 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
 
                         // The D3D device holds its own reference to the adapter it was created on
                         // (verified: the adapter is not needed after this call returns), so the
-                        // Vortice adapter wrapper itself must still be disposed here — SharpGen
+                        // Vortice adapter wrapper itself must still be disposed here - SharpGen
                         // ComObjects never release their native ref without an explicit Dispose.
                         // `adapterOwnsOutput = true` above only meant "don't dispose it in the
                         // finally below"; without this line the wrapper (and its underlying COM

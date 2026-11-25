@@ -5,9 +5,9 @@ using RoeSnip.Core.Capture;
 namespace RoeSnip.Core.Recording;
 
 /// <summary>Pure, unit-testable geometry helpers for multi-monitor recording, PHASE 1 (drag a live
-/// recording region across a monitor boundary — snap to the destination monitor, not true spanning
-/// capture; see PLAN-MULTIMON-RECORDING.md §3, WPF side). No live capture/device/window/thread
-/// dependency — same "make the testable slice a public class instead of an InternalsVisibleTo edit"
+/// recording region across a monitor boundary - snap to the destination monitor, not true spanning
+/// capture; see PLAN-MULTIMON-RECORDING.md sec 3, WPF side). No live capture/device/window/thread
+/// dependency - same "make the testable slice a public class instead of an InternalsVisibleTo edit"
 /// convention the WPF app already uses for its own recording-side pure math. Every rect here is
 /// virtual-desktop-absolute physical pixels, never monitor-relative, except where a method name says
 /// otherwise (<see cref="ToMonitorRelative"/>).
@@ -15,18 +15,18 @@ namespace RoeSnip.Core.Recording;
 /// PORTABLE COPY, deliberately NOT shared with the WPF app's own <c>RoeSnip.Recording.MultiMonitorRecording</c>:
 /// the WPF app's <c>MonitorInfo</c> carries a live Win32 HMONITOR handle (needed directly by its
 /// WGC/Desktop-Duplication capturers) that this portable <see cref="MonitorInfo"/> deliberately has
-/// no equivalent for (a cross-platform opaque <see cref="MonitorInfo.BackendKey"/> string instead —
+/// no equivalent for (a cross-platform opaque <see cref="MonitorInfo.BackendKey"/> string instead -
 /// see that record's own doc comment). The two types are therefore genuinely different shapes, not
 /// just a namespace rename, so this class cannot be a literal move-and-retarget of the WPF one
-/// without first unifying WPF's monitor-enumeration/capture layer onto the portable shape — out of
+/// without first unifying WPF's monitor-enumeration/capture layer onto the portable shape - out of
 /// scope for the Core-extraction item that added this file (see docs/parity.md's 04-recording-core-
 /// extraction entry). Both copies implement the exact same geometry and are independently
 /// unit-tested; this is the one deliberate duplication in that extraction.</summary>
 public static class MultiMonitorRecording
 {
-    /// <summary>The bounding box of every enumerated monitor's own bounds — NOT necessarily a
+    /// <summary>The bounding box of every enumerated monitor's own bounds - NOT necessarily a
     /// filled rectangle (monitor layouts can have gaps/notches), just the smallest axis-aligned
-    /// rect that contains all of them. Returns a degenerate (0,0,0,0) rect for an empty list —
+    /// rect that contains all of them. Returns a degenerate (0,0,0,0) rect for an empty list -
     /// callers that can hit this (a total enumeration failure) already treat that defensively
     /// elsewhere.</summary>
     public static RectPhysical UnionBounds(IReadOnlyList<MonitorInfo> monitors)
@@ -70,7 +70,7 @@ public static class MultiMonitorRecording
     }
 
     /// <summary>Which monitor should "own" a recording region at its current absolute position: the
-    /// one with the LARGEST overlap against the region — "snap to majority overlap", matching a
+    /// one with the LARGEST overlap against the region - "snap to majority overlap", matching a
     /// drag's own direction-of-travel intuition, never a split. Ties (a region centered dead-on a
     /// seam) break toward the lower <see cref="MonitorInfo.Index"/> for determinism, not because one
     /// choice is more correct than the other. Returns null only when the region doesn't intersect
@@ -95,10 +95,10 @@ public static class MultiMonitorRecording
         return best;
     }
 
-    /// <summary>Slides (NEVER resizes) a region so it fits fully within one monitor's bounds — the
+    /// <summary>Slides (NEVER resizes) a region so it fits fully within one monitor's bounds - the
     /// "clamp the new selection fully onto the destination monitor" step of a handoff. Width/height
     /// are always preserved verbatim; only Left/Top can move. If the region is itself wider/taller
-    /// than the destination monitor (a single-monitor-sized region landing on a smaller monitor —
+    /// than the destination monitor (a single-monitor-sized region landing on a smaller monitor -
     /// pathological on normal hardware, but not impossible), it's centered instead of clamped into a
     /// negative offset.</summary>
     public static RectPhysical ClampToMonitor(RectPhysical selectionAbs, MonitorInfo monitor)
@@ -118,10 +118,10 @@ public static class MultiMonitorRecording
         return new RectPhysical(absolute.Left - b.Left, absolute.Top - b.Top, absolute.Right - b.Left, absolute.Bottom - b.Top);
     }
 
-    /// <summary>Virtual-desktop-absolute overlap of two rects — needed once spanning capture has to
+    /// <summary>Virtual-desktop-absolute overlap of two rects - needed once spanning capture has to
     /// know WHERE each monitor's own captured pixels land, not just whether/how-much they overlap.
     /// Returns a degenerate (zero-width and/or zero-height, but never inverted) rect anchored at the
-    /// higher of the two lefts/tops when there is no real overlap — callers check
+    /// higher of the two lefts/tops when there is no real overlap - callers check
     /// <c>Width &gt; 0 &amp;&amp; Height &gt; 0</c> (see <see cref="IntersectingMonitors"/>) rather
     /// than relying on this method to signal "no overlap" any other way.</summary>
     public static RectPhysical Intersect(RectPhysical a, RectPhysical b)
@@ -134,11 +134,11 @@ public static class MultiMonitorRecording
     }
 
     /// <summary>Every monitor <paramref name="selectionAbs"/> overlaps by a positive area, ordered
-    /// by <see cref="MonitorInfo.Index"/> for determinism — the SET a spanning recording builds one
+    /// by <see cref="MonitorInfo.Index"/> for determinism - the SET a spanning recording builds one
     /// per-monitor recorder from. A selection that sits entirely on one monitor returns a
     /// one-element list: spanning with N==1 is deliberately just the ordinary non-spanning case at
     /// the geometry layer, not a separate code path. A selection dragged into a dead gap between
-    /// non-adjacent monitors returns an EMPTY list — the caller's job to decide what
+    /// non-adjacent monitors returns an EMPTY list - the caller's job to decide what
     /// "stay put"/"snap to nearest" means in that case, same convention <see cref="FindOwningMonitor"/>
     /// already uses for its own null return.</summary>
     public static IReadOnlyList<MonitorInfo> IntersectingMonitors(RectPhysical selectionAbs, IReadOnlyList<MonitorInfo> monitors)

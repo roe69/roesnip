@@ -12,7 +12,7 @@ public enum FrameFormat
 
 /// <summary>Owns one monitor's raw captured pixels for the lifetime of a capture session.
 /// The buffer is exactly as delivered by the capturer: <see cref="Stride"/> is the real row
-/// pitch (may exceed Width * BytesPerPixel due to driver padding) — always index as
+/// pitch (may exceed Width * BytesPerPixel due to driver padding) - always index as
 /// <c>row * Stride + col * BytesPerPixel</c>, never assume tightly packed rows.
 /// Lifetime: created by CaptureService.CaptureAll(); the caller (AppComposition) owns and
 /// must Dispose() every frame once the capture session (overlay + any exports) is complete.</summary>
@@ -34,10 +34,10 @@ public sealed class CapturedFrame : IDisposable
     }
 
     /// <summary><paramref name="pooledBuffer"/>: the pixel buffer was rented from
-    /// ArrayPool&lt;byte&gt;.Shared (it may be LONGER than stride*height — always index via
+    /// ArrayPool&lt;byte&gt;.Shared (it may be LONGER than stride*height - always index via
     /// <see cref="Row"/>, never the array length) and Dispose returns it to the pool. Recording
     /// rents at up to 50 frames/s; fresh region-sized arrays at that cadence are pure LOH churn
-    /// (Gen2 pauses freeze UI hit-testing — the f7aa9a3 class of bug).</summary>
+    /// (Gen2 pauses freeze UI hit-testing - the f7aa9a3 class of bug).</summary>
     public CapturedFrame(FrameFormat format, int width, int height, int stride, byte[] pixels, MonitorInfo monitor, bool pooledBuffer)
     {
         Format = format;

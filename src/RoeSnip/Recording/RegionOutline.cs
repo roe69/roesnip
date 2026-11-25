@@ -54,14 +54,14 @@ internal sealed class RegionOutline : Window
     private enum DragKind { None, Move, Left, Right, Top, Bottom, TopLeft, TopRight, BottomLeft, BottomRight }
 
     // Union of every enumerated monitor's own bounds (MultiMonitorRecording.UnionBounds), computed
-    // once at construction — the drag-clamp limit for BOTH ApplyDrag and SetSelectionForAutomation.
-    // Multi-monitor recording, phase 1 (PLAN-MULTIMON-RECORDING.md §4): this window's own coordinate
-    // convention is virtual-desktop-absolute physical pixels now, not "relative to one monitor" —
+    // once at construction - the drag-clamp limit for BOTH ApplyDrag and SetSelectionForAutomation.
+    // Multi-monitor recording, phase 1 (PLAN-MULTIMON-RECORDING.md sec 4): this window's own coordinate
+    // convention is virtual-desktop-absolute physical pixels now, not "relative to one monitor" -
     // the outline itself can freely span/cross monitor boundaries (DWM composites a WS_EX_LAYERED
     // window across monitors with no special-casing needed), it's ONLY RecordingSession's recorder
     // handoff (OnRegionMoved) that still snaps to a single monitor once a take exists.
     private readonly RectPhysical _unionBounds;
-    private RectPhysical _selectionPx; // slides/reshapes on drag — virtual-desktop-absolute
+    private RectPhysical _selectionPx; // slides/reshapes on drag - virtual-desktop-absolute
     private readonly OutlineElement _element;
 
     private bool _allowResize = true; // true in Setup; false once capturing (size locked)
@@ -155,7 +155,7 @@ internal sealed class RegionOutline : Window
     {
         int outerW = _selectionPx.Width + BandPx * 2;
         int outerH = _selectionPx.Height + BandPx * 2;
-        // _selectionPx is already virtual-desktop-absolute — no monitor origin to fold in anymore
+        // _selectionPx is already virtual-desktop-absolute - no monitor origin to fold in anymore
         // (used to be "b.Left + _selectionPx.Left"; see the class/ctor doc for the migration).
         NativeMethods.SetWindowPos(
             hwnd, NativeMethods.HWND_TOPMOST,
@@ -192,7 +192,7 @@ internal sealed class RegionOutline : Window
                     handled = true;
                 }
                 // _drag == None here means WM_NCHITTEST classified this point as HTTRANSPARENT (a
-                // plain click inside the region, meant to fall through to the app being recorded —
+                // plain click inside the region, meant to fall through to the app being recorded -
                 // see the class doc). Unconditionally setting handled = true regardless of _drag (the
                 // bug this fixes) swallowed WM_LBUTTONDOWN itself even for a click-through point,
                 // same as WM_MOUSEMOVE/WM_LBUTTONUP below already correctly avoid.
@@ -300,7 +300,7 @@ internal sealed class RegionOutline : Window
 
     /// <summary>Computes the new selection for a drag of <paramref name="kind"/> by (dx,dy) from the
     /// selection captured at drag start. Moves translate; resizes move the grabbed edge(s) while the
-    /// opposite edge stays put. Clamped to the UNION of every monitor's bounds (not just one — see
+    /// opposite edge stays put. Clamped to the UNION of every monitor's bounds (not just one - see
     /// the ctor/class doc), kept at/above the minimum, and forced to even width/height (the H.264/
     /// GIF encoders need even dimensions).</summary>
     private RectPhysical ApplyDrag(DragKind kind, RectPhysical s, int dx, int dy)
@@ -334,20 +334,20 @@ internal sealed class RegionOutline : Window
         return RectPhysical.FromSize(left, top, Math.Max(MinSizePx, w), Math.Max(MinSizePx, h));
     }
 
-    /// <summary>AutomationServer hook (dev-gated automation channel — App/AutomationServer.cs):
+    /// <summary>AutomationServer hook (dev-gated automation channel - App/AutomationServer.cs):
     /// applies a new selection exactly like a finished band drag would - the same field updates
     /// (_selectionPx / _element.Selection / MoveWindowToSelection) and the same RegionChanged
     /// event as WM_MOUSEMOVE's drag-apply branch above - without needing a live mouse-move stream.
     /// rect is virtual-desktop-absolute physical pixels, clamped to the union of every monitor's
     /// bounds (same limit ApplyDrag uses). Multi-monitor recording, phase 1: while size-locked
-    /// (<see cref="_allowResize"/> false — a take is Capturing/Reviewing, see
+    /// (<see cref="_allowResize"/> false - a take is Capturing/Reviewing, see
     /// <see cref="SetInteractionMode"/>) this is a MOVE-ONLY call exactly like a real band drag
     /// would be in that state (<see cref="ZoneAt"/> only ever returns <see cref="DragKind.Move"/>
-    /// then) — the incoming rect's width/height are ignored and the CURRENT selection's own
+    /// then) - the incoming rect's width/height are ignored and the CURRENT selection's own
     /// width/height are kept, honoring the same "encoder canvas stays fixed for the whole take"
     /// invariant a real drag already has. This is what lets AutomationServer's `select` command
     /// drive the cross-monitor drag-handoff path headlessly (RecordingSession.
-    /// SetSelectionForAutomation no longer phase-gates this away — see that method's own doc
+    /// SetSelectionForAutomation no longer phase-gates this away - see that method's own doc
     /// comment for why).</summary>
     internal void SetSelectionForAutomation(RectPhysical absoluteRect)
     {
@@ -374,7 +374,7 @@ internal sealed class RegionOutline : Window
     /// outline's displayed/tracked selection to a rect the SESSION itself decided (typically
     /// HandoffToMonitor's monitor-clamped destination rect) WITHOUT raising
     /// <see cref="RegionChanged"/>. Unlike <see cref="SetSelectionForAutomation"/>, this is called
-    /// FROM INSIDE a RegionChanged handler (RecordingSession.OnRegionMoved) — re-raising here would
+    /// FROM INSIDE a RegionChanged handler (RecordingSession.OnRegionMoved) - re-raising here would
     /// recurse straight back into that same handler.</summary>
     internal void SyncExternalSelection(RectPhysical absoluteRect)
     {

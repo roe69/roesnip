@@ -10,7 +10,7 @@ namespace RoeSnip.Platform.Windows;
 
 /// <summary>Primary capture path per docs/architecture.md: IDXGIOutput5.DuplicateOutput1, requesting both
 /// FP16 scRGB and BGRA8 sRGB as supported formats and branching on whichever format is actually
-/// delivered (DXGI_OUTDUPL_DESC.ModeDesc.Format) — never on AdvancedColorActive.
+/// delivered (DXGI_OUTDUPL_DESC.ModeDesc.Format) - never on AdvancedColorActive.
 /// Ported from src/RoeSnip/Capture/DesktopDuplicationCapturer.cs with exactly
 /// two mechanical changes: the HMONITOR now comes from <see cref="MonitorEnumerator.ParseHMonitor"/>
 /// (Core's MonitorInfo carries BackendKey, not a raw handle), and CapturedFrame gains the 7th
@@ -19,16 +19,16 @@ namespace RoeSnip.Platform.Windows;
 ///
 /// Cursor: this path never reads DXGI's separate pointer-shape buffer
 /// (DXGI_OUTDUPL_FRAME_INFO.PointerShapeBufferSize et al.) at all, so screenshots never contain the
-/// OS cursor — a shipped, deliberate, cross-backend product decision (WgcCapturer's
+/// OS cursor - a shipped, deliberate, cross-backend product decision (WgcCapturer's
 /// IsCursorCaptureEnabled = false is the same decision on the other backend), not a bug. Contrast
 /// the recording path (RegionRecorder/WindowsRegionCaptureSource), which explicitly wants the
 /// cursor visible. See docs/architecture.md "Capture".</summary>
 public sealed class DesktopDuplicationCapturer : IScreenCapturer
 {
-    // Total first-frame budget ~240 ms (was 5 × 100 ms = 500 ms). AcquireNextFrame normally
+    // Total first-frame budget ~240 ms (was 5 x 100 ms = 500 ms). AcquireNextFrame normally
     // returns the current desktop immediately on the first call; the retry loop only exists for
     // DXGI_ERROR_WAIT_TIMEOUT on static screens, and on monitors with the NVIDIA black-frame
-    // quirk this budget is pure wasted hotkey latency before the WGC fallback engages — keep it
+    // quirk this budget is pure wasted hotkey latency before the WGC fallback engages - keep it
     // tight while still surviving a couple of timeouts on a genuinely static screen.
     private const int MaxAcquireAttempts = 3;
     private const int AcquireTimeoutMs = 80;
@@ -135,7 +135,7 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
             // FallbackCaptureBackend engage the WGC fallback).
             if (FrameSanity.IsAllZero(pixels))
             {
-                // The ONE failure that proves DD is permanently broken here — the memo's whole
+                // The ONE failure that proves DD is permanently broken here - the memo's whole
                 // purpose (see CaptureException.IndicatesPermanentlyBroken).
                 throw new CaptureException(
                     $"Desktop Duplication delivered an all-zero (black) frame for monitor {monitor.DeviceName} " +
@@ -182,7 +182,7 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
     }
 
     /// <summary>Finds the DXGI output matching <paramref name="monitor"/>'s HMONITOR (recovered from
-    /// BackendKey) and creates the D3D11 device on the adapter that owns it — never assume the
+    /// BackendKey) and creates the D3D11 device on the adapter that owns it - never assume the
     /// default adapter (hybrid-GPU laptops).</summary>
     private static (IDXGIOutput output, ID3D11Device device) FindOutputAndCreateDevice(MonitorInfo monitor)
     {
@@ -215,7 +215,7 @@ public sealed class DesktopDuplicationCapturer : IScreenCapturer
 
                         // The D3D device holds its own reference to the adapter it was created on
                         // (verified: the adapter is not needed after this call returns), so the
-                        // Vortice adapter wrapper itself must still be disposed here — SharpGen
+                        // Vortice adapter wrapper itself must still be disposed here - SharpGen
                         // ComObjects never release their native ref without an explicit Dispose.
                         // `adapterOwnsOutput = true` above only meant "don't dispose it in the
                         // finally below"; without this line the wrapper (and its underlying COM

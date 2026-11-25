@@ -5,9 +5,9 @@ using System.Linq;
 namespace RoeSnip.Overlay;
 
 /// <summary>Pure list operations behind the toolbar's editable swatch palette (UX round 5, item 3):
-/// the whole palette — formerly a hardcoded 6-preset row plus a separate CustomColors row — is now
+/// the whole palette - formerly a hardcoded 6-preset row plus a separate CustomColors row - is now
 /// one persisted, user-editable list (RoeSnipSettings.PaletteColors, "#RRGGBB" strings in display
-/// order). Every mutation returns a new list (settings records are immutable); no WPF dependency —
+/// order). Every mutation returns a new list (settings records are immutable); no WPF dependency -
 /// unit-testable in isolation, matching BoundedColorList's convention.</summary>
 public static class SwatchPalette
 {
@@ -45,11 +45,11 @@ public static class SwatchPalette
         DefaultNames.TryGetValue(hex, out var name) ? name : hex;
 
     /// <summary>One-time migration (item 3): an empty <paramref name="paletteColors"/> means the
-    /// settings file predates the editable palette — seed from the built-in defaults plus any
+    /// settings file predates the editable palette - seed from the built-in defaults plus any
     /// legacy CustomColors ("+"-swatch colors, stored newest-first; appended here oldest-last so
     /// the visual order matches what the old two-row toolbar showed), deduplicated and capped at
     /// <see cref="MaxColors"/>. A non-empty palette is returned as-is (already migrated). The
-    /// legacy CustomColors field itself is preserved for downgrade compat — read, never displayed
+    /// legacy CustomColors field itself is preserved for downgrade compat - read, never displayed
     /// separately again.</summary>
     public static List<string> EffectivePalette(IReadOnlyList<string> paletteColors, IReadOnlyList<string> legacyCustomColors)
     {

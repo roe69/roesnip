@@ -10,22 +10,22 @@ using RoeSnip.Imaging;
 namespace RoeSnip.Overlay;
 
 // RoeSnip.csproj enables both UseWPF and UseWindowsForms, so System.Windows.Forms/System.Drawing
-// are in scope alongside System.Windows/System.Windows.Media — alias the colliding names to WPF's.
-// (Declared after the namespace line — see AnnotationLayer.cs for why: RoeSnip.Color, a sibling
+// are in scope alongside System.Windows/System.Windows.Media - alias the colliding names to WPF's.
+// (Declared after the namespace line - see AnnotationLayer.cs for why: RoeSnip.Color, a sibling
 // WP-A namespace, would otherwise shadow an outer-scope alias for "Color".)
 using Point = System.Windows.Point;
 using Color = System.Windows.Media.Color;
 using Brushes = System.Windows.Media.Brushes;
 using Pen = System.Windows.Media.Pen;
 using FontFamily = System.Windows.Media.FontFamily;
-// Not a WinForms/System.Drawing collision — FrameworkElement itself declares an instance
+// Not a WinForms/System.Drawing collision - FrameworkElement itself declares an instance
 // FlowDirection property, which shadows the enum type name "FlowDirection" inside any method of a
 // class deriving from it (Magnifier here). Alias to a distinct name to avoid CS0176.
 using FlowDir = System.Windows.FlowDirection;
 
-/// <summary>Zoom loupe near the cursor with hex/RGB (sampled from the tone-mapped preview — what
+/// <summary>Zoom loupe near the cursor with hex/RGB (sampled from the tone-mapped preview - what
 /// the user "sees") and a nits readout (sampled from the raw FP16 CapturedFrame via
-/// <see cref="CapturedFrame.ReadPixelNits"/>) — RoeSnip's signature feature: it can reveal an HDR
+/// <see cref="CapturedFrame.ReadPixelNits"/>) - RoeSnip's signature feature: it can reveal an HDR
 /// highlight even when the hex value reads as plain white. Click anywhere on the loupe widget to
 /// copy the current hex string to the clipboard as plain text.</summary>
 public sealed class Magnifier : FrameworkElement
@@ -35,7 +35,7 @@ public sealed class Magnifier : FrameworkElement
 
     /// <summary>Clamp range for <see cref="SampleRadius"/>: 1 => 3x3 source pixels at ~51 DIPs
     /// each (tightest zoom), 15 => 31x31 at ~5 DIPs each (widest context; also keeps the
-    /// per-render swatch count sane — the loupe redraws every mouse move). 5 (11x11) is the
+    /// per-render swatch count sane - the loupe redraws every mouse move). 5 (11x11) is the
     /// historical fixed sampling and remains the settings default.</summary>
     public const int MinSampleRadius = 1;
     public const int MaxSampleRadius = 15;
@@ -43,7 +43,7 @@ public sealed class Magnifier : FrameworkElement
     private int _sampleRadius = MaxSampleRadius;
 
     /// <summary>How many source pixels the loupe shows: a (2r+1)x(2r+1) block around the cursor,
-    /// rendered inside the FIXED-size loupe (the widget never changes size — the per-pixel swatch
+    /// rendered inside the FIXED-size loupe (the widget never changes size - the per-pixel swatch
     /// size scales instead, so a smaller radius means fewer, bigger pixels: zoomed in).
     /// Wheel-adjustable per session (OverlayWindow's wheel handler); every session opens at
     /// <see cref="MaxSampleRadius"/> (widest, normal pointer speed).</summary>
@@ -69,7 +69,7 @@ public sealed class Magnifier : FrameworkElement
     public double DeviceScaleX { get; set; } = 1.0;
     public double DeviceScaleY { get; set; } = 1.0;
 
-    /// <summary>Which value lines the loupe shows below the pixel grid — the same ordered
+    /// <summary>Which value lines the loupe shows below the pixel grid - the same ordered
     /// ColorFormats list the ColorPickerWindow's gear popover manages, so configuring the formats
     /// once configures both readouts. Set from OverlayWindow.AssignSessionFields; the widget
     /// sizes itself to exactly the enabled lines.</summary>
@@ -82,7 +82,7 @@ public sealed class Magnifier : FrameworkElement
     public bool ShowColorReadout { get; set; } = true;
 
     // The enabled subset of Formats' color-format list, derived lazily and cached by settings
-    // reference — OnRender runs per mouse move, so it must not re-run the catalog merge each time.
+    // reference - OnRender runs per mouse move, so it must not re-run the catalog merge each time.
     private RoeSnipSettings? _activeFormatsSource;
     private List<ColorFormatEntry> _activeFormats = new();
 
@@ -102,7 +102,7 @@ public sealed class Magnifier : FrameworkElement
 
     public string CurrentHex { get; private set; } = string.Empty;
 
-    /// <summary>The candidate crop rectangle currently being dragged, in physical pixels — the same
+    /// <summary>The candidate crop rectangle currently being dragged, in physical pixels - the same
     /// value <see cref="SelectionAdorner.SelectionPx"/> gets, mirrored here by every
     /// <c>SetSelection</c> call site (see OverlayWindow.xaml.cs) so the loupe can draw the same edge
     /// while zoomed in. Null means "no candidate selection to preview" (nothing extra is drawn even
@@ -112,7 +112,7 @@ public sealed class Magnifier : FrameworkElement
     public RectPhysical? SelectionPx { get; set; }
 
     /// <summary>Whether <see cref="SelectionPx"/> should currently be drawn as a border inside the
-    /// loupe. Deliberately a separate flag from "is <see cref="SelectionPx"/> non-null" — the caller
+    /// loupe. Deliberately a separate flag from "is <see cref="SelectionPx"/> non-null" - the caller
     /// (OverlayWindow's mouse-move handler) sets this to true only during a live
     /// <c>DragMode.NewSelection</c> drag past the click-threshold, so a stale rect left over from a
     /// previous selection is never drawn during the pending-click phase, a Move/Resize drag (where
@@ -132,7 +132,7 @@ public sealed class Magnifier : FrameworkElement
     /// <summary>Updates the sample point. <paramref name="cursorDip"/> is the mouse position in
     /// this window's DIPs (used only to position the loupe widget on screen);
     /// <paramref name="cursorPx"/> is the same point already converted to physical pixels (used
-    /// for the actual sampling, per the mixed-DPI contract — DIPs never cross into sampling math).</summary>
+    /// for the actual sampling, per the mixed-DPI contract - DIPs never cross into sampling math).</summary>
     public void Update(SdrImage preview, CapturedFrame frame, Point cursorDip, Point cursorPx)
     {
         _preview = preview;
@@ -170,7 +170,7 @@ public sealed class Magnifier : FrameworkElement
             Math.Clamp(cy, 0, frame.Height - 1));
         CurrentHex = string.Create(CultureInfo.InvariantCulture, $"#{r:X2}{g:X2}{b:X2}");
 
-        // Value lines below the pixel grid — the loupe-enabled subset of the same ordered,
+        // Value lines below the pixel grid - the loupe-enabled subset of the same ordered,
         // user-managed format list the ColorPickerWindow shows (see ActiveFormats), each expanded
         // by ColorFormatTemplate. ONE consistent style for every line (same face, size, and
         // color); the single deliberate exception is a STATE signal, not a styling one: a
@@ -194,7 +194,7 @@ public sealed class Magnifier : FrameworkElement
             }
         }
 
-        // Fixed-footprint loupe: the pixel grid never resizes with zoom — the per-pixel swatch
+        // Fixed-footprint loupe: the pixel grid never resizes with zoom - the per-pixel swatch
         // size is derived from how many pixels have to fit, so wheel-zooming only changes
         // magnification. The widget's total size hugs exactly the enabled value lines (compact:
         // no reserved space for hidden formats), growing wider only if a long line (cmyk) needs it.
@@ -258,7 +258,7 @@ public sealed class Magnifier : FrameworkElement
         }
 
         // Crosshair over the center (sampled) pixel: a white ring nested inside a black ring, so
-        // it reads against ANY background — a lone white ring vanished on white pixels (and a
+        // it reads against ANY background - a lone white ring vanished on white pixels (and a
         // lone black one would vanish on black), but one of the two always contrasts.
         double centerX = loupeLeft + loupeSize / 2;
         double centerY = loupeTop + loupeSize / 2;
@@ -294,7 +294,7 @@ public sealed class Magnifier : FrameworkElement
         catch (System.Runtime.InteropServices.COMException)
         {
             // The clipboard can be transiently locked by another process; click-to-copy is a
-            // convenience, not part of the critical Copy/Save path — swallow and let the user retry.
+            // convenience, not part of the critical Copy/Save path - swallow and let the user retry.
         }
     }
 
@@ -309,7 +309,7 @@ public sealed class Magnifier : FrameworkElement
     /// <c>Bottom</c> are one-past-last-pixel boundaries (see <see cref="RectPhysical"/>'s own doc
     /// comment) and this formula relies on Left &lt;= Right, Top &lt;= Bottom to produce a
     /// non-inverted <see cref="Rect"/>. Callers are expected to clip the result to the loupe's own
-    /// square themselves (see the <c>PushClip</c> call in <see cref="OnRender"/>) — off-loupe edges
+    /// square themselves (see the <c>PushClip</c> call in <see cref="OnRender"/>) - off-loupe edges
     /// are not bounds-checked here.</summary>
     public static Rect MapSelectionToLoupeRect(
         RectPhysical selection, int centerX, int centerY, int sampleRadius,

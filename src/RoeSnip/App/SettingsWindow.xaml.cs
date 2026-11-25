@@ -530,10 +530,10 @@ public partial class SettingsWindow : Window
     private void RunElevatedCheckBox_Unchecked(object sender, RoutedEventArgs e) => ToggleElevatedStartup(enable: false);
 
     /// <summary>Drives the "Run as administrator" checkbox. If this process is already elevated, the
-    /// task is created/deleted in-process — no UAC needed. Otherwise a second RoeSnip.exe is
+    /// task is created/deleted in-process - no UAC needed. Otherwise a second RoeSnip.exe is
     /// launched with Verb=runas and the matching hidden --enable/--disable-elevated-startup verb
     /// (ONE UAC prompt), and this window waits for it to finish before re-querying the real state and
-    /// reflecting it back onto the checkbox — so the checkbox always ends up showing what actually
+    /// reflecting it back onto the checkbox - so the checkbox always ends up showing what actually
     /// happened, not what the user clicked (it reverts on a cancelled UAC prompt, a failed schtasks
     /// call, etc).</summary>
     private void ToggleElevatedStartup(bool enable)
@@ -629,7 +629,7 @@ public partial class SettingsWindow : Window
 
     /// <summary>Non-elevated path: relaunch RoeSnip.exe elevated (one UAC prompt) with the matching
     /// hidden verb, wait for it, and surface any failure. A cancelled UAC prompt raises
-    /// Win32Exception 1223 — that's treated as a silent no-op (the checkbox reverts via the
+    /// Win32Exception 1223 - that's treated as a silent no-op (the checkbox reverts via the
     /// re-query in the caller), not an error dialog, since the user made an explicit choice.</summary>
     private void RunElevatedViaUac(bool enable)
     {
@@ -672,7 +672,7 @@ public partial class SettingsWindow : Window
         }
         catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            // User clicked "No" on the UAC prompt — nothing changed; the checkbox reverts silently.
+            // User clicked "No" on the UAC prompt - nothing changed; the checkbox reverts silently.
         }
         catch (Exception ex)
         {
@@ -723,7 +723,7 @@ public partial class SettingsWindow : Window
         }
 
         // Exits the WinForms message loop TrayApp.RunInstance() is running (this app's UI thread is
-        // WinForms, not WPF — there is no App.xaml/System.Windows.Application instance to shut down).
+        // WinForms, not WPF - there is no App.xaml/System.Windows.Application instance to shut down).
         // The new elevated instance takes the single-instance mutex once this process has fully exited.
         System.Windows.Forms.Application.Exit();
     }
@@ -789,7 +789,7 @@ public partial class SettingsWindow : Window
         try
         {
             // When the elevated task is installed, its own onlogon trigger owns startup (see
-            // StartupManager's doc comment) — keep the Run key clear rather than writing the
+            // StartupManager's doc comment) - keep the Run key clear rather than writing the
             // checkbox's raw value, regardless of what RunAtStartupCheckBox shows.
             bool elevatedTaskInstalled = ElevationManager.IsElevatedTaskInstalled();
             StartupManager.SetRunAtStartup(elevatedTaskInstalled ? false : runAtStartup);
@@ -828,7 +828,7 @@ public partial class SettingsWindow : Window
     /// at map-time (never trust options end-to-end), but bad input must never be SAVED in the first
     /// place: a Knee/Peak pair with PeakOverride == Knee divides by zero downstream (NaN -> HDR
     /// highlights render as black, since Math.Clamp does not clamp NaN), and Knee greater than Peak
-    /// silently hard-clips the entire frame — exactly the failure mode this app exists to prevent.
+    /// silently hard-clips the entire frame - exactly the failure mode this app exists to prevent.
     /// Blank boxes mean "no override" (null), matching the pre-existing ParseNullableDouble
     /// behavior. Returns false (with a user-facing message, matching this window's existing
     /// MessageBox-on-failure pattern) if either box contains non-blank text that fails to parse, or

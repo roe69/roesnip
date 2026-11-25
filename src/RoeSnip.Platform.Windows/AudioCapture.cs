@@ -8,7 +8,7 @@ using Vortice.Multimedia;
 
 namespace RoeSnip.Platform.Windows;
 
-/// <summary>WASAPI capture engine for MP4 recording audio — ported near-verbatim from the WPF app's
+/// <summary>WASAPI capture engine for MP4 recording audio - ported near-verbatim from the WPF app's
 /// own <c>src/RoeSnip/Recording/AudioCapture.cs</c> (<c>AudioCaptureEngine</c>). Microphone (default
 /// capture endpoint) and/or system audio (default render endpoint in loopback mode), both converted
 /// by WASAPI itself (AUTOCONVERTPCM) to one shared 48 kHz stereo 16-bit format, gap-filled with
@@ -19,8 +19,8 @@ namespace RoeSnip.Platform.Windows;
 ///
 /// Vortice.MediaFoundation 3.8.3 does not expose IAudioClient/IAudioCaptureClient, so this class
 /// hand-rolls minimal vtable wrappers (AudioClient/AudioCaptureClient below) over the raw COM
-/// pointer IMMDevice.Activate returns. Everything WASAPI-related — enumerator, device activation,
-/// Initialize, Start, and every poll — happens on ONE thread (the capture thread) rather than split
+/// pointer IMMDevice.Activate returns. Everything WASAPI-related - enumerator, device activation,
+/// Initialize, Start, and every poll - happens on ONE thread (the capture thread) rather than split
 /// across the caller and a worker: IAudioClient/IAudioCaptureClient are not documented as agile, so
 /// creating them on the UI thread and calling them from a background thread would be a
 /// cross-apartment hazard for no benefit. TryStart blocks (bounded) until that thread finishes
@@ -35,7 +35,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
 
     private const uint StreamFlagAutoConvertPcm = unchecked((uint)AudioClientStreamFlags.AutoConvertPCM);
     private const uint StreamFlagLoopback = (uint)AudioClientStreamFlags.LoopBack;
-    // AUDCLNT_STREAMFLAGS_SRCDEFAULTQUALITY — not in Vortice.Multimedia's enum, commonly OR'd
+    // AUDCLNT_STREAMFLAGS_SRCDEFAULTQUALITY - not in Vortice.Multimedia's enum, commonly OR'd
     // alongside AUTOCONVERTPCM so WASAPI's built-in resampler favors quality over speed.
     private const uint StreamFlagSrcDefaultQuality = 0x08000000;
     private const uint BufferFlagsSilent = 0x2; // AUDCLNT_BUFFERFLAGS_SILENT
@@ -73,7 +73,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
 
     /// <summary>UI thread. Blocks (bounded) until the capture thread has activated and started
     /// whichever WASAPI endpoints were requested, so the caller learns synchronously whether audio
-    /// is actually available — matching RecordingController.Start's own synchronous, clean-up-on-
+    /// is actually available - matching RecordingController.Start's own synchronous, clean-up-on-
     /// failure contract. Returns null when both flags are false (nothing to capture) or on any
     /// device/COM failure (logged here; also see the capture thread's own mid-capture handler for
     /// failures after this point).</summary>
@@ -99,7 +99,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
     /// <summary>Encoder thread.</summary>
     public bool TryDequeue(out AudioChunk chunk) => _queue.TryDequeue(out chunk);
 
-    /// <summary>UI thread; idempotent. Stops the queue from growing further — the capture thread
+    /// <summary>UI thread; idempotent. Stops the queue from growing further - the capture thread
     /// notices on its next poll and exits after one final drain.</summary>
     public void Stop() => _stopRequested = true;
 
@@ -115,7 +115,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
         // Only dispose the event once the thread has actually exited (Join returned because the
         // thread function returned, not because of the timeout): a still-running startup on a
         // wedged device could call _ready.Set() after this Dispose() call, and Set() on an
-        // already-disposed ManualResetEventSlim throws — unhandled on a background thread, which
+        // already-disposed ManualResetEventSlim throws - unhandled on a background thread, which
         // still crashes the process. Bounded leak of one event handle in that pathological case
         // beats a crash.
         if (!_thread.IsAlive)
@@ -128,7 +128,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
     {
         // MTA: this thread only ever calls in-process WASAPI objects it creates and owns itself,
         // no message pump needed. RPC_E_CHANGED_MODE (thread already in a different apartment) is
-        // non-fatal — COM is still usable, but CoUninitialize must be skipped since this call did
+        // non-fatal - COM is still usable, but CoUninitialize must be skipped since this call did
         // not actually take ownership of the apartment.
         int coHr = CoInitializeEx(IntPtr.Zero, 0 /*COINIT_MULTITHREADED*/);
         bool comInitialized = coHr >= 0;
@@ -186,7 +186,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
         }
         catch (Exception ex)
         {
-            // Never throw across the thread boundary — log once and let the queue simply stop
+            // Never throw across the thread boundary - log once and let the queue simply stop
             // growing; RecordingController already treats a drained-but-silent audio engine fine.
             FileLog.Write($"RoeSnip: audio capture stopped unexpectedly: {ex.Message}");
         }
@@ -263,7 +263,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
 
     /// <summary>One WASAPI endpoint (microphone capture or loopback render), converted to the
     /// shared target format and gap-filled into a continuous sample timeline. All members are
-    /// capture-thread-only — no locking, since only AudioCaptureDevice's single background thread
+    /// capture-thread-only - no locking, since only AudioCaptureDevice's single background thread
     /// ever touches a Source.</summary>
     private sealed class Source : IDisposable
     {
@@ -272,7 +272,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
         private readonly string _label;
         // Growable byte buffer for this source's continuous timeline: [0, _consumed) already
         // emitted into chunks, [_consumed, Count) pending. Compacted back to the front whenever
-        // something is consumed — in steady state the mixer drains nearly everything every poll,
+        // something is consumed - in steady state the mixer drains nearly everything every poll,
         // so this stays tiny.
         private readonly List<byte> _pending = new();
         private int _consumed;
@@ -355,7 +355,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
 
         /// <summary>Drains every packet WASAPI actually has, then pads with silence up to the
         /// expected sample count for elapsed wall-clock time (beyond a small tolerance) so this
-        /// source's timeline never falls behind — loopback in particular yields nothing while no
+        /// source's timeline never falls behind - loopback in particular yields nothing while no
         /// audio plays.</summary>
         public void Poll(long nowQpc, long engineStartQpc)
         {
@@ -458,7 +458,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
         }
     }
 
-    /// <summary>Minimal IAudioClient vtable wrapper — Vortice.MediaFoundation 3.8.3 does not
+    /// <summary>Minimal IAudioClient vtable wrapper - Vortice.MediaFoundation 3.8.3 does not
     /// expose this interface. IUnknown occupies slots 0-2; slot numbers below are IAudioClient's
     /// own layout (Initialize=3 ... GetService=14), verified against the real DLL and a live
     /// device (see the WPF app's own recording-audio smoke test, which this port did not need to
@@ -487,7 +487,7 @@ public sealed class AudioCaptureDevice : IAudioCaptureDevice
     }
 
     /// <summary>Minimal IAudioCaptureClient vtable wrapper, same reasoning as AudioClient above.
-    /// GetBuffer's device-position/QPC-position out params are omitted (pass null pointers) —
+    /// GetBuffer's device-position/QPC-position out params are omitted (pass null pointers) -
     /// this class computes its own timeline from Stopwatch/QPC rather than the device's clock.</summary>
     private sealed unsafe class AudioCaptureClient : SharpGen.Runtime.ComObject
     {

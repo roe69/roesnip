@@ -18,16 +18,16 @@ using BoundedColorList = RoeSnip.Core.Color.BoundedColorList;
 namespace RoeSnip.App.Overlay;
 
 /// <summary>Small standalone always-on-top eyedropper window (modeled on PowerToys Color Picker),
-/// singleton per app (owned/recreated on demand by OverlayController — see OnColorPicked there).
+/// singleton per app (owned/recreated on demand by OverlayController - see OnColorPicked there).
 /// Opened by a plain click on the overlay (OverlayWindow.TriggerColorPick), which cancels the snip
 /// and hands this window a <see cref="PickedColorInfo"/> snapshot via <see cref="ApplyPick"/>.
 ///
 /// "Pick" re-launches the capture overlay in a lightweight pick-only mode (OverlayController's
-/// pick-only session — suppresses selection/toolbar, shows just crosshair+magnifier) so the next
+/// pick-only session - suppresses selection/toolbar, shows just crosshair+magnifier) so the next
 /// click picks a new color into this same window in place. Recent picks (newest first, capped at
 /// 8) and which format rows are visible are persisted to RoeSnipSettings (additive fields) so they
 /// survive across window instances/app restarts. Ported from the frozen WPF app's own
-/// src/RoeSnip/Overlay/ColorPickerWindow.xaml(.cs) (item 22) — same layout/behavior, rebuilt with
+/// src/RoeSnip/Overlay/ColorPickerWindow.xaml(.cs) (item 22) - same layout/behavior, rebuilt with
 /// Avalonia controls (Popup instead of a WPF Popup, Button-based swatches instead of raw
 /// Border+mouse-event wiring, BeginMoveDrag instead of DragMove).</summary>
 public partial class ColorPickerWindow : Window
@@ -40,7 +40,7 @@ public partial class ColorPickerWindow : Window
     private RoeSnipSettings _settings;
 
     /// <summary>Working copy of the ordered format list (see RoeSnipSettings.ColorFormats /
-    /// ColorFormatCatalog.EffectiveFormats) — every popover mutation edits this list, persists it,
+    /// ColorFormatCatalog.EffectiveFormats) - every popover mutation edits this list, persists it,
     /// and re-renders both the rows and the popover itself.</summary>
     private List<ColorFormatEntry> _formats;
 
@@ -48,7 +48,7 @@ public partial class ColorPickerWindow : Window
     private double? _nits; // null when the active color isn't a live capture sample (a shade or a reloaded recent)
 
     // XAML-infrastructure-only constructor (satisfies the XAML compiler's public-ctor expectation,
-    // AVLN3001) — RoeSnip's own code always uses the data-taking overload below; a window created
+    // AVLN3001) - RoeSnip's own code always uses the data-taking overload below; a window created
     // this way is inert and must not be shown.
     public ColorPickerWindow()
         : this(static () => { })
@@ -70,7 +70,7 @@ public partial class ColorPickerWindow : Window
         PickButton.Click += (_, _) => _onPickRequested();
         GearButton.Click += (_, _) => FormatsPopup.IsOpen = !FormatsPopup.IsOpen;
 
-        // Item 02 parity: exclude this window from screen capture — a "Pick" re-capture freezes
+        // Item 02 parity: exclude this window from screen capture - a "Pick" re-capture freezes
         // the screen WITH this window still up; without the exclusion it photobombs the frozen
         // frame and the user can't pick colors from pixels underneath it. Same seam every other
         // Avalonia window in this app uses (overlay/flash/recording chrome); handles the
@@ -78,9 +78,9 @@ public partial class ColorPickerWindow : Window
         Opened += (_, _) => AppShell.WindowCaptureExclusion.Apply(this);
 
         // Esc closes this window (user-reported WPF fix: it previously fell through and could end
-        // up cancelling an overlay session instead — see ColorPickerWindow.xaml.cs:81-99). Tunnel
+        // up cancelling an overlay session instead - see ColorPickerWindow.xaml.cs:81-99). Tunnel
         // so it wins over any focused child; the formats popup gets to close itself first if it is
-        // open. Deliberately does NOT call into OverlayController/any shared cancel routine — this
+        // open. Deliberately does NOT call into OverlayController/any shared cancel routine - this
         // window has no relationship to whichever overlay session (if any) happens to be active,
         // so closing it must never reach over and cancel one.
         AddHandler(KeyDownEvent, (_, e) =>
@@ -103,7 +103,7 @@ public partial class ColorPickerWindow : Window
         BuildFormatsPopup();
         RefreshRecentColorsPanel();
 
-        // Sensible pre-pick default so the window never shows a blank swatch/rows — in practice
+        // Sensible pre-pick default so the window never shows a blank swatch/rows - in practice
         // OverlayController always calls ApplyPick before the first Show().
         _r = _g = _b = 0x80;
         _nits = null;
@@ -111,8 +111,8 @@ public partial class ColorPickerWindow : Window
     }
 
     /// <summary>Applies a new pick (from the overlay's eyedropper click or a pick-mode re-pick),
-    /// updates the recent-colors list (persisted), and — only the first time this instance becomes
-    /// visible — positions the window near the click. Subsequent re-picks update content in place
+    /// updates the recent-colors list (persisted), and - only the first time this instance becomes
+    /// visible - positions the window near the click. Subsequent re-picks update content in place
     /// without moving the window, per spec ("re-picks update it in place").</summary>
     internal void ApplyPick(PickedColorInfo info)
     {
@@ -135,11 +135,11 @@ public partial class ColorPickerWindow : Window
         }
     }
 
-    /// <summary>Approximate placement "near" the click, per spec — not pixel-exact (that precision
+    /// <summary>Approximate placement "near" the click, per spec - not pixel-exact (that precision
     /// isn't needed for a small utility popup). Position is in physical screen pixels (Avalonia's
     /// PixelPoint, unlike Width/Height's DIPs), and the click's ScreenPx is already an absolute
     /// physical-pixel virtual-desktop coordinate, so only the DIP-specified offset needs converting
-    /// via the source monitor's DPI — no divide-then-remultiply round trip WPF's own DIP-based
+    /// via the source monitor's DPI - no divide-then-remultiply round trip WPF's own DIP-based
     /// Left/Top needed.</summary>
     private void PositionNear(double screenPxX, double screenPxY, int dpiX, int dpiY)
     {
@@ -166,7 +166,7 @@ public partial class ColorPickerWindow : Window
         catch (InvalidOperationException)
         {
             // BeginMoveDrag can throw if the platform can't start a move-drag from this event
-            // (e.g. a very fast click where the button was already released) — nothing to do, the
+            // (e.g. a very fast click where the button was already released) - nothing to do, the
             // window just doesn't move. Mirrors WPF's own DragMove try/catch here.
         }
     }
@@ -229,7 +229,7 @@ public partial class ColorPickerWindow : Window
                 continue;
             }
             // %Nt renders "n/a" when _nits is null (a shade / a reloaded recent color has no live
-            // capture sample) — handled inside the template engine.
+            // capture sample) - handled inside the template engine.
             AddFormatRow(entry.Name, ColorFormatTemplate.Format(entry.Format, _r, _g, _b, _nits));
         }
     }
@@ -288,7 +288,7 @@ public partial class ColorPickerWindow : Window
         }
         catch (Exception)
         {
-            // Clipboard transiently locked by another process — a copy button is a convenience,
+            // Clipboard transiently locked by another process - a copy button is a convenience,
             // not worth an error dialog.
         }
         if (!copied)
@@ -331,7 +331,7 @@ public partial class ColorPickerWindow : Window
             swatch.Click += (_, _) =>
             {
                 _r = r; _g = g; _b = b;
-                _nits = null; // reloaded from history — no live nits sample available for it
+                _nits = null; // reloaded from history - no live nits sample available for it
                 RefreshDisplay();
             };
             RecentColorsPanel.Children.Add(swatch);
@@ -394,7 +394,7 @@ public partial class ColorPickerWindow : Window
             var loupeBox = new CheckBox
             {
                 IsChecked = entry.InLoupe,
-                IsEnabled = entry.Enabled, // the loupe shows the enabled subset — a disabled format never renders there
+                IsEnabled = entry.Enabled, // the loupe shows the enabled subset - a disabled format never renders there
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),
@@ -406,13 +406,13 @@ public partial class ColorPickerWindow : Window
             Grid.SetColumn(loupeBox, 1);
             row.Children.Add(loupeBox);
 
-            var up = PopupIconButton("▴", "Move up", enabled: index > 0);
+            var up = PopupIconButton(((char)0x25B4).ToString(), "Move up", enabled: index > 0);
             up.Click += (_, _) => MutateFormats(() =>
                 (_formats[index - 1], _formats[index]) = (_formats[index], _formats[index - 1]));
             Grid.SetColumn(up, 2);
             row.Children.Add(up);
 
-            var down = PopupIconButton("▾", "Move down", enabled: index < _formats.Count - 1);
+            var down = PopupIconButton(((char)0x25BE).ToString(), "Move down", enabled: index < _formats.Count - 1);
             down.Click += (_, _) => MutateFormats(() =>
                 (_formats[index + 1], _formats[index]) = (_formats[index], _formats[index + 1]));
             Grid.SetColumn(down, 3);
@@ -420,7 +420,7 @@ public partial class ColorPickerWindow : Window
 
             if (entry.IsCustom)
             {
-                var edit = PopupIconButton("✎", "Edit this custom format", enabled: true);
+                var edit = PopupIconButton(((char)0x270E).ToString(), "Edit this custom format", enabled: true);
                 edit.Click += async (_, _) =>
                 {
                     var dialog = new CustomFormatDialog(entry.Name, entry.Format, _r, _g, _b, _nits);
@@ -437,7 +437,7 @@ public partial class ColorPickerWindow : Window
                 Grid.SetColumn(edit, 4);
                 row.Children.Add(edit);
 
-                var delete = PopupIconButton("✕", "Delete this custom format", enabled: true);
+                var delete = PopupIconButton(((char)0x2715).ToString(), "Delete this custom format", enabled: true);
                 delete.Click += (_, _) => MutateFormats(() => _formats.RemoveAt(index));
                 Grid.SetColumn(delete, 5);
                 row.Children.Add(delete);
@@ -523,7 +523,7 @@ public partial class ColorPickerWindow : Window
     }
 
     /// <summary>Single mutation seam for the format list: apply, persist (the stored list becomes
-    /// the user's truth from the first edit on — see ColorFormatCatalog.EffectiveFormats), and
+    /// the user's truth from the first edit on - see ColorFormatCatalog.EffectiveFormats), and
     /// re-render the rows AND the popover (indices/enabled states baked into the closures above
     /// go stale after any mutation, so the popover is always rebuilt wholesale).</summary>
     private void MutateFormats(System.Action mutation)
@@ -655,7 +655,7 @@ public partial class ColorPickerWindow : Window
             root.Children.Add(buttons);
             Content = root;
 
-            // Enter saves (when the current template is valid), Escape cancels — the local
+            // Enter saves (when the current template is valid), Escape cancels - the local
             // equivalent of WPF's IsDefault/IsCancel button flags, which Avalonia's Button has no
             // direct analog for.
             AddHandler(KeyDownEvent, (_, e) =>

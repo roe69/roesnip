@@ -10,8 +10,8 @@ using System.Windows.Media;
 namespace RoeSnip.Overlay;
 
 // RoeSnip.csproj enables both UseWPF and UseWindowsForms, so System.Windows.Forms/System.Drawing
-// are in scope alongside System.Windows/System.Windows.Media — alias the colliding names to WPF's.
-// (Declared after the namespace line — see AnnotationLayer.cs for why: RoeSnip.Color, a sibling
+// are in scope alongside System.Windows/System.Windows.Media - alias the colliding names to WPF's.
+// (Declared after the namespace line - see AnnotationLayer.cs for why: RoeSnip.Color, a sibling
 // WP-A namespace, would otherwise shadow an outer-scope alias for "Color".)
 using Color = System.Windows.Media.Color;
 using UserControl = System.Windows.Controls.UserControl;
@@ -19,14 +19,14 @@ using ContextMenu = System.Windows.Controls.ContextMenu;
 using MenuItem = System.Windows.Controls.MenuItem;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 
-/// <summary>Pictogram tool buttons (inline vector Path icons — no image assets), the editable
-/// swatch palette (right-click Replace/Remove per swatch — item 3, UX round 5), the numeric size
-/// input (item 2, UX round 5 — one editable px/pt ComboBox instead of the old fixed stroke dots),
-/// undo, the terminal action buttons (Copy / Save, with HDR export on Save's right-click menu —
+/// <summary>Pictogram tool buttons (inline vector Path icons - no image assets), the editable
+/// swatch palette (right-click Replace/Remove per swatch - item 3, UX round 5), the numeric size
+/// input (item 2, UX round 5 - one editable px/pt ComboBox instead of the old fixed stroke dots),
+/// undo, the terminal action buttons (Copy / Save, with HDR export on Save's right-click menu -
 /// item 4, UX round 5), and a Cancel X that always closes the whole overlay. Always attached
 /// below-right of the current selection by the owning OverlayWindow (flipping above if it would go
-/// off-screen). All buttons are always visible — no hover-only-revealed controls, per the product's
-/// UI style requirement — and every control except the size ComboBox's editable TextBox is
+/// off-screen). All buttons are always visible - no hover-only-revealed controls, per the product's
+/// UI style requirement - and every control except the size ComboBox's editable TextBox is
 /// Focusable=false so keystrokes (Esc/Enter/Ctrl+...) keep reaching the overlay window's handler
 /// even right after a toolbar click. The size box is the one deliberate exception (typing needs
 /// real keyboard focus); OverlayWindow.IsTextInputFocused + the session keyboard hook's pass-through
@@ -38,7 +38,7 @@ using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 /// don't inherit it.</summary>
 public partial class ToolbarControl : UserControl
 {
-    /// <summary>Every installed system font family, sorted by display name — enumerated once per
+    /// <summary>Every installed system font family, sorted by display name - enumerated once per
     /// process (Lazy) since the installed set doesn't change under a running session. Replaces the
     /// old fixed six-font list; the dropdown stays cheap despite hundreds of entries because
     /// DarkComboBoxStyle's popup virtualizes (only the visible rows realize their live-font "AaBb"
@@ -95,7 +95,7 @@ public partial class ToolbarControl : UserControl
     public event Action? RecordGifClicked;
     public event Action? CancelClicked;
 
-    /// <summary>Text-style group (item 4) — Bold, Italic, font family. Only ever visible while the
+    /// <summary>Text-style group (item 4) - Bold, Italic, font family. Only ever visible while the
     /// Text tool is selected. Font size is edited via the shared size ComboBox (pt mode).</summary>
     public event Action<double>? FontSizeSelected;
     public event Action<bool>? BoldToggled;
@@ -123,7 +123,7 @@ public partial class ToolbarControl : UserControl
         RefreshSizeCombo();
 
         // Commit whatever was typed whenever keyboard focus leaves the size box entirely (clicking
-        // a tool, clicking the image, Enter's own focus hand-back) — never leave a typed-but-
+        // a tool, clicking the image, Enter's own focus hand-back) - never leave a typed-but-
         // uncommitted value silently reverting later.
         SizeComboBox.IsKeyboardFocusWithinChanged += (_, e) =>
         {
@@ -134,7 +134,7 @@ public partial class ToolbarControl : UserControl
         };
 
         // A ContextMenu isn't part of its owner Button's visual tree, so these can't be set as a
-        // XAML RelativeSource binding — set once here so the menu opens directly under the button
+        // XAML RelativeSource binding - set once here so the menu opens directly under the button
         // (normal menu-button UX) instead of at the cursor (ContextMenu's default for a left-click
         // open, since it has no mouse-position event to place itself against).
         RecordContextMenu.PlacementTarget = RecordButton;
@@ -165,7 +165,7 @@ public partial class ToolbarControl : UserControl
             button.IsChecked = ReferenceEquals(button, selected);
         }
 
-        // The text-style group is always visible while the Text tool is active — no hover-hiding —
+        // The text-style group is always visible while the Text tool is active - no hover-hiding -
         // and collapsed for every other tool.
         TextStylePanel.Visibility = tool == AnnotationTool.Text ? Visibility.Visible : Visibility.Collapsed;
 
@@ -188,9 +188,9 @@ public partial class ToolbarControl : UserControl
     // ---------- Editable swatch palette (item 3, UX round 5) ----------
 
     /// <summary>Rebuilds the swatch row from the persisted palette (RoeSnipSettings.PaletteColors,
-    /// migrated/capped by SwatchPalette) — called by OverlayWindow when the toolbar is (re)shown
+    /// migrated/capped by SwatchPalette) - called by OverlayWindow when the toolbar is (re)shown
     /// and after every palette edit. The swatch matching <paramref name="selectedColor"/> is
-    /// checked (falling back to the first swatch, without raising ColorSelected — OverlayWindow
+    /// checked (falling back to the first swatch, without raising ColorSelected - OverlayWindow
     /// keeps its current color aligned with the palette before calling this).</summary>
     public void SetPaletteColors(IReadOnlyList<string> hexColors, Color selectedColor)
     {
@@ -235,7 +235,7 @@ public partial class ToolbarControl : UserControl
         }
 
         // Never show a palette with nothing checked: fall back to the first swatch visually
-        // (no ColorSelected raise — display-only, mirroring how the old preset row initialized).
+        // (no ColorSelected raise - display-only, mirroring how the old preset row initialized).
         if (_selectedColorSwatch is null && ColorSwatchPanel.Children.Count > 0)
         {
             _selectedColorSwatch = (ToggleButton)ColorSwatchPanel.Children[0];
@@ -244,7 +244,7 @@ public partial class ToolbarControl : UserControl
     }
 
     /// <summary>Per-swatch right-click menu: Replace... only (a swatch is a recolorable slot, not
-    /// a removable row). Index is captured per swatch — the whole row is rebuilt on every palette
+    /// a removable row). Index is captured per swatch - the whole row is rebuilt on every palette
     /// change, so indices can never go stale.</summary>
     private ContextMenu BuildSwatchContextMenu(int paletteIndex)
     {
@@ -277,7 +277,7 @@ public partial class ToolbarControl : UserControl
         _selectedColorSwatch = clicked;
     }
 
-    /// <summary>Re-checks the default Select tool without raising ToolSelected — called by the
+    /// <summary>Re-checks the default Select tool without raising ToolSelected - called by the
     /// owning OverlayWindow when the toolbar is hidden (selection cleared), which also resets its
     /// own current tool to None; this keeps the visible checked state from lying on re-show.</summary>
     public void ResetToolSelection()
@@ -294,7 +294,7 @@ public partial class ToolbarControl : UserControl
     // ---------- Numeric size input (item 2, UX round 5) ----------
 
     /// <summary>Live-updates the size box from a scroll-wheel change (OverlayWindow calls this; it
-    /// does not itself raise StrokeWidthSelected — the wheel handler already knows the new width
+    /// does not itself raise StrokeWidthSelected - the wheel handler already knows the new width
     /// and drives OverlayWindow's own state directly). Also the canonical-text refresh after a
     /// typed commit.</summary>
     public void SetStrokeWidth(double width)
@@ -306,7 +306,7 @@ public partial class ToolbarControl : UserControl
         }
     }
 
-    /// <summary>Live-updates the size box from a scroll-wheel font resize — mirrors
+    /// <summary>Live-updates the size box from a scroll-wheel font resize - mirrors
     /// <see cref="SetStrokeWidth"/>'s role for the Text tool's pt mode.</summary>
     public void SetFontSize(double size)
     {
@@ -365,7 +365,7 @@ public partial class ToolbarControl : UserControl
     /// <summary>Parses/clamps whatever is in the size box and applies it: updates the tool state
     /// via StrokeWidthSelected/FontSizeSelected (OverlayWindow updates the brush + cursor circle
     /// immediately) and rewrites the box to the canonical "Npx"/"Npt" form. Unparseable text
-    /// reverts to the current value. Idempotent — safe to call from both Enter and focus-loss.</summary>
+    /// reverts to the current value. Idempotent - safe to call from both Enter and focus-loss.</summary>
     private void CommitSizeText()
     {
         if (_suppressSizeEvents)
@@ -402,7 +402,7 @@ public partial class ToolbarControl : UserControl
     }
 
     /// <summary>Enter commits and hands keyboard focus back to the overlay window (so the NEXT
-    /// Enter confirms the snip — this one never does; the session hook passes keys through while
+    /// Enter confirms the snip - this one never does; the session hook passes keys through while
     /// the box is focused, see OverlayInputInterop.cs). Esc reverts and hands focus back likewise,
     /// deliberately consuming it so it can't double as "cancel the snip" mid-typing.</summary>
     private void OnSizeComboKeyDown(object sender, KeyEventArgs e)
@@ -431,7 +431,7 @@ public partial class ToolbarControl : UserControl
         }
 
         // Apply the preset directly (the editable Text may not have synced yet at this point),
-        // then hand focus back — picking from the dropdown is a complete gesture.
+        // then hand focus back - picking from the dropdown is a complete gesture.
         SetSizeComboTextSuppressed(presetText);
         CommitSizeText();
         ReturnFocusToOverlayWindow();
@@ -473,7 +473,7 @@ public partial class ToolbarControl : UserControl
         return false;
     }
 
-    /// <summary>True when the given event source sits inside the size ComboBox — OverlayWindow uses
+    /// <summary>True when the given event source sits inside the size ComboBox - OverlayWindow uses
     /// this to decide whether a toolbar click should yank keyboard focus back to the window (any
     /// toolbar click that is NOT into the size box should, since every other control is
     /// Focusable=false and would otherwise leave the box focused forever).</summary>
@@ -562,7 +562,7 @@ public partial class ToolbarControl : UserControl
         }
     }
 
-    /// <summary>Grays out Undo/Redo when they'd be no-ops — driven by OverlayWindow from
+    /// <summary>Grays out Undo/Redo when they'd be no-ops - driven by OverlayWindow from
     /// AnnotationLayer.HistoryChanged and on every toolbar (re)show.</summary>
     public void SetHistoryState(bool canUndo, bool canRedo)
     {
@@ -578,14 +578,14 @@ public partial class ToolbarControl : UserControl
     /// groups (Tools/History/Palette) down to Save/Copy/Cancel/Record/Share.
     ///
     /// Record and Share were BOTH gated off here until their respective spanning integrations landed
-    /// (spanning-recording, sharing-providers) — see the git history of this method for the old
+    /// (spanning-recording, sharing-providers) - see the git history of this method for the old
     /// GATE-style doc comments. Record is no longer gated: RecordingSession.BeginCapture re-derives
     /// its own intersected-monitor set and takes the spanning capture path automatically once 2+
     /// monitors are involved (see OverlaySession.RecordSpanning's doc comment in
-    /// OverlayController.cs), so there is nothing left for the TOOLBAR to refuse — the button stays
+    /// OverlayController.cs), so there is nothing left for the TOOLBAR to refuse - the button stays
     /// visible/enabled exactly like every other action. Share was never actually gated by a real
     /// constraint (RenderSpanningSelection already produces the byte composite Share uploads, same as
-    /// Copy/Save always could) — it was hidden only because nothing consumed the button yet; now that
+    /// Copy/Save always could) - it was hidden only because nothing consumed the button yet; now that
     /// OverlaySession.ShareCurrentSelection is wired, it stays visible too. Save HDR (the SaveButton's
     /// right-click menu item, never touched by this method) was likewise never collapsed once
     /// JxrWriter.WriteSpanning shipped. Called by OverlayWindow.ShowToolbar/UpdateToolbarPlacement
@@ -733,7 +733,7 @@ public partial class ToolbarControl : UserControl
     private void OnSaveClick(object sender, RoutedEventArgs e) => SaveClicked?.Invoke();
     private void OnSaveHdrClick(object sender, RoutedEventArgs e) => SaveHdrClicked?.Invoke();
 
-    // Left-click opens the format menu (unlike Save's right-click-only HDR menu — Record has no
+    // Left-click opens the format menu (unlike Save's right-click-only HDR menu - Record has no
     // single default format a plain click could commit to).
     private void OnRecordClick(object sender, RoutedEventArgs e) => RecordButton.ContextMenu!.IsOpen = true;
     private void OnRecordMp4Click(object sender, RoutedEventArgs e) => RecordMp4Clicked?.Invoke();

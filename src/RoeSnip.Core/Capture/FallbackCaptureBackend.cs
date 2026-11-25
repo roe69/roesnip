@@ -5,7 +5,7 @@ namespace RoeSnip.Core.Capture;
 /// <summary>Generalizes the WPF app's CaptureService fallback/cache/parallel-capture orchestration
 /// (see docs/architecture.md) into reusable infrastructure for ANY platform
 /// whose capture strategy is itself an ordered list of capturers with a "once broken, skip forever"
-/// memo — Windows (DD then WGC) and Linux (portal then X11) both fit this shape; macOS does not
+/// memo - Windows (DD then WGC) and Linux (portal then X11) both fit this shape; macOS does not
 /// (exactly one capturer) and implements ICaptureBackend directly instead.
 ///
 /// Behavior, copied from the WPF app's CaptureService.CaptureAll/CaptureOneOrNull (unchanged):
@@ -14,7 +14,7 @@ namespace RoeSnip.Core.Capture;
 /// entry says is already known-broken; on the first success, return it; on total failure across all
 /// capturers, log to stderr and omit the monitor. A failure of a given capturer for a given monitor
 /// persists a cache entry ONLY once a later capturer in the order actually succeeds AND the failure
-/// itself proves that capturer permanently broken (<see cref="CaptureException.IndicatesPermanentlyBroken"/>) —
+/// itself proves that capturer permanently broken (<see cref="CaptureException.IndicatesPermanentlyBroken"/>) -
 /// a transient failure (access lost, a timeout, a deadline-abandoned capture still holding a device
 /// slot) falls back for that capture only and is never memoized, so it can never poison future
 /// captures (including after a relaunch).</summary>
@@ -29,7 +29,7 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
 
     /// <summary>The last capturer's <see cref="CaptureException.Message"/> for each monitor that was
     /// omitted by the most recent <see cref="CaptureAll"/> call (rebuilt from scratch every call, not
-    /// accumulated) — this is the most specific reason available (e.g. the portal's "permission
+    /// accumulated) - this is the most specific reason available (e.g. the portal's "permission
     /// denied or dialog dismissed" text) for a caller that wants to surface something more useful
     /// than "capture failed on every monitor" to the user. Populated after the Parallel.For in
     /// CaptureAll completes, from a pre-sized per-monitor slot array (no lock needed: each slot is
@@ -84,13 +84,13 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
         var frame = CaptureOneAttempt(monitor, out bool skippedAnyByMemo, out lastCapturerFailureMessage);
         if (frame is null && skippedAnyByMemo)
         {
-            // Everything failed while memoized capturers were skipped — the memo may be stale
+            // Everything failed while memoized capturers were skipped - the memo may be stale
             // (environment changed since it was recorded, e.g. a portal got installed or a
             // one-off X error got persisted by an older build). Clear this monitor's memos and
             // retry once from scratch so a poisoned cache can never permanently kill capture.
             FileLog.Write(
                 $"RoeSnip: all capturers failed for monitor {monitor.Index} ({monitor.DeviceName}) " +
-                "while some were skipped by the persisted memo — clearing the memo and retrying once.");
+                "while some were skipped by the persisted memo - clearing the memo and retrying once.");
             for (int i = 0; i < _capturersInPriorityOrder.Count; i++)
             {
                 _cache.Unmark($"{monitor.DeviceName}::{i}");
@@ -111,8 +111,8 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
             string capturerKey = $"{monitor.DeviceName}::{i}"; // per-capturer-slot memo, not just per-monitor
             bool isLastCapturer = i == _capturersInPriorityOrder.Count - 1;
 
-            // Never memo-skip the last resort — skipping it guarantees failure, which is
-            // strictly worse than trying it. (Memo name kept for on-disk compat; §2.3 note.)
+            // Never memo-skip the last resort - skipping it guarantees failure, which is
+            // strictly worse than trying it. (Memo name kept for on-disk compat; sec 2.3 note.)
             if (!isLastCapturer && _cache.IsDesktopDuplicationBroken(capturerKey))
             {
                 skippedAnyByMemo = true;
@@ -124,9 +124,9 @@ public sealed class FallbackCaptureBackend : ICaptureBackend
                 var frame = _capturersInPriorityOrder[i].Capture(monitor);
                 // Persist "skip capturer #j" memos ONLY now that a later capturer has actually
                 // succeeded, AND ONLY for a failure that PROVES that capturer is permanently broken
-                // here (ex.IndicatesPermanentlyBroken — today, Windows DD's all-zero-frame quirk).
+                // here (ex.IndicatesPermanentlyBroken - today, Windows DD's all-zero-frame quirk).
                 // A transient failure (ghost display mid-wake, a deadline-abandoned capture still
-                // holding a device slot, access lost, a timeout) must not poison the memo forever —
+                // holding a device slot, access lost, a timeout) must not poison the memo forever -
                 // it falls back to the next capturer for this capture only, unmemoized.
                 foreach (var (j, indicatesPermanentlyBroken) in failedSlots)
                 {

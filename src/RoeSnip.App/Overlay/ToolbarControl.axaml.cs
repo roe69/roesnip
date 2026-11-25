@@ -9,23 +9,23 @@ using Avalonia.VisualTree;
 
 namespace RoeSnip.App.Overlay;
 
-/// <summary>Pictogram tool buttons (inline vector Path icons — no image assets), the editable
-/// swatch palette (right-click "Replace..." per swatch — item 08), the numeric size input (item
-/// 08 — one editable px/pt ComboBox instead of the old fixed stroke dots), undo/redo, the text-style
+/// <summary>Pictogram tool buttons (inline vector Path icons - no image assets), the editable
+/// swatch palette (right-click "Replace..." per swatch - item 08), the numeric size input (item
+/// 08 - one editable px/pt ComboBox instead of the old fixed stroke dots), undo/redo, the text-style
 /// row (Bold/Italic + font family, item 08), and the terminal action buttons (Copy / Save / Save
 /// HDR / Cancel). Always attached below-right of the current selection by the owning OverlayWindow
-/// (flipping above if it would go off-screen). All buttons are always visible — no hover-only-
-/// revealed controls, per the product's UI style requirement — and every control except the size
+/// (flipping above if it would go off-screen). All buttons are always visible - no hover-only-
+/// revealed controls, per the product's UI style requirement - and every control except the size
 /// ComboBox's editable text box is Focusable=false so keystrokes (Esc/Enter/Ctrl+...) keep reaching
 /// the overlay window's handler even right after a toolbar click. Ported from the frozen WPF app's
 /// src/RoeSnip/Overlay/ToolbarControl.xaml(.cs) and src/RoeSnip/Overlay/SwatchPalette.cs /
 /// SizeInput.cs.</summary>
 public partial class ToolbarControl : UserControl
 {
-    /// <summary>Every installed system font family, sorted by display name — enumerated once per
+    /// <summary>Every installed system font family, sorted by display name - enumerated once per
     /// process (Lazy) since the installed set doesn't change under a running session. Replaces the
     /// old fixed six-font list. Avalonia's FontFamily.Name is already the best cross-platform
-    /// display name (no XmlLanguage/FamilyNames lookup needed — that was a WPF-specific
+    /// display name (no XmlLanguage/FamilyNames lookup needed - that was a WPF-specific
     /// localization detail; see FontFamilyChoices in the WPF version for the fuller original).</summary>
     private static readonly Lazy<string[]> FontFamilyChoices = new(() =>
     {
@@ -95,28 +95,28 @@ public partial class ToolbarControl : UserControl
 
     // ---------- Share split-button (Sharing/* subsystem, item 12) ----------
     //
-    // This control only ever RAISES these events / exposes these setters — it never touches
+    // This control only ever RAISES these events / exposes these setters - it never touches
     // Sharing/ShareManager itself and never knows what "the current selection render" even is (that
     // lives in Overlay/OverlayController, which this control has no reference to). The owning window
     // is responsible for: resolving the render, calling ShareManager.UploadAsync off the UI thread,
     // copying the result URL to the clipboard, and driving SetShareBusy/tray balloon around the call
-    // — exactly the same division of labor CopyClicked/SaveClicked already use. Mirrors the WPF
-    // app's own ToolbarControl split-button (and its d8fa815 fix — see SetShareProviders/SetShareBusy
+    // - exactly the same division of labor CopyClicked/SaveClicked already use. Mirrors the WPF
+    // app's own ToolbarControl split-button (and its d8fa815 fix - see SetShareProviders/SetShareBusy
     // below for the two gotchas that fix preserved).
 
     /// <summary>ShareButton's own click: upload to the caller's configured DEFAULT provider. No
-    /// payload — mirrors CopyClicked/SaveClicked's own zero-arg shape.</summary>
+    /// payload - mirrors CopyClicked/SaveClicked's own zero-arg shape.</summary>
     public event Action? ShareClicked;
 
     /// <summary>A specific provider was picked from ShareMenuButton's dropdown. The argument is that
-    /// provider's ShareProviderConfig.Id (opaque to this control — it only ever echoes back an Id it
+    /// provider's ShareProviderConfig.Id (opaque to this control - it only ever echoes back an Id it
     /// was itself given via <see cref="SetShareProviders"/>).</summary>
     public event Action<string>? ShareToProviderRequested;
 
     /// <summary>Raised when ShareMenuButton is clicked while no provider is configured at all (the
     /// menu would otherwise be empty). <see cref="SetShareProviders"/> disables ShareMenuButton
-    /// itself in exactly that case (per the no-hidden-controls rule — the chevron is DISABLED, not
-    /// hidden, not dead — d8fa815), so this can never actually fire from a live click; kept for
+    /// itself in exactly that case (per the no-hidden-controls rule - the chevron is DISABLED, not
+    /// hidden, not dead - d8fa815), so this can never actually fire from a live click; kept for
     /// parity with the WPF control's own event shape.</summary>
     public event Action? ManageProvidersRequested;
 
@@ -126,17 +126,17 @@ public partial class ToolbarControl : UserControl
     private bool _shareHasProviders;
     private string _uploadShortcutText = "Ctrl+U";
 
-    // d8fa815 gotcha #2: SetShareProviders is re-run on every toolbar show (pooled-window reuse —
+    // d8fa815 gotcha #2: SetShareProviders is re-run on every toolbar show (pooled-window reuse -
     // see OverlayWindow.ShowToolbar's own doc comment). SetShareBusy(true) is now only a momentary
     // double-click guard set right before the overlay's own Finish() (see OverlaySession.
-    // ShareCurrentSelection's own doc comment) rather than a whole-upload-duration lock — the window
-    // is closing either way — but this flag still exists so that brief window can't have a re-run of
+    // ShareCurrentSelection's own doc comment) rather than a whole-upload-duration lock - the window
+    // is closing either way - but this flag still exists so that brief window can't have a re-run of
     // SetShareProviders unconditionally recompute IsEnabled from _shareHasProviders alone and
     // clobber it. One flag, checked by both methods, is enough to keep them from fighting over the
     // same two IsEnabled bits.
     private bool _shareBusy;
 
-    /// <summary>Text-style group (item 08) — Bold, Italic, font family. Only ever visible while the
+    /// <summary>Text-style group (item 08) - Bold, Italic, font family. Only ever visible while the
     /// Text tool is selected. Font size is edited via the shared size ComboBox (pt mode).</summary>
     public event Action<double>? FontSizeSelected;
     public event Action<bool>? BoldToggled;
@@ -144,12 +144,12 @@ public partial class ToolbarControl : UserControl
     public event Action<string>? FontFamilySelected;
 
     /// <summary>Right-click palette editing (item 08): raised once the swatch's own
-    /// ColorReplaceFlyout (shown by this control — see BuildSwatchContextMenu) has a picked color.
+    /// ColorReplaceFlyout (shown by this control - see BuildSwatchContextMenu) has a picked color.
     /// The first argument is the swatch's index into the palette list last passed to
     /// <see cref="SetPaletteColors"/>. OverlayWindow owns the persistence and calls
     /// SetPaletteColors again. Deviates from WPF's index-only PaletteReplaceRequested (WPF's
     /// System.Windows.Forms.ColorDialog is a blocking modal OverlayWindow itself invokes; Avalonia's
-    /// Flyout must be anchored to the swatch Control, which only this control holds — see
+    /// Flyout must be anchored to the swatch Control, which only this control holds - see
     /// ColorReplaceFlyout's own doc comment).</summary>
     public event Action<int, Color>? PaletteReplaceRequested;
 
@@ -212,9 +212,9 @@ public partial class ToolbarControl : UserControl
         Find<Button>("CancelButton").Click += (_, _) => CancelClicked?.Invoke();
 
         // Commit whatever was typed whenever keyboard focus leaves the size box entirely (clicking
-        // a tool, clicking the image, Enter's own focus hand-back) — never leave a typed-but-
+        // a tool, clicking the image, Enter's own focus hand-back) - never leave a typed-but-
         // uncommitted value silently reverting later. Mirrors WPF's IsKeyboardFocusWithinChanged
-        // wiring (SizeComboBox.IsKeyboardFocusWithinChanged, ToolbarControl.xaml.cs:141-147) —
+        // wiring (SizeComboBox.IsKeyboardFocusWithinChanged, ToolbarControl.xaml.cs:141-147) -
         // Avalonia's InputElement.IsKeyboardFocusWithin is the direct analog.
         _sizeComboBox.PropertyChanged += (_, e) =>
         {
@@ -242,7 +242,7 @@ public partial class ToolbarControl : UserControl
     }
 
     /// <summary>docs/architecture.md: "Save HDR is Windows-only v1 (backend capability flag hides the
-    /// button elsewhere)" — the owning OverlayWindow sets this from the composition root's
+    /// button elsewhere)" - the owning OverlayWindow sets this from the composition root's
     /// WriteHdrExport hook being non-null.</summary>
     public void SetSaveHdrVisible(bool visible) => _saveHdrButton.IsVisible = visible;
 
@@ -262,13 +262,13 @@ public partial class ToolbarControl : UserControl
         _colorSwatchPanel.IsVisible = visible;
     }
 
-    /// <summary>Called by the owning window to (re)populate the provider picker — typically once
+    /// <summary>Called by the owning window to (re)populate the provider picker - typically once
     /// when the toolbar is (re)shown, mirroring SetPaletteColors' own "OverlayWindow keeps this in
     /// sync" contract. Enables ShareButton/ShareMenuButton only once <paramref name="providers"/> is
     /// non-empty (see this control's own class-level Share-group doc comment for why it never
-    /// enables itself) — a caller that never calls this at all leaves the buttons correctly disabled
+    /// enables itself) - a caller that never calls this at all leaves the buttons correctly disabled
     /// forever rather than presenting as clickable-but-silently-broken. If a Share upload is still in
-    /// flight (<see cref="_shareBusy"/>) this deliberately does NOT re-enable either button — see
+    /// flight (<see cref="_shareBusy"/>) this deliberately does NOT re-enable either button - see
     /// that field's own doc comment (d8fa815 gotcha #2). Mirrors the WPF control's own
     /// SetShareProviders.</summary>
     public void SetShareProviders(IReadOnlyList<(string Id, string Name)> providers, string? defaultId)
@@ -291,13 +291,13 @@ public partial class ToolbarControl : UserControl
         ToolTip.SetTip(_shareButton, ShareToolTip);
         if (_shareBusy)
         {
-            return; // an upload is still running — SetShareBusy already disabled both buttons; leave that alone
+            return; // an upload is still running - SetShareBusy already disabled both buttons; leave that alone
         }
         _shareButton.IsEnabled = _shareHasProviders;
         _shareMenuButton.IsEnabled = _shareHasProviders;
     }
 
-    /// <summary>Upload-in-progress state. Disables both buttons for the duration — the same
+    /// <summary>Upload-in-progress state. Disables both buttons for the duration - the same
     /// visible-but-inert pattern Undo/Redo already use while inapplicable, rather than a spinner this
     /// small icon-only control has no room for. Restores (rather than assumes) the enabled state
     /// SetShareProviders last established, so busy=false never re-enables a Share button that has no
@@ -342,9 +342,9 @@ public partial class ToolbarControl : UserControl
     // ---------- Editable swatch palette (item 08) ----------
 
     /// <summary>Rebuilds the swatch row from the persisted palette (RoeSnipSettings.PaletteColors,
-    /// migrated/capped by SwatchPalette) — called by OverlayWindow when the toolbar is (re)shown
+    /// migrated/capped by SwatchPalette) - called by OverlayWindow when the toolbar is (re)shown
     /// and after every palette edit. The swatch matching <paramref name="selectedColor"/> is
-    /// checked (falling back to the first swatch, without raising ColorSelected — OverlayWindow
+    /// checked (falling back to the first swatch, without raising ColorSelected - OverlayWindow
     /// keeps its current color aligned with the palette before calling this). Mirrors WPF's
     /// SetPaletteColors (ToolbarControl.xaml.cs:208-257).</summary>
     public void SetPaletteColors(IReadOnlyList<string> hexColors, Color selectedColor)
@@ -381,7 +381,7 @@ public partial class ToolbarControl : UserControl
         }
 
         // Never show a palette with nothing checked: fall back to the first swatch visually
-        // (no ColorSelected raise — display-only).
+        // (no ColorSelected raise - display-only).
         if (_selectedColorSwatch is null && _colorSwatchPanel.Children.Count > 0)
         {
             _selectedColorSwatch = (ToggleButton)_colorSwatchPanel.Children[0];
@@ -390,7 +390,7 @@ public partial class ToolbarControl : UserControl
     }
 
     /// <summary>Per-swatch right-click menu: "Replace..." only (a swatch is a recolorable slot,
-    /// not a removable row). Index and color are captured per swatch — the whole row is rebuilt on
+    /// not a removable row). Index and color are captured per swatch - the whole row is rebuilt on
     /// every palette change, so they can never go stale. Mirrors WPF's BuildSwatchContextMenu
     /// (ToolbarControl.xaml.cs:262-274), swapping WPF's ColorDialog for ColorReplaceFlyout since
     /// this control (not OverlayWindow) is the one holding the swatch Control the flyout anchors
@@ -426,7 +426,7 @@ public partial class ToolbarControl : UserControl
 
     private void SelectTool(ToggleButton selected, AnnotationTool tool)
     {
-        // Clicking the tool that is ALREADY active toggles back to the Select tool — a quick
+        // Clicking the tool that is ALREADY active toggles back to the Select tool - a quick
         // "put the tool away" gesture. The Select tool itself does not toggle to anything.
         if (tool != AnnotationTool.None && tool == _activeTool)
         {
@@ -440,7 +440,7 @@ public partial class ToolbarControl : UserControl
             button.IsChecked = ReferenceEquals(button, selected);
         }
 
-        // The text-style group is always visible while the Text tool is active — no hover-hiding —
+        // The text-style group is always visible while the Text tool is active - no hover-hiding -
         // and collapsed for every other tool.
         _textStylePanel.IsVisible = tool == AnnotationTool.Text;
 
@@ -450,7 +450,7 @@ public partial class ToolbarControl : UserControl
         ToolSelected?.Invoke(tool);
     }
 
-    /// <summary>Re-checks the default Select tool without raising ToolSelected — called by the
+    /// <summary>Re-checks the default Select tool without raising ToolSelected - called by the
     /// owning OverlayWindow when the toolbar is hidden (selection cleared), which also resets its
     /// own current tool to None; this keeps the visible checked state from lying on re-show.</summary>
     public void ResetToolSelection()
@@ -467,7 +467,7 @@ public partial class ToolbarControl : UserControl
     // ---------- Numeric size input (item 08) ----------
 
     /// <summary>Live-updates the size box from a scroll-wheel change (OverlayWindow calls this; it
-    /// does not itself raise StrokeWidthSelected — the wheel handler already knows the new width
+    /// does not itself raise StrokeWidthSelected - the wheel handler already knows the new width
     /// and drives OverlayWindow's own state directly). Also the canonical-text refresh after a
     /// typed commit.</summary>
     public void SetStrokeWidth(double width)
@@ -479,7 +479,7 @@ public partial class ToolbarControl : UserControl
         }
     }
 
-    /// <summary>Live-updates the size box from a scroll-wheel font resize — mirrors
+    /// <summary>Live-updates the size box from a scroll-wheel font resize - mirrors
     /// <see cref="SetStrokeWidth"/>'s role for the Text tool's pt mode.</summary>
     public void SetFontSize(double size)
     {
@@ -536,7 +536,7 @@ public partial class ToolbarControl : UserControl
     /// <summary>Parses/clamps whatever is in the size box and applies it: updates the tool state
     /// via StrokeWidthSelected/FontSizeSelected (OverlayWindow updates the brush + cursor
     /// immediately) and rewrites the box to the canonical "Npx"/"Npt" form. Unparseable text
-    /// reverts to the current value. Idempotent — safe to call from both Enter and focus-loss.</summary>
+    /// reverts to the current value. Idempotent - safe to call from both Enter and focus-loss.</summary>
     private void CommitSizeText()
     {
         if (_suppressSizeEvents)
@@ -573,7 +573,7 @@ public partial class ToolbarControl : UserControl
     }
 
     /// <summary>Enter commits and hands keyboard focus back to the overlay window (so the NEXT
-    /// Enter confirms the snip — this one never does). Esc reverts and hands focus back likewise,
+    /// Enter confirms the snip - this one never does). Esc reverts and hands focus back likewise,
     /// deliberately consuming it so it can't double as "cancel the snip" mid-typing.</summary>
     private void OnSizeComboKeyDown(object? sender, KeyEventArgs e)
     {
@@ -601,7 +601,7 @@ public partial class ToolbarControl : UserControl
         }
 
         // Apply the preset directly (the editable Text may not have synced yet at this point),
-        // then hand focus back — picking from the dropdown is a complete gesture.
+        // then hand focus back - picking from the dropdown is a complete gesture.
         SetSizeComboTextSuppressed(presetText);
         CommitSizeText();
         ReturnFocusToOverlayWindow();
@@ -644,11 +644,11 @@ public partial class ToolbarControl : UserControl
         return false;
     }
 
-    /// <summary>True when the given event source sits inside the size ComboBox — OverlayWindow uses
+    /// <summary>True when the given event source sits inside the size ComboBox - OverlayWindow uses
     /// this to decide whether a toolbar click should yank keyboard focus back to the window (any
     /// toolbar click that is NOT into the size box should, since every other control is
     /// Focusable=false and would otherwise leave the box focused forever). A plain visual-only walk
-    /// — mirrors WPF's own IsWithinSizeInput (ToolbarControl.xaml.cs:466-478), which likewise never
+    /// - mirrors WPF's own IsWithinSizeInput (ToolbarControl.xaml.cs:466-478), which likewise never
     /// bothers with the logical-parent popup bridge OverlayWindow.IsWithin needs: a click that lands
     /// inside the size box's OWN open dropdown already gets focus handed back by
     /// OnSizeComboSelectionChanged above, so under-reporting there is harmless.</summary>
@@ -740,7 +740,7 @@ public partial class ToolbarControl : UserControl
         }
     }
 
-    /// <summary>Grays out Undo/Redo when they'd be no-ops — driven by OverlayWindow from
+    /// <summary>Grays out Undo/Redo when they'd be no-ops - driven by OverlayWindow from
     /// AnnotationLayer.HistoryChanged and on every toolbar (re)show.</summary>
     public void SetHistoryState(bool canUndo, bool canRedo)
     {
