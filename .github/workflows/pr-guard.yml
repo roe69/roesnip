@@ -92,21 +92,42 @@ jobs:
             | "- `\($f.filename | clean)`: \($r[1])"
           ' files.json | sort -u > line-hits.txt
 
+          # Added lines with any non-ASCII character (em dash, curly quote, arrow, emoji...). The repo
+          # rule is plain 7-bit ASCII; the local hooks enforce it, this catches web edits and clones
+          # without the hooks. Only the file and the count are reported, never the line.
+          jq -r '
+            def clean: gsub("[`\r\n]"; "?");
+            .[] | . as $f
+            | (($f.patch // "") | split("\n")
+               | map(select(startswith("+") and (startswith("+++") | not) and test("[^\\x00-\\x7f]")))
+               | length) as $n
+            | select($n > 0)
+            | "- `\($f.filename | clean)`: \($n) added line(s) with non-ASCII characters"
+          ' files.json | sort -u > ascii-hits.txt
+
           # A changed file under .github or a build file with no patch (too large / binary) cannot be read.
           jq -r '.[] | select((.patch // "") == "" and .changes > 0) |"- `\(.filename | gsub("[`\r\n]"; "?"))`: no diff available (binary or too large) - read it by hand"' files.json | sort -u | head -20 > nopatch-hits.txt
 
           marker='<!-- roesnip-pr-guard -->'
           flagged=0
           if [ -s path-hits.txt ] || [ -s line-hits.txt ]; then flagged=1; fi
+          ascii=0
+          if [ -s ascii-hits.txt ]; then ascii=1; fi
 
           {
             echo "## PR Guard"
             echo
-            if [ "$flagged" = 1 ]; then
+            if [ "$flagged" = 0 ] && [ "$ascii" = 1 ]; then
+              echo "@roe69 **Non-ASCII text added.** This repo is plain 7-bit ASCII (no em dashes, curly quotes, arrows or emoji); the local pre-commit hook rejects them. Fix these before merge:"
+              echo
+              echo "**Non-ASCII added lines**"; echo; cat ascii-hits.txt; echo
+              flagged=1
+            elif [ "$flagged" = 1 ]; then
               echo "@roe69 **Needs a human read before merge.** This pull request touches files that can run on our build or signing runner, or content that could leak a secret. The release runner and the signing key are only reachable from a dispatch on main by the owner, so read these before merging:"
               echo
               if [ -s path-hits.txt ]; then echo "**Sensitive paths**"; echo; cat path-hits.txt; echo; fi
               if [ -s line-hits.txt ]; then echo "**Added lines**"; echo; cat line-hits.txt; echo; fi
+              if [ "$ascii" = 1 ]; then echo "**Non-ASCII added lines** (repo rule: plain ASCII)"; echo; cat ascii-hits.txt; echo; fi
             else
               echo "No sensitive paths or risky added lines found in $total changed file(s). This is a path and pattern check only, not a code review."
               echo

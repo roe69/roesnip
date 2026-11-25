@@ -5,8 +5,7 @@
 # U+FFFD, mojibake, AI credit lines - and the ASCII spellings of all of those
 # (&mdash;, &#8212;, a backslash-u escape, %E2%80%94), which are 7-bit ASCII in
 # the source and still render as the character they encode. Anything else with
-# a byte >= 0x80 is blocked too; see .githooks/ai-tells.sh for the one exempt
-# character.
+# a byte >= 0x80 is blocked too.
 # Only newly added lines are checked, so pre-existing text does not block you;
 # fix the line (plain '-', straight quotes, ASCII) and re-stage.
 # Per-commit escape hatch for docs that legitimately need typography:
