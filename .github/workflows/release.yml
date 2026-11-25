@@ -499,9 +499,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          # ImageMagick is not preinstalled on ubuntu-24.04 - install it for the .ico -> .png icon.
+          # ImageMagick for the .ico -> .png icon; `file` is required by appimagetool and missing
+          # from our self-hosted runner image.
           sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends imagemagick
+          sudo apt-get install -y --no-install-recommends imagemagick file
           VERSION="${{ needs.prep.outputs.version }}"
           PUBLISH="src/RoeSnip.App/bin/Release/net8.0/${{ matrix.rid }}/publish"
           APPDIR="$PWD/AppDir"
