@@ -51,6 +51,115 @@ Design docs: [DESIGN.md](DESIGN.md) (capture paths, tone mapping, overlay
 semantics, failure modes), [PLAN.md](PLAN.md), [DESIGN-XPLAT.md](DESIGN-XPLAT.md)
 and [PLAN-XPLAT.md](PLAN-XPLAT.md) (the cross-platform port).
 
+## Tools for developers and AI agents
+
+### Command line
+
+`RoeSnip.exe` (WPF) and the Avalonia app share these headless modes:
+
+```sh
+RoeSnip.exe --diag
+RoeSnip.exe --capture [--monitor N] [--out shot.png] [--jxr]
+```
+
+- `--diag` prints per-monitor diagnostics (device, resolution, Advanced Color
+  on or off, SDR white level, max luminance) and exits.
+- `--capture` captures one or all monitors without the overlay, writes PNGs,
+  prints min, max and average captured nits, and with `--jxr` also writes the
+  untouched HDR original next to each PNG.
+
+The Avalonia app (`src/RoeSnip.App`) adds two verbs that signal the resident
+instance, or start one if none is running:
+
+- `RoeSnip capture` opens the snip overlay (what the hotkey does).
+- `RoeSnip settings` opens the Settings window.
+
+Any other argument prints usage and exits 1. `--self-update-now` runs one
+update and exits.
+
+### Dev automation pipe
+
+A dev-only JSON pipe lets a test drive the real overlay code without mouse
+input. Start the resident with it on, then talk to it with `--auto`:
+
+```sh
+RoeSnip.exe --automation            # or set ROESNIP_AUTOMATION=1
+RoeSnip.exe --auto state
+RoeSnip.exe --auto trigger
+RoeSnip.exe --auto '{"cmd":"select","x":100,"y":80,"w":800,"h":600}'
+```
+
+Without the flag the pipe does not exist. The pipe is `RoeSnip-Automation`
+for the WPF app and `RoeSnip.App-Automation` for the Avalonia app, so the two
+never drive each other. Commands include `state`, `trigger`, `select`, `zoom`,
+`toast`, `record`, `preset`, `fps`, `chrome`, `escape`, `screenshot`,
+`confirm`, `settings`, `lastcapture` and `tray`. [TESTING.md](TESTING.md)
+lists every command, its fields and what has been verified.
+
+Never drive RoeSnip with synthetic mouse or UI Automation input (it can steal
+real input and gives flaky results). Use the pipe, or ask a person to click.
+`--enable-elevated-startup`, `--disable-elevated-startup` and
+`--record-smoketest` are internal and not for general use.
+
+### Logs
+
+| App | Log |
+|---|---|
+| WPF `RoeSnip.exe` | `%APPDATA%\RoeSnip\roesnip.log` |
+| Avalonia on Windows | `%APPDATA%\RoeSnip.App\roesnip.log` |
+| Linux | `~/.config/roesnip-app/roesnip.log` (screencast tokens sit in the same folder) |
+| macOS | `~/Library/Application Support/RoeSnip.App/roesnip.log` |
+
+The previous log is `roesnip.log.1`. Useful lines:
+
+- Windows capture timing: `hotkey-to-dim`, `WGC capture ... session=`,
+  `capture-to-overlay N ms`, `first-overlays-visible`, `all-overlays-visible`.
+- Windows power and memory: `console display off/on`, `display-on capture
+  re-warm`, `idle memory trim`.
+- Linux Wayland: `screencast snapshot session open in N ms`, `stream mapping:`,
+  `screen share for a capture: Allowed|Declined|Unsupported`, `portal app id
+  registered as ...`.
+- Linux drag latency: `drag <mode> N moves in T ms ...`. Avalonia's own errors
+  go to `journalctl --user | grep 'RoeSnip\['`.
+- macOS: `scksnap serve started in N ms`, `scksnap snapshot N/N display(s) in
+  N ms`.
+- Self-update: `update already in progress by another RoeSnip process;
+  skipping`.
+
+To summarize a log, replace digits with `N` and count:
+`sed -E 's/[0-9]+/N/g' roesnip.log | sort | uniq -c | sort -rn`.
+
+### Docs to read first
+
+- [docs/PARITY.md](docs/PARITY.md): every WPF feature and its Avalonia status.
+- [DESIGN.md](DESIGN.md): capture paths, tone mapping, overlay behavior,
+  failure modes.
+- [TESTING.md](TESTING.md): the automation pipe and what has been verified on
+  which OS.
+
+### Platform notes
+
+- **Linux install:** the tray's Install item moves the AppImage to
+  `~/.local/share/RoeSnip/RoeSnip.AppImage` (follows `XDG_DATA_HOME`), adds
+  `~/.local/share/applications/net.roelite.roesnip.desktop` and, for start at
+  login, `~/.config/autostart/net.roelite.roesnip.desktop`.
+- **Linux hotkey:** the SharpHook hook only works on X11. On GNOME under Wayland
+  RoeSnip adds a custom keybinding that runs `RoeSnip capture`, and clears
+  GNOME's own Print, Shift+Print or Alt+Print binding when the PrintScreen
+  takeover setting is on. On KDE Plasma 6 and Hyprland it binds through the
+  `org.freedesktop.portal.GlobalShortcuts` portal. If nothing works, bind a
+  desktop shortcut to `RoeSnip capture` by hand.
+- **Wayland capture:** instant capture reads a kept-open screen share. Its
+  dialog only opens from the first capture or the Settings button, never on its
+  own. On GNOME the desktop screenshot portal (shutter sound and flash) is not
+  used.
+- **macOS install:** the tray's Install item copies the app to
+  `~/Applications/RoeSnip.app` and adds
+  `~/Library/LaunchAgents/net.roelite.roesnip.plist` for start at login.
+- **Settings file:** `%APPDATA%\RoeSnip\settings.json` for the WPF app. A
+  missing or corrupt file falls back to defaults in memory and is not
+  overwritten.
+
 ## Parity rule
 
 A change to the WPF app is ported to the Avalonia app, as its own commit, and
