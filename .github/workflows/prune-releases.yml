@@ -13,6 +13,9 @@ name: Prune old releases
 # a release published while "immutable releases" was on; that setting is off for this repo now).
 #
 # Runs on our linux-release-roesnip container with the same job gate as release.yml: main, dispatch, roe69.
+#
+# GitHub forgets the download count of a deleted asset, so each deleted asset's count is first added
+# to archived.json on the `stats` branch, then download-badge.yml rewrites the README badge.
 
 on:
   workflow_call:
@@ -97,6 +100,22 @@ jobs:
           fi
           echo "$newest_tag carries a complete set - safe to prune behind it."
 
+          # Adds deleted assets' download counts to archived.json on the stats branch (see download-badge.yml).
+          add_archived() {
+            [ "$1" -gt 0 ] || return 0
+            local cur sha old
+            cur=$(gh api "repos/$REPO/contents/archived.json?ref=stats" \
+              --jq '(.sha) + " " + (.content | gsub("\n"; "") | @base64d | fromjson | .archived | tostring)')
+            sha="${cur%% *}"; old="${cur#* }"
+            if gh api -X PUT "repos/$REPO/contents/archived.json" -f branch=stats -f sha="$sha" \
+                -f message="- stats: archive $1 downloads of $2" \
+                -f content="$(printf '{"archived": %d}\n' $((old + $1)) | base64 -w0)" --jq '.commit.sha'; then
+              echo "$2: archived $1 downloads ($old -> $((old + $1)))"
+            else
+              echo "::error::could not add $1 downloads of $2 to archived.json on the stats branch - add them by hand."
+            fi
+          }
+
           stripped=0
           freed=0
           {
@@ -124,12 +143,12 @@ jobs:
             fi
 
             mapfile -t assets < <(gh api "repos/$REPO/releases/$id/assets" --paginate \
-              --jq '.[] | "\(.id)\t\(.size)"')
+              --jq '.[] | "\(.id)\t\(.size)\t\(.download_count)"')
             # Already stripped on an earlier pass: every release below the cut settles at zero.
             [ "${#assets[@]}" -gt 0 ] || continue
 
             bytes=0
-            for a in "${assets[@]}"; do bytes=$((bytes + ${a##*$'\t'})); done
+            for a in "${assets[@]}"; do IFS=$'\t' read -r _ size _ <<< "$a"; bytes=$((bytes + size)); done
             mb=$((bytes / 1024 / 1024))
 
             if [ "$immutable" = "true" ]; then
@@ -146,10 +165,16 @@ jobs:
 
             echo "Stripping ${#assets[@]} asset(s), ${mb}MB, from $tag"
             failed=0
+            gone=0
             for a in "${assets[@]}"; do
-              gh api -X DELETE "repos/$REPO/releases/assets/${a%%$'\t'*}" \
-                || { failed=$((failed + 1)); echo "::warning::could not delete asset ${a%%$'\t'*} of $tag"; }
+              IFS=$'\t' read -r aid _ count <<< "$a"
+              if gh api -X DELETE "repos/$REPO/releases/assets/$aid"; then
+                gone=$((gone + count))
+              else
+                failed=$((failed + 1)); echo "::warning::could not delete asset $aid of $tag"
+              fi
             done
+            add_archived "$gone" "$tag"
             echo "- \`$tag\` - ${#assets[@]} asset(s), ${mb}MB, $failed failed" >> "$GITHUB_STEP_SUMMARY"
             stripped=$((stripped + 1))
             freed=$((freed + bytes))
@@ -160,3 +185,11 @@ jobs:
           else
             echo "Stripped $stripped release(s), about $((freed / 1024 / 1024))MB. Releases, notes and tags left in place."
           fi
+
+  badge:
+    name: Downloads badge
+    needs: prune
+    if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/download-badge.yml
