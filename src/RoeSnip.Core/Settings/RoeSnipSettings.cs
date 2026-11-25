@@ -17,6 +17,7 @@ public sealed record RoeSnipSettings
     public bool CopyOnSelect { get; init; } = false;
     public bool PrintScreenPromptAnswered { get; init; } = false; // Windows-only meaning; harmless elsewhere
     public bool WaylandHotkeyNoticeShown { get; init; } = false; // Wayland-only meaning; harmless elsewhere
+    public bool LinuxRunAtStartupDefaulted { get; init; } = false; // Linux: RunAtStartup turned on once by default
 
     /// <summary>GNOME only: org.gnome.shell.keybindings keys RoeSnip cleared so the capture hotkey
     /// reaches it, mapped to their original gsettings value text (e.g. "['Print']"). Written back

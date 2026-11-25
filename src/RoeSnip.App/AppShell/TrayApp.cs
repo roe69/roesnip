@@ -363,6 +363,7 @@ public sealed class TrayApp : ITrayNotifier
             _hotkeyManager.WaylandStatusChanged += () => Dispatcher.UIThread.Post(MaybeShowWaylandHotkeyNotice);
             WarnIfPrintScreenConflict();
             MaybeShowWaylandHotkeyNotice();
+            MaybeDefaultLinuxRunAtStartup();
 
             switch (s_initialAction)
             {
@@ -407,6 +408,30 @@ public sealed class TrayApp : ITrayNotifier
             FileLog.Write($"RoeSnip: failed to persist the Wayland hotkey notice flag: {ex.Message}");
         }
         _settings = updated;
+    }
+
+    /// <summary>Linux: PrintScreen runs `RoeSnip.AppImage capture`, which is a full cold start
+    /// (~1 s) when no resident is running, so start at login is on by default. Applied once per
+    /// install; unticking it in Settings afterwards sticks.</summary>
+    private void MaybeDefaultLinuxRunAtStartup()
+    {
+        if (!OperatingSystem.IsLinux() || _settings.LinuxRunAtStartupDefaulted || !UpdateManager.InstallExists)
+        {
+            return;
+        }
+
+        var updated = _settings with { RunAtStartup = true, LinuxRunAtStartupDefaulted = true };
+        try
+        {
+            StartupManager.SetRunAtStartup(true);
+            SettingsStore.Save(updated);
+            _settings = updated;
+            FileLog.Write("RoeSnip: start at login turned on (Linux default)");
+        }
+        catch (Exception ex)
+        {
+            FileLog.Write($"RoeSnip: could not turn on start at login: {ex.Message}");
+        }
     }
 
     /// <summary>Wayland, a user's capture before instant capture was allowed: asks for the screen
