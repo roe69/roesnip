@@ -14,8 +14,10 @@ name: release
 # app's updater silently download and swap in the OTHER product's binary). The .dmg and
 # RoeSnip-linux-<arch>.tar.gz (publish folder, for distros without FUSE) are for manual installs.
 #
-# RUNNERS: everything that can runs on our own machines (house repo): Linux x64 jobs (prep, the
-# linux-x64 build, release, prune) on the `linux-build` container for this repo (VM 102), the
+# RUNNERS: everything that can runs on our own machines (house repo): the linux-x64 build on the
+# `linux-build` container `gh-roesnip` (VM 102, the only one that runs repo-built code) and prep,
+# release and prune on a SECOND container `gh-roesnip-release` (label `linux-release-roesnip`, own
+# volumes and network, no repo code ever runs there; it holds the release-write token), the
 # Windows build on a SEPARATE runner `win-roesnip-build` (label `win-build-roesnip`) on the same
 # Windows VM 104 as the signer, but as the unprivileged local user `roesnip-build` with its own
 # work dir and tool cache and no access to the signing runner's folders. linux-arm64 and macOS stay
@@ -71,7 +73,7 @@ jobs:
   # ---------------------------------------------------------------------------
   prep:
     name: Resolve version
-    runs-on: [self-hosted, linux-build]
+    runs-on: [self-hosted, linux-release-roesnip]
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.actor == 'roe69' && github.triggering_actor == 'roe69'
     permissions:
       contents: read
@@ -151,6 +153,16 @@ jobs:
       sha_app_x64: ${{ steps.hash.outputs.sha_app_x64 }}
       sha_app_arm64: ${{ steps.hash.outputs.sha_app_arm64 }}
     steps:
+      # The service runs with required privileges stripped to ChangeNotify/CreateGlobal/IncreaseWorkingSet
+      # (sc privs). SeImpersonate would let job code potato its way to SYSTEM and the signer's runner.
+      - name: Job token has no impersonation or escalation privileges
+        shell: pwsh
+        run: |
+          $p = whoami /priv /fo csv | ConvertFrom-Csv
+          $p | Format-Table -AutoSize | Out-String | Write-Host
+          $bad = @($p | Where-Object { $_.'Privilege Name' -match '^Se(Impersonate|AssignPrimaryToken|Debug|Tcb|LoadDriver|Backup|Restore|TakeOwnership|CreateToken|Relabel|SecurityAudit)Privilege$' })
+          if ($bad.Count) { throw "job token holds: $($bad.'Privilege Name' -join ', ')" }
+
       - name: Check out (dispatch commit)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -222,6 +234,14 @@ jobs:
           name: win-app-arm64
           path: src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-arm64/publish/RoeSnipApp-win-arm64.exe
           if-no-files-found: error
+
+      # A missing packages*.lock.json is NOT an error in locked mode: restore writes a fresh one and
+      # carries on. So fail if any restore above created or changed one.
+      - name: Restore left every lock file as committed
+        shell: pwsh
+        run: |
+          $d = git status --porcelain --untracked-files=all -- ':(glob)**/packages*.lock.json'
+          if ($d) { $d; throw 'a restore created or changed a NuGet lock file' }
 
       # sign-windows compares what it downloads with these (job outputs travel outside the artifacts).
       - name: Record sha256 of the three exes
@@ -304,6 +324,13 @@ jobs:
       # JxrEncApp (jxrlib, BSD-2-Clause) writes the HDR original as .jxr on Linux and macOS; it ships
       # as a flat sibling of the RoeSnip executable (JxrExport.LocateEncoder), next to its licence.
       # osx-x64 is cross-compiled on the arm64 runner.
+      # A missing packages*.lock.json is NOT an error in locked mode: restore writes a fresh one and
+      # carries on. So fail if the restore created or changed one.
+      - name: Restore left every lock file as committed
+        run: |
+          d=$(git status --porcelain --untracked-files=all -- ':(glob)**/packages*.lock.json')
+          if [ -n "$d" ]; then echo "$d"; echo "::error::a restore created or changed a NuGet lock file"; exit 1; fi
+
       - name: Build JxrEncApp (${{ matrix.rid }})
         shell: bash
         run: |
@@ -474,6 +501,11 @@ jobs:
     defaults:
       run:
         shell: pwsh -NoProfile -NonInteractive -Command ". '{0}'"
+    # sha256 of the SIGNED exes: the release job re-checks the bytes it downloads against these.
+    outputs:
+      signed_win: ${{ steps.signed.outputs.signed_win }}
+      signed_app_x64: ${{ steps.signed.outputs.signed_app_x64 }}
+      signed_app_arm64: ${{ steps.signed.outputs.signed_app_arm64 }}
     steps:
       - name: Download unsigned Windows exes
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -494,6 +526,7 @@ jobs:
           "TOOLS=$dir" | Add-Content $env:GITHUB_ENV
           if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
           New-Item -ItemType Directory -Force $dir | Out-Null
+          New-Item -ItemType Directory -Force (Join-Path $dir 'tmp') | Out-Null
           $tools = @(
             @{ url = 'https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13.1%2B2/OpenJDK21U-jre_x64_windows_hotspot_21.0.13.1_2.zip'; file = 'jre.zip'; sha = 'E15EE1E54A5A3B38027A09CEDFA87BC3348D7DD3CE50866DD3D9671D7FFFC6C1' },
             @{ url = 'https://github.com/ebourg/jsign/releases/download/7.6/jsign-7.6.jar'; file = 'jsign.jar'; sha = '6CF58AA080E7FF82656F320CFF8D4A3BFF30408DF8766806DCBA3740DD839FA5' },
@@ -545,7 +578,7 @@ jobs:
             $dest = Join-Path (Resolve-Path signed) $n
             Copy-Item $found[0].FullName $dest
             if ((Get-FileHash $dest -Algorithm SHA256).Hash -ne $expect[$n]) { throw "sha256 differs from the build job for $n" }
-            & $env:JAVA_EXE -jar (Join-Path $dir 'jsign.jar') --replace --storetype PKCS11 --keystore (Join-Path $dir 'pkcs11.cfg') `
+            & $env:JAVA_EXE "-Djava.io.tmpdir=$(Join-Path $dir 'tmp')" -jar (Join-Path $dir 'jsign.jar') --replace --storetype PKCS11 --keystore (Join-Path $dir 'pkcs11.cfg') `
               --storepass none --alias RoeLite-27 --certfile (Join-Path $dir 'chain.pem') --alg SHA-256 `
               --tsaurl http://timestamp.globalsign.com/tsa/r6advanced1 --tsmode RFC3161 --tsretries 5 --tsretrywait 10 $dest
             if ($LASTEXITCODE -ne 0) { throw "jsign failed for $n" }
@@ -562,6 +595,21 @@ jobs:
           }
           if (@(Get-ChildItem signed -File).Count -ne 3) { $bad++ }
           if ($bad) { throw "$bad file(s) not validly signed and timestamped" }
+
+      - name: Record sha256 of the signed exes
+        id: signed
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $map = [ordered]@{
+            signed_win       = 'RoeSnip.exe'
+            signed_app_x64   = 'RoeSnipApp-win-x64.exe'
+            signed_app_arm64 = 'RoeSnipApp-win-arm64.exe'
+          }
+          foreach ($k in $map.Keys) {
+            $h = (Get-FileHash (Join-Path signed $map[$k]) -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$k=$h" | Add-Content $env:GITHUB_OUTPUT
+            "$h  $($map[$k])"
+          }
 
       - name: Upload signed Windows exes
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -589,7 +637,7 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [prep, build-xplat, sign-windows]
-    runs-on: [self-hosted, linux-build]
+    runs-on: [self-hosted, linux-release-roesnip]
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.actor == 'roe69' && github.triggering_actor == 'roe69'
     # contents: write only; no OIDC rights, and no third-party actions (gh CLI only).
     permissions:
@@ -617,6 +665,23 @@ jobs:
         with:
           name: signed-win
           path: dist-win
+
+      # The artifact store sits between the signer and here: the bytes must be the ones sign-windows hashed.
+      - name: Signed exes match the sign job's sha256
+        env:
+          SIGNED_WIN: ${{ needs.sign-windows.outputs.signed_win }}
+          SIGNED_APP_X64: ${{ needs.sign-windows.outputs.signed_app_x64 }}
+          SIGNED_APP_ARM64: ${{ needs.sign-windows.outputs.signed_app_arm64 }}
+        run: |
+          set -euo pipefail
+          check() {
+            printf '%s' "$2" | grep -Eq '^[0-9a-f]{64}$' || { echo "::error::no signed sha256 for $1"; exit 1; }
+            echo "$2  dist-win/$1" | sha256sum -c -
+          }
+          check RoeSnip.exe "$SIGNED_WIN"
+          check RoeSnipApp-win-x64.exe "$SIGNED_APP_X64"
+          check RoeSnipApp-win-arm64.exe "$SIGNED_APP_ARM64"
+          [ "$(find dist-win -type f | wc -l)" = 3 ] || { echo "::error::signed-win must hold exactly the three exes"; exit 1; }
 
       - name: Stage Windows exes and gzip siblings
         run: |
