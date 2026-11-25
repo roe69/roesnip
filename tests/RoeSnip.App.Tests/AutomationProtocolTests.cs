@@ -5,9 +5,9 @@ using Xunit;
 namespace RoeSnip.App.Tests;
 
 /// <summary>The pure parse/dispatch/serialize half of the dev-gated automation channel (see
-/// AppShell/AutomationServer.cs's own doc comment) — no live window, no Dispatcher, no pipe. Ported
+/// AppShell/AutomationServer.cs's own doc comment) - no live window, no Dispatcher, no pipe. Ported
 /// from the WPF app's tests/RoeSnip.Tests/AutomationProtocolTests.cs; the live half (actually
-/// driving OverlayController) is verified end-to-end against a resident process, not here — see
+/// driving OverlayController) is verified end-to-end against a resident process, not here - see
 /// docs/testing.md's "Driving the Avalonia app" section. "confirm" accepts copy|save|share,
 /// matching the WPF suite exactly (Sharing/* subsystem, item 12).</summary>
 public class AutomationProtocolTests
@@ -283,7 +283,7 @@ public class AutomationProtocolTests
     [Fact]
     public void ValidateArgs_Confirm_ShareNeedsNoPath()
     {
-        // Sharing/* subsystem (item 12): "share" is accepted alongside copy|save, same as "copy" —
+        // Sharing/* subsystem (item 12): "share" is accepted alongside copy|save, same as "copy" -
         // the upload result is a URL, not a local file, so no "path" is required.
         var request = AutomationProtocol.TryParseRequest("{\"cmd\":\"confirm\",\"action\":\"share\"}", out _)!;
         Assert.Null(AutomationProtocol.ValidateArgs("confirm", request));
@@ -396,8 +396,8 @@ public class AutomationProtocolTests
             new List<AutomationProtocol.MonitorDto> { new("\\\\.\\DISPLAY1", 0, 0, 100, 100, true) });
         string json = AutomationProtocol.SerializeState(state);
 
-        Assert.DoesNotContain('—', json); // em dash
-        Assert.DoesNotContain('–', json); // en dash
+        Assert.DoesNotContain((char)0x2014, json); // em dash
+        Assert.DoesNotContain((char)0x2013, json); // en dash
     }
 
     // ---------- lastcapture / tray ----------
@@ -540,8 +540,8 @@ public class AutomationProtocolTests
     {
         // Wire-shape parity with the WPF app (see AutomationProtocol's own doc comment):
         // record/preset/fps/chrome remain KNOWN/validated commands here even though this port's
-        // live handlers reject them as "unsupported until recording is ported" — never as
-        // "unknown command" — so a future recording port only has to swap the live handlers.
+        // live handlers reject them as "unsupported until recording is ported" - never as
+        // "unknown command" - so a future recording port only has to swap the live handlers.
         // "settings" (settings-legibility-pass) opens/closes the Settings window
         // (TrayApp.OpenSettingsForAutomation/CloseSettingsForAutomation) for --auto-driven visual QA.
         // "lastcapture" and "tray" came with the kept still capture. "lastcapture" is live

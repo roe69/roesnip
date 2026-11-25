@@ -11,11 +11,11 @@ using Xunit;
 namespace RoeSnip.Core.Tests;
 
 /// <summary>End-to-end behavioral coverage of the timestamped <c>AddFrame(SdrImage, long)</c> delta
-/// pipeline — transparency-mask correctness, palette reuse, and keyframing — all verified against
+/// pipeline - transparency-mask correctness, palette reuse, and keyframing - all verified against
 /// the actual on-disk bytes rather than trusting <c>GifBitmapDecoder</c>'s already-composited output
 /// (which can't show per-pixel transparent-index or LCT-byte-identity facts). The emit-rate-shaping
 /// coverage this class used to carry (a motion-keyed delay floor test) was deleted along with the
-/// mechanism itself — see GifEncoderOptions' class doc comment on the quality/framerate decoupling
+/// mechanism itself - see GifEncoderOptions' class doc comment on the quality/framerate decoupling
 /// workstream; rate control lives at capture cadence now, not in this encoder.
 ///
 /// Everything here is parsed with a self-contained walker (<see cref="ParseAllFrames"/>) independent
@@ -142,7 +142,7 @@ public class GifDeltaBehaviorTests
         return frames;
     }
 
-    // GIF89a Color Table entries are stored Red, Green, Blue (in that order) — see GifEncoder's
+    // GIF89a Color Table entries are stored Red, Green, Blue (in that order) - see GifEncoder's
     // WriteFrame comment on the LCT write for why the byte order flips there relative to every
     // internal B,G,R palette buffer. Read back and re-expose as (B, G, R) so callers below, written
     // against the app's usual BGR convention, don't have to care.
@@ -203,7 +203,7 @@ public class GifDeltaBehaviorTests
             var delta = frames[1];
             Assert.True(delta.HasTransparency);
             // Bbox is the tight rectangle enclosing both changed corners, so it also spans the
-            // untouched pixels between them — exactly the shape the transparency mask exists for.
+            // untouched pixels between them - exactly the shape the transparency mask exists for.
             Assert.Equal((1, 1, 4, 4), (delta.Left, delta.Top, delta.Width, delta.Height));
 
             for (int y = 0; y < delta.Height; y++)
@@ -270,7 +270,7 @@ public class GifDeltaBehaviorTests
                 SetPixel(pixels, w, 0, 0, driftB, background, background);
 
                 // An unrelated pixel elsewhere that always differs hugely from whatever it was last
-                // painted at — forces an emit (and, once the drift pixel also differs, sweeps the
+                // painted at - forces an emit (and, once the drift pixel also differs, sweeps the
                 // drift pixel into the same bbox) without ever touching the drift pixel's own baseline.
                 byte unrelated = (i % 2 == 1) ? (byte)220 : (byte)10;
                 SetPixel(pixels, w, 9, 9, unrelated, unrelated, unrelated);
@@ -291,7 +291,7 @@ public class GifDeltaBehaviorTests
             }
 
             // Frame for drift = 5 (> tolerance 4) is the first to sweep the drift pixel into the
-            // bbox and repaint it — the regression this test guards against is EITHER repainting too
+            // bbox and repaint it - the regression this test guards against is EITHER repainting too
             // early (frames 1-4 above) OR never repainting at all (checked here).
             var repaint = frames[5];
             Assert.Equal((0, 0, w, h), (repaint.Left, repaint.Top, repaint.Width, repaint.Height));
@@ -300,7 +300,7 @@ public class GifDeltaBehaviorTests
             Assert.Equal((byte)(background + 5), LctColor(repaint, driftIndex).B); // exact: 2-color palette
 
             // Composite the whole sequence (sub-rects + transparency, exactly as a GIF viewer would)
-            // and check the final drift pixel is within tolerance of the TRUE final source value —
+            // and check the final drift pixel is within tolerance of the TRUE final source value -
             // it can never have drifted further than that, since the tolerance check runs every frame.
             byte[] composite = Composite(frames, w, h);
             byte finalComposited = composite[0];
@@ -339,7 +339,7 @@ public class GifDeltaBehaviorTests
             encoder.AddFrame(new SdrImage(w, h, frame1), 100L);
 
             var frame2 = (byte[])background.Clone();
-            SetPixel(frame2, w, 1, 1, 203, 63, 57); // +3/+3/-3 from frame1 — over ChannelTolerance(2)...
+            SetPixel(frame2, w, 1, 1, 203, 63, 57); // +3/+3/-3 from frame1 - over ChannelTolerance(2)...
             SetPixel(frame2, w, 2, 2, 63, 197, 63); // ...but within PaletteReuseErrorThreshold(6)
             encoder.AddFrame(new SdrImage(w, h, frame2), 200L);
 
@@ -350,7 +350,7 @@ public class GifDeltaBehaviorTests
             var delta1 = frames[1];
             var delta2 = frames[2];
 
-            // Both frames actually repainted the same region — the perturbation was big enough to
+            // Both frames actually repainted the same region - the perturbation was big enough to
             // count as a change, this isn't just "nothing happened twice".
             Assert.Equal((1, 1, 2, 2), (delta1.Left, delta1.Top, delta1.Width, delta1.Height));
             Assert.Equal((1, 1, 2, 2), (delta2.Left, delta2.Top, delta2.Width, delta2.Height));
@@ -387,7 +387,7 @@ public class GifDeltaBehaviorTests
             int steps = totalMs / intervalMs; // 30
             for (int i = 0; i <= steps; i++)
             {
-                // A single drifting pixel is the only thing that ever changes — its value sequence
+                // A single drifting pixel is the only thing that ever changes - its value sequence
                 // (i*50 mod 256) always differs from the immediately preceding step by exactly 50 or
                 // 206 absolute units (a mod-256 ramp never "wraps small"), so every step is a genuine,
                 // easily-over-tolerance change and nothing here is ever skipped as a no-op.
@@ -427,18 +427,18 @@ public class GifDeltaBehaviorTests
         }
     }
 
-    // ---- (5) Lossy run-extension (quality/fps expansion workstream) — GifDelta.ClassifyAndPaint's
+    // ---- (5) Lossy run-extension (quality/fps expansion workstream) - GifDelta.ClassifyAndPaint's
     // gifsicle-style "reuse the adjacent already-painted palette entry when close enough" lever.
     // Exercised directly against ClassifyAndPaint (not through a full GifEncoder file) so each test
     // can inspect exactly which pixels the lossy path touched, rather than inferring it from
     // already-composited/decoded bytes. GifColorDistance.RedmeanSquared is `internal` (no
-    // InternalsVisibleTo edit for this repo's test-access convention — see e.g.
+    // InternalsVisibleTo edit for this repo's test-access convention - see e.g.
     // RecordingSizeEstimator's own doc comment on making the testable slice public instead), so
     // RedmeanSquared below is the same documented formula, duplicated for verification purposes. ----
 
     /// <summary>Same formula as (internal) GifColorDistance.RedmeanSquared, duplicated here since
     /// this test assembly has no InternalsVisibleTo edit into RoeSnip (this repo's convention is to
-    /// make the testable slice public rather than add one — see GifColorDistance's own doc comment
+    /// make the testable slice public rather than add one - see GifColorDistance's own doc comment
     /// for why it stays internal: it's an implementation detail of the Gif namespace, not a public
     /// surface).</summary>
     private static double RedmeanSquared(byte b1, byte g1, byte r1, byte b2, byte g2, byte r2)
@@ -452,7 +452,7 @@ public class GifDeltaBehaviorTests
              + (2.0 + (255.0 - rmean) / 256.0) * db * db;
     }
 
-    /// <summary>An N-entry grayscale palette where palette index i IS exactly gray level i — every
+    /// <summary>An N-entry grayscale palette where palette index i IS exactly gray level i - every
     /// pixel in a 0..N-1 gradient therefore has an EXACT (distance-0) nearest-color match, so
     /// without the lossy mechanism a fine gradient produces a fresh, distinct index almost every
     /// pixel (no accidental merging from palette coarseness muddying what's being measured).</summary>
@@ -474,7 +474,7 @@ public class GifDeltaBehaviorTests
         // threshold 0 = byte-identical output to before this feature existed: with the lossy
         // mechanism disabled (lossyRunThresholdSq: 0, the default for every pre-existing call site
         // and Max/Quality), every painted pixel's index must be EXACTLY what a plain LUT.Lookup on
-        // its own source color would produce — the lossy branch must never fire.
+        // its own source color would produce - the lossy branch must never fire.
         const int w = 128;
         byte[] palette = BuildExactGrayscalePalette(128);
         var lut = new GifNearestColorLut();
@@ -507,12 +507,12 @@ public class GifDeltaBehaviorTests
     {
         // A fine 1-unit-step grayscale gradient against an EXACT-per-level palette. Even with the
         // lossy mechanism OFF (threshold 0), GifNearestColorLut's own 5-5-5 bucket cache (8 units/
-        // channel — see that class's doc comment) already merges SOME neighbors purely from bucket
+        // channel - see that class's doc comment) already merges SOME neighbors purely from bucket
         // quantization, so the baseline is not literally "one distinct index per pixel" - this test
         // only asserts the RELATIVE effect the lossy mechanism adds on top of that baseline, not an
         // absolute transition count. With a generous threshold on, nearby gray levels reuse the
         // run's anchor index instead of a fresh (bucket-cached) lookup, producing measurably longer
-        // runs — exactly the size lever this mechanism exists to add (see GifDelta's class doc).
+        // runs - exactly the size lever this mechanism exists to add (see GifDelta's class doc).
         const int w = 200;
         byte[] palette = BuildExactGrayscalePalette(w);
         var current = new byte[w * 4];
@@ -537,7 +537,7 @@ public class GifDeltaBehaviorTests
         }
 
         byte[] baseline = EncodeIndices(0);
-        byte[] lossy = EncodeIndices(2000); // Δ_max ≈ sqrt(2000/9) ≈ 14.9 gray levels merge per run
+        byte[] lossy = EncodeIndices(2000); // delta_max ~= sqrt(2000/9) ~= 14.9 gray levels merge per run
 
         static int Transitions(byte[] indices)
         {
@@ -572,7 +572,7 @@ public class GifDeltaBehaviorTests
         // Bounded-error guarantee: for every pixel where the lossy mechanism actually fired (its
         // final index differs from what a fresh, independent LUT lookup on that pixel's own source
         // color would have produced), the SOURCE color must be within lossyRunThresholdSq (redmean-
-        // squared) of the reused entry's actual palette color — the exact condition the code checks
+        // squared) of the reused entry's actual palette color - the exact condition the code checks
         // before taking that branch, verified here against the real output rather than trusted by
         // inspection alone.
         const int w = 150;
@@ -624,7 +624,7 @@ public class GifDeltaBehaviorTests
     [Fact]
     public void ClassifyAndPaint_LossyRunExtension_NeverProducesTheTransparentIndex()
     {
-        // A changed pixel must never be classified transparent by the lossy mechanism — that is
+        // A changed pixel must never be classified transparent by the lossy mechanism - that is
         // tolerance's job, with its own bound (see GifDelta's class doc comment). Mixes genuinely
         // unchanged pixels (within channelTolerance of the baseline, must map to transparentIndex)
         // with genuinely changed ones (must never map to transparentIndex, lossy-reused or not),
@@ -645,8 +645,8 @@ public class GifDeltaBehaviorTests
         var current = new byte[w * 4];
         for (int x = 0; x < w; x++)
         {
-            // Even x: within channelTolerance(2) of the baseline(20) — must classify transparent.
-            // Odd x: a FIXED, far-outside-tolerance gray (200) — must be genuinely painted. A
+            // Even x: within channelTolerance(2) of the baseline(20) - must classify transparent.
+            // Odd x: a FIXED, far-outside-tolerance gray (200) - must be genuinely painted. A
             // constant (rather than x-derived) value deliberately avoids landing back near 20 for
             // some odd x, which a naive x%w mapping would (e.g. x=19,21 map to 19,21 - themselves
             // within tolerance of 20).
@@ -659,7 +659,7 @@ public class GifDeltaBehaviorTests
         GifDelta.ClassifyAndPaint(
             current, lastPainted, indexScratch, w, box, lut, palette,
             transparentIndex, allowTransparency: true, channelTolerance: 2, ditherErrorFloor: 255,
-            lossyRunThresholdSq: 50_000); // deliberately huge — see class doc above for why
+            lossyRunThresholdSq: 50_000); // deliberately huge - see class doc above for why
 
         for (int x = 0; x < w; x++)
         {

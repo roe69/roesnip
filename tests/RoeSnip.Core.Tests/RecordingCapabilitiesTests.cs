@@ -3,12 +3,12 @@ using Xunit;
 
 namespace RoeSnip.Core.Tests;
 
-/// <summary>Registry-plumbing coverage for <see cref="RecordingCapabilitiesRegistry"/> — the same
+/// <summary>Registry-plumbing coverage for <see cref="RecordingCapabilitiesRegistry"/> - the same
 /// candidate-list select/skip mechanics as <c>RoeSnip.Core.Capture.CaptureBackendRegistry</c>, plus
 /// the one behavior that registry does NOT have: a non-throwing fallback
 /// (<see cref="RecordingCapabilities.None"/>) when nothing matches, since "no MP4/audio backend on
 /// this OS" is a documented degrade here, not an error. Registration is a process-global, append-
-/// only list (same caveat CaptureBackendRegistry's own doc comment carries) — every assertion below
+/// only list (same caveat CaptureBackendRegistry's own doc comment carries) - every assertion below
 /// is written to hold regardless of what any other candidate already registered in this process, by
 /// only ever checking for ITS OWN uniquely-tagged candidate rather than assuming an empty list.</summary>
 public class RecordingCapabilitiesTests

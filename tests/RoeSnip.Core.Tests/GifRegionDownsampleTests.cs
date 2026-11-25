@@ -3,7 +3,7 @@ using Xunit;
 
 namespace RoeSnip.Core.Tests;
 
-/// <summary>ScaledCanvasDimension/BoxDownsample — ported verbatim from the WPF app's
+/// <summary>ScaledCanvasDimension/BoxDownsample - ported verbatim from the WPF app's
 /// RecordingController (ScaledCanvasDimension/BoxDownsampleGifFrame), the GIF Compact/Minimal
 /// size-tier downscale math.</summary>
 public class GifRegionDownsampleTests
@@ -21,9 +21,9 @@ public class GifRegionDownsampleTests
     [Fact]
     public void BoxDownsample_HalfScale_AveragesTwoByTwoBlocks()
     {
-        // 4x4 source, 2x2 destination — each destination pixel averages a 2x2 source block.
-        // Block (0,0): four pixels of (10,20,30) — average is exactly (10,20,30).
-        // Block (1,1): four pixels of (100,150,200) — average is exactly (100,150,200).
+        // 4x4 source, 2x2 destination - each destination pixel averages a 2x2 source block.
+        // Block (0,0): four pixels of (10,20,30) - average is exactly (10,20,30).
+        // Block (1,1): four pixels of (100,150,200) - average is exactly (100,150,200).
         byte[] src = new byte[4 * 4 * 4];
         for (int y = 0; y < 4; y++)
         {
@@ -59,7 +59,7 @@ public class GifRegionDownsampleTests
     public void BoxDownsample_UniformSource_ProducesUniformDestination()
     {
         // A flat-color source at a non-integer scale ratio (0.75-equivalent 4->3) must still produce
-        // the exact same flat color throughout — the mixed 1/2-pixel source-rect pattern must never
+        // the exact same flat color throughout - the mixed 1/2-pixel source-rect pattern must never
         // introduce a rounding artifact on uniform content.
         byte[] src = new byte[4 * 4 * 4];
         for (int i = 0; i < src.Length; i += 4)

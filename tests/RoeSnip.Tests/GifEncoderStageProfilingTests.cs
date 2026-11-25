@@ -11,10 +11,10 @@ namespace RoeSnip.Tests;
 /// <summary>DIAGNOSTIC, not a correctness or regression gate: measures the wall-time split across
 /// GifEncoder's per-frame pipeline stages (<see cref="GifEncoderStageTimings"/>) on the same kind of
 /// full-motion content GifSizeBenchmarkTests' NoiseFrame exercises (a worst case for a diff/LZW-based
-/// encoder — nothing repeats between frames), at the two configurations the GIF software-encode CPU
+/// encoder - nothing repeats between frames), at the two configurations the GIF software-encode CPU
 /// workstream's own brief measured process CPU against: Quality@25fps and Max@50fps, both at a
 /// 640x420 canvas. Exists purely to answer "where does the CPU actually go" BEFORE attacking any one
-/// stage — see this class's own test bodies for the reported breakdown, and the workstream's commit
+/// stage - see this class's own test bodies for the reported breakdown, and the workstream's commit
 /// history for what changed as a result.
 ///
 /// No byte-count or ratio assertions here (that is GifSizeBenchmarkTests' job); the only assertions
@@ -36,7 +36,7 @@ public class GifEncoderStageProfilingTests
     }
 
     /// <summary>Same xorshift32 full-canvas noise generator as GifSizeBenchmarkTests.NoiseFrame
-    /// (deterministic, no <see cref="Random"/>) — duplicated rather than shared across test classes
+    /// (deterministic, no <see cref="Random"/>) - duplicated rather than shared across test classes
     /// since it's a five-line pure function and this class has no other dependency on that one's
     /// internals.</summary>
     private static uint XorShift32(uint state)
@@ -149,14 +149,14 @@ public class GifEncoderStageProfilingTests
     /// <summary>Every worst-case-content frame at Quality/Max changes and emits (noise never
     /// stabilizes within tolerance), so every stage should have done real, nonzero work, and the sum
     /// of the six instrumented buckets should account for the large majority of AddFrame's own wall
-    /// time (the remainder being un-instrumented glue — see GifEncoderStageTimings' own doc comment).
+    /// time (the remainder being un-instrumented glue - see GifEncoderStageTimings' own doc comment).
     /// A bucket stuck at exactly zero, or an instrumented total wildly exceeding wall time (a timing
     /// bug, e.g. double-counting), fails loudly here rather than silently mis-reporting a future
     /// optimization's before/after comparison.</summary>
     private static void AssertSane(StageBreakdown b)
     {
         Assert.True(b.FrameCount > 0);
-        Assert.True(b.TotalMs > 0, "no stage recorded any time at all — instrumentation is not wired up");
+        Assert.True(b.TotalMs > 0, "no stage recorded any time at all - instrumentation is not wired up");
         Assert.True(b.BboxScanPct > 0, "bbox scan bucket never recorded time");
         Assert.True(b.CollectPaintedPct > 0, "collect-painted bucket never recorded time");
         Assert.True(b.PalettePct > 0, "octree/LUT (palette) bucket never recorded time");
@@ -167,18 +167,18 @@ public class GifEncoderStageProfilingTests
         // generous room for JIT warmup/GC/test-harness overhead on the very first profiling run in
         // a process) and never more than 100% plus a small timer-granularity slack.
         Assert.True(b.TotalMs <= b.WallMs * 1.05,
-            $"instrumented total ({b.TotalMs:F1}ms) exceeds wall time ({b.WallMs:F1}ms) by more than timer slack — likely double-counted timing");
+            $"instrumented total ({b.TotalMs:F1}ms) exceeds wall time ({b.WallMs:F1}ms) by more than timer slack - likely double-counted timing");
         Assert.True(b.TotalMs >= b.WallMs * 0.20,
-            $"instrumented total ({b.TotalMs:F1}ms) is implausibly small next to wall time ({b.WallMs:F1}ms) — a stage may have stopped being timed");
+            $"instrumented total ({b.TotalMs:F1}ms) is implausibly small next to wall time ({b.WallMs:F1}ms) - a stage may have stopped being timed");
     }
 
-    /// <summary>Raw production-path wall-clock time — <see cref="GifEncoderStageTimings.Enabled"/> is
+    /// <summary>Raw production-path wall-clock time - <see cref="GifEncoderStageTimings.Enabled"/> is
     /// deliberately left false/untouched here, unlike <see cref="Profile"/> above. The per-stage
-    /// instrumentation is cheap when off (a single false branch per stage per frame — see that
+    /// instrumentation is cheap when off (a single false branch per stage per frame - see that
     /// class's own doc comment) but NOT free when on: in particular, <c>GifNearestColorLut.Lookup</c>
     /// increments a [ThreadStatic] counter on every call (hundreds of millions of times across a
     /// full-motion take), and thread-local storage access has real per-access cost that measurably
-    /// distorts wall-clock comparisons at that call frequency — observed directly while calibrating
+    /// distorts wall-clock comparisons at that call frequency - observed directly while calibrating
     /// this workstream's own before/after numbers. This method is the one this class's own Facts use
     /// to report the number that actually matters: encode wall time with zero instrumentation
     /// overhead, exactly what a real recording take pays.</summary>

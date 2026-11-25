@@ -5,8 +5,8 @@ using Xunit;
 
 namespace RoeSnip.Core.Tests;
 
-/// <summary>Exercises SettingsStore against isolated temp-directory paths only — never the real
-/// per-OS config-directory settings.json — via the public path-taking overloads of Load/Save.</summary>
+/// <summary>Exercises SettingsStore against isolated temp-directory paths only - never the real
+/// per-OS config-directory settings.json - via the public path-taking overloads of Load/Save.</summary>
 public class SettingsTests : IDisposable
 {
     private readonly string _tempDir;
@@ -29,7 +29,7 @@ public class SettingsTests : IDisposable
     [Fact]
     public void Load_MissingDirectory_ReturnsDefault_AndDoesNotCreateFile()
     {
-        // _tempDir is never created in this test — simulates a fresh install with no config dir yet.
+        // _tempDir is never created in this test - simulates a fresh install with no config dir yet.
         string settingsPath = PathFor("settings.json");
 
         var loaded = SettingsStore.Load(settingsPath);
@@ -151,7 +151,7 @@ public class SettingsTests : IDisposable
 
         // RoeSnipSettings.RecentPickedColors/CustomColors/PaletteColors/ShareProviders are all
         // List<T>, whose default (reference) equality means a freshly-deserialized instance never ==
-        // the original list instance even with identical content — assert their contents explicitly
+        // the original list instance even with identical content - assert their contents explicitly
         // (xUnit's Assert.Equal does a structural/sequence compare for IEnumerable<T>), then
         // neutralize them to the same reference before the whole-record equality check below so it
         // isn't tripped up by that same reference-equality quirk on the remaining (scalar) fields.
@@ -271,7 +271,7 @@ public class SettingsTests : IDisposable
     {
         // Simulates a settings.json written by an OLDER Core build that predates this work item's
         // fields entirely (not just a hand-added unknown field, which
-        // Load_JsonWithUnknownFields_IgnoresThemAndUsesKnownValues above already covers) — every
+        // Load_JsonWithUnknownFields_IgnoresThemAndUsesKnownValues above already covers) - every
         // field this item added must be entirely ABSENT from the JSON and still resolve to its
         // record-initializer default rather than throwing or deserializing to a CLR default (e.g.
         // TextFontSize silently becoming 0.0 instead of 20.0).

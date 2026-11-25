@@ -9,7 +9,7 @@ namespace RoeSnip.App.Tests;
 /// <see cref="Magnifier.MapSelectionToLoupeRect"/> maps a physical-pixel candidate crop rectangle
 /// into the loupe's own on-screen DIP square, using the identical per-axis affine the swatch grid
 /// itself uses. Factored out as a static, Avalonia-rendering-free function specifically so this
-/// mapping is testable without a live Control/DrawingContext — see the method's own doc comment.
+/// mapping is testable without a live Control/DrawingContext - see the method's own doc comment.
 /// Mirrors the WPF app's identically-named, identically-shaped test
 /// (tests/RoeSnip.Tests/MagnifierSelectionPreviewTests.cs).</summary>
 public class MagnifierSelectionPreviewTests
@@ -22,7 +22,7 @@ public class MagnifierSelectionPreviewTests
     public void MapSelectionToLoupeRect_SinglePixelAtCenter_MapsToTheCenterSwatchCell()
     {
         // A 1x1 selection exactly at the sampled center pixel: its near edge sits at the "0th"
-        // offset from center (i.e. swatch index sampleRadius), its far edge one swatch further —
+        // offset from center (i.e. swatch index sampleRadius), its far edge one swatch further -
         // identical in kind to how a single swatch is placed in the Render grid loop.
         var selection = RectPhysical.FromSize(100, 100, 1, 1);
 
@@ -54,7 +54,7 @@ public class MagnifierSelectionPreviewTests
     public void MapSelectionToLoupeRect_UnnormalizedRect_StillProducesANonInvertedRect()
     {
         // Constructed with Right < Left and Bottom < Top (as the live drag path's raw candidate
-        // rect briefly can be before Normalized() is applied) — the mapping must normalize first,
+        // rect briefly can be before Normalized() is applied) - the mapping must normalize first,
         // exactly like SelectionAdorner.Render does before computing its own dipRect.
         var backwards = new RectPhysical(105, 105, 100, 100);
 
@@ -69,7 +69,7 @@ public class MagnifierSelectionPreviewTests
     {
         // A 50px-wide/tall selection whose far corner is well beyond the +/-5-pixel sampled
         // window: the mapped rect legitimately extends past the loupe's own square. The method
-        // itself performs no bounds-checking or clamping — callers (Magnifier.Render) are expected
+        // itself performs no bounds-checking or clamping - callers (Magnifier.Render) are expected
         // to PushClip to the loupe square instead, per the spec's "off-screen edges are simply
         // clipped with no artifact" decision.
         var selection = RectPhysical.FromSize(100, 100, 50, 50);
@@ -85,7 +85,7 @@ public class MagnifierSelectionPreviewTests
     public void MapSelectionToLoupeRect_NearEdgeBeforeSampleWindow_MapsBeforeLoupeOrigin_NoBoundsCheck()
     {
         // Symmetric case: an anchor corner far to the top-left of the sampled window maps to
-        // negative coordinates relative to the loupe's own top-left — again, clipping is the
+        // negative coordinates relative to the loupe's own top-left - again, clipping is the
         // caller's job, not this function's.
         var selection = RectPhysical.FromSize(50, 50, 50, 50); // right/bottom edge at (100,100)
 

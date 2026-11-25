@@ -10,14 +10,14 @@ using Xunit.Abstractions;
 // Recording-core-extraction: RecordingSizeEstimator moved to RoeSnip.Core.Recording. A plain
 // `using RoeSnip.Core.Recording;` would also pull in that namespace's own GifEncoder, which
 // collides with the WPF app's own RoeSnip.Recording.GifEncoder (already in scope via the
-// `using RoeSnip.Recording;` above and used throughout this file) — an alias avoids the ambiguity.
+// `using RoeSnip.Recording;` above and used throughout this file) - an alias avoids the ambiguity.
 using RecordingSizeEstimator = RoeSnip.Core.Recording.RecordingSizeEstimator;
 
 namespace RoeSnip.Tests;
 
 /// <summary>PERMANENT benchmark (not a correctness test): measures GifEncoder's output
 /// bytes/second on three deterministic synthetic 10-second, 640x400 sequences that stand in for
-/// the recording content shapes that matter in practice — a mostly-static UI, a scrolling text
+/// the recording content shapes that matter in practice - a mostly-static UI, a scrolling text
 /// panel, and a video-like worst case. All three are generated with fixed formulas/seeded xorshift
 /// only (no <see cref="Random"/>, no wall-clock), so results are reproducible run to run and only
 /// change when GifEncoder's encoding actually changes.
@@ -25,7 +25,7 @@ namespace RoeSnip.Tests;
 /// REDESIGNED for the quality/framerate decoupling workstream: content generators are driven by
 /// ELAPSED REAL TIME (milliseconds), not by a fixed frame index tied to one hardcoded fps, so the
 /// same real-world motion (cursor moving 4x/sec, text scrolling 200px/sec) can be sampled at
-/// whatever capture fps a test picks — frame interval is always 1000/fps ms on this benchmark's
+/// whatever capture fps a test picks - frame interval is always 1000/fps ms on this benchmark's
 /// ticksPerSecond=1000 clock (1 tick == 1ms), mirroring production where the capture-side schedule
 /// throttle (RegionRecorder), not the encoder, is what turns a chosen fps into an actual sampling
 /// interval. Noise is the one exception: each sampled frame is independently random regardless of
@@ -34,29 +34,29 @@ namespace RoeSnip.Tests;
 /// Gates were rebuilt around the deleted motion-floor mechanism (see GifEncoderOptions' and
 /// GifSizePresets' class docs): with no emit-rate shaping left in the encoder, EVERY candidate
 /// frame that clears tolerance now emits, so bytes/sec on genuinely-moving content (scroll, noise)
-/// is expected to land noticeably HIGHER than the old floor-throttled numbers — that is the whole
+/// is expected to land noticeably HIGHER than the old floor-throttled numbers - that is the whole
 /// point of the workstream (framerate is now the user's capture-fps choice, not a side effect of
 /// picking a quality tier) and is deliberately accepted here, not treated as a regression:
 ///   - Quality @ the new default 25fps: static/scroll/noise absolute ceilings, each set at ~1.7x
 ///     the measured new-behavior baseline. Measured once this class was rebuilt: static 894.4 B/s
-///     (unchanged from the pre-decoupling figure — the cursor's fixed 4 steps/REAL-second means
+///     (unchanged from the pre-decoupling figure - the cursor's fixed 4 steps/REAL-second means
 ///     capture fps barely matters for a near-static take), scroll 225,593.6 B/s (up from the old
-///     floor-throttled ~173,279 B/s — every frame now emits instead of being held behind the
+///     floor-throttled ~173,279 B/s - every frame now emits instead of being held behind the
 ///     deleted large/huge-motion floors), and noise 8,587,672.4 B/s (roughly DOUBLE the old
 ///     floor-throttled ~4,293,334 B/s figure, consistent with the old ~12.5fps-effective huge-motion
-///     floor being replaced by this benchmark's unthrottled 25fps capture rate — almost exactly 2x
+///     floor being replaced by this benchmark's unthrottled 25fps capture rate - almost exactly 2x
 ///     the old effective rate, and the byte-rate follows suit almost exactly 2x).
 ///   - Quality-axis sanity at 25fps: on noise, Minimal &lt;= Compact &lt;= Balanced &lt;= Quality bytes
 ///     must hold (MaxPaletteColors/lossy-run/RenderScale are, together, a monotone lever on
-///     color-rich content — see QUALITY/FPS EXPANSION below for the full picture, which SUPERSEDES
+///     color-rich content - see QUALITY/FPS EXPANSION below for the full picture, which SUPERSEDES
 ///     the old palette-only "Balanced/Compact are the ONLY surviving size lever" framing).
 ///   - Framerate axis at Quality on scroll: 10fps must produce meaningfully fewer bytes than 25fps
-///     (&lt;=0.55x, linear-with-slack — 10/25 = 0.40x is the exact-linear expectation).
+///     (&lt;=0.55x, linear-with-slack - 10/25 = 0.40x is the exact-linear expectation).
 /// Every produced GIF is still decode-verified through the real WPF GifBitmapDecoder end users'
 /// viewers ultimately rely on (see <see cref="EncodeAndMeasure"/>).
 ///
 /// QUALITY/FPS EXPANSION WORKSTREAM (Balanced/Compact/Minimal's lossy run-extension + Minimal's
-/// half-resolution render — see GifSizePresets' own class doc for what the levers ARE and why each
+/// half-resolution render - see GifSizePresets' own class doc for what the levers ARE and why each
 /// tier's numbers are what they are): the old scroll-only "every tier stays within 1.10x of Quality"
 /// sanity band is GONE, superseded by
 /// <see cref="QualityAxis_BlendedScrollNoiseRatio_MeetsCalibratedTargets"/> below, which measures
@@ -73,23 +73,23 @@ namespace RoeSnip.Tests;
 /// Monotonicity Minimal &lt; Compact &lt; Balanced &lt; Quality &lt;= Max is asserted directly.
 ///
 /// TIER SPREAD (2026-07-13, after the VISUAL RETUNE below): the retune left Compact's blended
-/// ratio at 0.865, bunched within ~6% of Balanced's 0.922 — a visually constrained lossy threshold
+/// ratio at 0.865, bunched within ~6% of Balanced's 0.922 - a visually constrained lossy threshold
 /// only buys ~13% on this content mix, so the "Low" tier was a near-alias of "Medium". Compact
 /// gained RenderScale 0.75 (see GifSizePresets' own TIER SPREAD doc paragraph for the full
-/// reasoning) and the table row above is the re-measurement with that scale folded in — landing
+/// reasoning) and the table row above is the re-measurement with that scale folded in - landing
 /// right on the 0.5625 x 0.865 ~= 0.49 pixel-factor prediction. The visual gates below needed NO
 /// structural change for this: <see cref="EncodeAndMeasureVisualMeanError"/> was already
 /// scale-aware (it box-downsamples the gate's ground-truth source whenever the preset's
-/// RenderScale &lt; 1.0 — the same convention Minimal's gate established), so Compact's scroll
+/// RenderScale &lt; 1.0 - the same convention Minimal's gate established), so Compact's scroll
 /// meanErr simply re-measured 1.13 -> 1.26 at 0.75 scale, and its gradient meanErr 19.33 -> 19.26
 /// (the lossy threshold, not the scale, dominates gradient error). The RETUNE paragraph below
-/// predates this pass — its Compact byte figures are full-resolution history.
+/// predates this pass - its Compact byte figures are full-resolution history.
 ///
 /// VISUAL RETUNE (2026-07-13): Balanced's and Compact's LossyRunThresholdSq (and, downstream, the
 /// blended ratios/target bands above) were retuned from their original values (90,000/350,000,
-/// blended 0.742/0.415) after a visual QA pass — a scratch harness, since deleted, encoded a
+/// blended 0.742/0.415) after a visual QA pass - a scratch harness, since deleted, encoded a
 /// diagonal-RGB-gradient and a plasma/photo-like scene at every tier and the decoded, GifRawCompositor
-/// -composited results were eyeballed directly — found the original Compact threshold's redmean-
+/// -composited results were eyeballed directly - found the original Compact threshold's redmean-
 /// squared distance ceiling was ~77% of the maximum possible (black-vs-white) distance, generous
 /// enough to visibly STREAK smooth content: the lossy run tracker's anchor color stays fixed for the
 /// whole run, so a threshold that generous let dozens of consecutive gradient pixels merge into one
@@ -102,20 +102,20 @@ namespace RoeSnip.Tests;
 ///
 /// <see cref="Minimal_Scroll_VisuallySane_MeanErrorBounded"/> is the "calibration didn't converge on
 /// garbage" guard the mandate requires: Minimal is decoded and compared, mean-per-channel-error
-/// bounded, against its OWN (box-downsampled) source — not pixel-exact, but recognizably the same
+/// bounded, against its OWN (box-downsampled) source - not pixel-exact, but recognizably the same
 /// content.
 ///
 /// DROPPED from the pre-decoupling version of this class (each row was earning its keep against a
 /// mechanism that no longer exists):
-///   - Per-tier STATIC rows (Balanced/Compact static measurements) — static was already measured
+///   - Per-tier STATIC rows (Balanced/Compact static measurements) - static was already measured
 ///     Quality-only before this redesign; still true, nothing changed there.
-///   - The wide Max-preset budget band (MaxMinFraction/ScrollMaxMaxFraction/NoiseMaxMaxFraction) —
+///   - The wide Max-preset budget band (MaxMinFraction/ScrollMaxMaxFraction/NoiseMaxMaxFraction) -
 ///     that band existed specifically to bound how much bigger Max could get from disabling the
 ///     motion floors relative to Quality's floor-throttled rate. With no floors left on ANY tier,
 ///     Max and Quality use an identical emit policy (every candidate frame emits) and only differ
 ///     in palette-reuse strictness, which the new blanket "within 1.10x of Quality" scroll check
 ///     and noise monotonicity check already cover without a Max-specific band.
-///   - Compact's scroll effective-frame-rate floor (>=50 emitted frames/10s) — that gate existed to
+///   - Compact's scroll effective-frame-rate floor (>=50 emitted frames/10s) - that gate existed to
 ///     catch a tier's motion floor collapsing emit cadence into a slideshow. No tier has a motion
 ///     floor anymore, so emitted frame count on scroll is bounded below by the capture fps itself,
 ///     not by anything a quality tier could still get wrong.</summary>
@@ -126,14 +126,14 @@ public class GifSizeBenchmarkTests
     private const int DurationSeconds = 10;
     private const long TicksPerSecond = 1000; // 1 tick == 1 ms
 
-    // The new shipped default GIF capture rate (RecordingSizeEstimator.GifDefaultFps) — "Quality at
+    // The new shipped default GIF capture rate (RecordingSizeEstimator.GifDefaultFps) - "Quality at
     // default fps" below measures exactly what a fresh install's first take actually produces.
     private static readonly int DefaultFps = RecordingSizeEstimator.GifDefaultFps;
 
-    // Absolute ceilings (bytes/sec), Quality preset, DefaultFps — ~1.7x the measured new-behavior
+    // Absolute ceilings (bytes/sec), Quality preset, DefaultFps - ~1.7x the measured new-behavior
     // baseline (894.4 / 225,593.6 / 8,587,672.4 B/s respectively; see class doc comment for the
     // measurement and why these numbers are intentionally far above the OLD floor-throttled
-    // thresholds — frame rate is no longer throttled by the quality tier at all).
+    // thresholds - frame rate is no longer throttled by the quality tier at all).
     private const double StaticThresholdBytesPerSec = 1_600d;
     private const double ScrollThresholdBytesPerSec = 384_000d;
     private const double NoiseThresholdBytesPerSec = 14_600_000d;
@@ -177,13 +177,13 @@ public class GifSizeBenchmarkTests
 
     /// <summary>Encodes <paramref name="frameAt"/> at <paramref name="fps"/> across
     /// <see cref="DurationSeconds"/> (frame interval == 1000/fps ticks on this benchmark's
-    /// ticksPerSecond=1000 clock — production's capture-cadence rate control, reproduced here
+    /// ticksPerSecond=1000 clock - production's capture-cadence rate control, reproduced here
     /// exactly instead of the encoder throttling anything itself) with the given (or default/
     /// Quality) <paramref name="options"/>, and returns both the resulting file size and the
     /// actual number of GIF frames a real decoder sees. Decode-verifies through the same real WPF
     /// decoder end users' GIF viewers ultimately rely on (frame count &gt; 1 is a basic sanity
     /// check that this genuinely is the multi-frame animation the encoder was asked to produce, not
-    /// just "didn't throw") — every preset/fps variant goes through this same check.</summary>
+    /// just "didn't throw") - every preset/fps variant goes through this same check.</summary>
     private static (long Bytes, int EmittedFrameCount) EncodeAndMeasure(
         string name, Func<int, long, SdrImage> frameAt, int fps, GifEncoderOptions? options = null)
     {
@@ -195,7 +195,7 @@ public class GifSizeBenchmarkTests
         long frameIntervalTicks = TicksPerSecond / fps;
 
         // Compact/Minimal (RenderScale < 1.0) are measured through the SAME downscaled render path
-        // RecordingController's EncoderLoop actually uses in production — GifEncoder itself has no
+        // RecordingController's EncoderLoop actually uses in production - GifEncoder itself has no
         // notion of RenderScale (see that option's own doc comment: it is purely a pre-encode
         // downsample step), so reproducing it here (not just measuring a smaller palette at full
         // resolution) is what makes this benchmark's Compact/Minimal numbers mean anything.
@@ -243,7 +243,7 @@ public class GifSizeBenchmarkTests
     }
 
     /// <summary>Same floor-to-even-after-scaling formula as RecordingController.ScaledCanvasDimension
-    /// — duplicated here (test-only helper, no production dependency) since this benchmark needs to
+    /// - duplicated here (test-only helper, no production dependency) since this benchmark needs to
     /// open its GifEncoder at the exact canvas size a real Minimal take would.</summary>
     private static int ScaledDim(int fullSize, double scale)
     {
@@ -251,10 +251,10 @@ public class GifSizeBenchmarkTests
         return Math.Max(2, scaled - (scaled % 2));
     }
 
-    /// <summary>Same box-filter formula as RecordingController.BoxDownsampleGifFrame — duplicated
+    /// <summary>Same box-filter formula as RecordingController.BoxDownsampleGifFrame - duplicated
     /// here for the same reason as <see cref="ScaledDim"/> above: this benchmark must reproduce the
     /// real downscaled render path (Compact 0.75 / Minimal 0.5, including 0.75's integer-snapped
-    /// 1,1,2-pixel rect pattern — see the production method's own doc comment), not just measure a
+    /// 1,1,2-pixel rect pattern - see the production method's own doc comment), not just measure a
     /// smaller palette at full resolution.</summary>
     private static void BoxDownsample(byte[] src, int srcWidth, int srcHeight, byte[] dst, int dstWidth, int dstHeight)
     {
@@ -298,7 +298,7 @@ public class GifSizeBenchmarkTests
     /// already parses; Max/Balanced/Compact/Minimal get
     /// "{contentLabel}-max"/"-balanced"/"-compact"/"-minimal"). Quality is measured exactly once
     /// here and its bytes are what the tier-sanity assertions below compare the other four against
-    /// — reusing this one pass rather than each gated assertion re-encoding its own Quality
+    /// - reusing this one pass rather than each gated assertion re-encoding its own Quality
     /// reference keeps the multiplied encode work (five presets, not one) from quintupling again.</summary>
     private Dictionary<GifSizePreset, PresetMeasurement> MeasureAcrossPresets(string contentLabel, Func<int, long, SdrImage> frameAt, int fps)
     {
@@ -338,7 +338,7 @@ public class GifSizeBenchmarkTests
     }
 
     /// <summary>A UI-like flat background: a title bar band, a body fill, and a grid of small
-    /// "glyph block" rectangles (stand-ins for rendered text) at fixed positions — all constant
+    /// "glyph block" rectangles (stand-ins for rendered text) at fixed positions - all constant
     /// across frames except a 16x16 "cursor" block that steps to a new position 4 times per REAL
     /// second (every 250ms of <paramref name="elapsedMs"/>, independent of capture fps).</summary>
     private static SdrImage StaticUiFrame(long elapsedMs)
@@ -384,7 +384,7 @@ public class GifSizeBenchmarkTests
     /// rather than scrolling slower): each row is a solid background stripe with a few "glyph"
     /// segments in 2-3 flat colors plus a handful of anti-aliased-looking gray shades along glyph
     /// edges (fixed per-row/col formula, not random), wrapped vertically so the content never runs
-    /// out. The area outside the band is a static background — only the band itself changes frame
+    /// out. The area outside the band is a static background - only the band itself changes frame
     /// to frame.</summary>
     private static SdrImage ScrollFrame(long elapsedMs)
     {
@@ -451,11 +451,11 @@ public class GifSizeBenchmarkTests
         return new SdrImage(Width, Height, pixels);
     }
 
-    /// <summary>Deterministic xorshift32 PRNG (fixed seed) — never <see cref="Random"/> — used to
+    /// <summary>Deterministic xorshift32 PRNG (fixed seed) - never <see cref="Random"/> - used to
     /// regenerate full-canvas noise every frame, the worst case for a diff/LZW-based encoder since
     /// nothing repeats between frames and nothing compresses well within one. Keyed by the frame's
     /// SEQUENCE INDEX rather than elapsed time: unlike the cursor/scroll motion above, noise has no
-    /// real-world timing to stay faithful to — each sampled frame is simply independent of every
+    /// real-world timing to stay faithful to - each sampled frame is simply independent of every
     /// other, at any fps.</summary>
     private static uint XorShift32(uint state)
     {
@@ -491,7 +491,7 @@ public class GifSizeBenchmarkTests
     [Fact]
     public void Static_UiLikeContent_AtDefaultFps_BytesPerSecond()
     {
-        // Quality only — static is preset-invariant (no swept tolerance/palette knob ever moved
+        // Quality only - static is preset-invariant (no swept tolerance/palette knob ever moved
         // its near-zero bytes at all, see class doc comment on what was dropped and why).
         var (bytes, _) = EncodeAndMeasure("static", (_, ms) => StaticUiFrame(ms), DefaultFps, GifSizePresets.ForPreset(GifSizePreset.Quality));
         double bytesPerSec = RecordAndReport("static", bytes);
@@ -505,7 +505,7 @@ public class GifSizeBenchmarkTests
     public void Scroll_TextLikeContent_AtDefaultFps_BytesPerSecond()
     {
         // QUALITY/FPS EXPANSION WORKSTREAM: the old "every tier stays within 1.10x of Quality on
-        // scroll" gate is GONE — that was true only while palette size was the tiers' one lever
+        // scroll" gate is GONE - that was true only while palette size was the tiers' one lever
         // (see GifSizePresets' class doc for the original finding), and is no longer true, ON
         // PURPOSE, now that Balanced/Compact/Minimal carry a real lossy run-extension threshold:
         // that lever DOES meaningfully shrink scroll/text content, which is the whole point of
@@ -550,7 +550,7 @@ public class GifSizeBenchmarkTests
     [Fact]
     public void Scroll_FpsAxis_LowerFpsProducesFewerBytes()
     {
-        // Same real-world scroll motion (200px/REAL second — see ScrollFrame's doc comment),
+        // Same real-world scroll motion (200px/REAL second - see ScrollFrame's doc comment),
         // sampled at two different capture rates. With no motion-floor throttling left in the
         // encoder, bytes/sec now tracks capture fps directly: this is the core behavior the
         // quality/framerate decoupling workstream exists to enable.
@@ -576,10 +576,10 @@ public class GifSizeBenchmarkTests
     // Blended-ratio target bands (mean of scroll,noise byte ratio vs. Quality/High), per the
     // calibration mandate: tune ONLY the lossy thresholds (and Minimal's palette, if truly needed)
     // until each tier's measured blended ratio lands inside its own band. RETUNED 2026-07-13 (was
-    // 0.6-0.8 / 0.4-0.6) alongside GifSizePresets.ForPreset's LossyRunThresholdSq retune — see this
+    // 0.6-0.8 / 0.4-0.6) alongside GifSizePresets.ForPreset's LossyRunThresholdSq retune - see this
     // class's own VISUAL RETUNE doc-comment paragraph for why the bands moved so much closer to
     // 1.0: a visual streaking problem, not a byte-target miss, drove the retune. Compact's band
-    // moved again the same day (was 0.75-0.92) for the TIER SPREAD pass — RenderScale 0.75 took its
+    // moved again the same day (was 0.75-0.92) for the TIER SPREAD pass - RenderScale 0.75 took its
     // measured blended ratio to 0.498, and the band is centered on that measurement with roughly
     // the same +-0.05-0.08 width every other band carries (wide enough to absorb encoder-side
     // drift, tight enough that losing the resolution lever, or doubling it, still fails loudly).
@@ -607,7 +607,7 @@ public class GifSizeBenchmarkTests
         double compactBlended = Blended(GifSizePreset.Compact);
         double minimalBlended = Blended(GifSizePreset.Minimal);
 
-        // Monotonicity: Minimal < Compact < Balanced < Quality(1.0) <= Max — see this class's own
+        // Monotonicity: Minimal < Compact < Balanced < Quality(1.0) <= Max - see this class's own
         // doc comment for the exact measured values this run's numbers should track.
         Assert.True(minimalBlended < compactBlended,
             $"Minimal blended ratio ({minimalBlended:F3}) should be < Compact's ({compactBlended:F3})");
@@ -632,14 +632,14 @@ public class GifSizeBenchmarkTests
     public void Minimal_Scroll_VisuallySane_MeanErrorBounded()
     {
         // Calibration must never converge on illegible garbage: composite the actual Minimal-tier
-        // GIF's frames using GIF's own "do not dispose" disposal rule (GifRawCompositor — see its
+        // GIF's frames using GIF's own "do not dispose" disposal rule (GifRawCompositor - see its
         // own doc comment for why this MUST be a from-scratch composite, not just
         // GifBitmapDecoder.Frames[last]: that gives one frame's own raw sub-rect alone, not the true
         // final displayed image) and verify the result stays within a loose mean-error bound of the
-        // SAME (box-downsampled) source frame the encoder was actually asked to reproduce — not
+        // SAME (box-downsampled) source frame the encoder was actually asked to reproduce - not
         // pixel-exact (a lossy tier is expected to differ from its source), but recognizably the
         // same content, not noise. Measured mean-per-channel error at the calibrated Minimal
-        // settings: 5.20 (well inside the 30 bound) — comfortably legible, not the ~40+ an earlier,
+        // settings: 5.20 (well inside the 30 bound) - comfortably legible, not the ~40+ an earlier,
         // buggy version of this test (comparing against GifBitmapDecoder's uncomposited last frame
         // instead) mistakenly reported as a real fidelity problem.
         var options = GifSizePresets.ForPreset(GifSizePreset.Minimal);
@@ -661,7 +661,7 @@ public class GifSizeBenchmarkTests
                 encoder.AddFrame(new SdrImage(canvasWidth, canvasHeight, scratch), tick);
             }
             encoder.FinalizeAndClose(frameCount * frameIntervalTicks);
-            // 'scratch' still holds the LAST frame's downsampled source — nothing overwrites it
+            // 'scratch' still holds the LAST frame's downsampled source - nothing overwrites it
             // after the loop above, and AddFrame never retains a reference to the buffer it's
             // handed (see GifEncoder.AddFrame's own doc comment), so this is exactly the ground
             // truth the final GIF frame should be judged against.
@@ -681,7 +681,7 @@ public class GifSizeBenchmarkTests
             double meanErrPerChannel = totalErr / (pixelCount * 3.0);
             _output.WriteLine($"minimal scroll visual sanity: meanErrPerChannel={meanErrPerChannel:F2}");
             Assert.True(meanErrPerChannel < MinimalVisualMeanErrorBound,
-                $"Minimal scroll output's mean per-channel error ({meanErrPerChannel:F2}) vs its own source exceeds the {MinimalVisualMeanErrorBound} sanity bound — calibration may have converged on garbage");
+                $"Minimal scroll output's mean per-channel error ({meanErrPerChannel:F2}) vs its own source exceeds the {MinimalVisualMeanErrorBound} sanity bound - calibration may have converged on garbage");
         }
         finally
         {
@@ -692,18 +692,18 @@ public class GifSizeBenchmarkTests
     // ---- PERMANENT quality-floor gates, added by the 2026-07-13 visual retune pass (see this
     // class's own VISUAL RETUNE doc-comment paragraph for the streaking bug these exist to catch).
     // A byte-ratio target band alone (QualityAxis_BlendedScrollNoiseRatio_MeetsCalibratedTargets
-    // above) cannot detect visible streaking — a heavily-merged run of pixels still compresses well,
+    // above) cannot detect visible streaking - a heavily-merged run of pixels still compresses well,
     // which is exactly how the original 90,000/350,000 thresholds passed their own byte bands while
     // streaking smooth content. These two gates close that hole with composited-final-frame meanErr
     // bounds, so a future recalibration chasing a smaller byte number can never silently reintroduce
     // it. Deliberately a SHORT 3-second sub-benchmark (not this class's usual 10-second
-    // DurationSeconds) — these two gates exist purely to bound visual error, not to measure byte
+    // DurationSeconds) - these two gates exist purely to bound visual error, not to measure byte
     // throughput, so a shorter clip is exactly as diagnostic while keeping total suite runtime sane. ----
 
     private const int VisualGateDurationSeconds = 3;
 
     // ~2-3x margin over the measured numbers (scroll: Balanced 0.94 at full resolution, Compact
-    // 1.26 at its 0.75 RenderScale — the tier-spread pass re-measured Compact against its own
+    // 1.26 at its 0.75 RenderScale - the tier-spread pass re-measured Compact against its own
     // box-downsampled source, per EncodeAndMeasureVisualMeanError's scale-aware ground-truth
     // convention; the pre-scale full-resolution figure was 1.13). Both stay this low specifically
     // because scroll's flat, well-separated glyph colors barely engage the lossy run-extension
@@ -712,7 +712,7 @@ public class GifSizeBenchmarkTests
     private const double BalancedScrollVisualMeanErrorBound = 3.0;
     private const double CompactScrollVisualMeanErrorBound = 2.5;
 
-    // ~2x margin over the measured number (Compact/gradient: 19.26 at 0.75 RenderScale — barely
+    // ~2x margin over the measured number (Compact/gradient: 19.26 at 0.75 RenderScale - barely
     // moved from the full-resolution 19.33, since the lossy threshold, not the scale, dominates
     // gradient error).
     private const double CompactGradientVisualMeanErrorBound = 40.0;
@@ -753,10 +753,10 @@ public class GifSizeBenchmarkTests
     /// <summary>Shared plumbing behind both quality-floor gates below: encodes
     /// <paramref name="frameAt"/> at <paramref name="preset"/>, <see cref="DefaultFps"/>, for
     /// <see cref="VisualGateDurationSeconds"/>, decodes the true final composited frame
-    /// (<see cref="GifRawCompositor"/> — see that class's own doc comment for why this, never
+    /// (<see cref="GifRawCompositor"/> - see that class's own doc comment for why this, never
     /// <c>GifBitmapDecoder.Frames[last]</c> directly), and returns its mean-per-channel absolute
     /// error against that same final frame's own source pixels (box-downsampled first if the
-    /// preset's RenderScale &lt; 1.0 — matches <see cref="Minimal_Scroll_VisuallySane_MeanErrorBounded"/>'s
+    /// preset's RenderScale &lt; 1.0 - matches <see cref="Minimal_Scroll_VisuallySane_MeanErrorBounded"/>'s
     /// own ground-truth convention above).</summary>
     private static double EncodeAndMeasureVisualMeanError(string name, Func<long, SdrImage> frameAt, GifSizePreset preset)
     {
@@ -786,7 +786,7 @@ public class GifSizeBenchmarkTests
                 encoder.AddFrame(new SdrImage(canvasWidth, canvasHeight, scratch), tick);
             }
             encoder.FinalizeAndClose(frameCount * frameIntervalTicks);
-            // 'scratch' still holds the LAST frame's (possibly downsampled) source — see
+            // 'scratch' still holds the LAST frame's (possibly downsampled) source - see
             // Minimal_Scroll_VisuallySane_MeanErrorBounded's own comment on why nothing overwrites it
             // after the loop and why AddFrame never retaining its buffer makes this safe.
             byte[] lastSource = scratch;
@@ -818,9 +818,9 @@ public class GifSizeBenchmarkTests
         _output.WriteLine($"scroll visual meanErr: balanced={balancedErr:F2} compact={compactErr:F2}");
 
         Assert.True(balancedErr < BalancedScrollVisualMeanErrorBound,
-            $"Balanced scroll output's mean per-channel error ({balancedErr:F2}) vs its own source exceeds the {BalancedScrollVisualMeanErrorBound} sanity bound — the lossy run-extension threshold may be streaking text/UI content again");
+            $"Balanced scroll output's mean per-channel error ({balancedErr:F2}) vs its own source exceeds the {BalancedScrollVisualMeanErrorBound} sanity bound - the lossy run-extension threshold may be streaking text/UI content again");
         Assert.True(compactErr < CompactScrollVisualMeanErrorBound,
-            $"Compact scroll output's mean per-channel error ({compactErr:F2}) vs its own source exceeds the {CompactScrollVisualMeanErrorBound} sanity bound — the lossy run-extension threshold may be streaking text/UI content again");
+            $"Compact scroll output's mean per-channel error ({compactErr:F2}) vs its own source exceeds the {CompactScrollVisualMeanErrorBound} sanity bound - the lossy run-extension threshold may be streaking text/UI content again");
     }
 
     [Fact]
@@ -835,6 +835,6 @@ public class GifSizeBenchmarkTests
         _output.WriteLine($"gradient visual meanErr: compact={err:F2}");
 
         Assert.True(err < CompactGradientVisualMeanErrorBound,
-            $"Compact gradient output's mean per-channel error ({err:F2}) vs its own source exceeds the {CompactGradientVisualMeanErrorBound} sanity bound — the lossy run-extension threshold may be streaking smooth/gradient content again");
+            $"Compact gradient output's mean per-channel error ({err:F2}) vs its own source exceeds the {CompactGradientVisualMeanErrorBound} sanity bound - the lossy run-extension threshold may be streaking smooth/gradient content again");
     }
 }

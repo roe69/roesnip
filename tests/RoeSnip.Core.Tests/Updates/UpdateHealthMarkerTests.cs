@@ -49,7 +49,7 @@ public sealed class UpdateHealthMarkerTests : IDisposable
     public void Load_FieldMissingFromOlderFile_FallsBackToDefaultForThatField()
     {
         Directory.CreateDirectory(_tempDir);
-        // Only PendingVersion present — an older/hand-edited marker missing AttemptCount/
+        // Only PendingVersion present - an older/hand-edited marker missing AttemptCount/
         // QuarantinedVersion must not throw and must fall back to each field's own default.
         File.WriteAllText(Path.Combine(_tempDir, "update-health.json"), """{"PendingVersion":"1.9.0"}""");
 

@@ -5,7 +5,7 @@ using Xunit;
 
 namespace RoeSnip.App.Tests;
 
-/// <summary>CursorKey.For's normalization rules — the pure part of ToolCursorCache's caching that
+/// <summary>CursorKey.For's normalization rules - the pure part of ToolCursorCache's caching that
 /// doesn't require actually rasterizing a cursor bitmap. Ported verbatim from the WPF reference's
 /// tests/RoeSnip.Tests/ToolCursorCacheTests.cs against this port's own CursorKey copy.</summary>
 public class ToolCursorCacheTests

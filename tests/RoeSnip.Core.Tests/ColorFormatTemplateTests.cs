@@ -5,7 +5,7 @@ using Xunit;
 namespace RoeSnip.Core.Tests;
 
 /// <summary>Golden values for the custom-color-format template engine and the built-in catalog.
-/// The worked example color is #FFE4B5 (255, 228, 181) — the exact color PowerToys' own settings
+/// The worked example color is #FFE4B5 (255, 228, 181) - the exact color PowerToys' own settings
 /// UI displays for every built-in format, so each catalog entry is asserted against PowerToys'
 /// displayed output (and #FFE4B5 is CSS "moccasin", which pins the %Na name lookup too). Ported
 /// from the WPF app's own tests/RoeSnip.Tests/ColorFormatTemplateTests.cs (item 22).</summary>

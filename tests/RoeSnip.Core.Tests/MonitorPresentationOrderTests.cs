@@ -4,7 +4,7 @@ using Xunit;
 
 namespace RoeSnip.Core.Tests;
 
-/// <summary>Pure monitor-set/ordering helpers backing the Windows flash dimmer (item 18) — ported
+/// <summary>Pure monitor-set/ordering helpers backing the Windows flash dimmer (item 18) - ported
 /// from the WPF app's FlashDimmer.Matches/OrderCursorMonitorFirst semantics. No window/display
 /// needed: these operate purely on MonitorInfo + an explicit cursor position.</summary>
 public class MonitorPresentationOrderTests
@@ -29,7 +29,7 @@ public class MonitorPresentationOrderTests
     [Fact]
     public void SetsMatch_IdenticalSets_DifferentOrder_ReturnsTrue()
     {
-        // Order-independence is the whole point (see the class doc comment) — a caller's own
+        // Order-independence is the whole point (see the class doc comment) - a caller's own
         // enumeration order must never force a rebuild.
         var have = new[] { Monitor("B", 1920, 0, 1920, 1080), Monitor("A", 0, 0, 1920, 1080) };
         var want = new[] { Monitor("A", 0, 0, 1920, 1080), Monitor("B", 1920, 0, 1920, 1080) };
@@ -55,7 +55,7 @@ public class MonitorPresentationOrderTests
     [Fact]
     public void SetsMatch_SameNameDifferentBounds_ReturnsFalse()
     {
-        // A resolution/DPI change (same device, moved/resized bounds) must count as a real change —
+        // A resolution/DPI change (same device, moved/resized bounds) must count as a real change -
         // the flash windows are sized to the OLD bounds and would dim the wrong area otherwise.
         var have = new[] { Monitor("A", 0, 0, 1920, 1080) };
         var want = new[] { Monitor("A", 0, 0, 2560, 1440) };
@@ -108,7 +108,7 @@ public class MonitorPresentationOrderTests
     [Fact]
     public void OrderCursorMonitorFirst_CursorOverNoMonitor_ReturnsUnchanged()
     {
-        // A gap between non-adjacent monitors (e.g. a portrait secondary) — no monitor's bounds
+        // A gap between non-adjacent monitors (e.g. a portrait secondary) - no monitor's bounds
         // contain the cursor.
         var a = Monitor("A", 0, 0, 1920, 1080);
         var b = Monitor("B", 3000, 0, 1920, 1080);
@@ -131,7 +131,7 @@ public class MonitorPresentationOrderTests
     public void OrderCursorMonitorFirst_CursorOnBoundaryIsExclusiveOnRightBottom()
     {
         // BoundsPx.Right/Bottom are exclusive (matches RectPhysical's Width/Height = Right - Left
-        // convention) — a cursor exactly at monitor A's right edge belongs to B, not A.
+        // convention) - a cursor exactly at monitor A's right edge belongs to B, not A.
         var a = Monitor("A", 0, 0, 1920, 1080);
         var b = Monitor("B", 1920, 0, 1920, 1080);
         var ordered = MonitorPresentationOrder.OrderCursorMonitorFirst(new[] { a, b }, cursorX: 1920, cursorY: 0);

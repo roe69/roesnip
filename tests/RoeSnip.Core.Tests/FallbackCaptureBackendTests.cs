@@ -11,7 +11,7 @@ namespace RoeSnip.Core.Tests;
 /// <summary>Port of the WPF app's CaptureServiceTests: the same
 /// fallback/omission/memoization/ordering assertions, exercised against the generalized
 /// FallbackCaptureBackend (two fake IScreenCapturers in priority order) instead of the old
-/// CaptureService(primary, fallback, cache) 3-arg constructor, which no longer exists —
+/// CaptureService(primary, fallback, cache) 3-arg constructor, which no longer exists -
 /// CaptureService is now the 1-arg ICaptureBackend-wrapping facade.</summary>
 public class FallbackCaptureBackendTests : IDisposable
 {
@@ -75,7 +75,7 @@ public class FallbackCaptureBackendTests : IDisposable
     public void CaptureAll_PreservesInputOrder_EvenWhenCapturesFinishOutOfOrder()
     {
         var monitors = new[] { Monitor(0), Monitor(1), Monitor(2) };
-        // Monitor 0 is the slowest, monitor 2 the fastest — with parallel capture the completion
+        // Monitor 0 is the slowest, monitor 2 the fastest - with parallel capture the completion
         // order is the reverse of the input order, but the results must still come back 0, 1, 2.
         var primary = new FakeCapturer(m =>
         {
@@ -126,7 +126,7 @@ public class FallbackCaptureBackendTests : IDisposable
     public void CaptureAll_PrimaryFailure_IsMemoized_SecondCallSkipsPrimary()
     {
         var monitors = new[] { Monitor(0) };
-        // The memo only records failures that PROVE the permanent quirk (all-zero frame) — see
+        // The memo only records failures that PROVE the permanent quirk (all-zero frame) - see
         // CaptureException.IndicatesPermanentlyBroken; transient failures are covered below.
         var primary = new FakeCapturer(m =>
             throw new CaptureException("black frame") { IndicatesPermanentlyBroken = true });
@@ -216,7 +216,7 @@ public class FallbackCaptureBackendTests : IDisposable
     {
         var monitors = new[] { Monitor(0) };
         var cache = NewCache();
-        // A stale/incorrectly-persisted memo for the LAST capturer slot — the algorithm must never
+        // A stale/incorrectly-persisted memo for the LAST capturer slot - the algorithm must never
         // honor a memo for the last resort (skipping it can only turn a recoverable capture into a
         // guaranteed failure), regardless of what's on disk.
         cache.MarkDesktopDuplicationBroken($"{monitors[0].DeviceName}::1");
@@ -265,7 +265,7 @@ public class FallbackCaptureBackendTests : IDisposable
 
         Assert.Empty(frames);
         Assert.Single(primary.CalledFor);          // only the self-heal retry ever calls primary
-        Assert.Equal(2, fallback.CalledFor.Count); // first pass + the self-heal retry — no third attempt
+        Assert.Equal(2, fallback.CalledFor.Count); // first pass + the self-heal retry - no third attempt
         Assert.False(cache.IsDesktopDuplicationBroken($"{monitors[0].DeviceName}::0"));
         Assert.False(cache.IsDesktopDuplicationBroken($"{monitors[0].DeviceName}::1"));
     }

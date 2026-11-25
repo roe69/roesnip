@@ -7,7 +7,7 @@ using Xunit;
 
 namespace RoeSnip.App.Tests;
 
-/// <summary>RecordingController.RoundDownToEven — the H.264 4:2:0 chroma-subsampling floor ported
+/// <summary>RecordingController.RoundDownToEven - the H.264 4:2:0 chroma-subsampling floor ported
 /// verbatim from the WPF app's own RecordingController, exercised directly (pure geometry, no
 /// capture backend/encoder involved).</summary>
 public class RecordingControllerTests

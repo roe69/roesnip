@@ -5,7 +5,7 @@ using Xunit;
 namespace RoeSnip.Tests;
 
 /// <summary>The pure parse/dispatch/serialize half of the dev-gated automation channel (see
-/// App/AutomationServer.cs's own doc comment) — no live window, no Dispatcher, no pipe. The live
+/// App/AutomationServer.cs's own doc comment) - no live window, no Dispatcher, no pipe. The live
 /// half (actually driving OverlayController/RecordingController) is verified end-to-end against a
 /// resident process, not here - see docs/testing.md's "Driving the WPF app" section.</summary>
 public class AutomationProtocolTests
@@ -133,8 +133,8 @@ public class AutomationProtocolTests
 
     [Theory]
     [InlineData(5)]   // range floor
-    [InlineData(50)]  // GIF's own ceiling — still inside the pure layer's 5-60 union range
-    [InlineData(37)]  // not a divisor of 100 — legal now that fps is a free integer, not four chips
+    [InlineData(50)]  // GIF's own ceiling - still inside the pure layer's 5-60 union range
+    [InlineData(37)]  // not a divisor of 100 - legal now that fps is a free integer, not four chips
     [InlineData(60)]  // MP4's own (and the union's) ceiling
     public void ValidateArgs_Fps_AcceptsAnyIntegerInTheUnionRange(int fps)
     {
@@ -386,8 +386,8 @@ public class AutomationProtocolTests
             new List<AutomationProtocol.MonitorDto> { new("\\\\.\\DISPLAY1", 0, 0, 100, 100, true) });
         string json = AutomationProtocol.SerializeState(state);
 
-        Assert.DoesNotContain('—', json); // em dash
-        Assert.DoesNotContain('–', json); // en dash
+        Assert.DoesNotContain((char)0x2014, json); // em dash
+        Assert.DoesNotContain((char)0x2013, json); // en dash
     }
 
     // ---------- lastcapture / tray ----------
@@ -518,7 +518,7 @@ public class AutomationProtocolTests
     {
         // "confirm" added by the multimon-selection branch: Copy/Save on the overlay had no
         // automation entry point at all before it (Save's real path pops an interactive dialog,
-        // which automation must never do) — see OverlayController.ConfirmForAutomation's own doc
+        // which automation must never do) - see OverlayController.ConfirmForAutomation's own doc
         // comment. "settings" added by the settings-legibility-pass: opens/closes the Settings
         // window (TrayApp.OpenSettingsForAutomation/CloseSettingsForAutomation) so an --auto script
         // can drive a `screenshot` of it for visual QA without synthetic input.

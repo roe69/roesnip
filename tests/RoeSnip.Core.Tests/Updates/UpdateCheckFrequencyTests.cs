@@ -56,7 +56,7 @@ public class UpdateCheckFrequencyTests
     {
         string label = UpdateCheckFrequencies.DisplayLabel(frequency);
         Assert.Equal(expected, label);
-        Assert.DoesNotContain('—', label);
+        Assert.DoesNotContain((char)0x2014, label);
     }
 
     [Fact]

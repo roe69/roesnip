@@ -5,11 +5,11 @@ using Xunit;
 namespace RoeSnip.Tests;
 
 /// <summary>The pure parts of TextEditKeyForwarder (item 3b's guaranteed fallback tier for typing
-/// into a text annotation when the overlay window doesn't hold real OS focus) — key classification
+/// into a text annotation when the overlay window doesn't hold real OS focus) - key classification
 /// and the synthetic ToUnicodeEx key-state array, both independent of any live keyboard/OS state.</summary>
 public class TextEditKeyForwarderTests
 {
-    // Well-known Win32 virtual-key codes (VK_SHIFT = 0x10, VK_CAPITAL = 0x14) — asserted against
+    // Well-known Win32 virtual-key codes (VK_SHIFT = 0x10, VK_CAPITAL = 0x14) - asserted against
     // directly rather than via OverlayInputInterop's (internal) constants, since this test project
     // has no InternalsVisibleTo edit and the values are stable ABI constants either way.
     private const int VkShift = 0x10;

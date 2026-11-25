@@ -84,7 +84,7 @@ public class AnnotationHistoryTests
         history.Undo(); // redo now holds "b"
         Assert.True(history.CanRedo);
 
-        history.Add("c"); // a fresh action forks history — "b" is gone for good
+        history.Add("c"); // a fresh action forks history - "b" is gone for good
 
         Assert.False(history.CanRedo);
         Assert.Equal(new[] { "a", "c" }, history.Shapes);
@@ -114,7 +114,7 @@ public class AnnotationHistoryTests
         history.Remove("b", 1);
         Assert.True(history.Undo());
 
-        // "b" must land back BETWEEN "a" and "c" — reinserting at the end would silently reorder
+        // "b" must land back BETWEEN "a" and "c" - reinserting at the end would silently reorder
         // draw/overlap order (topmost == most recently drawn depends on list order).
         Assert.Equal(new[] { "a", "b", "c" }, history.Shapes);
     }
@@ -216,7 +216,7 @@ public class AnnotationHistoryTests
     [Fact]
     public void IndexOf_UsesReferenceEqualityForDuplicateContent()
     {
-        // Two distinct object references with equal content — IndexOf must resolve the SPECIFIC
+        // Two distinct object references with equal content - IndexOf must resolve the SPECIFIC
         // instance a caller (AnnotationLayer's move/resize/delete/re-edit) is holding, not just any
         // shape that happens to look the same.
         var shapeA = new object();

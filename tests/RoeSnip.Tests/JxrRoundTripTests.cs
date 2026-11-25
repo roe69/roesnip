@@ -13,7 +13,7 @@ namespace RoeSnip.Tests;
 /// &gt; 1.0 survives (i.e. the encoder did not flatten/clip to an 8-bit [0,1] SDR format).
 ///
 /// This test was actually run against both candidates (not guessed): WPF's
-/// <c>WmpBitmapEncoder</c>/<c>BitmapDecoder</c> pair FAILS — WPF flattens JXR to 32bpp Pbgra32 on
+/// <c>WmpBitmapEncoder</c>/<c>BitmapDecoder</c> pair FAILS - WPF flattens JXR to 32bpp Pbgra32 on
 /// both encode and decode regardless of the source pixel format supplied to it (a 3.0 value came
 /// back as ~0.78). Talking to WIC directly (namespace <see cref="Vortice.WIC"/>, from the
 /// <c>Vortice.Direct2D1</c> package which bundles the WIC bindings ) with pixel format <see cref="WicPixelFormat.Format128bppRGBAFloat"/> DOES preserve
@@ -57,7 +57,7 @@ public class JxrRoundTripTests
     }
 
     /// <summary>Decodes a .jxr file back to a float RGBA buffer via raw WIC (the same imaging
-    /// stack <see cref="JxrWriter"/> uses to encode) — WPF's decoder cannot be used here; it
+    /// stack <see cref="JxrWriter"/> uses to encode) - WPF's decoder cannot be used here; it
     /// flattens JXR float content to 32bpp regardless of what's actually in the file.</summary>
     private static (float R, float G, float B) DecodePixel(string path, int x, int y)
     {

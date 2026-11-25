@@ -6,7 +6,7 @@ using Xunit;
 namespace RoeSnip.App.Tests;
 
 /// <summary>The text-style fields added to AnnotationShape/AnnotationLayer.CommitText for item 08's
-/// toolbar text-style row (Bold/Italic/font family) — mirrors WPF's AnnotationShape.TextFontFamily/
+/// toolbar text-style row (Bold/Italic/font family) - mirrors WPF's AnnotationShape.TextFontFamily/
 /// TextBold/TextItalic (src/RoeSnip/Overlay/AnnotationLayer.cs:66-68). No Avalonia Application/
 /// visual-tree bootstrap needed, same rationale as AnnotationLayerSelectEditTests.</summary>
 public class AnnotationShapeTextStyleTests

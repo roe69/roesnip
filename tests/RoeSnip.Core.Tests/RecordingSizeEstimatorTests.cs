@@ -4,7 +4,7 @@ using Xunit;
 
 namespace RoeSnip.Core.Tests;
 
-/// <summary>The pure live-estimate math behind the recording chrome's size readout — no live
+/// <summary>The pure live-estimate math behind the recording chrome's size readout - no live
 /// encoder/chrome needed, see RecordingSizeEstimator's own doc comment.</summary>
 public class RecordingSizeEstimatorTests
 {
@@ -50,7 +50,7 @@ public class RecordingSizeEstimatorTests
     public void Mp4BytesPerSecond_DoublingFps_DoublesUnclampedRate()
     {
         // Mp4BitrateEstimator.ComputeBitrate scales linearly by fps (0.1 bpp * fps), so the byte-rate
-        // estimate composes with the quality axis for free — this locks that composition rather
+        // estimate composes with the quality axis for free - this locks that composition rather
         // than re-deriving ComputeBitrate's own formula (that's Mp4EncoderTests' job).
         double at30 = RecordingSizeEstimator.Mp4BytesPerSecond(1280, 720, 30, GifSizePreset.Quality, audioEnabled: false);
         double at60 = RecordingSizeEstimator.Mp4BytesPerSecond(1280, 720, 60, GifSizePreset.Quality, audioEnabled: false);
@@ -72,7 +72,7 @@ public class RecordingSizeEstimatorTests
     {
         // Max's measured blended benchmark ratio is >= 1.0 (its own bit-exact palette-reuse
         // threshold, vs. Quality's coarser one, never produces SMALLER output on the calibration
-        // content) — unlike the pre-workstream estimate, Max is no longer asserted equal to Quality.
+        // content) - unlike the pre-workstream estimate, Max is no longer asserted equal to Quality.
         double quality = RecordingSizeEstimator.GifTypicalBytesPerSecond(640, 400, 25, GifSizePreset.Quality);
         double max = RecordingSizeEstimator.GifTypicalBytesPerSecond(640, 400, 25, GifSizePreset.Max);
         Assert.True(max >= quality, $"Max ({max}) should be >= Quality ({quality})");
@@ -81,10 +81,10 @@ public class RecordingSizeEstimatorTests
     [Fact]
     public void GifTypicalBytesPerSecond_Balanced_AppliesTheDocumentedFactor()
     {
-        // 0.922 is GifSizeBenchmarkTests' measured blended (scroll+noise, mean) ratio vs. Quality —
+        // 0.922 is GifSizeBenchmarkTests' measured blended (scroll+noise, mean) ratio vs. Quality -
         // see RecordingSizeEstimator.GifBalancedFactor's own doc comment for the full table.
         // Retuned 2026-07-13 (was 0.742) alongside GifSizePresets.ForPreset's LossyRunThresholdSq
-        // retune — see that class's own comment for why the factor moved this much closer to 1.0.
+        // retune - see that class's own comment for why the factor moved this much closer to 1.0.
         double quality = RecordingSizeEstimator.GifTypicalBytesPerSecond(640, 400, 25, GifSizePreset.Quality);
         double balanced = RecordingSizeEstimator.GifTypicalBytesPerSecond(640, 400, 25, GifSizePreset.Balanced);
         Assert.Equal(quality * 0.922, balanced, precision: 3);
@@ -94,7 +94,7 @@ public class RecordingSizeEstimatorTests
     public void GifTypicalBytesPerSecond_Compact_AppliesTheDocumentedFactor()
     {
         // 0.498: the 2026-07-13 retune (was 0.415, briefly 0.865 at full resolution) followed by
-        // the same-day tier-spread pass's RenderScale 0.75 — the factor folds the 0.5625x
+        // the same-day tier-spread pass's RenderScale 0.75 - the factor folds the 0.5625x
         // pixel-count effect in, same convention as Minimal's (see GifCompactFactor's own doc
         // comment for the derivation).
         double quality = RecordingSizeEstimator.GifTypicalBytesPerSecond(640, 400, 25, GifSizePreset.Quality);
@@ -106,7 +106,7 @@ public class RecordingSizeEstimatorTests
     public void GifTypicalBytesPerSecond_Minimal_AppliesTheDocumentedFactor()
     {
         // Minimal's factor already folds in the RenderScale-0.5 pixel-count effect (see
-        // GifMinimalFactor's own doc comment) — it is a plain function of the SAME full-size
+        // GifMinimalFactor's own doc comment) - it is a plain function of the SAME full-size
         // selected region every other tier's estimate is computed from.
         double quality = RecordingSizeEstimator.GifTypicalBytesPerSecond(640, 400, 25, GifSizePreset.Quality);
         double minimal = RecordingSizeEstimator.GifTypicalBytesPerSecond(640, 400, 25, GifSizePreset.Minimal);
@@ -116,7 +116,7 @@ public class RecordingSizeEstimatorTests
     [Fact]
     public void GifTypicalBytesPerSecond_QualityAxisIsMonotoneNonIncreasing_AtFixedFps()
     {
-        // Minimal <= Compact <= Balanced <= Quality <= Max at any fixed fps — the quality axis
+        // Minimal <= Compact <= Balanced <= Quality <= Max at any fixed fps - the quality axis
         // alone must never make the estimate go UP when moving to a smaller/coarser tier.
         double max = RecordingSizeEstimator.GifTypicalBytesPerSecond(640, 400, 25, GifSizePreset.Max);
         double quality = RecordingSizeEstimator.GifTypicalBytesPerSecond(640, 400, 25, GifSizePreset.Quality);
@@ -141,7 +141,7 @@ public class RecordingSizeEstimatorTests
     public void GifTypicalBytesPerSecond_ScalesLinearlyWithFps_QualityAxisOrthogonal()
     {
         // The framerate axis is now free of the quality axis: doubling fps must double the estimate
-        // at every tier, independent of which tier is picked — the core assertion of the
+        // at every tier, independent of which tier is picked - the core assertion of the
         // quality/framerate decoupling workstream.
         foreach (var preset in new[] { GifSizePreset.Max, GifSizePreset.Quality, GifSizePreset.Balanced, GifSizePreset.Compact, GifSizePreset.Minimal })
         {
@@ -185,7 +185,7 @@ public class RecordingSizeEstimatorTests
     [InlineData(50, 50)]
     [InlineData(25, 25)]
     [InlineData(5, 5)]
-    [InlineData(37, 37)]   // any integer in range is legal now — no snap-to-divisor
+    [InlineData(37, 37)]   // any integer in range is legal now - no snap-to-divisor
     [InlineData(1, 5)]     // clamps up to the floor
     [InlineData(0, 5)]
     [InlineData(51, 50)]   // clamps down to the ceiling
@@ -265,7 +265,7 @@ public class RecordingSizeEstimatorTests
     public void FormatEstimate_NeverContainsAnEmDash(double bytesPerSecond)
     {
         string text = RecordingSizeEstimator.FormatEstimate(bytesPerSecond);
-        Assert.DoesNotContain('—', text); // em dash
-        Assert.DoesNotContain('–', text); // en dash, same repo rule
+        Assert.DoesNotContain((char)0x2014, text); // em dash
+        Assert.DoesNotContain((char)0x2013, text); // en dash, same repo rule
     }
 }

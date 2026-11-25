@@ -14,7 +14,7 @@ namespace RoeSnip.Platform.Windows.Tests;
 /// Ported unchanged from tests/RoeSnip.Tests/JxrRoundTripTests.cs - the only
 /// mechanical edits are Core's portable MonitorInfo shape (BackendKey/Scale instead of HMonitor)
 /// and CapturedFrame's 7th constructor argument (sdrWhiteInBufferUnits = sdrWhiteNits / 80.0, the
-/// Windows convention, which is 1.0 for these tests' 80-nits monitors — preserving every original
+/// Windows convention, which is 1.0 for these tests' 80-nits monitors - preserving every original
 /// numeric assertion).</summary>
 public class JxrRoundTripTests
 {
@@ -57,7 +57,7 @@ public class JxrRoundTripTests
     }
 
     /// <summary>Decodes a .jxr file back to a float RGBA buffer via raw WIC (the same imaging
-    /// stack <see cref="JxrWriter"/> uses to encode) — WPF's decoder cannot be used here; it
+    /// stack <see cref="JxrWriter"/> uses to encode) - WPF's decoder cannot be used here; it
     /// flattens JXR float content to 32bpp regardless of what's actually in the file.</summary>
     private static (float R, float G, float B) DecodePixel(string path, int x, int y)
     {

@@ -7,7 +7,7 @@ using Xunit;
 namespace RoeSnip.Core.Tests;
 
 /// <summary>Pure geometry tests for the multi-monitor recording phase-1 drag-handoff decision logic
-/// (MultiMonitorRecording — see that class's own doc comment). No live WGC/device/window needed —
+/// (MultiMonitorRecording - see that class's own doc comment). No live WGC/device/window needed -
 /// these are exactly the "coordinate conversion, handoff decision logic" pure helpers the workstream
 /// extracted specifically to be unit-testable, mirroring RecordingSizeEstimatorTests' own
 /// no-live-encoder convention.</summary>
@@ -16,7 +16,7 @@ public class MultiMonitorRecordingTests
     // Three-monitor layout used throughout, modeled on a real dev rig noted in docs/testing.md:
     // DISPLAY3 primary at (0,0)-(2560,1440), DISPLAY1 directly above it at (0,-1440)-(2560,0), and
     // DISPLAY2 to the right of DISPLAY3 at (2560,0)-(4480,1440). BackendKey/Scale replace the WPF
-    // app's own MonitorInfo's HMonitor field here — this portable MonitorInfo has no live handle
+    // app's own MonitorInfo's HMonitor field here - this portable MonitorInfo has no live handle
     // (see its own doc comment); BackendKey values below are arbitrary but distinct, matching this
     // record's "opaque outside the ICaptureBackend that produced it" contract.
     private static MonitorInfo Display3 => new(
@@ -89,7 +89,7 @@ public class MultiMonitorRecordingTests
     public void FindOwningMonitor_MostlyStraddledOntoDisplay1_PicksDisplay1()
     {
         // 800x500 region whose top edge is well above the DISPLAY3/DISPLAY1 seam (y=0): only 50px
-        // of its 500px height still overlaps DISPLAY3 — DISPLAY1 has the clear majority.
+        // of its 500px height still overlaps DISPLAY3 - DISPLAY1 has the clear majority.
         var region = RectPhysical.FromSize(600, -450, 800, 500);
         var owner = MultiMonitorRecording.FindOwningMonitor(region, ThreeMonitors);
         Assert.Equal(Display1.DeviceName, owner!.DeviceName);
@@ -128,7 +128,7 @@ public class MultiMonitorRecordingTests
     public void FindOwningMonitor_TeleportAcrossTwoMonitors_LandsOnTheFinalOne()
     {
         // A single automation `select` jump (not an incremental drag) straight from DISPLAY3
-        // territory to squarely on DISPLAY1, skipping DISPLAY2 entirely — mirrors the E2E test's own
+        // territory to squarely on DISPLAY1, skipping DISPLAY2 entirely - mirrors the E2E test's own
         // one-shot cross-monitor `select` call.
         var region = RectPhysical.FromSize(200, -1200, 800, 600); // squarely on DISPLAY1
         var owner = MultiMonitorRecording.FindOwningMonitor(region, ThreeMonitors);
@@ -154,7 +154,7 @@ public class MultiMonitorRecordingTests
         Assert.Equal(600, clamped.Height);
         Assert.True(MultiMonitorRecording.Contains(Display3.BoundsPx, clamped));
         Assert.Equal(Display3.BoundsPx.Right - 800, clamped.Left);
-        Assert.Equal(100, clamped.Top); // Y untouched — only the offending axis moves
+        Assert.Equal(100, clamped.Top); // Y untouched - only the offending axis moves
     }
 
     [Fact]
@@ -218,7 +218,7 @@ public class MultiMonitorRecordingTests
     {
         // Exercises the exact call sequence HandoffToMonitor makes: clamp an absolute rect onto a
         // destination monitor, then convert to that monitor's own relative space for RegionRecorder
-        // — the result must itself be Contains()-valid against the monitor's own (0,0)-sized bounds.
+        // - the result must itself be Contains()-valid against the monitor's own (0,0)-sized bounds.
         var desired = RectPhysical.FromSize(2500, 100, 800, 600); // straddling DISPLAY3/DISPLAY2 seam
         var clamped = MultiMonitorRecording.ClampToMonitor(desired, Display2);
         var relative = MultiMonitorRecording.ToMonitorRelative(clamped, Display2);
