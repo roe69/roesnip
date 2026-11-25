@@ -14,15 +14,17 @@ name: release
 # app's updater silently download and swap in the OTHER product's binary). The .dmg and
 # RoeSnip-linux-<arch>.tar.gz (publish folder, for distros without FUSE) are for manual installs.
 #
-# WINDOWS SIGNING (same model as installer-src): build-windows and sign-windows run on our own
-# win-build runner (this repo's runner only). build-windows has no OIDC token; sign-windows is the
-# only job with id-token: write, runs no repo-built code, and signs exactly RoeSnip.exe,
-# RoeSnipApp-win-x64.exe and RoeSnipApp-win-arm64.exe with the Cloud KMS key RoeLite-27 (jsign +
-# kmsp11) through GCP workload identity provider `roesnip` (repo, refs/heads/main, this workflow
-# file, actor roe69). Both jobs carry a job-level `if` (main, workflow_dispatch, actor roe69) that
-# GitHub evaluates before routing to the runner. The release job (ubuntu, contents: write, gh CLI
-# only) makes each "<name>.exe.gz" from the SIGNED bytes and publishes. Self-updaters trust the
-# GitHub asset digest. Every action is pinned by full commit SHA (tag in the trailing comment).
+# WINDOWS SIGNING (same model as installer-src, hardened for a public repo): build-windows runs repo
+# code and NuGet restore, so it runs on GitHub-hosted windows-latest with no OIDC token. Only
+# sign-windows runs on our persistent win-build runner (this repo's runner only): it checks out
+# nothing, runs no repo code, fetches a pinned Temurin JRE + jsign + kmsp11 (sha256) into a fresh
+# temp dir, checks each exe against the sha256 the build job published as a job output, and signs
+# exactly RoeSnip.exe, RoeSnipApp-win-x64.exe and RoeSnipApp-win-arm64.exe with the Cloud KMS key
+# RoeLite-27 through GCP workload identity provider `roesnip` (repo + repo id, refs/heads/main,
+# this workflow file, actor roe69 + actor id). Both jobs carry a job-level `if` (main,
+# workflow_dispatch, actor roe69). The release job (ubuntu, contents: write, gh CLI only) makes
+# each "<name>.exe.gz" from the SIGNED bytes and publishes. Self-updaters trust the GitHub asset
+# digest. Every action is pinned by full commit SHA (tag in the trailing comment).
 # Both UpdateManagers prefer the "<name>.exe.gz" sibling and fall back to the plain exe. Never
 # remove or rename the plain "RoeSnip.exe" / "RoeSnipApp-win-x64.exe" assets: older installs only
 # ever look for those exact names.
@@ -124,12 +126,16 @@ jobs:
   build-windows:
     name: Build Windows (win-x64)
     needs: prep
-    runs-on: [self-hosted, win-build]
-    # GitHub evaluates this before routing the job to our runner: only the owner's dispatch from main.
+    runs-on: windows-latest
+    # GitHub-hosted: this job runs repo code and NuGet restore, so it never touches the win-build VM.
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && github.actor == 'roe69' && github.triggering_actor == 'roe69'
-    # Runs dotnet/NuGet code: read-only, no OIDC token (signing is the sign-windows job).
+    # Read-only, no OIDC token (signing is the sign-windows job).
     permissions:
       contents: read
+    outputs:
+      sha_win: ${{ steps.hash.outputs.sha_win }}
+      sha_app_x64: ${{ steps.hash.outputs.sha_app_x64 }}
+      sha_app_arm64: ${{ steps.hash.outputs.sha_app_arm64 }}
     steps:
       - name: Check out (dispatch commit)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -137,7 +143,11 @@ jobs:
           ref: ${{ needs.prep.outputs.sha }}
           persist-credentials: false
 
-      # The VM carries .NET SDK 8 (house setup-toolchain.ps1); no setup-dotnet on the persistent runner.
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: "8.0.x"
+
       - name: Build solution (Release)
         run: dotnet build RoeSnip.sln -c Release
 
@@ -193,6 +203,24 @@ jobs:
           name: win-app-arm64
           path: src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0/win-arm64/publish/RoeSnipApp-win-arm64.exe
           if-no-files-found: error
+
+      # sign-windows compares what it downloads with these (job outputs travel outside the artifacts).
+      - name: Record sha256 of the three exes
+        id: hash
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $b = 'src/RoeSnip.App/bin/Release/net8.0-windows10.0.22621.0'
+          $map = [ordered]@{
+            sha_win       = 'src/RoeSnip/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/RoeSnip.exe'
+            sha_app_x64   = "$b/win-x64/publish/RoeSnipApp-win-x64.exe"
+            sha_app_arm64 = "$b/win-arm64/publish/RoeSnipApp-win-arm64.exe"
+          }
+          foreach ($k in $map.Keys) {
+            $h = (Get-FileHash $map[$k] -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$k=$h" | Add-Content $env:GITHUB_OUTPUT
+            "$h  $($map[$k])"
+          }
 
   # ---------------------------------------------------------------------------
   # 2b. Cross-platform (RoeSnip.App, net8.0): one matrix leg per shippable arch;
@@ -402,14 +430,14 @@ jobs:
           name: xplat-${{ matrix.rid }}
           path: dist/*
           if-no-files-found: error
-
   # ---------------------------------------------------------------------------
   # 2c. Sign the three RoeSnip exes (EV key RoeLite-27 in Cloud KMS, reached keylessly through
-  #     workload identity federation, exactly as installer-src does). Runs on our own win-build
-  #     runner and is the ONLY job with id-token: write. It executes no code from this repo: it
-  #     downloads the exes the build job made, fetches sha256-pinned jsign + kmsp11, and signs
-  #     the three named files. The GCP provider `roesnip` accepts only this repo, refs/heads/main,
-  #     this workflow file and actor roe69. Never a third-party binary: only these names.
+  #     workload identity federation, exactly as installer-src does). Runs on our persistent
+  #     win-build runner and is the ONLY job with id-token: write, so it executes nothing from
+  #     this repo and shares nothing with the runner's earlier jobs: no checkout, no tool cache,
+  #     no profile script (shell below), a fresh per-run tools dir deleted first, every tool by
+  #     absolute path. The GCP provider `roesnip` accepts only this repo + id, refs/heads/main,
+  #     this workflow file and actor roe69 + id. Never a third-party binary: only these names.
   # ---------------------------------------------------------------------------
   sign-windows:
     name: Sign Windows exes
@@ -419,74 +447,87 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    defaults:
+      run:
+        shell: pwsh -NoProfile -NonInteractive -Command ". '{0}'"
     steps:
-      - name: Check out (dispatch commit; only the certificate chain is used)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ needs.prep.outputs.sha }}
-          persist-credentials: false
-
       - name: Download unsigned Windows exes
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: win*
           path: winin
 
-      - name: Authenticate to Google Cloud (code signing)
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
-        with:
-          workload_identity_provider: projects/327472973067/locations/global/workloadIdentityPools/github/providers/roesnip
-
-      # kmsp11 ships for amd64 only, so the JVM must be x64.
-      - name: Set up Java x64 (code signing)
-        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
-        with:
-          distribution: temurin
-          java-version: "21"
-          architecture: x64
-
+      # Java x64 (kmsp11 is amd64 only), jsign, kmsp11 and the certificate chain: all sha256
+      # pinned, all into a directory deleted first. The chain comes from the dispatch commit
+      # over HTTPS (public repo, no token) and is hash-checked, so nothing here needs a checkout.
       - name: Fetch signing tools
-        shell: pwsh
+        env:
+          SHA: ${{ needs.prep.outputs.sha }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $dir = Join-Path $env:RUNNER_TEMP 'codesign'
+          $ProgressPreference = 'SilentlyContinue'
+          $dir = Join-Path $env:RUNNER_TEMP "codesign-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"
+          "TOOLS=$dir" | Add-Content $env:GITHUB_ENV
+          if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
           New-Item -ItemType Directory -Force $dir | Out-Null
           $tools = @(
+            @{ url = 'https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.13.1%2B2/OpenJDK21U-jre_x64_windows_hotspot_21.0.13.1_2.zip'; file = 'jre.zip'; sha = 'E15EE1E54A5A3B38027A09CEDFA87BC3348D7DD3CE50866DD3D9671D7FFFC6C1' },
             @{ url = 'https://github.com/ebourg/jsign/releases/download/7.6/jsign-7.6.jar'; file = 'jsign.jar'; sha = '6CF58AA080E7FF82656F320CFF8D4A3BFF30408DF8766806DCBA3740DD839FA5' },
-            @{ url = 'https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/pkcs11-v1.9/libkmsp11-1.9-windows-amd64.zip'; file = 'kmsp11.zip'; sha = '2592C65FA78B07F4F112FA137FCCE1F5497BC47907FFCED51AB5AD0F9E3904A0' }
+            @{ url = 'https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/pkcs11-v1.9/libkmsp11-1.9-windows-amd64.zip'; file = 'kmsp11.zip'; sha = '2592C65FA78B07F4F112FA137FCCE1F5497BC47907FFCED51AB5AD0F9E3904A0' },
+            @{ url = "https://raw.githubusercontent.com/roe69/roesnip/$($env:SHA)/.github/codesign/roelite-27-chain.pem"; file = 'chain.pem'; sha = '687A9A8A1B60967B3247F9B95D39EFC123524FF78077596BACC285E77BD2E522' }
           )
           foreach ($t in $tools) {
             $out = Join-Path $dir $t.file
             Invoke-WebRequest $t.url -OutFile $out
             if ((Get-FileHash $out -Algorithm SHA256).Hash -ne $t.sha) { throw "checksum mismatch: $($t.url)" }
           }
-          Expand-Archive (Join-Path $dir 'kmsp11.zip') -DestinationPath $dir -Force
-          $dll = (Join-Path $dir 'libkmsp11-1.9-windows-amd64\kmsp11.dll') -replace '\\', '/'
-          "name = kmsp11`nlibrary = $dll`nslotListIndex = 0`n" | Set-Content -Encoding ascii (Join-Path $dir 'pkcs11.cfg')
+          Expand-Archive (Join-Path $dir 'jre.zip') -DestinationPath (Join-Path $dir 'jre') -Force
+          Expand-Archive (Join-Path $dir 'kmsp11.zip') -DestinationPath (Join-Path $dir 'kmsp11') -Force
+          $java = @(Get-ChildItem (Join-Path $dir 'jre') -Recurse -File -Filter java.exe)
+          if ($java.Count -ne 1) { throw "expected one java.exe, found $($java.Count)" }
+          $dll = @(Get-ChildItem (Join-Path $dir 'kmsp11') -Recurse -File -Filter kmsp11.dll)
+          if ($dll.Count -ne 1) { throw "expected one kmsp11.dll, found $($dll.Count)" }
+          "name = kmsp11`nlibrary = $($dll[0].FullName -replace '\\', '/')`nslotListIndex = 0`n" | Set-Content -Encoding ascii (Join-Path $dir 'pkcs11.cfg')
           "generate_certs: true`ntokens:`n  - key_ring: `"projects/roelite-codesign/locations/australia-southeast2/keyRings/codesign-keyring`"`n" | Set-Content -Encoding ascii (Join-Path $dir 'kms.yaml')
+          "JAVA_EXE=$($java[0].FullName)" | Add-Content $env:GITHUB_ENV
           "KMS_PKCS11_CONFIG=$(Join-Path $dir 'kms.yaml')" | Add-Content $env:GITHUB_ENV
 
+      # Last step before signing so the credentials file lives as briefly as possible.
+      - name: Authenticate to Google Cloud (code signing)
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: projects/327472973067/locations/global/workloadIdentityPools/github/providers/roesnip
+
+      # Each exe is copied, then hashed AFTER the copy against the build job's output, then signed.
       # --replace: jsign would otherwise nest a new signature under an existing one.
       - name: Sign RoeSnip.exe, RoeSnipApp-win-x64.exe, RoeSnipApp-win-arm64.exe
-        shell: pwsh
+        env:
+          SHA_WIN: ${{ needs.build-windows.outputs.sha_win }}
+          SHA_APP_X64: ${{ needs.build-windows.outputs.sha_app_x64 }}
+          SHA_APP_ARM64: ${{ needs.build-windows.outputs.sha_app_arm64 }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $dir = Join-Path $env:RUNNER_TEMP 'codesign'
-          $names = @('RoeSnip.exe', 'RoeSnipApp-win-x64.exe', 'RoeSnipApp-win-arm64.exe')
+          $dir = $env:TOOLS
+          $expect = @{
+            'RoeSnip.exe'              = $env:SHA_WIN
+            'RoeSnipApp-win-x64.exe'   = $env:SHA_APP_X64
+            'RoeSnipApp-win-arm64.exe' = $env:SHA_APP_ARM64
+          }
           New-Item -ItemType Directory -Force signed | Out-Null
-          foreach ($n in $names) {
+          foreach ($n in $expect.Keys) {
+            if ($expect[$n] -notmatch '^[0-9a-f]{64}$') { throw "no build sha256 for $n" }
             $found = @(Get-ChildItem winin -Recurse -File -Filter $n)
             if ($found.Count -ne 1) { throw "expected exactly one $n, found $($found.Count)" }
             $dest = Join-Path (Resolve-Path signed) $n
             Copy-Item $found[0].FullName $dest
-            java -jar (Join-Path $dir 'jsign.jar') --replace --storetype PKCS11 --keystore (Join-Path $dir 'pkcs11.cfg') `
-              --storepass none --alias RoeLite-27 --certfile .github/codesign/roelite-27-chain.pem --alg SHA-256 `
+            if ((Get-FileHash $dest -Algorithm SHA256).Hash -ne $expect[$n]) { throw "sha256 differs from the build job for $n" }
+            & $env:JAVA_EXE -jar (Join-Path $dir 'jsign.jar') --replace --storetype PKCS11 --keystore (Join-Path $dir 'pkcs11.cfg') `
+              --storepass none --alias RoeLite-27 --certfile (Join-Path $dir 'chain.pem') --alg SHA-256 `
               --tsaurl http://timestamp.globalsign.com/tsa/r6advanced1 --tsmode RFC3161 --tsretries 5 --tsretrywait 10 $dest
             if ($LASTEXITCODE -ne 0) { throw "jsign failed for $n" }
           }
 
       - name: Verify Authenticode signatures
-        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $bad = 0
@@ -509,10 +550,9 @@ jobs:
       # even when an earlier step failed.
       - name: Remove credentials and workspace
         if: always()
-        shell: pwsh
         run: |
           if ($env:GOOGLE_APPLICATION_CREDENTIALS) { Remove-Item -Force -ErrorAction SilentlyContinue $env:GOOGLE_APPLICATION_CREDENTIALS }
-          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $env:RUNNER_TEMP 'codesign')
+          if ($env:TOOLS) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $env:TOOLS }
           Get-ChildItem -Force -ErrorAction SilentlyContinue $env:GITHUB_WORKSPACE | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
   # ---------------------------------------------------------------------------
