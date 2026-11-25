@@ -1,8 +1,9 @@
 # RoeSnip: HDR screenshot tool and screen recorder for Windows, Linux and macOS
 
 [![Latest release](https://img.shields.io/github/v/release/roe69/roesnip?label=release&logo=github&color=FF6B35)](https://github.com/roe69/roesnip/releases/latest)
-[![Total downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Froe69%2Froesnip%2Fstats%2Fdownloads.json)](https://github.com/roe69/roesnip/releases)
-[![Latest release downloads](https://img.shields.io/github/downloads/roe69/roesnip/latest/total?label=downloads&logo=github&color=FF6B35)](https://github.com/roe69/roesnip/releases/latest)
+[![Total downloads](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Froe69%2Froesnip%2Fstats%2Fdownloads.json&label=total%20dls)](https://github.com/roe69/roesnip/releases)
+[![Downloads of the published releases](https://img.shields.io/github/downloads/roe69/roesnip/total?label=release%20dls&logo=github&color=FF6B35)](https://github.com/roe69/roesnip/releases)
+[![Latest release downloads](https://img.shields.io/github/downloads/roe69/roesnip/latest/total?label=latest%20dls&logo=github&color=FF6B35)](https://github.com/roe69/roesnip/releases/latest)
 [![GitHub stars](https://img.shields.io/github/stars/roe69/roesnip?style=flat&logo=github&color=FF6B35)](https://github.com/roe69/roesnip/stargazers)
 [![Windows 10 / 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0wIDBoMTEuNHYxMS40SDB6TTEyLjYgMEgyNHYxMS40SDEyLjZ6TTAgMTIuNmgxMS40VjI0SDB6TTEyLjYgMTIuNkgyNFYyNEgxMi42eiIvPjwvc3ZnPg==)](https://github.com/roe69/roesnip/releases/latest/download/RoeSnip.exe)
 [![Linux](https://img.shields.io/badge/Linux-AppImage-FCC624?logo=linux&logoColor=black)](https://github.com/roe69/roesnip/releases/latest/download/RoeSnip-linux-x64.AppImage)
