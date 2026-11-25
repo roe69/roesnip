@@ -17,7 +17,7 @@ the washed-out gray look. Two things must be handled:
 
 RoeSnip captures the real FP16 frame and does both. A shot of SDR-only content is
 pixel-identical to a shot on an SDR monitor, HDR content gets a hue-preserving rolloff, and the
-untouched HDR original can be saved as JPEG XR (Windows).
+untouched HDR original can be saved as JPEG XR (Windows through WIC, Linux and macOS through jxrlib).
 
 ## Projects
 
@@ -83,7 +83,15 @@ API can read them, and RoeSnip uses the same flag on its own overlay windows.
 - **Linux:** on Wayland, captures come from a kept-open xdg-desktop-portal ScreenCast session (one
   share dialog, remembered by a token); the cursor is drawn in from the stream's cursor metadata.
   GNOME's screenshot portal (shutter sound and flash) is not used. X11 uses `XGetImage`. Frames are
-  SDR (`Bgra8Srgb`).
+  SDR (`Bgra8Srgb`) except on a monitor in HDR mode on GNOME 50 or newer: mutter then offers
+  half-float PQ BT.2020 frames, DMA-BUF only (the 8-bit stream is mutter's own tone-mapped copy and
+  loses the HDR values). `PipeWireHdrReader` (own libpipewire consumer on its own remote of the same
+  session) takes them, `DmaBufGl` imports each frame through EGL into an RGBA16F texture, and a
+  capture reads it back and `PqBt2020` converts it to linear scRGB with SDR white 203 nits
+  (`SdrWhiteInBufferUnits` 203/80), so everything after capture is the Windows path. Any failure
+  leaves that monitor on the 8-bit stream. See docs/parity.md item 35.
+- The .jxr on Linux and macOS is `JxrExport`: a float TIFF run through the bundled jxrlib
+  `JxrEncApp -c 28`, the same 128bppRGBAFloat scRGB file Windows writes through WIC.
 - **macOS:** the Swift helper `scksnap` (ScreenCaptureKit) captures and records. macOS 15 on Apple
   silicon asks for an HDR screenshot; older or Intel Macs get SDR. A TCC "screen recording denied"
   exit code is surfaced as an error in the UI.

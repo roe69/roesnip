@@ -1995,3 +1995,30 @@ because a correct implementation needs live hardware this repo cannot exercise.
   Avalonia: FlashWindow pins the rect through Win32Properties.AddWndProcHookCallback; the
   overlay re-derives its DIP size and scale on ScalingChanged (every OS). Log:
   `overlay window|flash dimmer DPI now N; kept WxH at X,Y`, `overlay for monitor N changed to RenderScaling S`.
+- [x] 35-linux-hdr-capture (live-verified on GNOME 50, NVIDIA RTX 5070 Ti, 3 HDR monitors; AMD/Intel and
+  KDE unverified): a monitor in HDR mode (mutter DisplayConfig `color-mode` 1, bt2100) is captured
+  from mutter's half-float PQ BT.2020 stream instead of its 8-bit tone-mapped copy. GStreamer's
+  pipewiresrc cannot negotiate those formats, so `PipeWireHdrReader` is an own libpipewire consumer
+  (own OpenPipeWireRemote fd of the kept-open session: no second dialog) offering RGBA_F16 +
+  smpte2084/bt2020 as DMA-BUF only; `DmaBufGl` imports each frame through EGL
+  (`EGL_EXT_image_dma_buf_import_modifiers`, surfaceless GLES3, on the GPU that drives the monitors)
+  into an RGBA16F texture and a capture reads that back. `Core/Color/PqBt2020` turns it into
+  linear scRGB with SDR white 203 nits (`SdrWhiteInBufferUnits` 203/80), so the tone-mapper, the
+  loupe's nits and the .jxr work as on Windows; the monitor's peak comes from its EDID
+  (`Core/Color/EdidHdr`, 1000 nits when unreadable). Recording on an HDR monitor tone-maps the
+  region per frame with the Core mapper. Nodes that offer no HDR frame (SDR monitors, GNOME before
+  50), a missing EGL/modifier, a dmabuf import failure or `ROESNIP_NO_HDR_CAPTURE=1` stay on the
+  8-bit pipeline with one log line. Logs: `HDR screencast capture enabled|off|unavailable (...)`,
+  `HDR stream node N negotiated RGBA_F16 ...`, `HDR screencast frame DP-N: hdr readback N ms, pq convert N ms`,
+  `screencast node N stays 8-bit (why)`. Limit: HDR turned on after the session opened needs the
+  next session open (restart).
+- [ ] 36-xplat-jxr-export (Linux live-verified; macOS not built or run on a Mac): the untouched HDR
+  original as .jxr on Linux and macOS, behind the same Save HDR button / "Save HDR copy" setting as
+  Windows. `Core/Imaging/JxrExport` streams a float TIFF to a temp file and runs the bundled
+  jxrlib `JxrEncApp -c 28 -q 1.0` (128bppRGBAFloat, linear scRGB 1.0 = 80 nits, alpha 1, same as
+  `JxrWriter`); Fp16 values are rescaled by (SdrWhiteNits/80)/SdrWhiteInBufferUnits (identity on
+  Windows and Linux; macOS EDR frames now report SDR white 203 nits). `helpers/jxrenc/build.sh`
+  builds it at a pinned commit in release.yml and ships it next to the executable with its licence
+  (`ROESNIP_JXRENC_PATH` overrides); without it the button and the auto copy stay off
+  (`SupportsHdrExport` follows `JxrExport.IsAvailable`). Round trip checked with JxrDecApp: a
+  test pattern's 100 / 203 / 1000 nit bars read back as 1.26 / 2.54 / 11.5 scRGB.
