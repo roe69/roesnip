@@ -5,7 +5,7 @@ using RoeSnip.Core.Color;
 namespace RoeSnip.Core.Capture;
 
 /// <summary>Owns one monitor's raw captured pixels for the lifetime of a capture session. Identical
-/// shape to the WPF app's type (PLAN.md §2.2) with one addition: <see cref="SdrWhiteInBufferUnits"/>.
+/// shape to the WPF app's type with one addition: <see cref="SdrWhiteInBufferUnits"/>.
 ///
 /// ## Key semantics — read this before touching ToneMapper or ReadPixelNits
 ///
@@ -38,7 +38,7 @@ namespace RoeSnip.Core.Capture;
 /// produce <c>SdrWhiteNits² / 80</c> instead of <c>SdrWhiteNits</c> for a white pixel. The fix (baked
 /// into the method below): keep the Bgra8Srgb branch doing the exact old constant-<c>*80.0</c> math,
 /// unconditionally, and ONLY use the generalized <c>SdrWhiteInBufferUnits</c> formula for Fp16ScRgb.
-/// This is exactly why DESIGN-XPLAT.md calls Bgra8Srgb's value "n/a" — it is unused BECAUSE the
+/// This is exactly why Bgra8Srgb's value is "n/a" - it is unused BECAUSE the
 /// nits math for that format never needed generalizing in the first place, not because nits
 /// don't matter for SDR frames.</summary>
 public sealed class CapturedFrame : IDisposable
@@ -75,7 +75,7 @@ public sealed class CapturedFrame : IDisposable
     /// <summary>Reads pixel (x,y) in this frame's own buffer units (NOT nits) — for Fp16ScRgb this is
     /// the raw linear value (Windows scRGB or macOS EDR, per SdrWhiteInBufferUnits); for Bgra8Srgb
     /// this decodes the sRGB EOTF and rescales by Monitor.SdrWhiteNits/80.0, EXACTLY as the WPF app
-    /// did (PLAN.md §2.2) — unchanged, not touched by the SdrWhiteInBufferUnits generalization.</summary>
+    /// did - unchanged, not touched by the SdrWhiteInBufferUnits generalization.</summary>
     public Vector4 ReadPixelScRgb(int x, int y)
     {
         var row = Row(y);

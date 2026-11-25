@@ -6,7 +6,7 @@ using RoeSnip.Core.Capture;
 namespace RoeSnip.Platform.MacOS;
 
 /// <summary>Thrown when macOS denies Screen Recording (TCC) permission - scksnap's distinct exit
-/// code 82. This is a FIRST-CLASS, UI-surfaced error per DESIGN-XPLAT.md, not a generic capture
+/// code 82. This is a FIRST-CLASS, UI-surfaced error, not a generic capture
 /// failure: the app should tell the user to grant Screen Recording to scksnap in
 /// System Settings &gt; Privacy &amp; Security and retry, rather than silently showing zero frames.
 /// (Not derived from <see cref="CaptureException"/> only because that Core type is sealed.)</summary>
@@ -75,7 +75,7 @@ public sealed class ScksnapHelperClient
     /// <summary>Resolves the helper binary's path. <c>ROESNIP_SCKSNAP_PATH</c> overrides (testing);
     /// otherwise the helper ships next to the RoeSnip executable - <see cref="AppContext.BaseDirectory"/>
     /// is that directory both for a flat <c>dotnet publish</c> layout and inside an app bundle's
-    /// <c>Contents/MacOS/</c> (PLAN-XPLAT.md section 6 flag 8: the flat-sibling layout is the decision here,
+    /// <c>Contents/MacOS/</c> (the flat-sibling layout is the decision here,
     /// since a bare Avalonia publish is not a .app bundle; a future bundling step keeps working
     /// because BaseDirectory is Contents/MacOS in that layout too).</summary>
     public static string LocateHelper()

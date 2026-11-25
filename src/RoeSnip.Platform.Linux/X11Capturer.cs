@@ -5,8 +5,8 @@ using RoeSnip.Core.Diagnostics;
 
 namespace RoeSnip.Platform.Linux;
 
-/// <summary>Raw X11 <c>XGetImage</c> fallback capturer for portal-less X sessions (PLAN-XPLAT.md
-/// §3.4). Also hosts the RandR monitor-enumeration path (<see cref="EnumerateMonitorsViaRandR"/>)
+/// <summary>Raw X11 <c>XGetImage</c> fallback capturer for portal-less X sessions (docs/architecture.md).
+/// Also hosts the RandR monitor-enumeration path (<see cref="EnumerateMonitorsViaRandR"/>)
 /// that <see cref="LinuxCaptureBackend"/> uses regardless of which capturer ultimately succeeds —
 /// both the portal slicer and this capturer need the same monitor-bounds list, and keeping the
 /// enumeration on RandR (not Avalonia's Screens) keeps this project independent of RoeSnip.App.
@@ -14,7 +14,7 @@ namespace RoeSnip.Platform.Linux;
 /// All Xlib/XRandR functions are local <c>DllImport</c>s per the plan — they compile on any host OS
 /// and only need <c>libX11.so.6</c>/<c>libXrandr.so.2</c> to exist at runtime on a real Linux box.
 /// Output frames are always <see cref="FrameFormat.Bgra8Srgb"/> (X11 pixmaps are SDR by definition;
-/// no HDR capture path on Linux in v1, per DESIGN-XPLAT.md).
+/// an X11 session has no HDR path; Wayland HDR is the screencast's, docs/architecture.md).
 ///
 /// Thread safety (P2 audit fix): Xlib is not thread-safe by default, and
 /// <c>FallbackCaptureBackend.CaptureAll</c> runs one <see cref="Capture"/> call per monitor inside
@@ -127,7 +127,7 @@ public sealed class X11Capturer : IScreenCapturer
                 // that false success gets treated by FallbackCaptureBackend as proof the portal
                 // capturer (priority slot 0) is safe to memoize as permanently broken — see
                 // EnsureNotWaylandSession's doc comment for the full failure chain this guards
-                // against. A real, all-zero desktop frame is never legitimate (DESIGN.md's DD
+                // against. A real, all-zero desktop frame is never legitimate (docs/architecture.md's DD
                 // black-frame precedent), so this mirrors DesktopDuplicationCapturer's own check.
                 // Alpha is excluded from the check: ConvertZPixmapToBgra above unconditionally
                 // forces every alpha byte to 255 (root windows have no alpha), so IsAllZero would
@@ -325,8 +325,8 @@ public sealed class X11Capturer : IScreenCapturer
 
                 // RandR reports physical pixels on real X11; DPI/scale have no reliable per-monitor
                 // X11 story, so report the neutral 96/1.0 — the portal capturer independently
-                // verifies the actual pixel scale at capture time (PLAN-XPLAT.md §3.4), and
-                // SdrWhiteNits/AdvancedColorActive are the pinned Linux v1 constants (§3.4/§6 flag 6).
+                // verifies the actual pixel scale at capture time (docs/architecture.md), and
+                // SdrWhiteNits/AdvancedColorActive are the pinned Linux v1 constants.
                 return new MonitorInfo(
                     Index: index++,
                     DeviceName: name,
@@ -470,7 +470,7 @@ public sealed class X11Capturer : IScreenCapturer
         }
     }
 
-    // ---- Xlib / XRandR interop (local to this file per PLAN-XPLAT.md §3.4) --------------------
+    // ---- Xlib / XRandR interop (local to this file) --------------------
 
     private delegate int XErrorHandlerDelegate(IntPtr display, IntPtr errorEvent);
 

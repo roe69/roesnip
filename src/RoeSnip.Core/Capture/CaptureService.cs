@@ -1,7 +1,7 @@
 namespace RoeSnip.Core.Capture;
 
 /// <summary>Thin, backend-agnostic facade so CLI/AppComposition code looks almost identical to the
-/// WPF app's (PLAN.md §2.3) even though the fallback logic now lives behind whichever
+/// WPF app's even though the fallback logic now lives behind whichever
 /// ICaptureBackend the registry selects.</summary>
 public sealed class CaptureService
 {
