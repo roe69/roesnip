@@ -983,6 +983,14 @@ public static class Program
         AppComposition.WriteHdrExport = RoeSnip.Platform.Windows.JxrWriter.Write;
         // Cross-monitor selection (item 09) HDR save — see WriteHdrExportSpanning's own doc comment.
         AppComposition.WriteHdrExportSpanning = RoeSnip.Platform.Windows.JxrWriter.WriteSpanning;
+#else
+        // Linux and macOS write the same 128bppRGBAFloat scRGB .jxr through the bundled JxrEncApp;
+        // without it (a dev build) the Save HDR button and the auto copy stay off.
+        if ((OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) && JxrExport.IsAvailable)
+        {
+            AppComposition.WriteHdrExport = JxrExport.Write;
+            AppComposition.WriteHdrExportSpanning = JxrExport.WriteSpanning;
+        }
 #endif
     }
 

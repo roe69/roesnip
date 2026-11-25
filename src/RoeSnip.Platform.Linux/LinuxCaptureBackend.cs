@@ -1,4 +1,5 @@
 using RoeSnip.Core.Capture;
+using RoeSnip.Core.Imaging;
 
 namespace RoeSnip.Platform.Linux;
 
@@ -10,8 +11,10 @@ namespace RoeSnip.Platform.Linux;
 ///     XGetImage refuses on Wayland.
 ///   X11: XGetImage first, the Screenshot portal last (not on GNOME).
 /// Monitor enumeration is XRandR (XWayland on Wayland) for every capturer.
-/// SdrWhiteNits=240 / AdvancedColorActive=false are pinned (no HDR concept on Linux in v1) and
-/// every frame is Bgra8Srgb with the SdrWhiteInBufferUnits=1.0 sentinel.</summary>
+/// Frames are Bgra8Srgb (SdrWhiteNits=240 / AdvancedColorActive=false pinned, SdrWhiteInBufferUnits=1.0
+/// sentinel) except on a monitor in HDR mode on GNOME 50+: the screencast capturer then returns an
+/// Fp16ScRgb frame (SDR white 203 nits, see <see cref="HdrScreenCastStream"/>). SupportsHdrExport
+/// follows the bundled JxrEncApp.</summary>
 public sealed class LinuxCaptureBackend : ICaptureBackend
 {
     private readonly FallbackCaptureBackend _inner;
@@ -31,7 +34,7 @@ public sealed class LinuxCaptureBackend : ICaptureBackend
             };
         _inner = new FallbackCaptureBackend(
             ScreenCastSession.IsWaylandSession ? "Linux (ScreenCast portal/Screenshot portal)" : "Linux (X11/Screenshot portal)",
-            supportsHdrExport: false,
+            supportsHdrExport: JxrExport.IsAvailable,
             EnumerateMonitorsCore,
             capturers,
             CaptureCache.Default);

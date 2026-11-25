@@ -20,6 +20,8 @@ name: release
 # draft, verifies the attestation (this workflow file, refs/heads/main), signs with the Cloud KMS
 # key, uploads the signed "<name>.exe" and its "<name>.exe.gz" (made from the SIGNED bytes), removes
 # the .unsigned assets and publishes the release. Until then the draft is invisible to the updaters.
+# Every other asset is attested in the release job; the signer refuses to publish a draft with an
+# asset whose digest has no attestation for that exact name.
 # Asset names, the .gz siblings and the signing-ready.txt marker are a contract with
 # docker/roe-signing in the house repo. Both UpdateManagers prefer the "<name>.exe.gz" sibling and
 # fall back to the plain exe. Never remove or rename the plain "RoeSnip.exe" /
@@ -262,6 +264,37 @@ jobs:
         run: dotnet publish src/RoeSnip.App -c Release -f net8.0 -r ${{ matrix.rid }} --self-contained -p:EnableWindowsTargeting=true -p:PublishReadyToRun=false -p:EnableCompressionInSingleFile=false -p:SatelliteResourceLanguages=en -p:Version=${{ needs.prep.outputs.version }}
 
 
+      # JxrEncApp (jxrlib, BSD-2-Clause) writes the HDR original as .jxr on Linux and macOS; it ships
+      # as a flat sibling of the RoeSnip executable (JxrExport.LocateEncoder), next to its licence.
+      # osx-x64 is cross-compiled on the arm64 runner.
+      - name: Build JxrEncApp (${{ matrix.rid }})
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCH_FLAGS=""
+          if [ "${{ matrix.rid }}" = "osx-x64" ]; then ARCH_FLAGS="-arch x86_64"; fi
+          sh helpers/jxrenc/build.sh "$PWD/jxrenc-out" "$ARCH_FLAGS"
+          # Linux and the matching-arch mac build can run it: a lossless 128bppRGBAFloat encode of a 2x2 float TIFF.
+          if [ "${{ matrix.rid }}" != "osx-x64" ]; then
+            python3 - <<'PY'
+          import struct
+          w = h = 2
+          data = struct.pack("<16f", *([3.0, 1.0, 0.25, 1.0] * 4))
+          n = 12
+          bps = 8 + 2 + n * 12 + 4
+          entries = [(256, 4, 1, w), (257, 4, 1, h), (258, 3, 4, bps), (259, 3, 1, 1), (262, 3, 1, 2),
+                     (273, 4, 1, bps + 8), (277, 3, 1, 4), (278, 4, 1, h), (279, 4, 1, len(data)),
+                     (284, 3, 1, 1), (338, 3, 1, 2), (339, 3, 1, 3)]
+          out = b"II*\x00" + struct.pack("<IH", 8, n)
+          for tag, typ, cnt, val in entries:
+              out += struct.pack("<HHII", tag, typ, cnt, val)
+          out += struct.pack("<I", 0) + struct.pack("<4H", 32, 32, 32, 32) + data
+          open("jxr-probe.tif", "wb").write(out)
+          PY
+            "$PWD/jxrenc-out/JxrEncApp" -i jxr-probe.tif -o jxr-probe.jxr -c 28 -q 1.0
+            test -s jxr-probe.jxr
+          fi
+
       # ---- Linux: AppImage via the official static appimagetool, plus a tar.gz --------------
       # appimagetool must match the runner arch (aarch64 on ubuntu-24.04-arm); it embeds the
       # runtime for ARCH. roesnip.png sits at the AppDir root: the app copies it from $APPDIR into
@@ -279,6 +312,7 @@ jobs:
           rm -rf "$APPDIR"; mkdir -p "$APPDIR/usr/bin"
           cp -a "$PUBLISH/." "$APPDIR/usr/bin/"
           chmod +x "$APPDIR/usr/bin/RoeSnip"
+          cp jxrenc-out/JxrEncApp jxrenc-out/JXRLIB-LICENSE.txt "$APPDIR/usr/bin/"
           convert "src/RoeSnip/Assets/roesnip.ico[0]" -resize 256x256 "$APPDIR/roesnip.png"
           cat > "$APPDIR/net.roelite.roesnip.desktop" <<EOF
           [Desktop Entry]
@@ -305,6 +339,7 @@ jobs:
           rm -rf tarroot; mkdir -p tarroot/RoeSnip
           cp -a "$PUBLISH/." tarroot/RoeSnip/
           cp "$APPDIR/roesnip.png" tarroot/RoeSnip/roesnip.png
+          cp jxrenc-out/JxrEncApp jxrenc-out/JXRLIB-LICENSE.txt tarroot/RoeSnip/
           tar -C tarroot -czf "dist/RoeSnip-${{ matrix.rid }}.tar.gz" RoeSnip
 
       # ---- macOS: build the capture helper, wrap in a .app, produce an UNSIGNED .dmg ----------
@@ -332,6 +367,7 @@ jobs:
           chmod +x "$APP/Contents/MacOS/RoeSnip"
           # scksnap ships as a flat sibling of the RoeSnip executable (ROESNIP_SCKSNAP_PATH default).
           cp helpers/scksnap/scksnap "$APP/Contents/MacOS/scksnap"
+          cp jxrenc-out/JxrEncApp jxrenc-out/JXRLIB-LICENSE.txt "$APP/Contents/MacOS/"
           # Icon (cosmetic - never fail the build on it).
           mkdir -p RoeSnip.iconset
           sips -s format png "src/RoeSnip/Assets/roesnip.ico" --out RoeSnip.iconset/icon_256x256.png >/dev/null 2>&1 || true
@@ -386,12 +422,21 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write       # Sigstore build provenance for the cross-platform assets (below)
+      attestations: write
     steps:
       - name: Download cross-platform artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: xplat-*
           path: dist
+
+      # The signer also verifies every non-Windows asset against an attestation of its own name
+      # before it publishes, so nothing in the draft is trusted just for being there.
+      - name: Attest build provenance (cross-platform assets)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/**/*
 
       - name: Download unsigned Windows artifacts
         uses: actions/download-artifact@v4
