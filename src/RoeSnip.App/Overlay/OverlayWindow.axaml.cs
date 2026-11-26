@@ -494,7 +494,7 @@ public partial class OverlayWindow : Window
             // stay over it, usable) and zooms in like a newly opened window. Fullscreen covers the
             // panels; UTILITY keeps GNOME Shell from animating the open, close and fullscreen
             // resize (it animates only NORMAL/DIALOG). Both before the first map. Keyboard focus
-            // still lands on the overlay (OverlayController activates it).
+            // is not given on map for UTILITY: OverlayController calls ActivateForKeyboard.
 #if LINUX_BACKEND
             if (TryGetPlatformHandle() is { } handle)
             {
@@ -507,6 +507,19 @@ public partial class OverlayWindow : Window
         PropagateDeviceScale();
         UpdateDimGeometry();
         return true;
+    }
+
+    /// <summary>Activate() that also wins keyboard focus under mutter (see X11Activation): without
+    /// it, Esc after PrintScreen went to the app that had focus before the snip.</summary>
+    internal void ActivateForKeyboard()
+    {
+        Activate();
+#if LINUX_BACKEND
+        if (OperatingSystem.IsLinux() && TryGetPlatformHandle() is { } handle)
+        {
+            RoeSnip.Platform.Linux.X11Activation.Activate(handle.Handle);
+        }
+#endif
     }
 
     private void PropagateDeviceScale()

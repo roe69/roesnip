@@ -647,7 +647,7 @@ public static class OverlayController
                 // steal keyboard focus back onto a still-on-screen (until its own deferred hide)
                 // flash window. See FlashDimmer.InvalidateForegroundClaim's own doc comment.
                 FlashDimmer.InvalidateForegroundClaim();
-                _activeWindow.Activate();
+                _activeWindow.ActivateForKeyboard();
             }
             catch
             {
@@ -722,7 +722,7 @@ public static class OverlayController
             if (!ReferenceEquals(_activeWindow, window))
             {
                 _activeWindow = window;
-                window.Activate();
+                window.ActivateForKeyboard();
             }
         }
 
@@ -1702,7 +1702,7 @@ public static class OverlayController
             if (!ReferenceEquals(_activeWindow, window))
             {
                 _activeWindow = window;
-                window.Activate();
+                window.ActivateForKeyboard();
             }
             OnSpanningCandidate(window, normalized, preserveSize: false);
             FinalizeNewSelectionDrag(window); // applies the same too-small-cancel rule a real pointer-up would
