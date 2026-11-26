@@ -22,7 +22,7 @@
     <!-- Compared against the GitHub Releases tag_name by AppShell/UpdateManager.cs (item 13) -
          bump on every release, in lockstep with the WPF app's own RoeSnip.csproj <Version>
          (a PR to main bumps both before release.yml is dispatched; prep and the signer check both). -->
-    <Version>2.7.11</Version>
+    <Version>2.7.12</Version>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
